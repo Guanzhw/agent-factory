@@ -1,0 +1,215 @@
+{
+  "head": "8de058a9639d3baf8f98e36f60be94cdd31d2f7c",
+  "run": 40129163038,
+  "url": "https://github.com/Guanzhw/agent-factory/actions/runs/40129163038",
+  "jobs": [
+    {
+      "id": 120976969870,
+      "name": "Select CI mode",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 120977002469,
+      "name": "postgres",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 120977002476,
+      "name": "frontend (windows-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 120977002490,
+      "name": "python (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 120977002494,
+      "name": "python (windows-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 120977002593,
+      "name": "frontend (ubuntu-latest)",
+      "status": "completed",
+      "conclusion": "success"
+    },
+    {
+      "id": 120984053055,
+      "name": "CI summary",
+      "status": "completed",
+      "conclusion": "success"
+    }
+  ],
+  "postgres": {
+    "suite": "postgres_acceptance",
+    "testsRun": 3517,
+    "skipped": 71,
+    "groups": {
+      "owner_byok_default_off": {
+        "requiredCases": 130,
+        "passed": 130,
+        "notPassed": []
+      },
+      "platform_application_boundaries": {
+        "requiredCases": 33,
+        "passed": 33,
+        "notPassed": []
+      },
+      "research_candidate_postgres": {
+        "requiredCases": 9,
+        "passed": 9,
+        "notPassed": []
+      },
+      "autoresearch_native_fixture": {
+        "requiredCases": 11,
+        "passed": 11,
+        "notPassed": []
+      },
+      "workflow_native_fixture": {
+        "requiredCases": 10,
+        "passed": 10,
+        "notPassed": []
+      },
+      "department_self_service": {
+        "requiredCases": 19,
+        "passed": 19,
+        "notPassed": []
+      },
+      "execution_invariants": {
+        "requiredCases": 6,
+        "passed": 6,
+        "notPassed": []
+      }
+    },
+    "accepted": true,
+    "modelLive": false,
+    "externalRemoteVerified": false,
+    "realCredentialsUsed": false,
+    "passed": 3446,
+    "elapsedSeconds": 1815.409,
+    "skipEvidence": [
+      "Real completed ORX custody, not a claim of interrupting a live process. ... skipped 'Requires disposable PG, pinned actual ORX and reviewed Linux container'",
+      "test_actual_two_roots_promote_exact_candidate_bytes_then_stop_on_tie (test_research_iterations_postgres.ResearchIterationsPostgresTests.test_actual_two_roots_promote_exact_candidate_bytes_then_stop_on_tie) ... skipped 'Requires disposable PG, pinned actual ORX and reviewed Linux container'",
+      "test_cancel_after_reservation_before_native_submission_releases_real_hold (test_research_iterations_postgres.ResearchIterationsPostgresTests.test_cancel_after_reservation_before_native_submission_releases_real_hold) ... skipped 'Requires disposable PG, pinned actual ORX and reviewed Linux container'",
+      "test_expiry_after_reservation_before_native_submission_releases_real_hold (test_research_iterations_postgres.ResearchIterationsPostgresTests.test_expiry_after_reservation_before_native_submission_releases_real_hold) ... skipped 'Requires disposable PG, pinned actual ORX and reviewed Linux container'",
+      "test_lost_native_dispatch_ack_restart_recovers_original_without_relaunch (test_research_iterations_postgres.ResearchIterationsPostgresTests.test_lost_native_dispatch_ack_restart_recovers_original_without_relaunch) ... skipped 'Requires disposable PG, pinned actual ORX and reviewed Linux container'",
+      "test_child_recovery_after_service_restart_keeps_one_run (test_actual_inference_tree.ActualDelegatedInferenceTests.test_child_recovery_after_service_restart_keeps_one_run) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_child_overrun_stops_work_under_shared_ancestor_budget (test_actual_inference_tree.ActualDelegatedStopTests.test_child_overrun_stops_work_under_shared_ancestor_budget) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_parent_cancel_stops_waiting_child_without_releasing_unknown_usage (test_actual_inference_tree.ActualDelegatedStopTests.test_parent_cancel_stops_waiting_child_without_releasing_unknown_usage) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_parent_inference_fault_preserves_acknowledged_child_work (test_actual_inference_tree.ActualParentInferenceTests.test_parent_inference_fault_preserves_acknowledged_child_work) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_receiver_child_restart_preserves_root_receipt_and_child_run (test_actual_inference_tree.ActualReceiverChildInferenceTests.test_receiver_child_restart_preserves_root_receipt_and_child_run) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_receiver_restart_recovers_same_original_run (test_actual_inference_tree.ActualReceiverInferenceTests.test_receiver_restart_recovers_same_original_run) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_parent_inference_fault_preserves_acknowledged_child_work (test_actual_inference_tree.ActualReceiverParentInferenceTests.test_parent_inference_fault_preserves_acknowledged_child_work) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_origin_account_overrun_revokes_current_receiver_authority (test_actual_inference_tree.ActualReceiverSafetyTests.test_origin_account_overrun_revokes_current_receiver_authority) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_origin_cancel_stops_receiver_as_cancellation (test_actual_inference_tree.ActualReceiverSafetyTests.test_origin_cancel_stops_receiver_as_cancellation) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_origin_connection_revocation_stops_receiver (test_actual_inference_tree.ActualReceiverSafetyTests.test_origin_connection_revocation_stops_receiver) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_origin_outage_fails_closed_restart_never_relaunches (test_actual_inference_tree.ActualReceiverSafetyTests.test_origin_outage_fails_closed_restart_never_relaunches) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_original_wait_deadline_stops_receiver (test_actual_inference_tree.ActualReceiverSafetyTests.test_original_wait_deadline_stops_receiver) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_receiver_authoritative_overrun_stops_original_work (test_actual_inference_tree.ActualReceiverSafetyTests.test_receiver_authoritative_overrun_stops_original_work) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_receiver_connection_revocation_stops_original_pin (test_actual_inference_tree.ActualReceiverSafetyTests.test_receiver_connection_revocation_stops_original_pin) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_receiver_source_drift_stops_tree_and_keeps_unknown_holds (test_actual_inference_tree.ActualReceiverSafetyTests.test_receiver_source_drift_stops_tree_and_keeps_unknown_holds) ... skipped 'Explicit owned Linux ORX/isolated PostgreSQL opt-in'",
+      "test_transient_fault_keeps_real_work_and_resumes_same_native_run (test_actual_inference_wait.ActualInferenceBrowserTests.test_transient_fault_keeps_real_work_and_resumes_same_native_run) ... skipped 'Explicit actual Chromium acceptance opt-in'",
+      "test_transient_fault_keeps_real_work_and_resumes_same_native_run (test_actual_inference_wait.ActualInferenceRestartTests.test_transient_fault_keeps_real_work_and_resumes_same_native_run) ... skipped 'Requires explicitly approved Linux ORX/container and isolated PostgreSQL'",
+      "test_authoritative_over_budget_usage_stops_waiting_work (test_actual_inference_wait.ActualInferenceStopTests.test_authoritative_over_budget_usage_stops_waiting_work) ... skipped 'Requires explicitly approved Linux ORX/container and isolated PostgreSQL'",
+      "test_connection_revocation_during_inference_wait_stops_work (test_actual_inference_wait.ActualInferenceStopTests.test_connection_revocation_during_inference_wait_stops_work) ... skipped 'Requires explicitly approved Linux ORX/container and isolated PostgreSQL'",
+      "test_declined_recovery_stops_work_and_records_decision (test_actual_inference_wait.ActualInferenceStopTests.test_declined_recovery_stops_work_and_records_decision) ... skipped 'Requires explicitly approved Linux ORX/container and isolated PostgreSQL'",
+      "test_original_wait_deadline_cleans_up_without_any_resume (test_actual_inference_wait.ActualInferenceStopTests.test_original_wait_deadline_cleans_up_without_any_resume) ... skipped 'Requires explicitly approved Linux ORX/container and isolated PostgreSQL'",
+      "test_source_drift_stops_original_tree_without_fabricating_success (test_actual_inference_wait.ActualInferenceStopTests.test_source_drift_stops_original_tree_without_fabricating_success) ... skipped 'Requires explicitly approved Linux ORX/container and isolated PostgreSQL'",
+      "test_user_cancel_stops_waiting_external_work (test_actual_inference_wait.ActualInferenceStopTests.test_user_cancel_stops_waiting_external_work) ... skipped 'Requires explicitly approved Linux ORX/container and isolated PostgreSQL'",
+      "test_transient_fault_keeps_real_work_and_resumes_same_native_run (test_actual_inference_wait.ActualInferenceWaitTests.test_transient_fault_keeps_real_work_and_resumes_same_native_run) ... skipped 'Requires explicitly approved Linux ORX/container and isolated PostgreSQL'",
+      "test_reviewed_receiver_runs_with_disjoint_least_capability_connections (test_actual_orx_receiver.ActualORXReceiverTests.test_reviewed_receiver_runs_with_disjoint_least_capability_connections) ... skipped 'Requires explicit pinned Linux ORX/container and isolated PostgreSQL'",
+      "test_exported_snapshot_with_live_artifact_writes_and_uncertain_admission (test_online_restore_postgres.OnlineRestorePostgresTests.test_exported_snapshot_with_live_artifact_writes_and_uncertain_admission) ... skipped 'Requires isolated PostgreSQL and official dump/restore tools'",
+      "test_real_rsa_ecdsa_ed25519_onboarding_has_no_research_dependencies (test_personal_ssh_live.PersonalSSHLiveTests.test_real_rsa_ecdsa_ed25519_onboarding_has_no_research_dependencies) ... skipped 'set FACTORY_TEST_SSHD for isolated real SSH acceptance'",
+      "test_real_shared_ssh_keeps_owner_credentials_and_stops_retained_member_lease (test_personal_ssh_live.PersonalSSHLiveTests.test_real_shared_ssh_keeps_owner_credentials_and_stops_retained_member_lease) ... skipped 'set FACTORY_TEST_SSHD for isolated real SSH acceptance'",
+      "test_wrong_host_identity_fails_before_remote_operation_and_app_prepare_is_explicit (test_personal_ssh_live.PersonalSSHLiveTests.test_wrong_host_identity_fails_before_remote_operation_and_app_prepare_is_explicit) ... skipped 'set FACTORY_TEST_SSHD for isolated real SSH acceptance'",
+      "test_official_clean_dump_restore_preserves_evidence_authority_and_unknown_capacity (test_restore_postgres.PostgreSQLRestoreTests.test_official_clean_dump_restore_preserves_evidence_authority_and_unknown_capacity) ... skipped 'Requires disposable loopback PostgreSQL and opt-in FACTORY_PG_BIN'",
+      "test_01_original_status_error_exits_without_dialog_timeout (test_actual_orx_local.ActualLinuxLocalORXTests.test_01_original_status_error_exits_without_dialog_timeout) ... skipped 'Requires explicit pinned Linux ORX and a task-owned local Docker boundary'",
+      "test_02_actual_success_source_metrics_snapshot_and_logs (test_actual_orx_local.ActualLinuxLocalORXTests.test_02_actual_success_source_metrics_snapshot_and_logs) ... skipped 'Requires explicit pinned Linux ORX and a task-owned local Docker boundary'",
+      "test_03_actual_evaluator_failure_keeps_scored_failure_evidence (test_actual_orx_local.ActualLinuxLocalORXTests.test_03_actual_evaluator_failure_keeps_scored_failure_evidence) ... skipped 'Requires explicit pinned Linux ORX and a task-owned local Docker boundary'",
+      "test_04_actual_running_cancel_proves_detached_tree_stopped (test_actual_orx_local.ActualLinuxLocalORXTests.test_04_actual_running_cancel_proves_detached_tree_stopped) ... skipped 'Requires explicit pinned Linux ORX and a task-owned local Docker boundary'",
+      "test_05_real_commit_lost_ack_reconciles_without_second_launch (test_actual_orx_local.ActualLinuxLocalORXTests.test_05_real_commit_lost_ack_reconciles_without_second_launch) ... skipped 'Requires explicit pinned Linux ORX and a task-owned local Docker boundary'",
+      "test_06_supervisor_hard_exit_recovered_by_native_cancel (test_actual_orx_local.ActualLinuxLocalORXTests.test_06_supervisor_hard_exit_recovered_by_native_cancel) ... skipped 'Requires explicit pinned Linux ORX and a task-owned local Docker boundary'",
+      "test_07_revocation_source_command_drift_deny_but_trusted_stop_retained (test_actual_orx_local.ActualLinuxLocalORXTests.test_07_revocation_source_command_drift_deny_but_trusted_stop_retained) ... skipped 'Requires explicit pinned Linux ORX and a task-owned local Docker boundary'",
+      "test_08_task_schema_and_native_command_drift_refused_before_launch (test_actual_orx_local.ActualLinuxLocalORXTests.test_08_task_schema_and_native_command_drift_refused_before_launch) ... skipped 'Requires explicit pinned Linux ORX and a task-owned local Docker boundary'",
+      "test_09_unsupported_environment_and_source_pin_refused_before_native_launch (test_actual_orx_local.ActualLinuxLocalORXTests.test_09_unsupported_environment_and_source_pin_refused_before_native_launch) ... skipped 'Requires explicit pinned Linux ORX and a task-owned local Docker boundary'",
+      "test_10_factory_worker_hard_exit_reattaches_original_run_without_duplicate (test_actual_orx_local.ActualLinuxLocalORXTests.test_10_factory_worker_hard_exit_reattaches_original_run_without_duplicate) ... skipped 'Requires explicit pinned Linux ORX and a task-owned local Docker boundary'",
+      "test_01_original_status_error_exits_without_dialog_timeout (test_actual_orx_local.ActualLocalORXTests.test_01_original_status_error_exits_without_dialog_timeout) ... skipped 'Requires explicitly pinned actual Windows ORX binary and source archive'",
+      "test_02_actual_success_source_metrics_snapshot_and_logs (test_actual_orx_local.ActualLocalORXTests.test_02_actual_success_source_metrics_snapshot_and_logs) ... skipped 'Requires explicitly pinned actual Windows ORX binary and source archive'",
+      "test_03_actual_evaluator_failure_keeps_scored_failure_evidence (test_actual_orx_local.ActualLocalORXTests.test_03_actual_evaluator_failure_keeps_scored_failure_evidence) ... skipped 'Requires explicitly pinned actual Windows ORX binary and source archive'",
+      "test_04_actual_running_cancel_proves_detached_tree_stopped (test_actual_orx_local.ActualLocalORXTests.test_04_actual_running_cancel_proves_detached_tree_stopped) ... skipped 'Requires explicitly pinned actual Windows ORX binary and source archive'",
+      "test_05_real_commit_lost_ack_reconciles_without_second_launch (test_actual_orx_local.ActualLocalORXTests.test_05_real_commit_lost_ack_reconciles_without_second_launch) ... skipped 'Requires explicitly pinned actual Windows ORX binary and source archive'",
+      "test_06_supervisor_hard_exit_recovered_by_native_cancel (test_actual_orx_local.ActualLocalORXTests.test_06_supervisor_hard_exit_recovered_by_native_cancel) ... skipped 'Requires explicitly pinned actual Windows ORX binary and source archive'",
+      "test_07_revocation_source_command_drift_deny_but_trusted_stop_retained (test_actual_orx_local.ActualLocalORXTests.test_07_revocation_source_command_drift_deny_but_trusted_stop_retained) ... skipped 'Requires explicitly pinned actual Windows ORX binary and source archive'",
+      "test_08_task_schema_and_native_command_drift_refused_before_launch (test_actual_orx_local.ActualLocalORXTests.test_08_task_schema_and_native_command_drift_refused_before_launch) ... skipped 'Requires explicitly pinned actual Windows ORX binary and source archive'",
+      "test_09_unsupported_environment_and_source_pin_refused_before_native_launch (test_actual_orx_local.ActualLocalORXTests.test_09_unsupported_environment_and_source_pin_refused_before_native_launch) ... skipped 'Requires explicitly pinned actual Windows ORX binary and source archive'",
+      "test_10_factory_worker_hard_exit_reattaches_original_run_without_duplicate (test_actual_orx_local.ActualLocalORXTests.test_10_factory_worker_hard_exit_reattaches_original_run_without_duplicate) ... skipped 'Requires explicitly pinned actual Windows ORX binary and source archive'",
+      "test_pinned_binary_actual_adapter_version (test_actual_orx_preflight.ActualOpenResearchPreflight.test_pinned_binary_actual_adapter_version) ... skipped 'Requires explicitly supplied exact-source ORX binary and digest'",
+      "test_wrong_pin_rejects_before_spawn (test_actual_orx_preflight.ActualOpenResearchPreflight.test_wrong_pin_rejects_before_spawn) ... skipped 'Requires explicitly supplied exact-source ORX binary and digest'",
+      "test_shared_namespace_and_independent_wall_guardian_stops_sleeping_descendant (test_actual_retrieval_boundary.ActualRetrievalBoundaryTests.test_shared_namespace_and_independent_wall_guardian_stops_sleeping_descendant) ... skipped 'Requires approved Linux binary and existing Docker runtime'",
+      "test_native_review_queue_sources_report_and_owner_download (test_literature_postgres.ActualLiteraturePostgresTests.test_native_review_queue_sources_report_and_owner_download) ... skipped 'Explicit opt-in: one small public/free query through the approved Linux container'",
+      "test_01_actual_binary_success_native_factory_approval_and_download (test_orx_experiment_factory.ActualLinuxORXNativeFactoryTests.test_01_actual_binary_success_native_factory_approval_and_download) ... skipped 'Requires explicit Linux task container, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_02_actual_evaluator_failure_retains_native_failed_metrics (test_orx_experiment_factory.ActualLinuxORXNativeFactoryTests.test_02_actual_evaluator_failure_retains_native_failed_metrics) ... skipped 'Requires explicit Linux task container, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_03_cancel_running_native_experiment_positive_process_stop (test_orx_experiment_factory.ActualLinuxORXNativeFactoryTests.test_03_cancel_running_native_experiment_positive_process_stop) ... skipped 'Requires explicit Linux task container, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_04_revoke_owner_connection_stops_owned_experiment_without_new_launch (test_orx_experiment_factory.ActualLinuxORXNativeFactoryTests.test_04_revoke_owner_connection_stops_owned_experiment_without_new_launch) ... skipped 'Requires explicit Linux task container, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_05_source_drift_after_inspect_before_confirmation_denies_launch (test_orx_experiment_factory.ActualLinuxORXNativeFactoryTests.test_05_source_drift_after_inspect_before_confirmation_denies_launch) ... skipped 'Requires explicit Linux task container, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_06_command_drift_after_inspect_before_confirmation_denies_launch (test_orx_experiment_factory.ActualLinuxORXNativeFactoryTests.test_06_command_drift_after_inspect_before_confirmation_denies_launch) ... skipped 'Requires explicit Linux task container, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_01_actual_binary_success_native_factory_approval_and_download (test_orx_experiment_factory.ActualORXNativeFactoryTests.test_01_actual_binary_success_native_factory_approval_and_download) ... skipped 'Requires explicit Windows task-containment, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_02_actual_evaluator_failure_retains_native_failed_metrics (test_orx_experiment_factory.ActualORXNativeFactoryTests.test_02_actual_evaluator_failure_retains_native_failed_metrics) ... skipped 'Requires explicit Windows task-containment, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_03_cancel_running_native_experiment_positive_process_stop (test_orx_experiment_factory.ActualORXNativeFactoryTests.test_03_cancel_running_native_experiment_positive_process_stop) ... skipped 'Requires explicit Windows task-containment, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_04_revoke_owner_connection_stops_owned_experiment_without_new_launch (test_orx_experiment_factory.ActualORXNativeFactoryTests.test_04_revoke_owner_connection_stops_owned_experiment_without_new_launch) ... skipped 'Requires explicit Windows task-containment, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_05_source_drift_after_inspect_before_confirmation_denies_launch (test_orx_experiment_factory.ActualORXNativeFactoryTests.test_05_source_drift_after_inspect_before_confirmation_denies_launch) ... skipped 'Requires explicit Windows task-containment, loopback PostgreSQL and pinned ORX toolchain'",
+      "test_06_command_drift_after_inspect_before_confirmation_denies_launch (test_orx_experiment_factory.ActualORXNativeFactoryTests.test_06_command_drift_after_inspect_before_confirmation_denies_launch) ... skipped 'Requires explicit Windows task-containment, loopback PostgreSQL and pinned ORX toolchain'"
+    ]
+  },
+  "windows": {
+    "testsRun": 3517,
+    "passed": 2228,
+    "skipped": 1289,
+    "failures": 0,
+    "errors": 0,
+    "elapsedSeconds": 250.295
+  },
+  "web": {
+    "testsPerOS": 728,
+    "astTestsPerOS": 10,
+    "productionAuditVulnerabilities": 0,
+    "allAuditVulnerabilities": 0,
+    "chromiumScenarios": [
+      "configured",
+      "bind-loss"
+    ]
+  },
+  "core": {
+    "accepted": true,
+    "accountManagementAvailable": true,
+    "appPackagesAbsent": true,
+    "applicationsEmpty": true,
+    "cleanShutdown": true,
+    "healthOK": true,
+    "lifespanReady": true,
+    "materialsEmpty": true,
+    "memberResourcesAvailable": true,
+    "modelRunRequested": false,
+    "nativeWorkerPresent": true,
+    "persistentVaultKeyPresent": true,
+    "phase": "complete",
+    "researchRouteAbsent": true,
+    "researchTablesAbsent": true,
+    "suite": "core_install_smoke",
+    "tableCounts": {
+      "assembled": 65,
+      "before": 0,
+      "running": 83,
+      "stopped": 83
+    },
+    "wheel": "department_agent_factory_core-0.2.0-py3-none-any.whl",
+    "wheelInstalled": true
+  },
+  "scope": "Validation-only union, not standalone exact-head full for every Draft; optional live/provider/ORX acceptance skips remain skips."
+}

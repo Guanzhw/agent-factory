@@ -11,7 +11,8 @@ from pydantic import ValidationError
 
 from agent_factory.auth import EXECUTOR_ID
 from agent_factory.control_commands import ControlCommand
-from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands
+from agent_factory_research.services import ResearchServices
+from agent_factory_research.control_compatibility import ResearchControlCommands as ControlCommands, ResearchControlHooks
 from agent_factory.factory_api import requirement_version
 from agent_factory.native_bridge import NativeBridge
 from agent_factory.store import digest
@@ -49,7 +50,7 @@ class ApprovedRecoveryProofTests(unittest.TestCase):
     def test_exact_original_approval_accepted_without_mutating_transcript(self):
         task, original, snapshot = fixture()
         before = copy.deepcopy(snapshot)
-        value = ControlCommands._approval_payload(task, snapshot, original)
+        value = ResearchControlHooks.approval_payload(task, snapshot, original)
         self.assertEqual(value["requirements"], original["body"]["requirements"])
         self.assertEqual(snapshot, before)
         self.assertEqual(value["pausedRequirementsSha256"], digest(snapshot["requirements"]))
@@ -65,7 +66,7 @@ class ApprovedRecoveryProofTests(unittest.TestCase):
             task, original, snapshot = fixture()
             mutate(original, snapshot)
             with self.assertRaises(HTTPException):
-                ControlCommands._approval_payload(task, snapshot, original)
+                ResearchControlHooks.approval_payload(task, snapshot, original)
 
     def test_repair_slot_distinct_from_approval_and_unique_per_original(self):
         self.assertEqual(ControlCommands.repair_slot("t", "a"), ControlCommands.repair_slot("t", "a"))
@@ -77,7 +78,7 @@ class ApprovedRecoveryProofTests(unittest.TestCase):
             task, original, snapshot = fixture()
             store = SimpleNamespace(sql=Mock(return_value=[{"command_id": "repair-original"}]))
             api = SimpleNamespace(store=store, auth=SimpleNamespace(require_member=Mock()), bridge=None)
-            commands = ControlCommands(api)
+            commands = ControlCommands(api, research=ResearchServices(api.store, installed=True))
             commands.row = Mock(return_value=original)
             commands._completed_launch = Mock(return_value={"orxRunId": "orx-1"})
             with self.assertRaises(HTTPException):
@@ -91,7 +92,7 @@ class ApprovedRecoveryProofTests(unittest.TestCase):
     def test_unknown_dispatch_is_read_only_recovery(self):
         async def exercise():
             api = SimpleNamespace(store=None, auth=SimpleNamespace(require_member=Mock()), bridge=SimpleNamespace(continue_approved_run=AsyncMock()))
-            commands = ControlCommands(api)
+            commands = ControlCommands(api, research=ResearchServices(api.store, installed=True))
             commands.row = Mock(return_value={"state": "DISPATCHING"})
             commands.recover = AsyncMock(return_value={"state": "UNKNOWN"})
             result = await commands.dispatch("owner", "task", "repair-command")
@@ -122,7 +123,7 @@ class ApprovedRecoveryQueueTests(unittest.TestCase):
         bridge.attach(SimpleNamespace(state=SimpleNamespace(queue_worker=worker)))
         bridge.detail = AsyncMock(return_value=snapshot)
         bridge._request = AsyncMock(side_effect=AssertionError("Detached HTTP fallback is forbidden"))
-        prepared = ControlCommands._approval_payload(task, snapshot, original)
+        prepared = ResearchControlHooks.approval_payload(task, snapshot, original)
         arguments = (task["run_id"], task["id"], task["owner_id"], prepared["requirements"])
         kwargs = {"command_proof": {"commandId": "repair-original", "fingerprint": "repair-fingerprint"},
                   "original_proof": prepared["originalApprovalProof"], "tools_sha256": prepared["toolsSha256"],
@@ -183,7 +184,8 @@ class ApprovedRecoveryEffectTests(unittest.TestCase):
         binding = SimpleNamespace(contract_revision="2", adapter=adapter)
         store = SimpleNamespace(task=Mock(return_value=task), effects=Mock(return_value=[effect]),
                                 execution_bindings=SimpleNamespace(recheck=Mock()))
-        commands = ControlCommands(SimpleNamespace(store=store, auth=None, bridge=None, settings=None))
+        commands = ControlCommands(SimpleNamespace(store=store, auth=None, bridge=None, settings=None),
+                                   research=ResearchServices(store, installed=True))
         ctx = SimpleNamespace(user_id=task["owner_id"], session_id=task["id"], run_id=task["run_id"], session_state={})
         stack = ExitStack()
         # These are mocked Linux effect contracts, independent of runner OS.
@@ -256,7 +258,7 @@ class ApprovedRecoveryReceiptTests(unittest.TestCase):
         store = SimpleNamespace(native_db=SimpleNamespace(get_job=Mock(side_effect=lambda *_args, **_kwargs: copy.deepcopy(ticket))))
         api = SimpleNamespace(store=store, auth=SimpleNamespace(require_member=Mock()), bridge=bridge, remote=None,
                               scoped_task=Mock(return_value=(task, None)))
-        commands = ControlCommands(api)
+        commands = ControlCommands(api, research=ResearchServices(api.store, installed=True))
         commands.row = Mock(return_value=row)
         def update(_row, *, evidence=None, error=None):
             row["body"]["error"] = error

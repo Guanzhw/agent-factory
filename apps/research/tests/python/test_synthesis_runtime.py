@@ -1,6 +1,5 @@
 """Plan-bound synthesis adapters: synthetic sources, no PG or provider I/O."""
-from research_services_fixture import with_research_services
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices, bind_registrations
 from copy import deepcopy
 from types import SimpleNamespace
 from typing import Any
@@ -23,6 +22,14 @@ from test_literature_synthesis import report  # pyright: ignore[reportMissingImp
 
 
 class SynthesisRuntimeTests(unittest.TestCase):
+    def test_inspector_refuses_other_graph_before_reading_original_store(self):
+        store, _, _, research = self.inspector_store()
+        foreign = ResearchServices(factory_store=SimpleNamespace(), installed=True)
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_STORE_MISMATCH'):
+            inspect_synthesis_evidence(store, 'alice', 'task', research=foreign)
+        store.task.assert_not_called()
+        research.synthesis_sources.read.assert_not_called()
+
     def setUp(self):
         self.projection = projection()
         self.context = build_source_context('Question?', self.projection)
@@ -30,13 +37,14 @@ class SynthesisRuntimeTests(unittest.TestCase):
                          'fingerprint': 'a' * 64, 'contextFingerprint': self.context.provenance['snapshotSha256']}
         self.service = SimpleNamespace(revalidate=Mock(side_effect=lambda *args, **kwargs: deepcopy(self.snapshot)))
         self.ctx: Any = SimpleNamespace(settings=SimpleNamespace(demo=True, source_synthesis_enabled=True),
-            store=with_research_services(SimpleNamespace(), synthesis_sources=self.service),
+            store=SimpleNamespace(),
             spec={'config': {'scope': SCOPE}}, connection=ControlledScientificFixture(),
             run_context=SimpleNamespace(user_id='alice', session_id='task', run_id='run'),
             plan={'ownerId': 'alice', 'application': APPLICATION_ID, 'applicationRef': {'id': APPLICATION_ID},
                   'mode': 'controlled-fixture', 'tools': [TOOL_NAME], 'capabilities': [PERMISSION],
                   'sourceSnapshotRef': {'id': 'snapshot', 'fingerprint': 'a' * 64}})
-        self.entries = {row.kind: row for row in registrations()}
+        self.research = ResearchServices(factory_store=self.ctx.store, installed=True, synthesis_sources=self.service)
+        self.entries = {row.kind: row for row in bind_registrations(registrations(), self.research)}
 
     def test_snapshot_fresh_resolution_and_native_knowledge_model_injection(self):
         knowledge = self.entries['knowledge'].factory(self.ctx)
@@ -64,29 +72,29 @@ class SynthesisRuntimeTests(unittest.TestCase):
         for change in changes:
             with self.subTest(change=change):
                 ctx = deepcopy(self.ctx)
-                services_for(ctx.store).synthesis_sources = deepcopy(self.service)
+                research = ResearchServices(factory_store=ctx.store, installed=True, synthesis_sources=deepcopy(self.service))
                 change(ctx)
                 with self.assertRaises(ValueError):
-                    resolve_context(ctx)
-                services_for(ctx.store).synthesis_sources.revalidate.assert_not_called()
+                    resolve_context(ctx, research=research)
+                research.synthesis_sources.revalidate.assert_not_called()
 
     def test_approved_clone_scope_has_no_hardcoded_application_id(self):
         self.ctx.plan.update(application='reviewed-clone', applicationRef={'id': 'reviewed-clone'})
-        self.assertEqual(resolve_context(self.ctx), self.context)
+        self.assertEqual(resolve_context(self.ctx, research=self.research), self.context)
         self.ctx.plan['applicationRef']['id'] = 'different'
         with self.assertRaises(ValueError):
-            resolve_context(self.ctx)
+            resolve_context(self.ctx, research=self.research)
 
     def test_source_fingerprint_context_drift_and_service_revocation_propagate(self):
         for key in ('fingerprint', 'contextFingerprint'):
             saved = self.snapshot[key]
             self.snapshot[key] = 'b' * 64
             with self.subTest(key=key), self.assertRaises(ValueError):
-                resolve_context(self.ctx)
+                resolve_context(self.ctx, research=self.research)
             self.snapshot[key] = saved
         self.service.revalidate.side_effect = PermissionError('synthetic revoked')
         with self.assertRaises(PermissionError):
-            resolve_context(self.ctx)
+            resolve_context(self.ctx, research=self.research)
 
     def test_model_requires_exact_credential_free_fixture_handle(self):
         for handle in (None, object(), ControlledScientificFixture('other')):
@@ -142,7 +150,7 @@ class SynthesisRuntimeTests(unittest.TestCase):
                 'environment': {'adapterId': ENVIRONMENT_ID, 'revision': '1', 'config': {'scope': SCOPE}},
                 'knowledge': [{'adapterId': KNOWLEDGE_ID, 'revision': '1', 'config': {'scope': SCOPE}}],
                 'tools': [{'adapterId': TOOL_ID, 'revision': '1', 'config': {'scope': SCOPE}, 'toolName': TOOL_NAME}]})
-        validate_plan_source(self.ctx.store, self.ctx.plan)
+        validate_plan_source(self.ctx.store, self.ctx.plan, research=self.research)
         for mutation in (lambda p: p.update(normalizedGoal='Changed'),
                          lambda p: p['bindingManifest']['sourceSnapshotRef'].update(fingerprint='c' * 64),
                          lambda p: p['executionBindings']['model'].update(adapterId='other'),
@@ -150,15 +158,15 @@ class SynthesisRuntimeTests(unittest.TestCase):
             plan = deepcopy(self.ctx.plan)
             mutation(plan)
             with self.assertRaises(ValueError):
-                validate_plan_source(self.ctx.store, plan)
+                validate_plan_source(self.ctx.store, plan, research=self.research)
         settings.source_synthesis_enabled = False
         with self.assertRaises(ValueError):
-            validate_plan_source(self.ctx.store, self.ctx.plan)
+            validate_plan_source(self.ctx.store, self.ctx.plan, research=self.research)
         settings.source_synthesis_enabled = True
         settings.demo = False
         with self.assertRaises(ValueError):
-            validate_plan_source(self.ctx.store, self.ctx.plan)
-        validate_plan_source(SimpleNamespace(), {'executionBindings': {}})
+            validate_plan_source(self.ctx.store, self.ctx.plan, research=self.research)
+        validate_plan_source(SimpleNamespace(), {'executionBindings': {}}, research=self.research)
 
     def inspector_store(self):
         context = self.context
@@ -189,18 +197,19 @@ class SynthesisRuntimeTests(unittest.TestCase):
                   'originalReportSha256': hashlib.sha256(encoded).hexdigest(),
                   'snapshotSha256': context.provenance['snapshotSha256'], 'citationIntegrityVerified': True,
                   'semanticReview': 'required'}
-        store = with_research_services(SimpleNamespace(task=Mock(return_value={'id': 'task', 'plan_id': 'plan', 'run_id': 'run'}), plan=Mock(return_value=plan), artifacts=Mock(return_value=rows), artifact=Mock(side_effect=lambda task, identifier: (next((row for row in rows if row['id'] == identifier)), raw[identifier])), effects=Mock(return_value=[{'effect_key': 'run:literature-synthesis-report-v1', 'status': 'DONE', 'result': result}])), synthesis_sources=SimpleNamespace(read=Mock(return_value=deepcopy(self.snapshot)), revalidate=Mock(return_value=deepcopy(self.snapshot))))
-        return store, rows, raw
+        store = SimpleNamespace(task=Mock(return_value={'id': 'task', 'plan_id': 'plan', 'run_id': 'run'}), plan=Mock(return_value=plan), artifacts=Mock(return_value=rows), artifact=Mock(side_effect=lambda task, identifier: (next((row for row in rows if row['id'] == identifier)), raw[identifier])), effects=Mock(return_value=[{'effect_key': 'run:literature-synthesis-report-v1', 'status': 'DONE', 'result': result}]))
+        research = ResearchServices(factory_store=store, installed=True, synthesis_sources=SimpleNamespace(read=Mock(return_value=deepcopy(self.snapshot)), revalidate=Mock(return_value=deepcopy(self.snapshot))))
+        return store, rows, raw, research
 
     def test_inspector_verifies_artifacts_and_retains_history_on_source_drift(self):
-        store, _, _ = self.inspector_store()
-        evidence = inspect_synthesis_evidence(store, 'alice', 'task')
+        store, _, _, research = self.inspector_store()
+        evidence = inspect_synthesis_evidence(store, 'alice', 'task', research=research)
         self.assertEqual(evidence['status'], 'ready')
         self.assertEqual(evidence['report'], report())
         self.assertTrue(evidence['sourceCurrent'])
         self.assertFalse(evidence['scientificConclusionVerified'])
-        services_for(store).synthesis_sources.revalidate.side_effect = ValueError('synthetic drift')
-        evidence = inspect_synthesis_evidence(store, 'alice', 'task')
+        research.synthesis_sources.revalidate.side_effect = ValueError('synthetic drift')
+        evidence = inspect_synthesis_evidence(store, 'alice', 'task', research=research)
         self.assertEqual(evidence['status'], 'ready')
         self.assertFalse(evidence['sourceCurrent'])
 
@@ -211,25 +220,25 @@ class SynthesisRuntimeTests(unittest.TestCase):
                      lambda store, rows, raw: store.effects.return_value[0].update(status='UNKNOWN'),
                      lambda store, rows, raw: rows.append(deepcopy(rows[0]))]
         for mutate in mutations:
-            store, rows, raw = self.inspector_store()
+            store, rows, raw, research = self.inspector_store()
             mutate(store, rows, raw)
-            evidence = inspect_synthesis_evidence(store, 'alice', 'task')
+            evidence = inspect_synthesis_evidence(store, 'alice', 'task', research=research)
             self.assertEqual(evidence['status'], 'invalid')
             self.assertIsNone(evidence['report'])
             self.assertIsNone(evidence['artifactIds'])
             self.assertNotIn('private', json.dumps(evidence))
-        store, _, _ = self.inspector_store()
+        store, _, _, research = self.inspector_store()
         store.artifacts.return_value = []
-        self.assertEqual(inspect_synthesis_evidence(store, 'alice', 'task')['status'], 'pending')
+        self.assertEqual(inspect_synthesis_evidence(store, 'alice', 'task', research=research)['status'], 'pending')
 
     def test_inspector_checks_owner_before_plan_or_artifact_access(self):
-        store, _, _ = self.inspector_store()
+        store, _, _, research = self.inspector_store()
         store.task.side_effect = PermissionError('synthetic owner denial')
         with self.assertRaises(PermissionError):
-            inspect_synthesis_evidence(store, 'bob', 'task')
+            inspect_synthesis_evidence(store, 'bob', 'task', research=research)
         store.plan.assert_not_called()
         store.artifacts.assert_not_called()
-        services_for(store).synthesis_sources.read.assert_not_called()
+        research.synthesis_sources.read.assert_not_called()
 
 
 if __name__ == '__main__':

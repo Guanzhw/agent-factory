@@ -30,7 +30,7 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetch);
   window.history.replaceState(null, '', '/?tab=catalog');
   vi.mocked(api.status).mockResolvedValue({ mode: 'demo', activeWorkers: 0, queuedJobs: 0, maxWorkers: 2, integration: 'Synthetic offline fixture', liveEnabled: false });
-  vi.mocked(api.materials).mockResolvedValue([]); vi.mocked(api.jobs).mockResolvedValue([]); vi.mocked(api.executionTargets).mockResolvedValue([]);
+  vi.mocked(api.materials).mockResolvedValue([]); vi.mocked(api.jobs).mockResolvedValue({ items: [], nextCursor: null }); vi.mocked(api.executionTargets).mockResolvedValue([]);
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
 });

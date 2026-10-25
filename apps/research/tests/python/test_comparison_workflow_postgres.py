@@ -1,6 +1,5 @@
 # pyright: reportMissingImports=false
 """One governed native task and original bounded process per controlled pair."""
-from agent_factory_research.services import services_for
 import asyncio
 from contextlib import ExitStack
 import hashlib
@@ -279,7 +278,7 @@ class ComparisonWorkflowPostgresTests(unittest.TestCase):
     def test_current_revocation_before_report_persistence_retains_process_evidence_only(self):
         f = self.fixture
         entered, release = threading.Event(), threading.Event()
-        comparisons = services_for(f.store).comparisons
+        comparisons = f.state['research'].comparisons
         original = comparisons.persist
         async def paused(context, receipt):
             entered.set()

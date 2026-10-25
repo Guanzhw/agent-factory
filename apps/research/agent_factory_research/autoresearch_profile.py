@@ -5,7 +5,7 @@ terminal response, and exposes trusted catalog authority. Provider accounting
 belongs to each real broker request, never to this outer response wrapper.
 """
 from __future__ import annotations
-from .services import services_for
+from .services import ResearchFactory
 
 from copy import deepcopy
 import json
@@ -98,7 +98,9 @@ def _public_context(preset):
 
 class ORXResearchModel(Model):
     """An async native response boundary, never an independent provider/tool loop."""
-    def __init__(self, context: BindingContext):
+    def __init__(self, context: BindingContext, *, research):
+        research.require_store(context.store, ready=True)
+        self.research = research
         _checked(context)
         super().__init__(id=MODEL_ID, name='ORX research session', provider=PROVIDER_ID, retries=0)
         self._context = context
@@ -109,7 +111,8 @@ class ORXResearchModel(Model):
         _require(type(messages) is list and self.retries == 0)
         _checked(self._context)
         _require(self._context.spec['config']['presetId'] == self._preset_id)
-        result = await services_for(self._context.store).autoresearch.execute(self._context)
+        self.research.require_store(self._context.store, ready=True)
+        result = await self.research.autoresearch.execute(self._context)
         _require(type(result) is dict)
         content = _json(result)
         cast(list, messages).append(Message(role='assistant', content=content))
@@ -160,40 +163,41 @@ def registrations(*, external_session=False):
             process_limit=SESSION_RESOURCE_LIMITS['pids'], cpu_percent=SESSION_RESOURCE_LIMITS['cpus'] * 100)
 
     def tool_factory(name):
-        def factory(ctx):
+        def factory(ctx, research):
             _checked(ctx)
             async def execute(run_context: RunContext, payload: dict[str, Any]) -> str:
                 _require(all(getattr(run_context, key, None) == getattr(ctx.run_context, key, None)
                              for key in ('user_id', 'session_id', 'run_id')))
                 _checked(ctx); _require(type(payload) is dict); _json(payload)
                 ctx.store.authorize_tool(run_context, name)
-                result = await services_for(ctx.store).autoresearch.tool(ctx, name, payload)
+                research.require_store(ctx.store, ready=True)
+                result = await research.autoresearch.tool(ctx, name, payload)
                 ctx.store.authorize_tool(run_context, name)
                 return _json(result)
             execute.__name__, execute.__doc__ = name, DESCRIPTIONS[name]
             return tool(execute)
         return factory
 
-    def model(ctx):
+    def model(ctx, research):
         preset = _checked(ctx)
         _require((_field(preset, 'external_session') is True) == external_session)
         if external_session:
             from .autoresearch_session_control import model_factory
-            return model_factory(ctx)
-        return ORXResearchModel(ctx)
+            return model_factory(ctx, research=research)
+        return ORXResearchModel(ctx, research=research)
 
-    entries = [AdapterRegistration('model', MODEL_ADAPTER_ID, '1', model, validator=_config, demo_only=True),
+    entries = [AdapterRegistration('model', MODEL_ADAPTER_ID, '1', ResearchFactory(model), validator=_config, demo_only=True),
         AdapterRegistration('knowledge', KNOWLEDGE_ID, '1', knowledge, validator=_config, demo_only=True),
         AdapterRegistration('environment', ENVIRONMENT_ID, '1', environment, validator=_config, demo_only=True),
-        *[AdapterRegistration('tool', TOOL_IDS[name], '1', tool_factory(name), validator=_config,
+        *[AdapterRegistration('tool', TOOL_IDS[name], '1', ResearchFactory(tool_factory(name)), validator=_config,
             demo_only=True, tool_name=name, permissions=('compute:local',) if name == 'research_experiment' else ('research:read',))
           for name in TOOL_NAMES]]
     if external_session:
-        def session(ctx):
+        def session(ctx, research):
             _checked(ctx)
             from .autoresearch_session_control import tool_factory
-            return tool_factory(ctx)
-        entries.append(AdapterRegistration('tool', SCIENTIFIC_TOOL_IDS[SESSION_TOOL], '1', session,
+            return tool_factory(ctx, research=research)
+        entries.append(AdapterRegistration('tool', SCIENTIFIC_TOOL_IDS[SESSION_TOOL], '1', ResearchFactory(session),
             validator=_config, demo_only=True, tool_name=SESSION_TOOL, permissions=('research:read',)))
         def authority_factory(name):
             def factory(ctx):

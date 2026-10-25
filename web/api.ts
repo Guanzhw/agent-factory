@@ -5,7 +5,7 @@ import { authEpoch, assertAuthEpoch, browserCsrf, BrowserAuthError, expireBrowse
 import { storageSummary, retentionReceipt, type StorageSummary, type RetentionReceipt } from './storageState.js';
 import { decisionFingerprint, type ControlIntent } from "./controlCommandStorage.js";
 import { remoteHandoffState } from './remoteHandoffState.js';
-import type { ControlReceipt, UserConnection, ConnectionRegistration, FactoryApplication, ApplicationVersion, ApplicationReview, CompositionInput, AssemblyProposal, EventPage, MaterialGovernancePolicy, MaterialReview, ExecutionTarget, PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
+import type { ControlReceipt, UserConnection, ConnectionRegistration, FactoryApplication, ApplicationVersion, ApplicationReview, CompositionInput, AssemblyProposal, EventPage, MaterialGovernancePolicy, MaterialReview, ExecutionTarget, PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, JobPage, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
 
 export class ApiError extends Error {
   constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); }
@@ -364,7 +364,7 @@ export const api = {
   requestPlanReview: (planId: string, requestId: string) => request<PlanReview>('/plan-reviews', 'POST', { planId, requestId }),
   planReviews: (allOwners = false, signal?: AbortSignal, planId?: string) => request<PlanReview[]>(`/plan-reviews?allOwners=${allOwners}${planId ? `&planId=${segment(planId)}` : ''}`, 'GET', undefined, signal),
   decidePlanReview: (id: string, approved: boolean, requestId: string) => request<PlanReview>(`/plan-reviews/${segment(id)}/decision`, 'POST', { approved, requestId }),
-  jobs: (signal?: AbortSignal) => request<FactoryJob[]>('/jobs', 'GET', undefined, signal),
+  jobs: (signal?: AbortSignal, cursor?: string) => request<JobPage>(`/jobs?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, 'GET', undefined, signal),
   detail: (id: string, signal?: AbortSignal) => request<JobDetail>(`/jobs/${segment(id)}`, 'GET', undefined, signal),
   cancel: (id: string) => request<FactoryJob>(`/jobs/${segment(id)}/cancel`, 'POST'),
   createChild: (id: string, goal: string, mode: string, requestId: string) => request<ChildReceipt>(`/jobs/${segment(id)}/children`, 'POST', { goal, mode, requestId }),

@@ -274,6 +274,9 @@ class DelegationService:
                 if old[0]["tool_name"] != name or old[0]["root_id"] != root_id:
                     raise PermissionError("Native execution ID conflicts with its persisted budget charge")
                 return {"charged": False, "rootTaskId": root_id}
+            local_scopes = getattr(self.store, 'local_budget_scopes', None)
+            if local_scopes is not None:
+                local_scopes.check_tool_capacity(conn, run_context.user_id, root_id)
             for ancestor in [task, *ancestors]:
                 ids = [ancestor["id"], *(link["child_id"] for link in self._descendants(ancestor["id"]) if link["child_id"])]
                 used = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE task_id=ANY(:ids)", ids=ids)[0]["n"]
@@ -541,13 +544,14 @@ class DelegationService:
 
     async def inspect_group(self, owner: str, parentid: str) -> dict[str, Any]:
         self.auth.require_member(owner)
+        return await self._inspect_group(owner, parentid)
+
+    async def _inspect_group(self, owner: str, parentid: str) -> dict[str, Any]:
+        """Original owner-bound facts for trusted lifecycle cleanup after revocation."""
         parent = self.store.task(parentid, owner)
         children = [await self._linked_facts(owner, link) for link in self._descendants(parent["id"])]
         parent_facts = await self._facts(parent)
         all_stopped = parent_facts["stopped"] and all(child["stopped"] for child in children)
-        root_id, _ = self._ancestry(parent)
-        if parent["id"] == root_id and all_stopped:
-            self.store.sql("UPDATE af_delegation_roots SET reclaimed=TRUE WHERE root_id=:root", root=root_id)
         return {"parent": parent_facts, "children": children, "pending": any(child["pending"] for child in children),
                 "unknown": parent_facts["unknown"] or any(child["unknown"] for child in children), "allStopped": all_stopped}
 

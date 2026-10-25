@@ -1,6 +1,6 @@
 # pyright: reportMissingImports=false
 """Concrete descriptor/settings/publication assembly without private inputs or DB."""
-from research_services_fixture import with_research_services
+from agent_factory_research.services import ResearchServices
 from copy import deepcopy
 from dataclasses import asdict
 import importlib
@@ -89,12 +89,14 @@ class ConcreteOperatorTests(unittest.TestCase):
         configured = bindings._controller(value, settings, resolver)
         resolver.assert_called_once_with('EXISTING_JWT')
         store = Mock(); store.sql.return_value = []
-        remote = configured.remote_scientific_factory(store, Mock(), Mock(), Mock(), None, Mock())
+        research = ResearchServices(store)
+        remote = configured.remote_scientific_factory(store, Mock(), Mock(), Mock(), None, Mock(), research=research)
         from agent_factory_research.remote_scientific_origin import RemoteScientificOrigin
         from agent_factory_research.autoresearch_remote_children import AutoResearchRemoteChildren
         self.assertIs(type(remote), RemoteScientificOrigin)
         self.assertEqual(remote.project_bindings[value['project']['id']]['projectPin'], 'b'*64)
-        children = configured.autoresearch_children_factory(store, Mock(), Mock(), Mock())
+        service = SimpleNamespace(research=research)
+        children = configured.autoresearch_children_factory(store, Mock(), service, Mock(), research=research)
         self.assertIs(type(children), AutoResearchRemoteChildren)
         self.assertEqual(children.target_ref, 'receiver')
         resolver.assert_called_once_with('EXISTING_JWT')
@@ -164,8 +166,10 @@ class ConcreteOperatorTests(unittest.TestCase):
                 return {**body, 'sha256': digest(body)}
             applications.create_draft.side_effect = create
             applications.import_snapshot.side_effect = lambda actor, snapshot, request: deepcopy(snapshot)
+            store = SimpleNamespace()
+            research = ResearchServices(store, installed=True, autoresearch=SimpleNamespace(presets=settings.autoresearch_presets))
             state = {'auth': Mock(), 'material_governance': governance, 'applications': applications,
-                     'settings': settings, 'store': with_research_services(SimpleNamespace(), autoresearch=SimpleNamespace(presets=settings.autoresearch_presets))}
+                     'settings': settings, 'store': store, 'research': research}
             app = SimpleNamespace(operator_config=value, state=SimpleNamespace(factory=state))
             result = bindings.prepare_publication(app, value['publication'])
             source_snapshot = result['applicationSnapshot']
@@ -271,7 +275,8 @@ class ReceiverBootstrapTests(unittest.TestCase):
         target = SimpleNamespace(provider=object.__new__(PreparationProvider), owners=frozenset({'alice'}))
         resources = SimpleNamespace(targets={'preparation': target}, _target_fingerprint=lambda _: 'd'*64)
         baseline_store = SimpleNamespace(storage=object(), process_runtime=SimpleNamespace(resources=resources))
-        baseline_state = {'store': baseline_store, 'auth': Mock(), 'resources': resources}
+        baseline_state = {'store': baseline_store, 'auth': Mock(), 'resources': resources,
+                          'research': ResearchServices(baseline_store, installed=True)}
         opened_settings = []
         @contextmanager
         def opened(settings, *, full_verification=False):
@@ -297,7 +302,8 @@ class ReceiverBootstrapTests(unittest.TestCase):
              patch('subprocess.Popen', side_effect=AssertionError('NO PROCESS')):
             configured = bindings._receiver(value, settings, resolver, stack)
             active_store = SimpleNamespace(storage=object(), sql=Mock(return_value=[]))
-            receiver = configured.remote_scientific_factory(active_store, Mock(), Mock(), Mock(), None, Mock())
+            research = ResearchServices(active_store)
+            receiver = configured.remote_scientific_factory(active_store, Mock(), Mock(), Mock(), None, Mock(), research=research)
             self.assertIs(type(receiver), RemoteScientificReceiver)
             selected = receiver.projects[project['id']]
             self.assertIs(type(selected.assembler), ScientificPhaseAssembler)
@@ -325,7 +331,7 @@ class ReceiverBootstrapTests(unittest.TestCase):
             project['assembly']['stageRoots']['training']['program'] = str(source_program)
             with self.assertRaises(ValueError):
                 blocked = bindings._receiver(value, settings, resolver, stack)
-                receiver_again = blocked.remote_scientific_factory(active_store, Mock(), Mock(), Mock(), None, Mock())
+                receiver_again = blocked.remote_scientific_factory(active_store, Mock(), Mock(), Mock(), None, Mock(), research=research)
                 self.fail(type(receiver_again).__name__)
             opened_settings.clear()
             policy.return_value = {'status': 'BLOCKED'}

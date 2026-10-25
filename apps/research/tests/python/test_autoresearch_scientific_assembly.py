@@ -1,5 +1,5 @@
 """Synthetic original-pin verifier tests; no filesystem staging, process or GPU."""
-from research_services_fixture import with_research_services
+from agent_factory_research.services import ResearchServices
 from copy import deepcopy
 from pathlib import Path
 from dataclasses import asdict
@@ -205,8 +205,8 @@ class EvaluationServiceTests(unittest.TestCase):
             'comparisonManifestSha256': manifest_fingerprint(value.manifest), 'variantSha256': 'b'*64}
         target = SimpleNamespace(provider=SimpleNamespace(read_completed_output=Mock(), read_launch_proof=Mock()))
         resources = SimpleNamespace(targets={pin['targetRef']: target}, _target_fingerprint=Mock(return_value='a'*64))
-        value.store = with_research_services(SimpleNamespace(process_runtime=SimpleNamespace(resources=resources)), research_runtime=SimpleNamespace(resources=resources))
-        value.state = {'auth': Mock(), 'settings': SimpleNamespace(remote_targets={pin['targetRef']: target})}
+        value.store = SimpleNamespace(process_runtime=SimpleNamespace(resources=resources))
+        value.state = {'auth': Mock(), 'research': ResearchServices(value.store, installed=True, research_runtime=SimpleNamespace(resources=resources)), 'settings': SimpleNamespace(remote_targets={pin['targetRef']: target})}
         value.checkpoints = SimpleNamespace(identity=Mock())
         value.evaluation_registrations, value.evaluation_services = {}, {}
         value.verify_phase = Mock()
@@ -265,9 +265,9 @@ class PhaseNamespaceTests(unittest.TestCase):
         value.verify_phase = Mock()
         value.checkpoints = SimpleNamespace(identity=Mock())
         resources = SimpleNamespace(targets={}, _target_fingerprint=lambda target: target.fingerprint)
-        store = with_research_services(SimpleNamespace(sql=Mock(return_value=[]), process_runtime=SimpleNamespace(resources=resources)), research_runtime=SimpleNamespace(resources=resources))
+        store = SimpleNamespace(sql=Mock(return_value=[]), process_runtime=SimpleNamespace(resources=resources))
         value.store = store
-        value.state = {'store': store, 'auth': Mock(), 'settings': SimpleNamespace(remote_targets={})}
+        value.state = {'store': store, 'auth': Mock(), 'research': ResearchServices(store, installed=True, research_runtime=SimpleNamespace(resources=resources)), 'settings': SimpleNamespace(remote_targets={})}
         def build(phase, candidate, prior, pin, stage, inputs, training, *, stop_only=False):
             value.phase_stages[pin['targetRef']] = stage
             target_fp = module.digest({'spec': asdict(stage.spec), 'custody': str(stage.custody_root)})

@@ -122,7 +122,7 @@ class MCPPhaseRingTests(unittest.IsolatedAsyncioTestCase):
     async def test_native_job_identity_uses_original_id_and_attempt(self):
         ring = MCPPhaseRing()
         identity = ring.native_identity({'id': 'original-run', 'status': 'running',
-                                         'attempt': 2, 'worker_id': 'original-worker'})
+                                         'attempt': 2, 'locked_by': 'original-worker', 'worker_id': 'wrong-field'})
         ring.record('native_observed', run_id=identity[0], status=identity[1],
                     attempt=identity[2], worker_id=identity[3])
         event = ring.snapshot()['events'][0]

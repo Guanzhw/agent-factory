@@ -6,6 +6,32 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
+    'shared_mcp_authority_regressions': (
+        'test_application_closure_authority.BoundedApplicationClosureTests',
+        'test_personal_mcp_callbacks',
+        'test_mcp_diagnostic_custody',
+        'test_mcp_phase_ring',
+        'test_native_fixture_lifecycle',
+        'test_personal_mcp_teardown_auth',
+    ),
+    'bounded_research_iterations': (
+        'test_research_iterations',
+        'test_research_iteration_driver',
+        'test_research_iteration_recipe',
+        'test_research_iteration_api',
+        'test_research_iteration_retirement',
+        'test_research_iteration_revocation_driver',
+        'test_native_workflow_bridge',
+    ),
+    'application_instance_ownership': (
+        'test_application_runtime.ApplicationRuntimeTests',
+        'test_application_assembly.ApplicationAssemblyTests',
+    ),
+    'remote_v2_contract': (
+        'test_remote_v2_manifest',
+        'test_remote_v2_bindings',
+        'test_remote_v2_authority',
+    ),
     'architecture_checks': (
         'test_architecture_checker',
         'test_postgres_checks',
@@ -51,6 +77,7 @@ FAST_PYTHON_TESTS = {
         'test_personal_tool_assembly.PersonalToolSettingsTests',
     ),
     'original_receipt_and_stop': (
+        'test_native_timeout_diagnostics',
         'test_process_receipt_validation.ProcessReceiptValidation',
         'test_research_candidate_native_stop.NativeStopTests',
         'test_guardian_reaping',
@@ -59,9 +86,31 @@ FAST_PYTHON_TESTS = {
         'test_research_package_paths.RelativePackagePathTests',
         'test_research_staging.StagingContractTests',
     ),
+    'history_control_separation': (
+        'test_history_summary_status.HistorySummaryStatusTests',
+        'test_remote_scientific_phase_reads.RemoteScientificPhaseReadTests',
+        'test_remote_scientific_evidence_contention',
+        'test_remote_scientific_late_authority',
+        'test_scientific_completion_claims',
+        'test_remote_receipt_snapshot',
+        'test_autoresearch_remote_children.RemoteChildrenTests.test_lost_drive_ack_observes_original_only_after_validated_intent',
+        'test_autoresearch_remote_children.RemoteChildrenTests.test_503_without_original_drive_intent_is_not_swallowed',
+        'test_autoresearch_remote_children.RemoteChildrenTests.test_terminal_child_with_validated_drive_intent_only_observes_original',
+    ),
 }
 
 FAST_POSTGRES_TESTS = {
+    'fresh_bounded_material_authority': (
+        'test_material_governance_bulk_postgres.MaterialGovernanceBulkPostgresTests',
+    ),
+    'shared_local_budget_commitments': (
+        'test_local_budget_scopes_postgres',
+        'test_local_budget_scope_boundaries_postgres',
+        'test_research_iteration_retirement_postgres',
+    ),
+    'history_background_finalization': (
+        'test_task_history_postgres.TaskHistoryPostgresTests.test_z_native_completion_waits_for_background_finalization_without_read_side_effects',
+    ),
     'original_process_custody': (
         'test_process_runtime_postgres.ProcessRuntimePostgresTests.test_original_native_plan_task_lease_and_process_identity_survive_reopen',
         'test_process_runtime_postgres.ProcessRuntimePostgresTests.test_lost_launch_receipt_reconciles_original_process_without_replay',

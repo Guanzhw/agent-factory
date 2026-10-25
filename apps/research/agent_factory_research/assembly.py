@@ -1,16 +1,18 @@
 """Explicit installation of the single research application into this deployment."""
+import asyncio
 from contextlib import asynccontextmanager
 
 from agent_factory.resources import PersistentResourceService
-from .services import services_for, release_services
+from .services import ResearchServices
 from .synthetic_runtime import default_bindings as synthetic_bindings
 
 
-def research_bindings(settings, store, connections):
+def research_bindings(settings, store, connections, *, research):
+    research.bind_store(store)
     from .orx_tools import register_orx_adapter
     from .orx_literature_tools import register_literature_adapters, LiteratureEvidenceModel, MODEL_ID
     from .orx_experiment_tools import register_orx_experiment_adapters, LocalORXWorkflowModel, MODEL_ADAPTER_ID, MODEL_ADAPTER_REVISION
-    bindings = synthetic_bindings(settings, store, connections)
+    bindings = synthetic_bindings(settings, store, connections, research=research)
     register_orx_adapter(bindings)
     register_literature_adapters(bindings)
     bindings.register('model', MODEL_ID, '1', lambda context: LiteratureEvidenceModel())
@@ -19,22 +21,21 @@ def research_bindings(settings, store, connections):
     return bindings
 
 
-def install_research(state):
+def install_research(state, *, research: ResearchServices):
     store, auth, settings = state['store'], state['auth'], state['settings']
     bridge, factory_api = state['bridge'], state['factory_api']
     base, connections = state['http_app'], state['connections']
     resources = state['resources']
     handoff_client, receiver = state['handoff_client'], state['handoff_receiver']
-    research = services_for(store)
+    research.require_store(store)
+    state['research'] = research
     from .orx_experiment_tools import initialize_orx_experiments
     initialize_orx_experiments(store)
-    from .inference_wait import initialize, mark_cancel_requested
+    from .inference_wait import initialize
     initialize(store)
-    store.runtime_mark_cancel_requested = lambda task_id: mark_cancel_requested(store, task_id)
     from .research_runtime_hooks import ResearchRuntimeHooks
-    store.runtime_effect_held = ResearchRuntimeHooks.effect_held
-    store.runtime_cancel_owned = lambda task: ResearchRuntimeHooks.cancel(store, task)
-    store.runtime_ended_reason = lambda task: ResearchRuntimeHooks.ended_reason(store, task)
+    from .runtime_registration import register_research_runtime
+    register_research_runtime(store, research=research)
     ResearchRuntimeHooks.reconcile_capacity(store)
     from agent_factory.application_environments import ApplicationEnvironments, environment_router
     environment_packages = {}
@@ -69,7 +70,7 @@ def install_research(state):
     from agent_factory_research.synthesis_sources import SynthesisSourceService
     research.synthesis_sources = SynthesisSourceService(store, auth)
     from agent_factory_research.autoresearch import AutoResearchService, autoresearch_router
-    research.autoresearch = AutoResearchService(store, auth, bridge, settings.autoresearch_presets, commands=factory_api.commands)
+    research.autoresearch = AutoResearchService(store, auth, bridge, settings.autoresearch_presets, research=research, commands=factory_api.commands)
     base.include_router(autoresearch_router(auth, research.autoresearch))
     from agent_factory_research.openresearch_workspace import OpenResearchWorkspace, openresearch_workspace_router
     openresearch_workspace = OpenResearchWorkspace(store, auth, research.autoresearch, factory=factory_api)
@@ -81,7 +82,7 @@ def install_research(state):
         await factory_api.commands.submit(task['owner_id'], task['id'], ControlCommand(
             commandId='ar-session:' + task['run_id'], action='approve', approved=True,
             requirementId=requirement['id'], version=requirement_version(requirement)))
-    research.autoresearch_session_control = AutoResearchSessionControl(store, auth, complete=complete_research_session)
+    research.autoresearch_session_control = AutoResearchSessionControl(store, auth, research=research, complete=complete_research_session)
     if settings.managed_orx_profiles_factory is not None:
         import copy
         profiles = settings.managed_orx_profiles_factory(store, auth, resources)
@@ -98,16 +99,16 @@ def install_research(state):
         from agent_factory_research.managed_orx_profile import install_completion_handler
         install_completion_handler(store)
     from agent_factory_research.research_runtime import ResearchProcessRuntimeService
-    research.research_runtime = ResearchProcessRuntimeService(store, auth, resources)
+    research.research_runtime = ResearchProcessRuntimeService(store, auth, resources, research=research)
     resources.execution_runtimes["research-process-run-v1"] = research.research_runtime
     if settings.research_evaluators:
         from agent_factory_research.research_evaluation_service import ResearchEvaluationService
-        research.research_evaluation = ResearchEvaluationService(store, auth, resources, settings.research_evaluators)
+        research.research_evaluation = ResearchEvaluationService(store, auth, resources, settings.research_evaluators, research=research)
     if settings.remote_scientific_factory is not None:
         from agent_factory_research.remote_scientific_origin import RemoteScientificOrigin
         from agent_factory_research.remote_scientific_receiver import RemoteScientificReceiver
         scientific = settings.remote_scientific_factory(store, auth, resources, handoff_client,
-            receiver, factory_api.commands)
+            receiver, factory_api.commands, research=research)
         if type(scientific) is RemoteScientificOrigin:
             research.remote_scientific = scientific
             handoff_client.scientific_service = scientific
@@ -119,7 +120,7 @@ def install_research(state):
             raise ValueError('REMOTE_SCIENTIFIC_SERVICE_INVALID')
     if settings.autoresearch_children_factory is not None:
         from agent_factory_research.autoresearch_children import AutoResearchChildren
-        children = settings.autoresearch_children_factory(store, auth, research.autoresearch, resources)
+        children = settings.autoresearch_children_factory(store, auth, research.autoresearch, resources, research=research)
         from agent_factory_research.autoresearch_remote_children import AutoResearchRemoteChildren
         if type(children) not in (AutoResearchChildren, AutoResearchRemoteChildren):
             raise ValueError('AUTORESEARCH_CHILD_SERVICE_INVALID')
@@ -135,24 +136,77 @@ def install_research(state):
     if settings.personal_agent_commands_enabled:
         from .personal_command_api import PersonalCommandAPI
         base.include_router(PersonalCommandAPI(store, auth, factory_api).router)
+    from .research_iteration_api import iteration_router
+    if settings.research_iterations_factory is not None:
+        from agent_factory.local_budget_scopes import LocalBudgetScopes
+        from .research_iterations import ResearchIterations
+        from .research_iteration_coordinator import IterationCoordinator
+        store.local_budget_scopes = LocalBudgetScopes(store, getattr(store, 'usage_ledger', None))
+        iterations = settings.research_iterations_factory(state, research=research)
+        if not isinstance(iterations, ResearchIterations) or iterations.store is not store or iterations.research is not research:
+            raise ValueError('RESEARCH_ITERATION_SERVICE_INVALID')
+        research.iterations = iterations
+        research.iteration_coordinator = IterationCoordinator(iterations)
+        store.register_execution_guard('local-budget-scopes', store.local_budget_scopes.require_current, tool_independent=True)
+    base.include_router(iteration_router(auth, research.iterations))
     research.workspace = openresearch_workspace
+    research.installed = True
     state.update(research=research, openresearch_workspace=openresearch_workspace,
         synthesis_sources=research.synthesis_sources, research_runtime=research.research_runtime,
         research_evaluation=research.research_evaluation)
 
 
+def _shutdown_pending(research):
+    groups = (
+        ('iterations', research.iteration_coordinator, 'active'),
+        ('receiver', research.remote_scientific_receiver, '_drives'),
+        ('controllers', research.autoresearch_session_control, 'active'),
+        ('controllerCleanup', research.autoresearch_session_control, 'failures'),
+        ('researchExecutions', research.autoresearch, 'executions'),
+        ('researchCleanup', research.autoresearch, 'cleanups'),
+    )
+    return {name: sorted(key for key, task in getattr(service, attribute, {}).items() if not task.done())
+            for name, service, attribute in groups}
+
+
 @asynccontextmanager
 async def research_lifespan(app):
     state = app.state.factory
+    fatal = state.get('shutdown_failed')
+    if not callable(fatal):
+        raise RuntimeError('RESEARCH_SHUTDOWN_PROCESS_POLICY_REQUIRED')
+    coordinator = state['research'].iteration_coordinator
+    if coordinator is not None:
+        coordinator.start()
     try:
         yield
     finally:
+        if coordinator is not None:
+            coordinator.stop_admission()
         store = state['store']
-        research = services_for(store)
-        if research.remote_scientific_receiver is not None:
-            await research.remote_scientific_receiver.close()
-        if research.autoresearch_session_control is not None:
-            await research.autoresearch_session_control.close()
+        research = state['research']
+        deadline = state.get('shutdown_deadline') or asyncio.get_running_loop().time() + 35
+        # Each owner closes admission and cancels only its original controller.
+        # Shared cleanup tasks keep their graph/native dependencies until all
+        # owners finish, or the composition's non-returning process policy runs.
+        failed = False
+        try:
+            closers = [asyncio.create_task(service.close(deadline=deadline)) for service in
+                       (research.iteration_coordinator, research.remote_scientific_receiver, research.autoresearch_session_control, research.autoresearch)
+                       if service is not None]
+            if closers:
+                done, pending = await asyncio.wait(closers, timeout=max(0, deadline - asyncio.get_running_loop().time()))
+                failed = bool(pending)
+                for task in done:
+                    if task.cancelled() or task.exception() is not None or task.result() is not True:
+                        failed = True
+        except BaseException:
+            fatal({'application': 'research', 'reason': 'interrupted', 'pending': _shutdown_pending(research)})
+            raise RuntimeError('RESEARCH_SHUTDOWN_PROCESS_POLICY_RETURNED')
+        pending = _shutdown_pending(research)
+        if failed or any(pending.values()):
+            fatal({'application': 'research', 'reason': 'incomplete', 'pending': pending})
+            raise RuntimeError('RESEARCH_SHUTDOWN_PROCESS_POLICY_RETURNED')
         if store.application_environments is not None:
             store.application_environments.close()
 
@@ -160,26 +214,33 @@ async def research_lifespan(app):
 
 def research_shutdown(state):
     """Release the application graph only after native/observer shutdown drains."""
-    release_services(state['store'])
+    state['research'].release()
+
+
+def abort_research_application(state):
+    """Undo only research-owned constructors; composition retains core handles."""
+    store = state['store']
+    try:
+        if store.application_environments is not None:
+            store.application_environments.close()
+    except Exception:
+        pass  # Preserve the original constructor failure.
+    finally:
+        if state.get('research') is not None:
+            state['research'].release()
 
 
 def abort_research_install(state):
-    """Undo local constructor resources when no HTTP/native lifespan has started."""
+    """Legacy single-application constructor cleanup, including core handles."""
     store = state['store']
-    # Async controllers start owned work only through HTTP/native admission.
-    # Package/SSH constructors can already own local handles, so close each even
-    # if a different constructor or closer failed. Preserve the startup error.
-    for service in (store.application_environments, store.personal_ssh):
-        if service is not None:
-            try:
-                service.close()
-            except Exception:
-                pass
-    try:
-        for close in (store.dispose_root_locks, store.engine.dispose):
-            try:
-                close()
-            except Exception:
-                pass
-    finally:
-        release_services(store)
+    abort_research_application(state)
+    if store.personal_ssh is not None:
+        try:
+            store.personal_ssh.close()
+        except Exception:
+            pass
+    for close in (store.dispose_root_locks, store.engine.dispose):
+        try:
+            close()
+        except Exception:
+            pass

@@ -1,6 +1,7 @@
 """Actual process death after rename on a generated, reconstructible directory."""
 import json
 import os
+import time
 import unittest
 from uuid import uuid4
 
@@ -35,6 +36,18 @@ class StorageProcessTests(unittest.TestCase):
         task, _ = self.waiting("answer")
         path = owned_directory(self, task)
         self.api("POST", "/jobs/" + task + "/cancel")
+        # The command acknowledges stop separately from background finalization.
+        # Read the original task until it is eligible for retention.
+        deadline = time.monotonic() + 15
+        stopped = None
+        while time.monotonic() < deadline:
+            stopped = self.api("GET", "/jobs/" + task)
+            if stopped["job"]["status"] == "canceled":
+                break
+            time.sleep(.05)
+        else:
+            self.fail(f"Original task did not finalize cancellation: {stopped}")
+        self.assertTrue(stopped["snapshot"]["delegation"]["allStopped"], stopped)
         plan = self.api("POST", "/storage/retention/plans", {"objectId": path.name, "requestId": str(uuid4())})
         endpoint = "/storage/retention/plans/" + plan["id"]
         (self.workspace / "fault.json").write_text(json.dumps({"phase": "storage-before-QUARANTINED", "commandId": plan["id"]}))

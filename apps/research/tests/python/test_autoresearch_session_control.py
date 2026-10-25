@@ -1,5 +1,5 @@
 """Inert original-pause controller checks; no DB, ORX, model provider or process."""
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices
 import asyncio
 from contextlib import nullcontext
 from copy import deepcopy
@@ -27,7 +27,8 @@ class Harness:
         self.result = {'allStopped': True, 'cancelled': False, 'research': {'original': 'actual-result'},
                        'scientificConclusionVerified': False}
         self.store = Mock()
-        services_for(self.store).autoresearch = Mock()
+        self.research = ResearchServices(self.store, installed=True)
+        self.research.autoresearch = Mock(cleanups={})
         self.store.settings = SimpleNamespace(demo=True)
         self.store.task.return_value = self.task
         self.store.plan.return_value = self.plan
@@ -35,29 +36,29 @@ class Harness:
         self.store.native_db.get_session.return_value = SimpleNamespace(runs=[SimpleNamespace(run_id='run',
             agent_id='factory-executor', requirements=[SimpleNamespace(to_dict=lambda: deepcopy(self.requirement))])])
         self.store.execution_bindings.recheck.return_value = {'model': {'adapterId': 'original-model', 'config': {'presetId': 'preset'}}}
-        services_for(self.store).autoresearch._unresolved_tools.return_value = False
-        services_for(self.store).autoresearch.current.return_value = SimpleNamespace(external_session=True)
-        services_for(self.store).autoresearch.row.side_effect = lambda *_: {'body': self.body}
-        services_for(self.store).autoresearch.change.side_effect = lambda _o, _t, fn: fn(self.body)
+        self.research.autoresearch._unresolved_tools.return_value = False
+        self.research.autoresearch.current.return_value = SimpleNamespace(external_session=True)
+        self.research.autoresearch.row.side_effect = lambda *_: {'body': self.body}
+        self.research.autoresearch.change.side_effect = lambda _o, _t, fn: fn(self.body)
         self.store.effects.return_value = []
         async def execute(ctx):
             self.body['status'] = 'awaiting-continuation'
             self.store.effects.return_value = [{'effect_key': 'run:' + EFFECT, 'status': 'DONE', 'result': self.result}]
             return {'untrustedReturn': 'ignored'}
-        services_for(self.store).autoresearch.execute = AsyncMock(side_effect=execute)
+        self.research.autoresearch.execute = AsyncMock(side_effect=execute)
         async def complete(*_):
             self.store.lifecycle_observer._binding.return_value.update(status='completed', persistedRunStatus='completed')
         self.complete = AsyncMock(side_effect=complete)
         self.store.delegation._root_lock.side_effect = lambda *_: nullcontext()
         self.store.delegation._descendants.return_value = []
         self.store.lifecycle_observer._cancel_bound = AsyncMock()
-        self.control = AutoResearchSessionControl(self.store, Mock(), complete=self.complete)
+        self.control = AutoResearchSessionControl(self.store, Mock(), research=self.research, complete=self.complete)
 
 
 class SessionControlTests(unittest.IsolatedAsyncioTestCase):
     async def test_model_external_call_once_and_original_receipt_only(self):
         h = Harness()
-        model = SessionControlModel(h.control._context(h.task))
+        model = SessionControlModel(h.control._context(h.task), research=h.research)
         native = SimpleNamespace(run_id='run', session_id='task', user_id='alice', requirements=None)
         messages = []
         response = await model.aresponse(messages, run_response=native)
@@ -79,7 +80,7 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
             await model.aresponse([Message(role='tool', tool_name=TOOL, tool_call_id='replacement', content=json.dumps(result))])
 
     async def test_stream_pause_does_not_double_publish_requirement_or_charge_provider(self):
-        h = Harness(); model = SessionControlModel(h.control._context(h.task))
+        h = Harness(); model = SessionControlModel(h.control._context(h.task), research=h.research)
         native = SimpleNamespace(run_id='run', session_id='task', user_id='alice', requirements=None)
         messages = []
         events = [item async for item in model.aresponse_stream(messages, run_response=native)]
@@ -90,19 +91,19 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(native.requirements)
         with self.assertRaises(ValueError): await model.ainvoke([])
         h.store.effect_reserve.assert_not_called()
-        services_for(h.store).autoresearch.execute.assert_not_awaited()
+        h.research.autoresearch.execute.assert_not_awaited()
 
     async def test_run_uses_trusted_binding_and_returns_persisted_done_not_callback(self):
         h = Harness()
         self.assertEqual(await h.control.run('alice', 'task'), h.result)
-        ctx = services_for(h.store).autoresearch.execute.await_args.args[0]
+        ctx = h.research.autoresearch.execute.await_args.args[0]
         self.assertIs(ctx.store, h.store)
         self.assertEqual(ctx.run_context.run_id, 'run')
         h.store.delegation.consume_tool_budget.assert_called_once_with(ctx.run_context, CALL_ID, TOOL)
         self.assertEqual(ctx.spec['adapterId'], 'original-model')
         self.assertEqual(h.body['sessionControl']['nativeRunId'], 'run')
         with self.assertRaises(ValueError): await h.control.run('alice', 'task')
-        services_for(h.store).autoresearch.execute.assert_awaited_once()
+        h.research.autoresearch.execute.assert_awaited_once()
 
     async def test_exact_paused_requirements_and_optin_required_before_execute(self):
         for mutation in ('ticket', 'persisted', 'tool', 'args', 'result', 'optin', 'cancel'):
@@ -112,11 +113,11 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
             if mutation == 'tool': h.requirement['tool_execution']['tool_call_id'] = 'other'
             if mutation == 'args': h.requirement['tool_execution']['tool_args'] = {'injected': True}
             if mutation == 'result': h.requirement['tool_execution']['result'] = 'forged'
-            if mutation == 'optin': services_for(h.store).autoresearch.current.return_value.external_session = False
+            if mutation == 'optin': h.research.autoresearch.current.return_value.external_session = False
             if mutation == 'cancel': h.task['cancel_requested'] = True
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 await h.control.run('alice', 'task')
-            services_for(h.store).autoresearch.execute.assert_not_awaited()
+            h.research.autoresearch.execute.assert_not_awaited()
 
     async def test_completion_rejects_unknown_cleanup_failed_body_and_stale_requirement(self):
         for mutation in ('effect', 'proof', 'cancelled', 'status', 'requirement'):
@@ -137,8 +138,8 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(h.control.start('alice', 'task'), first)
         self.assertEqual(await first, h.result)
         self.assertIs(h.control.start('alice', 'task'), first)
-        h.complete.assert_awaited_once(); services_for(h.store).autoresearch.execute.assert_awaited_once()
-        reconstructed = AutoResearchSessionControl(h.store, Mock())
+        h.complete.assert_awaited_once(); h.research.autoresearch.execute.assert_awaited_once()
+        reconstructed = AutoResearchSessionControl(h.store, Mock(), research=h.research)
         with self.assertRaises(ValueError): reconstructed.start('alice', 'task')
         self.assertTrue(await h.control.close())
         with self.assertRaises(ValueError): h.control.start('alice', 'task')
@@ -147,14 +148,14 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         h = Harness(); entered = asyncio.Event()
         async def execute(_):
             entered.set(); await asyncio.Event().wait()
-        services_for(h.store).autoresearch.execute.side_effect = execute
+        h.research.autoresearch.execute.side_effect = execute
         pending = h.control.start('alice', 'task')
         await entered.wait()
         self.assertTrue(await h.control.close())
         self.assertTrue(pending.cancelled())
         h.complete.assert_not_awaited()
         self.assertIn('sessionControl', h.body)
-        services_for(h.store).autoresearch.execute.assert_awaited_once()
+        h.research.autoresearch.execute.assert_awaited_once()
 
     async def test_failure_stops_original_parent_and_descendants_once_without_releasing_unknown(self):
         h = Harness()
@@ -165,7 +166,7 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         async def fail(_):
             h.body['status'] = 'unknown'
             raise failure
-        services_for(h.store).autoresearch.execute.side_effect = fail
+        h.research.autoresearch.execute.side_effect = fail
         with self.assertRaises(ValueError) as raised:
             await h.control.start('alice', 'task')
         self.assertIs(raised.exception, failure)
@@ -182,7 +183,7 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         async def fail(_):
             h.body['status'] = 'unknown'
             raise ValueError('unconfirmed child intent')
-        services_for(h.store).autoresearch.execute.side_effect = fail
+        h.research.autoresearch.execute.side_effect = fail
         with self.assertRaises(ValueError): await h.control.start('alice', 'task')
         h.store.request_cancel.assert_called_once_with('task')
         h.store.lifecycle_observer._cancel_bound.assert_awaited_once_with(h.task)
@@ -192,12 +193,12 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_diagnostic_write_failure_cannot_block_original_stop(self):
         h = Harness(); failure = ValueError('original execution failure')
-        services_for(h.store).autoresearch.execute.side_effect = failure
+        h.research.autoresearch.execute.side_effect = failure
         def change(_owner, _task, callback):
             if 'sessionControl' in h.body:
                 raise OSError('diagnostic write unavailable')
             callback(h.body)
-        services_for(h.store).autoresearch.change.side_effect = change
+        h.research.autoresearch.change.side_effect = change
         with self.assertRaises(ValueError) as raised:
             await h.control.start('alice', 'task')
         self.assertIs(raised.exception, failure)
@@ -210,10 +211,10 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         import json
         h = Harness(); await h.control.run('alice', 'task')
         h.body['status'] = 'completed'
-        services_for(h.store).autoresearch._unresolved_tools.return_value = True
+        h.research.autoresearch._unresolved_tools.return_value = True
         with self.assertRaises(ValueError):
             await h.control.completion(h.task, h.requirement)
-        model = SessionControlModel(h.control._context(h.task))
+        model = SessionControlModel(h.control._context(h.task), research=h.research)
         messages = [Message(role='tool', tool_name=TOOL, tool_call_id=CALL_ID,
                             content=json.dumps({**h.result, 'accepted': True}))]
         with self.assertRaises(ValueError): await model.aresponse(messages)
@@ -227,7 +228,7 @@ class SessionControlTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError): await h.control.start('alice', 'task')
         self.assertEqual(h.body['status'], 'failed')
         h.store.request_cancel.assert_called_once_with('task')
-        services_for(h.store).autoresearch.execute.assert_awaited_once()
+        h.research.autoresearch.execute.assert_awaited_once()
 
     async def test_success_waits_for_original_native_completion(self):
         h = Harness(); continued = asyncio.Event()

@@ -1,5 +1,5 @@
 """Offline controller ordering/fault tests; no native execution or GPU claim."""
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices
 import asyncio
 from copy import deepcopy
 from typing import Callable
@@ -28,8 +28,8 @@ class Harness:
             inspect_task=AsyncMock(return_value=deepcopy(self.lease)),
             _config=Mock(return_value=('target', {'manifest': 'controlled'}, 'variant')),
             _paused=Mock(return_value={'id': 'original-requirement', 'version': 'original-version'}))
-        services_for(self.store).research_runtime = self.runtime
-        self.state = {'store': self.store, 'research_runtime': self.runtime}
+        self.research = ResearchServices(self.store, installed=True, research_runtime=self.runtime)
+        self.state = {'store': self.store, 'research_runtime': self.runtime, 'research': self.research}
         self.imported = Mock(return_value={'artifactId': 'original-checkpoint'})
         self.progress = []
         self.fault: Callable | None = None

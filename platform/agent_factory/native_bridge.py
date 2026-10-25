@@ -155,6 +155,15 @@ class NativeBridge:
         ticket first, without replaying submission or changing native queue state.
         """
         self.auth.require_member(user_id)
+        return await self._find_run(session_id, user_id, original_only=False)
+
+    async def find_original_run(self, session_id: str, user_id: str) -> dict[str, Any] | None:
+        """Internal cleanup read: immutable task resolver, never HTTP or admission."""
+        if self._component_resolver is None:
+            raise HTTPException(409, "Original native lookup requires persisted task binding")
+        return await self._find_run(session_id, user_id, original_only=True)
+
+    async def _find_run(self, session_id: str, user_id: str, *, original_only: bool) -> dict[str, Any] | None:
         component = self._component(session_id, user_id)
         kind, identifier = component["kind"], component["id"]
         session_type = SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT
@@ -184,6 +193,10 @@ class NativeBridge:
                 raise HTTPException(409, "NATIVE_AMBIGUOUS_ADMISSION: multiple native runs for one task")
             if not runs:
                 return None
+            if original_only:
+                # The exact owner/session/component was checked above. A read
+                # cannot approve, resume or recreate the original operation.
+                return {"run_id": runs[0].run_id, "session_id": session_id}
             return await self.detail(runs[0].run_id, session_id, user_id)
         except HTTPException:
             raise

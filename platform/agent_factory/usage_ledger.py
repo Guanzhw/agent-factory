@@ -282,7 +282,7 @@ class UsageLedger:
                     or scope["settledAmountMicros"] + scope["heldAmountMicros"] > scope["amountMicrosLimit"]):
                 raise HTTPException(429, "USAGE_BUDGET_EXCEEDED: current shared accounting exceeds approval")
 
-    def _commitment(self, conn, plan):
+    def _commitment(self, conn, plan, *, persist=True):
         plan = {k: v for k, v in plan.items() if k not in {"taskId", "runId"}}
         migration = conn.execute(select(self.migrations).where(self.migrations.c.plan_id == plan["id"])).mappings().first()
         if migration:
@@ -301,7 +301,10 @@ class UsageLedger:
         if price is None or price.local_model_type is None:
             raise HTTPException(409, "USAGE_APPROVAL_REQUIRED: historical plans cannot gain provider spending")
         value = self.commitment_for(plan)
-        conn.execute(self.migrations.insert().values(plan_id=plan["id"], source_hash=digest(plan), body=value, hash=digest(value)))
+        # Historical reads may compute a registered local quote, but only an
+        # explicit execution/admission path records that migration durably.
+        if persist:
+            conn.execute(self.migrations.insert().values(plan_id=plan["id"], source_hash=digest(plan), body=value, hash=digest(value)))
         return value
 
     def prepare_remote_commitment(self, plan, effective_bindings):
@@ -450,6 +453,11 @@ class UsageLedger:
             if price.request_guard is not None:
                 price.request_guard(model, tuple(arguments), keyword_arguments or {}, commitment)
             root, accounts = self._scope_accounts(conn, owner, task)
+            local_scopes = getattr(self.store, 'local_budget_scopes', None)
+            if local_scopes is not None:
+                allocation = local_scopes.attempt_account(conn, owner, root)
+                if allocation is not None:
+                    accounts.append(allocation)
             grant_rows = conn.execute(select(self.grants).where(self.grants.c.task_id == root,
                 self.grants.c.owner_id == owner, self.grants.c.state == "IMPORTED")).mappings().all()
             for grant in grant_rows:
@@ -533,18 +541,19 @@ class UsageLedger:
         return {"id": attempt_id, "state": "SETTLED", "chargedAmountMicros": charged}
 
     def inspect(self, owner, task_id):
-        with self._transaction() as conn:
-            self._lock(conn)
+        # One MVCC snapshot keeps intersecting scopes consistent without making
+        # a browser read contend for the execution/admission advisory lock.
+        with self.store.transaction(read_only=True) as conn:
             task = self.store.task(task_id, owner)
             plan = self.store.plan(task["plan_id"], owner)
-            commitment = self._commitment(conn, plan)
+            commitment = self._commitment(conn, plan, persist=False)
             service = getattr(self.store, "delegation", None)
             root, ancestors = service._ancestry(task) if service is not None else (task["id"], [])
             accounts = []
             for current in [task, *ancestors]:
                 account = conn.execute(select(self.accounts).where(self.accounts.c.id == "task:" + current["id"])).mappings().first()
                 if account is None:
-                    current_commitment = self._commitment(conn, self.store.plan(current["plan_id"], owner))
+                    current_commitment = self._commitment(conn, self.store.plan(current["plan_id"], owner), persist=False)
                     account = {"id": "task:" + current["id"], "body": {"scope": "task", "taskId": current["id"],
                         "tokenLimit": current_commitment["tokenLimit"], "amountMicros": current_commitment["amountMicros"]},
                         "settled_tokens": 0, "settled_amount": 0, "held_tokens": 0, "held_amount": 0}
@@ -686,7 +695,7 @@ class UsageLedger:
                 state="CLOSED" if body["allStopped"] else "IMPORTED"))
             return body
 
-    def apply_remote_statement(self, owner, task_id, statement):
+    def apply_remote_statement(self, owner, task_id, statement, *, persist=True):
         """Authenticated target receipt accounting; cumulative, monotonic, idempotent."""
         if not isinstance(statement, dict) or set(statement) != STATEMENT_KEYS or statement.get("sha256") != digest({k: v for k, v in statement.items() if k != "sha256"}):
             raise HTTPException(409, "USAGE_REMOTE_STATEMENT_INTEGRITY: exact statement digest required")
@@ -695,7 +704,8 @@ class UsageLedger:
         if type(statement.get("allStopped")) is not bool:
             raise HTTPException(422, "USAGE_REMOTE_STATEMENT_STOP: explicit stop evidence required")
         with self._transaction() as conn:
-            self._lock(conn)
+            if persist:
+                self._lock(conn)
             self.store.task(task_id, owner)
             row = conn.execute(select(self.grants).where(self.grants.c.id == statement.get("grantId"),
                 self.grants.c.owner_id == owner, self.grants.c.task_id == task_id)).mappings().first()
@@ -726,6 +736,9 @@ class UsageLedger:
                 account = conn.execute(select(self.accounts).where(self.accounts.c.id == identity)).mappings().one()
                 if account["held_tokens"] < old_hold_tokens or account["held_amount"] < old_hold_amount:
                     raise HTTPException(409, "USAGE_REMOTE_HOLD_INTEGRITY: original allocation cannot release twice")
+            if not persist:
+                return {"id": row["id"], "state": row["state"], "validated": True}
+            for identity in row["allocation"]:
                 conn.execute(self.accounts.update().where(self.accounts.c.id == identity).values(
                     held_tokens=self.accounts.c.held_tokens - old_hold_tokens + hold_tokens,
                     held_amount=self.accounts.c.held_amount - old_hold_amount + hold_amount,
@@ -736,14 +749,15 @@ class UsageLedger:
             return {"id": row["id"], "state": state, "releasedUnused": release}
 
 
-    def reclaim_remote_no_dispatch(self, owner, task_id, grant_id, positive_receipt):
+    def reclaim_remote_no_dispatch(self, owner, task_id, grant_id, positive_receipt, *, persist=True):
         """Trusted proof-checked receiver CAS cancellation, never a missing ACK.
 
         Caller must first verify receiver binding proof, sticky identities and
         current trusted target transport. This has no public write endpoint.
         """
         with self._transaction() as conn:
-            self._lock(conn)
+            if persist:
+                self._lock(conn)
             self.store.task(task_id, owner)
             row = conn.execute(select(self.grants).where(self.grants.c.id == grant_id,
                 self.grants.c.owner_id == owner, self.grants.c.task_id == task_id)).mappings().first()
@@ -767,4 +781,4 @@ class UsageLedger:
                 "settledTokens": 0, "settledAmountMicros": 0, "heldTokens": 0, "heldAmountMicros": 0,
                 "allStopped": True, "sequence": previous["sequence"] + 1 if previous else 1}
             statement["sha256"] = digest(statement)
-            return self.apply_remote_statement(owner, task_id, statement)
+            return self.apply_remote_statement(owner, task_id, statement, persist=persist)

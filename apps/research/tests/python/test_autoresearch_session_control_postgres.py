@@ -4,7 +4,6 @@
 The scientific pin resolver is a trusted fixture seam. This proves queue and
 original-process custody, not full scientific assembly, inference or evaluation.
 """
-from agent_factory_research.services import services_for
 import asyncio
 import hashlib
 import os
@@ -118,7 +117,7 @@ class ExternalSessionPostgresTests(unittest.TestCase):
         self.addCleanup(cleanup)
         preset = bootstrap.publish_application(self.state, preset, author='alice')
         self.settings.autoresearch_presets[preset.id] = preset
-        services_for(self.store).autoresearch.presets[preset.id] = preset
+        self.state['research'].autoresearch.presets[preset.id] = preset
         manifest = example_manifest()
         pin = {'targetRef': 'original-preparation', 'comparisonManifest': manifest,
                'comparisonManifestSha256': manifest_fingerprint(manifest), 'variantSha256': 'b' * 64}
@@ -127,14 +126,14 @@ class ExternalSessionPostgresTests(unittest.TestCase):
             self.assertEqual(ctx.plan['delegation']['rootTaskId'], evidence['ctx'].run_context.session_id)
             self.assertEqual(ctx.run_context.user_id, 'alice')
             return pin
-        services_for(self.store).autoresearch_children = SimpleNamespace(require_child=require_child,
+        self.state['research'].autoresearch_children = SimpleNamespace(require_child=require_child,
             verify_preparation=AsyncMock(return_value={'originalSourceTask': 'synthetic-producer', 'scientificConclusionVerified': False}))
         self.login('alice')
         request = str(uuid4())
         result = self.post('/api/factory/autoresearch/runs', {'presetId': preset.id, 'requestId': request}, 202)
         end = time.monotonic() + 75
         while time.monotonic() < end:
-            body = services_for(self.store).autoresearch.row('alice', result['id'])['body']
+            body = self.state['research'].autoresearch.row('alice', result['id'])['body']
             if body['status'] in {'completed', 'failed', 'unknown'}: break
             time.sleep(.05)
         self.assertEqual(body['status'], 'completed', body)
