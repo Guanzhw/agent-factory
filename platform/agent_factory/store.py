@@ -587,6 +587,17 @@ class Store:
         if task["terminal"] != terminal:
             self.sql("UPDATE af_tasks SET terminal=:terminal WHERE id=:id", id=task["id"], terminal=terminal)
 
+    def reject_model_protocol(self, context):
+        with self.transaction() as conn:
+            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
+            rows = self.sql("SELECT id FROM af_tasks WHERE id=:id AND owner_id=:owner AND run_id=:run FOR UPDATE",
+                            id=context.session_id, owner=context.user_id, run=context.run_id)
+            if not rows:
+                raise InputCheckError("Original model task identity differs")
+            self.event(context.session_id, "protected_denied", "Model returned an undeclared tool",
+                       {"code": "PERSONAL_MODEL_TOOL_NOT_DECLARED"})
+            self.request_cancel(context.session_id)
+
     def request_cancel(self, task_id):
         with self.transaction():
             self.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id", id=task_id)
