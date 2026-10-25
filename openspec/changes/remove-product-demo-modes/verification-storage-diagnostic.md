@@ -9,3 +9,11 @@ One original test run will retain its original HTTP/test deadlines. A test-only 
 Discriminating criteria: absent heartbeat plus a main-thread connection/SQL wait supports loop blocking; continuing heartbeat plus native cancel awaiting DB/session work supports the native path; completed cancellation with pending detail supports response projection. A passing run cannot close the historical failure without discriminating evidence. This is observation, not a timeout increase or a new retry.
 
 Implementation and execution results are recorded separately after freezing the diagnostic fixture. Only root assigns the heavy-test slot.
+
+## First instrumented run
+
+The one authorized original test passed, 1/1 with zero skips in 13.498 seconds (exit 0). Command used the existing disposable PG fixture and `timeout 120`, retaining the test's original 15-second HTTP timeout. Log: `/tmp/af-storage-cancel-instrumented-first.log`; retained child evidence: `/tmp/af-storage-cancel-diagnostic-blg5tx4e`.
+
+The cancellation HTTP phase completed in 0.395 seconds: submit 0.272s, cascade 0.103s, native cancellation 0.042s. Neither 5s nor 12s sampling fired; the stack file is empty. This run does not reproduce or close the historical 15s failure and supplies no affirmative evidence of a pool or event-loop stall. Original quarantine process exit, restart, read recovery and restore assertions also passed; owned subprocess/database cleanup completed.
+
+Independent review identified that Python traceback.print_stack could include source lines/SQL literals if a sampling threshold fired. The run had already started when the finding arrived; no source was changed mid-run, and its empty stack file confirms no such output occurred. Commit 8362eb7 replaces that formatter with filename/line/function only. Ruff/diff checks passed; no second heavy run was made for this formatting-only correction.
