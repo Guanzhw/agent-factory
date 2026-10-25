@@ -5,12 +5,12 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { assistantApi } from './assistantClient.js';
 import { ApiError } from '../../../api.js';
 import { researchApi } from '../client.js';
-import type { ResearchProject } from '../types.js';
+import type { ResearchProject, VisibleResearchGoal } from '../types.js';
 import { ResearchWorkbench } from './ResearchWorkbench.js';
 
 let host: HTMLDivElement; let root: Root;
 const navigate = vi.fn(); const logout = vi.fn();
-const project: ResearchProject = { id: 'p1', ownerId: 'alice', title: '真实接口研究', state: 'ready', assistantId: 'assistant-a', currentGoalVersion: 1, createdAt: '2026-10-25T12:00:00Z', ending: null, execution: { available: true, reason: null }, goals: [{ version: 1, createdAt: '2026-10-25T12:00:00Z', confirmedAt: '2026-10-25T12:01:00Z', agreement: { objective: '降低误差', evaluation: '固定评估数据', stopConditions: '预算用尽停止', resourceRefs: {}, budget: { rounds: 3, toolCalls: 8, tokenLimit: null, amountMicros: null, currency: null }, execution: { applicationRef: { id: 'published', version: 2, sha256: 'a'.repeat(64) }, mode: 'test', materialChoices: {}, connectionRefs: {}, deadline: 1793000000, perRoundCaps: { rounds: 1, toolCalls: 4, tokenLimit: null, amountMicros: null, currency: null } } } }] };
+const project: Omit<ResearchProject, 'goals'> & { goals: VisibleResearchGoal[] } = { id: 'p1', ownerId: 'alice', title: '真实接口研究', state: 'ready', assistantId: 'assistant-a', currentGoalVersion: 1, createdAt: '2026-10-25T12:00:00Z', ending: null, execution: { available: true, reason: null }, goals: [{ version: 1, createdAt: '2026-10-25T12:00:00Z', confirmedAt: '2026-10-25T12:01:00Z', agreement: { objective: '降低误差', evaluation: '固定评估数据', stopConditions: '预算用尽停止', resourceRefs: {}, budget: { rounds: 3, toolCalls: 8, tokenLimit: null, amountMicros: null, currency: null }, execution: { applicationRef: { id: 'published', version: 2, sha256: 'a'.repeat(64) }, mode: 'test', materialChoices: {}, connectionRefs: {}, deadline: 1793000000, perRoundCaps: { rounds: 1, toolCalls: 4, tokenLimit: null, amountMicros: null, currency: null } } } }] };
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); window.sessionStorage.clear();
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() } as unknown as MediaQueryList);
@@ -80,4 +80,17 @@ it.each([403, 404])('retains an acknowledged start if its following project read
   expect(button('重试原操作')).toBeDefined();
   await act(async () => button('重试原操作').click());
   expect(vi.mocked(researchApi.start).mock.calls[1]).toEqual(first);
+});
+it('does not dereference protected goal bodies or render an editable agreement after withdrawal', async () => {
+  const protectedProject: ResearchProject = { ...project, sourceUnavailable: true, ending: { state: 'ended' }, goals: [{ version: 1, confirmedAt: '2026-10-25T12:01:00Z', sourceUnavailable: true }] };
+  vi.mocked(researchApi.project).mockResolvedValue(protectedProject);
+  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ items: [], rounds: [] }), { status: 200 })));
+  await mount('p1');
+  expect(host.textContent).toContain('来源不可用'); expect(host.textContent).not.toContain('降低误差'); expect(button('修改目标')).toBeUndefined(); expect(host.textContent).toContain('不代表资源已确认停止');
+});
+it('preserves explicitly selected evidence when editing the goal', async () => {
+  const evidence = { toolMaterial: { id: 'cli', version: 1, sha256: 'b'.repeat(64) }, fields: { metrics: 'measurements', source: 'code', run_recipe: 'recipe' } };
+  vi.mocked(researchApi.project).mockResolvedValue({ ...project, goals: [{ ...project.goals[0], agreement: { ...project.goals[0].agreement, evidence } }] });
+  await mount('p1'); await act(async () => button('修改目标').click()); await field('研究目标', '修订目标但保留证据'); await act(async () => button('保存研究约定').click());
+  expect(researchApi.goal).toHaveBeenCalledWith('alice', 'p1', expect.objectContaining({ agreement: expect.objectContaining({ evidence, execution: project.goals[0].agreement.execution }) }));
 });

@@ -1,7 +1,8 @@
 import { useState } from 'react';
+import { EvidenceSelection } from './live/EvidenceSelection.js';
 import type { ResearchAgreement } from './types.js';
 
-export function AgreementEditor({ initial, disabled, onSave }: { initial?: ResearchAgreement; disabled: boolean; onSave: (agreement: ResearchAgreement) => void }) {
+export function AgreementEditor({ ownerId, onMaterials, initial, disabled, onSave }: { ownerId: string; onMaterials: () => void; initial?: ResearchAgreement; disabled: boolean; onSave: (agreement: ResearchAgreement) => void }) {
   const [objective, setObjective] = useState(initial?.objective ?? '');
   const [evaluation, setEvaluation] = useState(initial?.evaluation ?? '');
   const [stopConditions, setStopConditions] = useState(initial?.stopConditions ?? '');
@@ -12,12 +13,14 @@ export function AgreementEditor({ initial, disabled, onSave }: { initial?: Resea
   const [amount, setAmount] = useState(initial?.budget.amountMicros == null ? '' : String(initial.budget.amountMicros / 1_000_000));
   const [currency, setCurrency] = useState<'USD' | 'EUR' | 'CNY'>(initial?.budget.currency ?? 'CNY');
   const [resources, setResources] = useState(Object.entries(initial?.resourceRefs ?? {}).map(([slot, ref]) => ({ slot, ref })));
+  const [evidence, setEvidence] = useState(initial?.evidence ?? null);
   const [error, setError] = useState('');
   return <form className="material-editor" aria-label="研究约定" onSubmit={event => {
     event.preventDefault(); setError('');
+    if (evidence && !Object.keys(evidence.fields).length) { setError('请选择至少一个公开证据字段，或明确移除此选择。'); return; }
     const slots = resources.map(item => item.slot.trim());
     if (new Set(slots).size !== slots.length) { setError('资源用途不能重复。'); return; }
-    onSave({ objective: objective.trim(), evaluation: evaluation.trim(), stopConditions: stopConditions.trim(), resourceRefs: Object.fromEntries(resources.map(item => [item.slot.trim(), item.ref.trim()])), budget: {
+    onSave({ ...initial, evidence, objective: objective.trim(), evaluation: evaluation.trim(), stopConditions: stopConditions.trim(), resourceRefs: Object.fromEntries(resources.map(item => [item.slot.trim(), item.ref.trim()])), budget: {
       rounds: Number(rounds), toolCalls: Number(toolCalls), tokenLimit: metered ? Number(tokens) : null,
       amountMicros: metered ? Math.round(Number(amount) * 1_000_000) : null, currency: metered ? currency : null,
     } });
@@ -32,6 +35,7 @@ export function AgreementEditor({ initial, disabled, onSave }: { initial?: Resea
       <h3>已保存资源</h3><p>仅填写资源中心中的引用，不填写密码、密钥或连接秘密。</p>
       {resources.map((item, index) => <div className="editor-grid" key={index}><label>资源用途<input required maxLength={200} pattern="[A-Za-z0-9_.:-]+" value={item.slot} onChange={event => setResources(values => values.map((value, i) => i === index ? { ...value, slot: event.target.value } : value))}/></label><label>资源引用<input required maxLength={200} pattern="[A-Za-z0-9_.:-]+" value={item.ref} onChange={event => setResources(values => values.map((value, i) => i === index ? { ...value, ref: event.target.value } : value))}/></label><button type="button" onClick={() => setResources(values => values.filter((_, i) => i !== index))}>移除资源引用</button></div>)}
       <button type="button" className="secondary" disabled={resources.length >= 30} onClick={() => setResources(values => [...values, { slot: '', ref: '' }])}>添加资源引用</button>
+      <EvidenceSelection ownerId={ownerId} value={evidence} onChange={setEvidence} onMaterials={onMaterials}/>
       {error && <p role="alert">{error}</p>}<button type="submit" className="primary">保存研究约定</button>
     </fieldset>
   </form>;

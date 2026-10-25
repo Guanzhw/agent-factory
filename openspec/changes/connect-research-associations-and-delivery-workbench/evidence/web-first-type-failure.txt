@@ -1,0 +1,16 @@
+
+> agent-factory@0.2.0 check
+> npm run lint && npm run typecheck && npm test && npm run build
+
+
+> agent-factory@0.2.0 lint
+> eslint web shared tests *.ts *.js
+
+
+> agent-factory@0.2.0 typecheck
+> tsc --noEmit
+
+web/apps/research/AgreementEditor.tsx(38,61): error TS2322: Type 'Dispatch<SetStateAction<{ toolMaterial: { id: string; version: number; sha256: string; }; fields: Partial<Record<"source" | "metrics" | "run_recipe", string>>; } | null>>' is not assignable to type '(value: { toolMaterial: { id: string; version: number; sha256: string; }; fields: Partial<Record<"source" | "metrics" | "run_recipe", string>>; } | null | undefined) => void'.
+  Types of parameters 'value' and 'value' are incompatible.
+    Type '{ toolMaterial: { id: string; version: number; sha256: string; }; fields: Partial<Record<"source" | "metrics" | "run_recipe", string>>; } | null | undefined' is not assignable to type 'SetStateAction<{ toolMaterial: { id: string; version: number; sha256: string; }; fields: Partial<Record<"source" | "metrics" | "run_recipe", string>>; } | null>'.
+      Type 'undefined' is not assignable to type 'SetStateAction<{ toolMaterial: { id: string; version: number; sha256: string; }; fields: Partial<Record<"source" | "metrics" | "run_recipe", string>>; } | null>'.
