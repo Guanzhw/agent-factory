@@ -17,7 +17,7 @@ def identity_config():
     key = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(_KEY.public_key()))
     key.update(kid='disposable-test-key', alg='RS256', use='sig')
     return OIDCIdentityConfig(issuer=ISSUER, audience=AUDIENCE, jwks={'keys': [key]},
-        subject_owners={(ISSUER, owner): owner for owner in ('alice', 'bob', 'manager', 'manager2', 'fixture-editor')})
+        subject_owners={(ISSUER, owner): owner for owner in ('alice', 'bob', 'manager', 'manager2', 'fixture-editor', 'owned-user', 'fixture-owner')})
 
 
 def access_token(owner):

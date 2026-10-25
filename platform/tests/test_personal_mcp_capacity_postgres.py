@@ -148,6 +148,34 @@ class MCPPhaseRing:
             self.record('worker_idle', worker_id=getattr(worker, 'worker_id', None))
 
 
+def exception_types(error):
+    """Keep exception class names only; SDK messages may contain private data."""
+    values = [type(error).__name__]
+    if isinstance(error, BaseExceptionGroup):
+        for child in error.exceptions[:8]:
+            values.extend(exception_types(child))
+    return values[:16]
+
+
+class ObservedProtocolServer(MCPProtocolServer):
+    phase_ring = None
+
+    async def _authenticated(self, scope, receive, send):
+        ring = self.phase_ring
+        if ring is None or scope['type'] != 'http':
+            return await super()._authenticated(scope, receive, send)
+        ring.record('server_request', kind=scope['method'])
+
+        async def response(message):
+            if message['type'] == 'http.response.start':
+                ring.record('server_response_start', kind=scope['method'], status=message['status'])
+            elif message['type'] == 'http.response.body' and not message.get('more_body', False):
+                ring.record('server_response_end', kind=scope['method'])
+            await send(message)
+
+        return await super()._authenticated(scope, receive, response)
+
+
 class EchoModel(native_fixture.InventoryModel):
     """Use the existing deterministic native driver with standard MCP arguments."""
 
@@ -206,6 +234,9 @@ class ObservedMCPAdapter(MCPToolAdapter):
             ring.record('sdk_begin', **identity)
         try:
             return await super()._run(state, arguments)
+        except BaseException as error:
+            observation['sdkExceptionTypes'] = exception_types(error)
+            raise
         finally:
             if ring is not None:
                 ring.record('sdk_exit', **identity)
@@ -215,8 +246,25 @@ class ObservedMCPAdapter(MCPToolAdapter):
     async def _call(self, session, state, arguments):
         observation = self.observation(state.invocation)
         started = time.monotonic()
+        async def observed(original, phase, *args, **kwargs):
+            ring = self.phase_ring
+            if ring is not None:
+                ring.record(phase + '_begin')
+            try:
+                result = await original(*args, **kwargs)
+            except BaseException as error:
+                observation['bodyExceptionTypes'] = exception_types(error)
+                observation['bodyExceptionPhase'] = phase
+                raise
+            else:
+                if ring is not None:
+                    ring.record(phase + '_end')
+                return result
+
         try:
-            return await super()._call(session, state, arguments)
+            with patch.object(session, 'initialize', partial(observed, session.initialize, 'initialize')), \
+                    patch.object(session, 'list_tools', partial(observed, session.list_tools, 'list_tools')):
+                return await super()._call(session, state, arguments)
         finally:
             if self.phase_ring is not None:
                 self.phase_ring.record('sdk_body_exit', run_id=state.invocation.run_context.run_id, call_id=state.invocation.call_id)
@@ -283,7 +331,7 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         self.addCleanup(database.__exit__, None, None, None)
         directory = TemporaryDirectory(prefix='personal-mcp-capacity-')
         self.addCleanup(directory.cleanup)
-        self.mcp = MCPProtocolServer(stateless=False)
+        self.mcp = ObservedProtocolServer(stateless=False)
         self.mcp.tokens['synthetic-inventory-secret-alice'] = 'alice'
         ready = Future()
         self.server_stop = threading.Event()
@@ -401,6 +449,7 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         self.assert_original_receipt(body, task, effects, request_count)
         ring = MCPPhaseRing()
         self.adapter.phase_ring = ring
+        self.mcp.phase_ring = ring
         with ring.lifecycle_trace():
             ring.record('first_generation_stop_begin', run_id=task['run_id'])
             self.stop()

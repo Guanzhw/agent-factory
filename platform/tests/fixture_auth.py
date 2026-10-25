@@ -1,7 +1,6 @@
 """Synthetic test subjects and short-lived bearer tokens, never an HTTP login mode."""
 from agent_factory.auth import ACCOUNT_ADMIN_ROLE, ACCOUNT_MIGRATION_KEY
 from fixture_identity import access_token
-from httpx import URL
 import time
 import jwt
 
@@ -25,7 +24,7 @@ def authorize_client(client, owner, auth=None):
             app = app.app
         auth = app.state.factory['auth']
     initialize_members(auth)
-    client.base_url = URL(str(client.base_url).replace('http://', 'https://', 1))
+    client.base_url = str(client.base_url).replace('http://', 'https://', 1)
     client.headers.update(member_headers(auth, owner))
     return client.get('/api/factory/session')
 

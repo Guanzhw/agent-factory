@@ -1,3 +1,4 @@
+from fixture_identity import access_token
 """Actual installed native QA and owner model wire; synthetic model, no external IO."""
 import json
 import os
@@ -65,7 +66,7 @@ class ResearchQANativeTests(unittest.TestCase):
         self.addCleanup(store.native_db.db_engine.dispose)
         self.addCleanup(store.dispose_root_locks)
         client = self.enterContext(TestClient(app, base_url="https://testserver"))
-        tokens = {owner: state['auth']._issue_native_token(owner) for owner in ('alice', 'bob')}
+        tokens = {owner: access_token(owner) for owner in ('alice', 'bob')}
         def post(path, body, owner='alice', expected=200):
             reply = client.post('/api/factory/research' + path, json=body,
                 headers={'Authorization': 'Bearer ' + tokens[owner]})

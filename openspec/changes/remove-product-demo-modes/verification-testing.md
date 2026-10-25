@@ -68,3 +68,63 @@ The following is an explicit AST method-name comparison against `9454000`, captu
 - Replacement: `MaterialGovernanceTests.test_historical_bootstrap_remains_unadopted_and_cannot_execute`.
 
 Additional real PostgreSQL replacements in `test_development_login_postgres.py`: unconfigured public boundary rejects internal tokens/old cookies; old demo database rejected before schema/identity mutation. No blanket skips were introduced. The authentication author supplies final detailed login-behavior equivalence evidence.
+
+## Follow-up fixture boundary corrections
+
+- Public department-publication HTTP checks use the configured external RS256 issuer; bare native team-membership HTTP/WebSocket checks retain the original internal HS256 token. They test different identity boundaries and are not interchangeable.
+- The core workspace browser fixture now runs only the real BrowserAuth flow against its disposable loopback HTTPS OIDC issuer. Desktop/mobile selection controls viewport only. Original login, navigation, empty state, deep link, refresh and logout/relogin assertions remain; this synthetic issuer does not prove deployment identity integration.
+- Storage governance fixtures use the production-valid 60-second retention grace. Positive purge cases advance only the service's clock after establishing the plan; permission denial and not-yet-elapsed rejection remain direct checks. No product retention validation or timeout was relaxed. These storage cases require their own PostgreSQL run.
+
+## First complete portable discovery and corrections
+
+`env -u FACTORY_TEST_DATABASE_URL timeout 600 python scripts/check_python.py` completed with exit 1: 2069 cases in 175.686s, 7 failure records, 12 error records, 561 skips. Some records are subtests, so subtracting failure/error records from case count does not give an accurate passed-case count. Original evidence: `/tmp/no-demo-full-portable-first.log`.
+
+Corrections are confined to fixture contracts:
+
+- Two snapshot tests assumed a globally empty command ledger. Ordinary fixture draft/publication now legitimately creates six commands. Capture the initial count and assert unchanged / exactly one new import command; no arbitrary replacement constant.
+- The historical unpinned-plan denial includes an explanatory message. Assert the precise current error, preserving the denial and unchanged original body.
+- Four actual-runtime failures shared hand-built materials lacking `runtimeBinding`. The helper now includes the same explicit fixture binding before hashing; original native tool/HITL/budget/UNKNOWN assertions remain.
+- Four lifecycle errors came from a fake TestClient constructor not accepting the now-explicit HTTPS `base_url`. The fake checks that exact URL; lifecycle ordering and engine-disposal assertions remain.
+- The removed `publish_demo_compatibility` method is asserted absent; ordinary production publication remains exercised.
+- Old product-reserved fixture material names are no longer special. Catalog/material tests retain rejection of unknown `arbitrary_shell` and `checksum` with `fixture:operate` permission, then assert another author receives 403, the actual owner can create version 2, and version 1's complete inspected body/governance remains unchanged. This does not loosen reserved request fields or runtime tool authority.
+
+Additional ID mapping:
+
+- `CatalogContractTests.test_tool_kind_and_registered_binding_cannot_be_replaced` → `test_tool_contract_and_owner_pins_cannot_be_replaced`.
+- `MaterialGovernanceTests.test_registered_tool_binding_and_reserved_identity_cannot_expand` → `test_registered_tool_permissions_and_material_owner_cannot_expand`.
+- Removed `CoreGoQueueBoundaryTests.test_direct_core_go_rejects_queue_amplification_before_database_or_workspace`: it exclusively asserted the deleted product Go-profile queue override. `GoProjectWorkflowTests.test_product_rejects_retired_development_profile` covers removed configuration; retained `GoLiveRunnerTests.test_member_settings_reach_local_app_boundary_without_provider_access` checks the test-only campaign explicitly passes `queue_max_attempts=1` without provider/credential access. No ordinary queue/retry behavior was deleted.
+
+The first full run is still a failure; targeted corrections and final combined validation must be recorded separately.
+
+The first eight-module correction run completed 88 cases in 10.556s with four errors and 14 skips (`/tmp/no-demo-full-corrections-targeted.log`). All four errors were one test-helper mistake: `FIXTURE_BINDINGS` stores `(kind, adapterId)` tuples, not runtime-binding objects. Converting explicitly to the existing `{adapterId, revision, config}` contract fixed the helper. The same eight modules then completed **74 passed, 14 skipped, zero failures/errors in 14.110s**, exit 0 (`/tmp/no-demo-full-corrections-targeted-fixed.log`).
+
+Independent review additionally found two remote public-app fixtures and the explicit `owned-user` composition fixture still using internal bearer tokens. Those now use the external test issuer; remote ASGI transports use HTTPS URLs, and the issuer explicitly maps the existing `owned-user` fixture subject. Native-only callers retain internal tokens. Their PostgreSQL runtime verification remains separate.
+
+## Complete portable result
+
+At code commit `9f84216`, the final necessary run after the above fixture changes completed: **2068 cases, 1507 passed, 561 skipped, zero failures/errors, 179.243s, exit 0**. Command: `env -u FACTORY_TEST_DATABASE_URL timeout 600 /workspace/agent-factory-research-next/.venv/bin/python scripts/check_python.py`; log `/tmp/no-demo-full-portable-final.log`. The skips include intentionally unavailable PostgreSQL/platform-specific acceptance; this is not full PostgreSQL validation.
+
+A final read-only scan found three more PG-only public callers in application snapshot transfer, native research QA and research associations. They now use `fixture_identity.access_token` rather than internal tokens. Two relocated runner helpers also had whitespace-only cleanup. These post-run edits do not change any executed portable test body, but the revised PG paths still require real PostgreSQL verification. No full result is attributed to those unexecuted paths.
+
+## PostgreSQL fast first failure diagnosis
+
+The coordinator's first PG fast run completed 61 cases in 177.619s with 12 failure records and 22 error records (`/tmp/af-no-demo-pg-fast-first.log`). Deduplicating subtest identities gives 24 failing case IDs. These are retained, not classified as harmless intermittent failures:
+
+- Twelve setup errors: the shared authorization helper passed an `httpx.URL` instance to the currently installed `httpx2` TestClient. Assigning the HTTPS URL as a string uses both clients' public API and changes no authentication behavior.
+- Ten setup errors: the actual personal-tool/MCP fixture used the production empty application, then attempted Alice's material publication without creating its synthetic members. Its test-only publication setup now explicitly initializes those members via the normal directory service.
+- One failure: `fixture-owner` existed in the isolated directory but lacked an external issuer subject mapping, producing 401 before the intended no-published-application 404. The disposable test issuer now explicitly maps this existing fixture identity.
+- Eleven subtest failures in one scheduling case: the external OIDC boundary rejects an already-disabled owner with 401, before native scheduling authorization. The test now checks exact external `OIDC_ACCESS_TOKEN_INVALID`, independently retains the native boundary's 403 denial, and requires the original task ID/run-ID set and schedule definition to remain unchanged. No dispatch or state change is accepted.
+
+Only these 24 first-failure IDs are selected for the next bounded run, using the current worktree `.venv` and isolated loopback PostgreSQL. This is targeted verification, not another full suite.
+
+The 24-ID targeted run (`/tmp/af-no-demo-pg-failures-targeted-first.log`, timeout 360s) completed in 268.906s, exit 1: 22 passed, one MCP failure and one scheduling case with eleven subtest errors. The latter was a fixture error: minting a native token after disabling its owner is itself forbidden. Minting the retained token before disabling the owner preserves the intended current-membership test. That single case then passed in 5.274s, zero skips, exit 0 (`/tmp/af-no-demo-disabled-member-targeted-fixed.log`).
+
+The remaining MCP failure is **not a queue terminal timeout**: native run `f0656e3b-e229-48d0-bea0-1dbeccc751ff` reached `completed`; task `debfa379-cb67-42c3-bd0c-40e07b4c8aaa` correctly retained capacity for an UNKNOWN tool outcome. Its second invocation failed before business dispatch with `MCP_TRANSPORT_ERROR`, `stopped=false`, SDK/transport closed and all 29 callbacks finished. The observer reported no error. The unchanged capacity assertion failed because this healthy-path attempt did not prove a stopped tool outcome.
+
+The original assertion includes a complete 250-event phase trace, now retained in [the safe synthetic diagnostic](evidence/mcp-schema-original-failure.json). Relative times: queued 17.275s, running 17.498s, SDK entered 18.672s, body exited 34.089s, SDK closed 34.641s, native completed 34.694s. Credential callbacks lasted up to 5.593s; an authorization callback lasted 4.886s. Their overlap means durations cannot be summed as wall time. A 10.947s generation-2 collection occurred before the second submission, not during its SDK call; that correlation is not a demonstrated cause. The fixture database was cleaned up, but the assertion retained original identities, effect/observer facts and phase trace. The original transport exception class and precise initialize/list-tools boundary were not recorded; no cause is claimed yet and no unchanged rerun is used to close it.
+
+A separately authorized **single** schema diagnostic run added only test-local observations: original exception class names (including bounded ExceptionGroup child class names), initialize/list-tools begin/end, and fixture HTTP method/status/receive-response times. No headers, bodies, exception messages or credentials are captured; original calls, assertions, deadlines and production code are unchanged.
+
+Command: `FACTORY_TEST_DATABASE_URL=<existing disposable loopback fixture> PYTHONPATH=platform:applications:deployment:platform/tests:applications/tests timeout 120 .venv/bin/python -m unittest test_personal_mcp_capacity_postgres.PersonalMCPCapacityPostgresTests.test_schema_failure_releases_capacity_and_keeps_original_receipt_after_restart`. Result: **one passed, zero skipped, 16.872s, exit 0**, log `/tmp/af-no-demo-mcp-schema-diagnostic-once.log`; [instrumented phase evidence](evidence/mcp-schema-instrumented-single-run.json).
+
+This run's two initializes took 0.348s / 0.333s and list-tools took 0.902s / 0.958s; HTTP response latency after fixture receipt was approximately 1–7ms. Both tool calls completed and capacity released. This rules out a consistently broken handshake or persistently unresponsive server in that run only. It does **not** identify the earlier transport exception or close its failure. The earlier seconds-long authorization/credential callbacks remain a concrete hypothesis for a later controlled investigation; no timeout, GC setting, retry or success assertion was relaxed, and there was no repeat-until-green loop.

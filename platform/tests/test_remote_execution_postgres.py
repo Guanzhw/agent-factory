@@ -1,3 +1,4 @@
+from fixture_identity import access_token
 """Public product HTTP contracts with two actual apps and native PostgreSQL queues.
 
 Only provider output and inter-app transport are synthetic: authenticated routes,
@@ -77,9 +78,9 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
         for state in (cls.origin, cls.receiver):
             cls.addClassCleanup(state["store"].engine.dispose)
             cls.addClassCleanup(state["store"].native_db.db_engine.dispose)
-        cls.target = HandoffTarget("receiver-fixture", trusted.reference, "http://receiver.factory.invalid",
+        cls.target = HandoffTarget("receiver-fixture", trusted.reference, "https://receiver.factory.invalid",
                                    {"alice": "bob"},
-                                   lambda owner: {"Authorization": "Bearer " + cls.receiver["auth"]._issue_native_token("bob")},
+                                   lambda owner: {"Authorization": "Bearer " + access_token("bob")},
                                    transport=httpx.ASGITransport(app=cls.receiver_app))
         # Operator-installed cyclic fixture connection, before any HTTP request.
         cls.handoff.targets[cls.target.reference] = cls.target
@@ -116,7 +117,7 @@ class RemoteExecutionProductPostgresTests(unittest.TestCase):
 
     def headers(self, owner="alice", state=None):
         state = state or self.origin
-        return {"Authorization": "Bearer " + state["auth"]._issue_native_token(owner)}
+        return {"Authorization": "Bearer " + access_token(owner)}
 
     def request(self, method, path, *, expected=200, owner="alice", **kwargs):
         response = self.origin_client.request(method, "/api/factory" + path, headers=self.headers(owner), **kwargs)

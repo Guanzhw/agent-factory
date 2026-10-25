@@ -1,3 +1,4 @@
+from fixture_identity import access_token
 """Governed configuration/composition tests with actual native managed Auth.
 
 Portable cases use owned SQLite metadata (not queue/concurrency evidence).
@@ -407,7 +408,7 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
             self.bindings.manifest(legacy)
         with self.assertRaises(HTTPException) as rejected:
             self.applications.require_plan_current(legacy)
-        self.assertEqual(rejected.exception.detail, 'APPLICATION_PIN_REQUIRED')
+        self.assertEqual(rejected.exception.detail, 'APPLICATION_PIN_REQUIRED: historical unpinned plans cannot authorize execution')
         self.assertEqual(self.store.plan(legacy['id'], 'alice'), legacy)
         self.assertFalse(hasattr(self.applications, 'adopt_legacy_demo_plan'))
 
@@ -633,7 +634,7 @@ class ApplicationCompositionPostgresTests(unittest.TestCase):
                 application = state["applications"].create_draft("owned-author", definition, "prod-app")
                 state["applications"].publish("owned-author", application["id"], 1, "prod-app-publish")
                 with TestClient(app, base_url="https://testserver") as client:
-                    headers = {"Authorization": "Bearer " + auth._issue_native_token("owned-user")}
+                    headers = {"Authorization": "Bearer " + access_token("owned-user")}
                     proposal = client.post("/api/factory/compositions/proposals", headers=headers, json={"goal": "Controlled production-mode fixture with no provider calls", "applicationRef": pin(application), "requestId": "prod-proposal"})
                     self.assertEqual(proposal.status_code, 201, proposal.text)
                     candidate = proposal.json()["candidate"]

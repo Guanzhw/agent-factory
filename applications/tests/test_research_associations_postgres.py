@@ -1,3 +1,4 @@
+from fixture_identity import access_token
 """Installed P3-to-QA association path, synthetic owner HTTP model, no GPU."""
 import json
 import os
@@ -109,7 +110,7 @@ class ResearchAssociationsNativeTests(unittest.TestCase):
         client = self.enterContext(TestClient(app, base_url="https://testserver"))
         configs = {}
         for owner in ('alice', 'bob'):
-            token = state['auth']._issue_native_token(owner)
+            token = access_token(owner)
             def post(path, body):
                 response = client.post('/api/factory/research' + path, json=body,
                     headers={'Authorization': 'Bearer ' + token})

@@ -14,7 +14,7 @@ from agno.db.sqlite import SqliteDb
 from agno.run import RunContext
 from agno.run.base import RunStatus
 from agent_factory.runtime import build_runtime
-from core_native_fixture import SEEDS
+from core_native_fixture import SEEDS, FIXTURE_BINDINGS
 from agent_factory.store import digest
 from core_native_fixture import fixture_bindings as default_bindings
 
@@ -102,6 +102,8 @@ def attach_fixture_bindings(settings, store, plan):
         if kind == 'tool' and content not in plan['tools']: continue
         if kind in {'skill','prompt','knowledge'} and plan['application'] == 'fixture-checksum': continue
         material = {'id':mid,'kind':kind,'name':name,'content':content,'permissions':permissions,'version':1}
+        if mid in FIXTURE_BINDINGS:
+            material['runtimeBinding'] = {'adapterId': FIXTURE_BINDINGS[mid][1], 'revision': '1', 'config': {}}
         material['sha256'] = digest(material)
         selected.append(material)
     if 'fixture_operation' in plan['tools']:

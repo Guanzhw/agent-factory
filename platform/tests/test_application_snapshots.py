@@ -1,3 +1,4 @@
+from fixture_identity import access_token
 """Exact inert application distribution, with independent local publication.
 
 Portable cases use synthetic SQLite metadata and actual native managed Auth;
@@ -107,15 +108,17 @@ class ApplicationSnapshotPortableTests(ApplicationCompositionFixture):
         case("unbounded-input", lambda value: value.update(description="x" * 140000))
         case("noncanonical-budget", lambda value: value["modes"]["literature"]["budget"].update(toolCalls="8"))
         before = self.count(self.applications.versions)
+        commands_before = self.count(self.applications.commands)
         for label, value in invalid:
             with self.subTest(label=label), self.assertRaises(HTTPException) as rejected:
                 self.applications.import_snapshot("manager", value, "invalid-" + label)
             self.assertEqual(rejected.exception.status_code, 422)
         self.assertEqual(self.count(self.applications.versions), before)
-        self.assertEqual(self.count(self.applications.commands), 0)
+        self.assertEqual(self.count(self.applications.commands), commands_before)
 
     def test_semantic_key_and_immutable_version_conflicts_never_overwrite(self):
         snapshot = self.snapshot()
+        commands_before = self.count(self.applications.commands)
         result = self.applications.import_snapshot("manager", snapshot, "exact-intent")
         self.assertEqual(self.applications.import_snapshot("manager", copy.deepcopy(snapshot), "exact-intent"), result)
         changed = rehash({**snapshot, "description": "A different fully valid synthetic intent."})
@@ -124,7 +127,7 @@ class ApplicationSnapshotPortableTests(ApplicationCompositionFixture):
                 self.applications.import_snapshot("manager", changed, key)
             self.assertEqual(conflict.exception.status_code, 409)
         self.assertEqual(self.applications.inspect("manager", snapshot["id"], 1)["application"], snapshot)
-        self.assertEqual(self.count(self.applications.commands), 1)
+        self.assertEqual(self.count(self.applications.commands), commands_before + 1)
 
     def test_new_versions_require_monotonic_lineage_but_preserve_source_number(self):
         first = self.snapshot(version=5)
@@ -233,7 +236,7 @@ class ApplicationSnapshotPostgresTests(unittest.TestCase):
         self.assertEqual(receiver.applications.require_current(pin(snapshot)), source.applications.require_current(pin(snapshot)))
         plan = receiver.composition.create_plan("alice", "Checksum original independent receiver evidence", "literature", application_ref=pin(snapshot))
         self.assertEqual(plan["applicationRef"], pin(snapshot))
-        headers = {"Authorization": "Bearer " + receiver.auth._issue_native_token("alice")}
+        headers = {"Authorization": "Bearer " + access_token("alice")}
         admitted = receiver.client.post("/api/factory/instances", headers=headers,
             json={"planId": plan["id"], "requestId": "receiver-native-instance"})
         self.assertEqual(admitted.status_code, 202, admitted.text)

@@ -219,13 +219,20 @@ class MaterialGovernanceTests(unittest.TestCase):
             self.assertEqual(saved["hash"], "original-legacy-hash")
             self.assertEqual(conn.execute(select(restarted.current_config.c.revision)).scalar_one(), "legacy-authority")
 
-    def test_registered_tool_binding_and_reserved_identity_cannot_expand(self):
+    def test_registered_tool_permissions_and_material_owner_cannot_expand(self):
         for value in [definition(kind="tool", content="arbitrary_shell", permissions=["checksum:read"]),
-                      definition(kind="tool", content="checksum", permissions=["fixture:operate"]),
-                      definition(id="fixture-checksum-tool", kind="tool", content="fixture_operation", permissions=["fixture:operate"]),
-                      definition(id="fixture-checksum-tool", kind="knowledge")]:
+                      definition(kind="tool", content="checksum", permissions=["fixture:operate"])]:
             with self.assertRaises(HTTPException):
                 self.service.create_draft("manager", value, str(uuid4()))
+        material, _ = self.publish(self.draft(id="fixture-checksum-tool", kind="knowledge"))
+        original = self.service.inspect_version("manager", material["id"], 1)
+        revised = definition(id=material["id"], kind="prompt")
+        with self.assertRaises(HTTPException) as denied:
+            self.service.create_draft("alice", revised, "not-my-material")
+        self.assertEqual(denied.exception.status_code, 403)
+        next_version = self.service.create_draft("manager", revised, "my-material-revision")
+        self.assertEqual(next_version["version"], 2)
+        self.assertEqual(self.service.inspect_version("manager", material["id"], 1), original)
 
     def test_json_complexity_batch_and_plan_reference_bounds_are_enforced(self):
         nested = {}
@@ -356,9 +363,7 @@ class MaterialGovernanceTests(unittest.TestCase):
         for mode in ("separate-admin", "demo-self-review"):
             with self.subTest(mode=mode), self.assertRaises(ValueError):
                 GovernanceConfig(review_mode=mode, revision="retired-mode")
-        with self.assertRaises(HTTPException) as retired:
-            self.service.publish_demo_compatibility("manager", material["id"], 1, "old-demo")
-        self.assertEqual(retired.exception.status_code, 410)
+        self.assertFalse(hasattr(self.service, "publish_demo_compatibility"))
         self.service.publish("manager", material["id"], 1, "publish-in-production")
         self.assertTrue(self.service.require_materials_current({"materialRefs": [ref(material)]})["allowed"])
         self.assertFalse(hasattr(self.service, "adopt_demo_bootstrap"))

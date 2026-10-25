@@ -1,0 +1,601 @@
+{
+  "mode": "mobile",
+  "database": "af_test_0e0c6cb8cb984e9b950d857bb7f73963",
+  "businessAPIsMocked": false,
+  "identity": "local-synthetic-oidc",
+  "result": {
+    "associations": {
+      "associationId": "8066c115-3f6d-4684-9eae-8e5098dec11d",
+      "peerSourceId": "17f41b24-babb-4122-8bef-2c14de66625a",
+      "nativeAssociationCalls": 2,
+      "projectSourceUnavailable": true,
+      "assistantConfigurationVia": "real backend HTTP fixture; no browser form claim",
+      "priorEvidenceVia": "actual content service fixture; actual research publication triggers native association"
+    },
+    "projectId": "1790c264-b6c3-4fc2-b887-26e1370c135f",
+    "deliveryId": "3a70251d-9a88-448b-bd62-a49d61a510cf",
+    "goalVersion": 4,
+    "originalRound": {
+      "id": "27e2ec58-76b2-4740-8604-d8ad180385a0",
+      "goalVersion": 3,
+      "scopeId": "003259e9-59f0-43e1-a4fb-4fb30de776a0",
+      "allocationId": "27e2ec58-76b2-4740-8604-d8ad180385a0",
+      "taskId": "04ba0ba0-a83f-4f77-b355-fe42cf21b139",
+      "deliveryId": null,
+      "decision": {
+        "action": "stop",
+        "reason": "Actual evidence differs",
+        "evidenceIds": [
+          "17f41b24-babb-4122-8bef-2c14de66625a",
+          "69821e86-6c2a-4653-86c5-40a0f0122bb5"
+        ],
+        "outcome": "not_met",
+        "sourceAssessments": [
+          {
+            "contentId": "17f41b24-babb-4122-8bef-2c14de66625a",
+            "disposition": "reproduce",
+            "reason": "Compare the actual prior condition with this original run"
+          }
+        ]
+      },
+      "terminal": {
+        "taskId": "04ba0ba0-a83f-4f77-b355-fe42cf21b139",
+        "runId": "8c275edb-a9c5-4828-9ae5-322abd9df4dc",
+        "decision": {
+          "action": "stop",
+          "reason": "Actual evidence differs",
+          "evidenceIds": [
+            "17f41b24-babb-4122-8bef-2c14de66625a",
+            "69821e86-6c2a-4653-86c5-40a0f0122bb5"
+          ],
+          "outcome": "not_met",
+          "sourceAssessments": [
+            {
+              "contentId": "17f41b24-babb-4122-8bef-2c14de66625a",
+              "disposition": "reproduce",
+              "reason": "Compare the actual prior condition with this original run"
+            }
+          ]
+        },
+        "runtime": [
+          {
+            "taskId": "04ba0ba0-a83f-4f77-b355-fe42cf21b139",
+            "runId": "8c275edb-a9c5-4828-9ae5-322abd9df4dc",
+            "status": "completed"
+          },
+          {
+            "taskId": "927dff9f-70f9-451a-a872-78776b1794af",
+            "runId": "1b498fee-be6e-48fc-9d2f-ef8256965292",
+            "status": "completed"
+          }
+        ],
+        "verificationStatus": "unverified",
+        "sharing": "published",
+        "continuationBlocked": null
+      },
+      "terminalRecordId": "fc52d42c-c4d4-4b46-9fe5-e327ff285d94",
+      "continuations": []
+    },
+    "selectedRoles": [
+      "metrics",
+      "run_recipe",
+      "source"
+    ],
+    "missingEvidence": [],
+    "downloadedBytes": 7987,
+    "pageErrors": [],
+    "consoleErrors": [],
+    "expectedUnauthorized": [
+      {
+        "path": "/api/factory/session",
+        "status": 401
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 401
+      },
+      {
+        "path": "/api/factory/research/deliveries/3a70251d-9a88-448b-bd62-a49d61a510cf",
+        "status": 404
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 401
+      },
+      {
+        "path": "/api/factory/research/associations/8066c115-3f6d-4684-9eae-8e5098dec11d",
+        "status": 404
+      }
+    ],
+    "apiResponses": [
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 401
+      },
+      {
+        "path": "/api/factory/auth/login",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/callback",
+        "status": 303
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants/me",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants/me",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 201
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f/goals",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/applications",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup/drafts",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup/365000ad-2cef-49d9-a0bb-a80d732eb69f",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup/365000ad-2cef-49d9-a0bb-a80d732eb69f/publish",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/applications",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/user-connections",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f/goals",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/setup",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f/goals",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f/confirm",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f/start",
+        "status": 202
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f/goals",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f/confirm",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f/deliveries",
+        "status": 201
+      },
+      {
+        "path": "/api/factory/research/deliveries/3a70251d-9a88-448b-bd62-a49d61a510cf",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/logout",
+        "status": 204
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 401
+      },
+      {
+        "path": "/api/factory/auth/login",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/callback",
+        "status": 303
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants/me",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/associations",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries/3a70251d-9a88-448b-bd62-a49d61a510cf",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries/3a70251d-9a88-448b-bd62-a49d61a510cf",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries/3a70251d-9a88-448b-bd62-a49d61a510cf/download",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries/3a70251d-9a88-448b-bd62-a49d61a510cf",
+        "status": 404
+      },
+      {
+        "path": "/api/factory/auth/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/logout",
+        "status": 204
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 401
+      },
+      {
+        "path": "/api/factory/auth/login",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/callback",
+        "status": 303
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants/me",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/associations",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/associations",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/associations/8066c115-3f6d-4684-9eae-8e5098dec11d",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/associations/8066c115-3f6d-4684-9eae-8e5098dec11d",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/application-content/17f41b24-babb-4122-8bef-2c14de66625a",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants/me",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/associations",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/deliveries",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/associations/8066c115-3f6d-4684-9eae-8e5098dec11d",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/associations/8066c115-3f6d-4684-9eae-8e5098dec11d",
+        "status": 404
+      },
+      {
+        "path": "/api/factory/auth/config",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/session",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/status",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/execution-targets",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/jobs",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/assistants/me",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/research/projects/1790c264-b6c3-4fc2-b887-26e1370c135f/experiments",
+        "status": 200
+      },
+      {
+        "path": "/api/factory/materials",
+        "status": 200
+      }
+    ],
+    "privateProjectDenied": true,
+    "withdrawnDownloadStatus": 404,
+    "realProviderOrGPU": false,
+    "modelAndToolConfiguredVia": "real core fixture prerequisite; selection/publication/evidence/goal/delivery via browser"
+  }
+}
