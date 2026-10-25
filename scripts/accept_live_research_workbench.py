@@ -24,7 +24,7 @@ from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
 from browser_identity_fixture import BrowserIdentityFixture, private_tls_files
 from pg_fixture import IsolatedPostgres
-from test_research_workflow_postgres import ResearchModel, settings_for, PERMISSION
+from test_research_workflow_postgres import DIGEST, ResearchModel, settings_for, PERMISSION
 
 
 def model_response(request):
@@ -56,8 +56,9 @@ def model_wire(request):
 def scenario(browser, origin, output, mode, identity, viewport):
     context = browser.new_context(ignore_https_errors=True, viewport=viewport, service_workers='block')
     page = context.new_page()
-    errors, console_errors, expected_unauthorized = [], [], []
+    errors, console_errors, expected_unauthorized, api_responses = [], [], [], []
     page.on('pageerror', lambda error: errors.append(str(error)))
+    page.on('response', lambda response: api_responses.append({'path': response.url.split('?', 1)[0].removeprefix(origin), 'status': response.status}) if response.url.startswith(origin + '/api/factory/') else None)
     def console(message):
         if message.type != 'error':
             return
@@ -129,10 +130,17 @@ def scenario(browser, origin, output, mode, identity, viewport):
             response = context.request.get(endpoint + '/experiments')
             assert response.ok, response.text()
             records = response.json()
-            if any(item.get('decision') for item in records.get('rounds', [])):
+            if any(item.get('decision') and item.get('terminal') for item in records.get('rounds', [])):
                 break
             page.wait_for_timeout(250)
-        assert any(item.get('decision') for item in records.get('rounds', [])), records
+        round_record = next((item for item in records.get('rounds', []) if item.get('decision') and item.get('terminal')), None)
+        assert round_record is not None, records
+        assert round_record['decision']['outcome'] == 'met', round_record
+        assert round_record['decision']['evidenceIds'], round_record
+        assert len(round_record['terminal']['runtime']) == 2, round_record
+        assert all(task['status'] == 'completed' for task in round_record['terminal']['runtime']), round_record
+        assert DIGEST in json.dumps(records['items']), records
+        assert any(attempt['operation']['observation']['output']['artifacts'] for item in records['items'] for attempt in item['attempts']), records
         page.get_by_role('tab', name='证据', exact=True).click()
         expect(page.get_by_text('Agent 分析 · 尚未独立验证', exact=True)).to_be_visible()
         page.reload()
@@ -159,15 +167,15 @@ def scenario(browser, origin, output, mode, identity, viewport):
             'expectedVersion': 2, 'outcome': 'cancelled', 'reason': 'Cross-owner denial probe'}, 404)
         assert not errors, errors
         assert not console_errors, console_errors
-        return {'projectId': project_id, 'rounds': records['rounds'], 'pageErrors': errors,
-            'consoleErrors': console_errors, 'expectedUnauthorized': expected_unauthorized,
+        return {'projectId': project_id, 'rounds': records['rounds'], 'experiments': records['items'], 'pageErrors': errors,
+            'consoleErrors': console_errors, 'expectedUnauthorized': expected_unauthorized, 'apiResponses': api_responses,
             'crossOwnerReadStatus': denied.status, 'crossOwnerWriteStatus': 404,
             'modelConfiguredVia': 'real core HTTP fixture prerequisite, no saved secret',
             'researchTeamReading': 'NOTDONE: P7 API absent', 'realProviderOrGPU': False}
     except BaseException:
         page.screenshot(path=str(output / 'first-failure.png'), full_page=True)
         (output / 'failure-page.txt').write_text(page.locator('body').inner_text())
-        (output / 'errors.json').write_text(json.dumps({'pageErrors': errors, 'consoleErrors': console_errors}, indent=2))
+        (output / 'errors.json').write_text(json.dumps({'pageErrors': errors, 'consoleErrors': console_errors, 'apiResponses': api_responses}, indent=2))
         raise
     finally:
         context.close()
