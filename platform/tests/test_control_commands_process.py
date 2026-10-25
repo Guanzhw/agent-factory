@@ -45,7 +45,7 @@ class CommandProcessTests(unittest.TestCase):
         project = Path(__file__).resolve().parents[2]
         environment = {**os.environ, "FACTORY_COMMAND_FIXTURE": str(self.config),
                        "PYTHONPATH": os.pathsep.join(str(project / part) for part in ("platform", "deployment", "platform/tests"))}
-        self.process = subprocess.Popen([sys.executable, "-m", "controlled_command_worker"],
+        self.process = subprocess.Popen([sys.executable, "-m", getattr(self, "worker_module", "controlled_command_worker")],
             env=environment, cwd=project, stdout=self.log, stderr=self.log)
         deadline = time.monotonic() + 25
         while time.monotonic() < deadline:
