@@ -636,7 +636,7 @@ class PersistentResourceService:
     def _claim_effect(self, owner, lease_id, field, state, *, reason=None):
         """Compare-and-set before transmission across processes, not a Python lock."""
         if reason is not None and (field != "cancelAck" or reason not in {
-                "TASK_CANCEL_REQUESTED", "NATIVE_TERMINAL", "LEASE_EXPIRED", "AUTHORITY_ENDED"}):
+                "TASK_CANCEL_REQUESTED", "OPERATION_CANCEL_REQUESTED", "NATIVE_TERMINAL", "LEASE_EXPIRED", "AUTHORITY_ENDED"}):
             raise ValueError("Invalid original-custody cancellation reason")
         with self.store.engine.begin() as conn:
             self._lock(conn)
