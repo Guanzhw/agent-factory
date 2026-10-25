@@ -120,3 +120,20 @@ full40112603820（PGjob120927320891）终态失败：3265项，3195通过、4失
 ## Follow-up read-purity fixture isolation
 
 The downstream #101 d1ec7e9 full40123407895 PG run (3385tests3316pass1fail68skip2554.347s,all7requiredgroupspassed) exposed one remaining fixture race in remote_handoff test23: receiver observer was stopped but origin background observation changed body.observedAt by35ms while repeated receipt GETs compared full rows. Now both observers are stopped/joined before the controlled scenario and restarted in finally. Original full task/event/effect/artifact/native identity assertions are unchanged; an origin observed() spy additionally rejects writes by the reads. No production change or timeout increase. The exact original failed case passed18.805s/24.471sdriver, exit0 (history-origin-observer-isolation); concurrent lightweight Pyright means this is functional evidence, not a performance comparison. Original failedfull logs retained in cloud-delivery-20261024/iterations-d1-full-pg.log. No full rerun.
+
+### 2026-10-25 prepared cancellation fixture ordering
+
+Full [40206239436](https://github.com/Guanzhw/agent-factory/actions/runs/40206239436), exact `551f1bf`, first PG failure: `RemoteHandoffPostgresTests.test_member_source_and_receiver_execute_directly_but_current_source_cancel_denies` line 604 expected `PREPARED`, observed `CANCELLED_NO_DISPATCH`. Original log: `/tmp/af-qa-full-first-pg.log`. Both real apps had active lifecycle observers; after source cancellation the cleanup owner could legitimately win before the assertion. The original task identity was not shown lost by this failure.
+
+The fixture now stops and joins both observers before cancellation. It retains the exact `PREPARED` assertion after rejected duplicate preparation, then explicitly runs receiver lifecycle observation and reconciliation. The latter must produce exactly `CANCELLED_NO_DISPATCH`, positive stop proof, unchanged handoff/source-task/request/receiver-task/plan/manifest identity, no native run and zero native tickets on both peers. Production code and deadlines are unchanged. The existing dispatch-CAS-wins counterexample still requires `UNKNOWN` and cannot infer no dispatch from absent native acknowledgement.
+
+Targeted command (isolated PostgreSQL, synthetic models):
+
+```sh
+timeout 120 env PYTHONPATH=platform:deployment:platform/tests \
+  python -m unittest \
+  test_remote_handoff_postgres.RemoteHandoffPostgresTests.test_member_source_and_receiver_execute_directly_but_current_source_cancel_denies \
+  test_remote_handoff_postgres.RemoteHandoffPostgresTests.test_prepared_cleanup_cannot_fence_dispatch_that_won_original_cas -v
+```
+
+First local invocation failed during class setup because sandbox loopback networking was unavailable: exit 5, zero tests, log `/tmp/af-remote-cancel-two-phase.log`. With explicit network permission and the same disposable loopback service, **2 passed / 0 skipped, 9.884s, exit 0** (`/tmp/af-remote-cancel-two-phase-network.log`). Fixture cleanup stopped both queue workers and schedulers and released isolated databases. Ruff and whitespace checks passed. This targeted result does not turn the original full run green or establish live remote-provider acceptance.
