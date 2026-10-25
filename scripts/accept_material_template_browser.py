@@ -1,9 +1,9 @@
 """Real browser acceptance of governed synthetic application templates.
 
-Run only against an isolated loopback development-mock Factory with approved
-explicit core native fixture materials. All mutations use UI; API reads corroborate
-immutable records and owner isolation. No services, credentials or live providers
-are configured here. Browser TLS exception applies only to this test context.
+Starts an isolated loopback test OIDC Factory with explicit core native
+fixture materials. All mutations use UI; API reads corroborate
+immutable records and owner isolation. Only test services and ephemeral synthetic credentials are created; no live
+providers are configured here. Browser TLS exception applies only to this test context.
 """
 import argparse
 from collections import Counter
@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from playwright.sync_api import expect, sync_playwright
 
-from accept_app_recovery_browser import capture, json_get, login, origin
+from accept_app_recovery_browser import capture, recovery_fixture, json_get, login
 
 PREFIX = '/api/factory'
 
@@ -87,7 +87,7 @@ def application_row(page, name, button):
     ).filter(has=page.get_by_role('button', name=button, exact=True))
 
 
-def scenario(browser, base, output, name, viewport):
+def scenario(browser, base, output, name, viewport, identity):
     contexts = [browser.new_context(ignore_https_errors=True, viewport=viewport, accept_downloads=True)
                 for _ in range(3)]
     author, owner, foreign = contexts
@@ -118,7 +118,7 @@ def scenario(browser, base, output, name, viewport):
             if response.status >= 400 and len(diagnostics) < 50 else None)
     try:
         for page, persona in zip(pages, ('manager', 'alice', 'bob'), strict=True):
-            login(page, base, persona)
+            login(page, base, persona, identity)
         stage = 'template'
         governance(manager)
         apps = json_get(author, base, '/applications')
@@ -244,18 +244,19 @@ def scenario(browser, base, output, name, viewport):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--base-url', type=origin, required=True)
+    parser.add_argument('--database-url', required=True)
+    parser.add_argument('--dist', type=Path, required=True)
     parser.add_argument('--output-dir', type=Path, required=True)
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=False)
-    evidence = {'evidenceMode': 'controlled-fixture', 'liveProviderVerified': False, 'screens': []}
+    evidence = {'evidenceMode': 'controlled-fixture', 'liveProviderVerified': False, 'identity': 'local-synthetic-oidc', 'realIdentityProviderVerified': False, 'screens': []}
     try:
-        with sync_playwright() as playwright:
+        with recovery_fixture(args.database_url, args.dist) as (base, identity, _state), sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             try:
                 for name, viewport in (('desktop', {'width': 1440, 'height': 1000}),
                                        ('mobile', {'width': 390, 'height': 844})):
-                    evidence['screens'].append(scenario(browser, args.base_url, args.output_dir, name, viewport))
+                    evidence['screens'].append(scenario(browser, base, args.output_dir, name, viewport, identity))
             finally:
                 browser.close()
         evidence['ok'] = True
