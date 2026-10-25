@@ -1,0 +1,133 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "mode": "demo",
+      "database": "af_test_0f5940adb9c04053829d76b49f392128",
+      "newIsolatedDatabase": true,
+      "identity": "development-selector",
+      "realExternalProductionIdentityVerified": false,
+      "businessAPIsMocked": false,
+      "viewports": {
+        "desktop": {
+          "screenshots": [
+            "login.png",
+            "login-return.png",
+            "home.png",
+            "catalog.png",
+            "tasks.png",
+            "resources.png",
+            "models.png",
+            "connections.png",
+            "retired-entry.png",
+            "logout.png",
+            "relogin.png"
+          ],
+          "login": true,
+          "emptyCatalog": true,
+          "emptyTasks": true,
+          "resourceNavigation": true,
+          "directURLsAndRefresh": true,
+          "retiredURLs": true,
+          "loginDeepLinkReturn": true,
+          "backForward": true,
+          "logoutRevokesSession": true,
+          "relogin": true,
+          "pageErrors": [],
+          "serverErrors": []
+        },
+        "mobile": {
+          "screenshots": [
+            "login.png",
+            "login-return.png",
+            "home.png",
+            "catalog.png",
+            "tasks.png",
+            "resources.png",
+            "models.png",
+            "connections.png",
+            "retired-entry.png",
+            "logout.png",
+            "relogin.png"
+          ],
+          "login": true,
+          "emptyCatalog": true,
+          "emptyTasks": true,
+          "resourceNavigation": true,
+          "directURLsAndRefresh": true,
+          "retiredURLs": true,
+          "loginDeepLinkReturn": true,
+          "backForward": true,
+          "logoutRevokesSession": true,
+          "relogin": true,
+          "pageErrors": [],
+          "serverErrors": []
+        }
+      }
+    },
+    {
+      "mode": "production-local",
+      "database": "af_test_8d17a8b6b953414fb9428c6c0ec8bf77",
+      "newIsolatedDatabase": true,
+      "identity": "local-synthetic-oidc-over-https",
+      "realExternalProductionIdentityVerified": false,
+      "businessAPIsMocked": false,
+      "viewports": {
+        "desktop": {
+          "screenshots": [
+            "login.png",
+            "login-return.png",
+            "home.png",
+            "catalog.png",
+            "tasks.png",
+            "resources.png",
+            "models.png",
+            "connections.png",
+            "retired-entry.png",
+            "logout.png",
+            "relogin.png"
+          ],
+          "login": true,
+          "emptyCatalog": true,
+          "emptyTasks": true,
+          "resourceNavigation": true,
+          "directURLsAndRefresh": true,
+          "retiredURLs": true,
+          "loginDeepLinkReturn": true,
+          "backForward": true,
+          "logoutRevokesSession": true,
+          "relogin": true,
+          "pageErrors": [],
+          "serverErrors": []
+        },
+        "mobile": {
+          "screenshots": [
+            "login.png",
+            "login-return.png",
+            "home.png",
+            "catalog.png",
+            "tasks.png",
+            "resources.png",
+            "models.png",
+            "connections.png",
+            "retired-entry.png",
+            "logout.png",
+            "relogin.png"
+          ],
+          "login": true,
+          "emptyCatalog": true,
+          "emptyTasks": true,
+          "resourceNavigation": true,
+          "directURLsAndRefresh": true,
+          "retiredURLs": true,
+          "loginDeepLinkReturn": true,
+          "backForward": true,
+          "logoutRevokesSession": true,
+          "relogin": true,
+          "pageErrors": [],
+          "serverErrors": []
+        }
+      }
+    }
+  ]
+}
