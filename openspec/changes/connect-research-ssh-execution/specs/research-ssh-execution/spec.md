@@ -115,3 +115,11 @@ Core SHALL expose a read-only original delegated-child lookup and bounded privat
 - **THEN** the unchanged child material-subset guard admits only the declared experiment tools, the child submits one original helper process with validated dynamic inputs, and native waiting resumes the same original root/child identities
 - **AND** actual process JSON supplies selected metrics/source/recipe artifacts, a controlled model records the original experimental terminal outcome, and a second member can read/download only selected team evidence; private stdout fields remain absent and withdrawing the source removes access
 - **AND** model HTTP and local SSH transport substitution are labelled synthetic; PostgreSQL, owner adapters, native queue, custody, helper subprocess, governance and artifact authority are real; no remote GPU or live provider acceptance is inferred
+
+#### Scenario: Required helper preflight is exercised by actual launch
+- **WHEN** a new native SSH launch is requested
+- **THEN** the same pinned transport first checks the matching helper protocol, existing private root and required Linux/fork/proc/rlimit mechanisms read-only, before any persistent operation/lease or submit; missing capability/helper returns a safe diagnostic with no capacity hold
+
+#### Scenario: Original operation recovery does not become preflight or redispatch
+- **WHEN** an exact original launch is replayed or an UNKNOWN operation is inspected after restart
+- **THEN** the original identity/receipt and input-conflict checks apply without a new helper preflight or submit, even if the helper is currently unavailable; original holds remain until positive evidence
