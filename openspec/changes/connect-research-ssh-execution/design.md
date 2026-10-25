@@ -115,3 +115,7 @@ FAILED/CANCELLED keep `output=null` as required by the existing runtime contract
 ## Required target facts
 
 正式运行前最少需要：Factory 可达的映射入口 host/port；最终 SSH 用户/主机公钥及已存在连接引用；允许工作目录；是允许直接运行还是必须经某个已安装调度器（名称及正常提交/查询/取消方式）；可用 Python/runtime 与训练入口/环境/数据位置；GPU资源分配方式与本次运行时限/预算、是否允许断线/取消验证。只要配置引用与非秘密元数据，不在聊天索要私钥。受控本机测试可先行，不能据此补写未知目标事实。
+
+### SSH host capacity aliases
+
+Provider capacity namespace derives only from the validated final SSH host public key and protocol, not actor/owner, registration reference, endpoint port, root, credentials or process specification. Aliases for that host must use the same fixed ComputePool definition; differing per-user declarations cannot multiply host capacity. Configuration fingerprint still includes the exact server/spec to prevent redirecting an original operation. This is an admission identity convention, not proof of physical topology: shared host keys across machines and cluster-wide scheduler pools require an explicit target pool decision and measured capacity before production acceptance. Target reconstruction uses the original immutable plan and connection pin; registration and restart restoration stay in the existing resource service, not a new endpoint registry.

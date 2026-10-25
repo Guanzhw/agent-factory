@@ -95,7 +95,7 @@ class SSHProcessProvider:
 
     @property
     def capacity_namespace(self):
-        return digest({'protocol': PROTOCOL, 'sshRoot': self.server.scope_pin()})
+        return digest({'protocol': PROTOCOL, 'hostKey': self.server.host_key})
 
     @property
     def configuration_fingerprint(self):

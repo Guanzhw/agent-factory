@@ -62,3 +62,7 @@
 #### Scenario: Cancellation during request transmission
 - **WHEN** submit 在 SSH 可写等待或分片传输期间被取消
 - **THEN** 每次写入及正常发送 EOF 前重新核对原准入/取消状态，不继续发送剩余完整请求；已完整发送或可能送达的原操作保持 UNKNOWN/hold，并只按原身份核对，不能声称已撤回远端执行
+
+#### Scenario: One host through multiple connection aliases
+- **WHEN** two validated connections have the same final host key but different owner, reference, root or forwarded endpoint
+- **THEN** their providers share the same capacity namespace and fixed pool; exact per-operation configuration pins remain distinct, and a different host key has a different namespace

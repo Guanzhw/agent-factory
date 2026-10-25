@@ -18,7 +18,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
         self.calls = []
         server = SimpleNamespace(validate=lambda: None, pin=lambda: 'a' * 64,
-                                 scope_pin=lambda: 'b' * 64, allowed_root='/private/runs')
+                                 scope_pin=lambda: 'b' * 64, host_key='synthetic-host-key', allowed_root='/private/runs')
         self.provider = SSHProcessProvider(server, target_ref='compute',
             spec=ProcessSpec('/bin/program', 'c' * 64, ()), limits=ProcessLimits(),
             exchange=self.exchange, read_lease=lambda owner, key: copy.deepcopy(self.lease))
@@ -161,3 +161,21 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                     os.close(read_fd)
                     process.stdin.close()
                     process.stdout.close()
+
+    def test_host_aliases_share_capacity_but_keep_original_configuration(self):
+        namespace = self.provider.capacity_namespace
+        original = self.provider.configuration_fingerprint
+        alias = copy.copy(self.provider.server)
+        alias.owner = 'bob'
+        alias.reference = 'other'
+        alias.address, alias.port = 'forwarder', 2202
+        alias.allowed_root = '/another/root'
+        alias.scope_pin = lambda: '8' * 64
+        alias.pin = lambda: '9' * 64
+        other = SSHProcessProvider(alias, target_ref='other-target',
+            spec=self.provider.spec, limits=self.provider.limits,
+            exchange=self.exchange, read_lease=lambda owner, key: None)
+        self.assertEqual(other.capacity_namespace, namespace)
+        self.assertNotEqual(other.configuration_fingerprint, original)
+        alias.host_key = 'different-host-key'
+        self.assertNotEqual(other.capacity_namespace, namespace)
