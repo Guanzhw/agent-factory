@@ -25,7 +25,7 @@ from fixture_auth import initialize_members
 import test_ssh_native_postgres as native
 
 
-def run(browser, dist, output):
+def run(browser, dist, output, *, windows_diagnostic_only=False):
     fixture = native.SSHNativePostgresTests('runTest')
     servers = ExitStack()
     identity = None
@@ -84,12 +84,42 @@ def run(browser, dist, output):
             else:
                 console_errors.append(value)
         page.on('console', console)
+        capability_projections = []
+        if windows_diagnostic_only:
+            def project_windows_diagnostic(route):
+                actual = route.fetch()
+                assert actual.status == 200
+                body = actual.json()
+                assert body['controllerDiagnostic'] is None
+                body['controllerDiagnostic'] = 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED'
+                capability_projections.append(body['controllerDiagnostic'])
+                route.fulfill(response=actual, json=body)
+            page.route('**/personal-ssh/capabilities', project_windows_diagnostic)
         page.goto(origin + '/?tab=connections')
         page.get_by_role('button', name='使用企业账号登录', exact=True).click()
         expect(page.get_by_role('heading', name='我的凭据与连接', exact=True)).to_be_visible()
         logged_in = True
         expect(page.get_by_text('尚未允许训练执行', exact=True)).to_be_visible()
         assert fixture.store.tasks('alice') == [] and not fixture.started.exists()
+        if windows_diagnostic_only:
+            diagnostic = '当前原生 Windows 控制端尚不支持 SSH 连接检查或执行。已有服务器配置仍可查看和撤销。'
+            expect(page.get_by_text(diagnostic, exact=True)).to_be_visible()
+            expect(page.get_by_role('heading', name=server['name'], exact=True)).to_be_visible()
+            expect(page.get_by_role('button', name='撤销授权', exact=True)).to_be_enabled()
+            page.screenshot(path=str(output / 'windows-diagnostic-existing-resource.png'), full_page=True)
+            page.get_by_role('button', name='撤销授权', exact=True).click()
+            page.get_by_role('button', name='确认撤销服务器授权', exact=True).click()
+            expect(page.get_by_text('连接授权已撤销', exact=True)).to_be_visible()
+            current = fixture.request('GET', '/personal-ssh/' + server['reference'])
+            assert current['status'] == 'revoked' and not current['enabled'] and not current['executionEnabled']
+            assert fixture.store.tasks('alice') == [] and fixture.processes == [] and not fixture.started.exists()
+            assert errors == [] and console_errors == [], (errors, console_errors)
+            page.screenshot(path=str(output / 'windows-diagnostic-revoked.png'), full_page=True)
+            return {'ok': True, 'scenario': 'windows-diagnostic-only', 'actualHost': 'Linux Chromium',
+                'capabilityProjection': capability_projections, 'nativeWindowsRuntimeTested': False,
+                'resourceStatusAfterActualRevoke': current['status'], 'tasks': 0, 'helperLaunches': 0,
+                'pageErrors': errors, 'consoleErrors': console_errors, 'expectedConsole': expected_console,
+                'businessMutationAPIsMocked': False, 'identity': 'synthetic local HTTPS OIDC'}
 
         def lose_reply(route):
             binds.append(route.request.post_data_json['requestId'])
@@ -177,12 +207,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dist', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--windows-diagnostic-only', action='store_true', help='Project only the unsupported-controller capability diagnostic; actual Linux fixture APIs remain')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=False)
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path='/usr/bin/chromium', headless=True)
         try:
-            result = run(browser, args.dist, args.output)
+            result = run(browser, args.dist, args.output, windows_diagnostic_only=args.windows_diagnostic_only)
             (args.output / 'evidence.json').write_text(json.dumps(result, indent=2))
         finally:
             browser.close()
