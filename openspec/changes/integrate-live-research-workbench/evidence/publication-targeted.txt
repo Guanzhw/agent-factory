@@ -1,0 +1,9 @@
+
+ RUN  v4.1.12 /workspace/agent-factory-research-workbench-live
+
+
+ Test Files  1 passed (1)
+      Tests  25 passed (25)
+   Start at  13:50:44
+   Duration  3.22s (transform 770ms, setup 0ms, import 939ms, tests 1.35s, environment 618ms)
+

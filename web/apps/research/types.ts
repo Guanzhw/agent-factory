@@ -3,6 +3,14 @@ export interface ResearchAgreement {
   evaluation: string;
   stopConditions: string;
   resourceRefs: Record<string, string>;
+  execution?: {
+    applicationRef: { id: string; version: number; sha256: string };
+    mode: string;
+    materialChoices: Record<string, { id: string; version: number; sha256: string }>;
+    connectionRefs: Record<string, string>;
+    deadline: number;
+    perRoundCaps: ResearchAgreement['budget'];
+  } | null;
   budget: { rounds: number; toolCalls: number; tokenLimit: number | null; amountMicros: number | null; currency: 'USD' | 'EUR' | 'CNY' | null };
 }
 export interface ResearchGoal {
@@ -19,8 +27,8 @@ export interface ResearchProjectSummary {
   state: 'draft' | 'ready' | 'ended';
   currentGoalVersion: number;
   createdAt: string;
-  ending: null | { outcome: 'not_met' | 'cancelled'; reason: string; endedAt: string; goalVersion: number; resourceCleanup: 'not_observed' };
-  execution: { available: false; reason: 'RESEARCH_EXECUTION_NOT_INSTALLED' };
+  ending: null | { outcome: 'met' | 'not_met' | 'cancelled'; reason: string; endedAt: string; goalVersion: number; resourceCleanup: 'not_observed' | 'stopped'; verificationStatus?: 'agent_analysis' };
+  execution: { available: boolean; reason: string | null };
 }
 export interface ResearchProject extends ResearchProjectSummary { goals: ResearchGoal[] }
 export interface Page<T> { items: T[]; nextCursor: string | null }

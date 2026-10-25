@@ -1,0 +1,26 @@
+[
+  {
+    "viewport": {
+      "width": 1487,
+      "height": 1058
+    },
+    "browser": "Chromium",
+    "identity": "synthetic HTTP fixture, not real authentication",
+    "core_and_research_write_calls": [],
+    "page_errors": [],
+    "console_errors": [],
+    "result": "passed"
+  },
+  {
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "browser": "Chromium",
+    "identity": "synthetic HTTP fixture, not real authentication",
+    "core_and_research_write_calls": [],
+    "page_errors": [],
+    "console_errors": [],
+    "result": "passed"
+  }
+]

@@ -1,0 +1,28 @@
+
+ RUN  v4.1.12 /workspace/agent-factory-research-workbench-live
+
+ ❯ web/apps/research/live/ResearchWorkbench.test.ts (8 tests | 2 failed) 557ms
+   × retains an acknowledged start if its following project read returns HTTP 403, including remount 39ms
+   × retains an acknowledged start if its following project read returns HTTP 404, including remount 37ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  web/apps/research/live/ResearchWorkbench.test.ts > retains an acknowledged start if its following project read returns HTTP 403, including remount
+ FAIL  web/apps/research/live/ResearchWorkbench.test.ts > retains an acknowledged start if its following project read returns HTTP 404, including remount
+AssertionError: expected null not to be null
+ ❯ web/apps/research/live/ResearchWorkbench.test.ts:76:82
+     74|   await act(async () => button('按当前约定启动或续接研究').click());
+     75|   const first = vi.mocked(researchApi.start).mock.calls[0];
+     76|   expect(window.sessionStorage.getItem('factory:research-command:alice…
+       |                                                                                  ^
+     77|   expect(button('按当前约定启动或续接研究').disabled).toBe(true);
+     78|   await act(async () => root.unmount()); root = createRoot(host); awai…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 6 passed (8)
+   Start at  14:13:17
+   Duration  2.22s (transform 708ms, setup 0ms, import 1.14s, tests 557ms, environment 326ms)
+
