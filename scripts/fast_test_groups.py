@@ -6,6 +6,10 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
+    'application_instance_ownership': (
+        'test_application_runtime.ApplicationRuntimeTests',
+        'test_application_assembly.ApplicationAssemblyTests',
+    ),
     'architecture_checks': (
         'test_architecture_checker',
         'test_postgres_checks',

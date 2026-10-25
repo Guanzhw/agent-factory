@@ -1,5 +1,5 @@
 """Offline bootstrap CLI tests; no training, Torch, PG connection or device query."""
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices
 from contextlib import redirect_stderr, redirect_stdout
 import importlib
 import importlib.util
@@ -121,12 +121,12 @@ class RunnerTests(unittest.TestCase):
                  'capacityHeld': False, 'stopEvidence': {'allStopped': True}, 'nativeRunId': 'original-run',
                  'providerJobId': 'original-process'}
         store = Mock()
-        services_for(store).research_runtime = Mock()
+        research = ResearchServices(store, installed=True, research_runtime=Mock())
         store.process_runtime._original.return_value = {'lease_id': 'original-lease'}
         store.process_runtime.resources.inspect.return_value = lease
         prep = Mock(); prep.import_completed.return_value = {'id': 'original-artifact'}
         prep.input_pin.return_value = {'binding': {'taskId': 'original-task'}}
-        bundle = {'state': {'store': store,
+        bundle = {'state': {'store': store, 'research': research,
                            'settings': SimpleNamespace(temporary_policy='member-self-service')}, 'preparation': prep}
         calls = []
         def request(method, path, body, *, owner):
@@ -144,7 +144,7 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(sum(path.endswith('/instances') for _, path, _, _ in calls), 1)
         self.assertFalse(any(path.endswith('/approve') for _, path, _, _ in calls))
         prep.import_completed.assert_called_once_with('alice', 'original-lease')
-        services_for(store).research_runtime.submit.assert_not_called()
+        research.research_runtime.submit.assert_not_called()
         store.request_cancel.assert_not_called()
 
 

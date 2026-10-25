@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 from fastapi import HTTPException
 from agent_factory.store import digest
 from agent_factory_research.remote_scientific_receiver import RemoteScientificReceiver
-from agent_factory_research.services import services_for, release_services
+from agent_factory_research.services import ResearchServices
 import test_remote_scientific_evidence as evidence
 
 
@@ -33,10 +33,11 @@ class LateAuthorityTests(unittest.IsolatedAsyncioTestCase):
         store = SimpleNamespace(plan=Mock(return_value={'fingerprint': lease['planFingerprint']}),
             sql=Mock(side_effect=lambda *a, **kw: deepcopy(rows)),
             handoff_receiver=SimpleNamespace(authorize=Mock(side_effect=[None, error])))
-        self.addCleanup(release_services, store)
+        research = ResearchServices(store, installed=True)
+        self.addCleanup(research.release)
         provider = Mock(); provider.read_launch_proof.return_value = evidence.launch('evaluation')
         resources = Mock(); resources._provider.return_value = provider
-        services_for(store).research_runtime = SimpleNamespace(resources=resources, submit=AsyncMock())
+        research.research_runtime = SimpleNamespace(resources=resources, submit=AsyncMock())
         verifier = AsyncMock()
         assembler = Mock(); assembler.evaluation_service.return_value.verify = verifier
         checkpoint = evidence.contract()['training']['checkpoint']
@@ -45,6 +46,7 @@ class LateAuthorityTests(unittest.IsolatedAsyncioTestCase):
         project = SimpleNamespace(assembler=assembler, checkpoints=checkpoints, manifest=evidence.contract()['comparisonManifest'])
         service = object.__new__(RemoteScientificReceiver)
         service.store, service.projects = store, {'project': project}
+        service.research = research
         service._context = Mock(return_value=SimpleNamespace(run_context=object()))
         service._bound = Mock(side_effect=lambda *a, **kw: (deepcopy(body), deepcopy(task), project))
         service._read = Mock(side_effect=lambda *a: deepcopy(body))
@@ -55,7 +57,7 @@ class LateAuthorityTests(unittest.IsolatedAsyncioTestCase):
         def retain():
             rows[:] = [{'owner_id': task['owner_id'], 'scope_hash': digest(retained['scope']),
                        'fingerprint': digest(retained), 'body': deepcopy(retained)}]
-        return SimpleNamespace(service=service, store=store, receipt=receipt, body=body, lease=lease,
+        return SimpleNamespace(service=service, store=store, research=research, receipt=receipt, body=body, lease=lease,
             retained=retained, rows=rows, retain=retain, verifier=verifier)
 
     async def exercise(self, error, mutation=None):
@@ -88,7 +90,7 @@ class LateAuthorityTests(unittest.IsolatedAsyncioTestCase):
                 f.verifier.assert_awaited_once()
                 f.service.inspect_phase.assert_awaited_with(f.receipt['remoteOwnerId'], f.receipt['remoteTaskId'], persist=False)
                 self.assertTrue(all(c.args[0].startswith('SELECT') for c in f.store.sql.call_args_list))
-                services_for(f.store).research_runtime.submit.assert_not_awaited()
+                f.research.research_runtime.submit.assert_not_awaited()
 
     async def test_missing_claim_identity_drift_or_current_grant_preserves_original_error(self):
         def incomplete(f):

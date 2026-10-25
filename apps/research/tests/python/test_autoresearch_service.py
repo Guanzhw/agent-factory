@@ -1,5 +1,5 @@
 """Service lifecycle contracts with in-memory seams; no ORX, provider or database."""
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchFactory, ResearchServices
 import asyncio
 from copy import deepcopy
 from dataclasses import replace
@@ -15,6 +15,7 @@ from fastapi import HTTPException
 from agent_factory_research.autoresearch import ACCEPTANCE, AutoResearchService, ResearchPreset
 from agent_factory_research.research_runtime_hooks import ResearchRuntimeHooks
 from agent_factory.store import digest
+from agent_factory.application_runtime import ApplicationRuntimeRegistry
 
 
 class MemoryService(AutoResearchService):
@@ -40,7 +41,6 @@ class MemoryService(AutoResearchService):
 class Harness:
     def __init__(self):
         self.run = SimpleNamespace(user_id='alice', session_id='task', run_id='run')
-        self.ctx = SimpleNamespace(run_context=self.run)
         self.runtime = SimpleNamespace(run=AsyncMock(return_value={'actual': 'result'}),
                                        stop=AsyncMock(return_value=True), cancel=AsyncMock())
         self.factory = Mock(return_value=self.runtime)
@@ -53,9 +53,13 @@ class Harness:
             application_ref={'id': 'app'}, runtime_factory=self.factory, context_reader=self.context,
             candidate_validator=self.validator, experiment=self.experiment)
         self.store = Mock()
-        self.store.runtime_effect_held = ResearchRuntimeHooks.effect_held
+        self.ctx = SimpleNamespace(store=self.store, run_context=self.run)
+        self.research = ResearchServices(self.store, installed=True)
+        self.store.application_runtime = ApplicationRuntimeRegistry(self.store)
+        self.store.application_runtime.register('research', ResearchRuntimeHooks(), effects=('orx-experiment-launch-v1',))
+        self.store.plan.return_value = {}
         self.store.cancellation_requested.return_value = False
-        self.store.task.return_value = {'id': 'task', 'run_id': 'run', 'owner_id': 'alice'}
+        self.store.task.return_value = {'id': 'task', 'run_id': 'run', 'owner_id': 'alice', 'plan_id': 'plan'}
         self.store.resolve_run.return_value = {'id': 'plan'}
         self.effects = {}
         def reserve(run, key, payload):
@@ -76,7 +80,7 @@ class Harness:
              'result': deepcopy(value.get('result'))} for key, value in self.effects.items()]
         self.commands = SimpleNamespace(submit=AsyncMock())
         self.bridge = SimpleNamespace(submit=AsyncMock())
-        self.service = MemoryService(self.store, Mock(), self.bridge, {'preset': self.preset}, commands=self.commands)
+        self.service = MemoryService(self.store, Mock(), self.bridge, {'preset': self.preset}, research=self.research, commands=self.commands)
         self.service.saved = {'fingerprint': digest({'preset': self.preset.fingerprint, 'goal': 'fixed goal'}),
             'body': {'id': 'task', 'ownerId': 'alice', 'presetId': 'preset', 'presetFingerprint': self.preset.fingerprint,
                      'requestId': 'original-request', 'goal': 'fixed goal', 'status': 'starting',
@@ -204,7 +208,7 @@ class AutoResearchServiceTests(unittest.IsolatedAsyncioTestCase):
         h = Harness()
         h.preset = replace(h.preset, external_session=True)
         h.service.presets['preset'] = h.preset
-        services_for(h.store).autoresearch_children = None
+        h.research.autoresearch_children = None
         self.assertFalse(h.service.list_presets('alice')[0]['ready'])
         with self.assertRaises(HTTPException) as caught:
             await h.service.start('alice', 'preset', None, 'new-original-request')
@@ -412,6 +416,56 @@ class AutoResearchServiceTests(unittest.IsolatedAsyncioTestCase):
         h.store.task.return_value['run_id'] = 'replacement-run'
         with self.assertRaisesRegex(ValueError, 'STOP_IDENTITY_INVALID'):
             h.service.commit_stop_intent(h.ctx, intent={**intent, 'key': 'another'})
+
+
+class ExplicitResearchGraphTests(unittest.TestCase):
+    def test_service_rejects_another_stores_graph_before_creating_tables(self):
+        store = Mock()
+        foreign = ResearchServices(object(), installed=True)
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_STORE_MISMATCH'):
+            AutoResearchService(store, Mock(), Mock(), {}, research=foreign)
+        store.sql.assert_not_called()
+
+    def test_presets_rebind_per_instance_without_mutating_shared_callbacks(self):
+        first, second = Harness(), Harness()
+        marker = ResearchFactory(lambda ctx, research, candidate, call_id: (research, candidate, call_id))
+        original = replace(first.preset, experiment=marker)
+        settings_presets = {'preset': original}
+        one = AutoResearchService(first.store, Mock(), Mock(), settings_presets, research=first.research)
+        # Reuse the already-bound first application's presets, as restart scripts do.
+        two = AutoResearchService(second.store, Mock(), Mock(), one.presets, research=second.research)
+        one_value, two_value = one.preset('alice', 'preset'), two.preset('alice', 'preset')
+        self.assertIsNone(marker.research)
+        self.assertIs(settings_presets['preset'], original)
+        self.assertIs(one_value.experiment.research, first.research)
+        self.assertIs(two_value.experiment.research, second.research)
+        self.assertIs(one_value.runtime_factory, original.runtime_factory)
+        first.research.release()
+        context = SimpleNamespace(store=second.store)
+        self.assertEqual(two_value.experiment(context, 'candidate', 'original-call'),
+                         (second.research, 'candidate', 'original-call'))
+        with self.assertRaisesRegex(ValueError, 'RESEARCH_STORE_MISMATCH'):
+            one_value.experiment(SimpleNamespace(store=first.store), 'candidate', 'original-call')
+
+    def test_candidate_callbacks_receive_the_explicit_graph(self):
+        h = Harness()
+        preset = replace(h.preset,
+            candidate_builder=ResearchFactory(lambda ctx, research, changes: changes['code']),
+            candidate_validator=ResearchFactory(lambda ctx, research, code: {'graph': research, 'code': code}))
+        h.service.presets['preset'] = preset
+        bound = h.service.preset('alice', 'preset')
+        actual = h.service._tool_preflight(h.ctx, bound, {'steps': []}, 'research_candidate',
+            {'hypothesis': 'synthetic', 'changes': {'code': 'inert'}})
+        self.assertEqual(actual, {'trainPy': 'inert', 'validated': {'graph': h.research, 'code': 'inert'}})
+
+    def test_dynamic_preset_is_bound_without_overwriting_published_value(self):
+        h = Harness()
+        published = replace(h.preset, context_reader=ResearchFactory(lambda ctx, research: research))
+        h.service.presets['preset'] = published
+        actual = h.service.preset('alice', 'preset')
+        self.assertIs(h.service.presets['preset'], published)
+        self.assertIsNone(published.context_reader.research)
+        self.assertIs(actual.context_reader(SimpleNamespace(store=h.store)), h.research)
 
 
 if __name__ == '__main__':

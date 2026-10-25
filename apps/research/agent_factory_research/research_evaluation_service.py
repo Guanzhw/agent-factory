@@ -22,7 +22,8 @@ def _require(value):
 
 
 class ResearchEvaluationService:
-    def __init__(self, store, auth, resources, operator_evaluators, *, checkpoint_reader=None):
+    def __init__(self, store, auth, resources, operator_evaluators, *, research, checkpoint_reader=None):
+        self.research = research.require_store(store)
         _require(type(operator_evaluators) is dict and bool(operator_evaluators))
         checkpoint_reader = checkpoint_reader if checkpoint_reader is not None else getattr(store, 'artifact_identity', None)
         if not callable(checkpoint_reader):
@@ -70,7 +71,7 @@ class ResearchEvaluationService:
         if training:
             _require(current_variant == execution['variantSha256'])
         from .autoresearch_custody import require_original_custody
-        require_original_custody(self.store, owner, plan, runtime._context(task), stopped=True)
+        require_original_custody(self.store, owner, plan, runtime._context(task), research=self.research, stopped=True)
         authorized = self.resources._authorize(owner, lease['connectionRef'])
         _require(self.resources._target_fingerprint(authorized) == self.resources._target_fingerprint(target)
                  and lease['targetFingerprint'] == self.resources._target_fingerprint(target))

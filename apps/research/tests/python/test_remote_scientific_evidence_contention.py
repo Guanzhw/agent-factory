@@ -40,7 +40,7 @@ class EvidenceContentionTests(unittest.IsolatedAsyncioTestCase):
         complete = await f.service.project_evidence(receipt)
         self.assertIsNotNone(complete['checkpoint'])
         self.assertEqual(f.project.checkpoints.identity.call_count, 2)
-        receiver.services_for(f.store).research_runtime.submit.assert_not_called()
+        f.research.research_runtime.submit.assert_not_called()
 
     async def test_busy_preserves_only_verified_claims_without_writing(self):
         f = self.f

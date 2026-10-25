@@ -5,7 +5,6 @@ here, never in Factory custody/accounting. These hooks observe or stop existing
 work only; original identity, authorization and idempotency checks stay in the
 existing adapters. No user-supplied module paths or callback registration.
 """
-from .services import services_for
 from fastapi import HTTPException
 
 
@@ -48,7 +47,8 @@ class ResearchRuntimeHooks:
         await reclaim_orx_experiment(store.settings, store, task["id"])
 
     @staticmethod
-    def project(settings, store, task, plan, events, job):
+    def project(settings, store, task, plan, events, job, *, research):
+        research.require_store(store, ready=True)
         evaluation = next((event["data"] for event in reversed(events) if event["type"] == "experiment_completed"), None)
         from .orx_experiment_tools import inspect_orx_experiment
         experiment = inspect_orx_experiment(store, task["owner_id"], task["id"])
@@ -56,8 +56,8 @@ class ResearchRuntimeHooks:
         literature = (inspect_literature_evidence(store, task["owner_id"], task["id"])
                       if plan.get("application") in APPLICATION_TOOLS else None)
         from .synthesis_runtime import inspect_synthesis_evidence
-        synthesis = inspect_synthesis_evidence(store, task["owner_id"], task["id"])
-        comparison = services_for(store).comparisons.inspect(task["owner_id"], task["id"]) if services_for(store).comparisons is not None else None
+        synthesis = inspect_synthesis_evidence(store, task["owner_id"], task["id"], research=research)
+        comparison = research.comparisons.inspect(task["owner_id"], task["id"]) if research.comparisons is not None else None
         if synthesis is not None:
             job.update(validationStatus="受控综合；引用结构检查不等于科研结论验证", evidenceKind="controlled_model_synthesis")
         if comparison is not None:
@@ -88,10 +88,11 @@ class ResearchRuntimeHooks:
                 "orxExperiment": experiment}, evaluation
 
     @staticmethod
-    async def requirement(store, task, requirement, version, status, job, actions):
+    async def requirement(store, task, requirement, version, status, job, actions, *, research):
+        research.require_store(store, ready=True)
         tool = requirement.get("tool_execution") or {}
         if tool.get("tool_name") == "autoresearch_session_run" and tool.get("external_execution_required"):
-            control = getattr(services_for(store), "autoresearch_session_control", None)
+            control = getattr(research, "autoresearch_session_control", None)
             if control is not None and status == "waiting_approval":
                 try:
                     await control.completion(task, requirement)
@@ -103,7 +104,7 @@ class ResearchRuntimeHooks:
                         "scope": scope, "toolName": "autoresearch_session_run", "arguments": {}}, approval={"scope": scope})
                     actions.append("approve")
         elif tool.get("tool_name") == "research_process_run" and tool.get("external_execution_required"):
-            runtime = getattr(services_for(store), "research_runtime", None)
+            runtime = getattr(research, "research_runtime", None)
             original = runtime._original(task["id"]) if runtime is not None else None
             if original is not None and runtime is not None:
                 lease = runtime.resources.inspect(task["owner_id"], original["lease_id"])

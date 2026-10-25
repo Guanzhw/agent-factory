@@ -16,8 +16,6 @@ from unittest.mock import patch
 
 from agent_factory_research.autoresearch import ResearchPreset
 from agent_factory_research.config import ResearchSettings
-from agent_factory_research.services import services_for
-import agent_factory_research.assembly as assembly
 import agent_factory_server.main as deployment
 
 
@@ -38,9 +36,9 @@ def main():
     spec.loader.exec_module(bootstrap)
 
     class Runtime:
-        def __init__(self, ctx):
+        def __init__(self, ctx, research):
             self.ctx = ctx
-            self.graph = services_for(ctx.store)
+            self.graph = research.require_store(ctx.store, ready=True)
             self.identity = {'taskId': ctx.run_context.session_id,
                              'runId': ctx.run_context.run_id, 'ownerId': ctx.run_context.user_id}
 
@@ -68,7 +66,7 @@ def main():
                 deadline = time.monotonic() + 45
                 while time.monotonic() < deadline:
                     # Exercise actual consumers throughout the 35s close wait.
-                    same_graph = services_for(self.ctx.store) is self.graph
+                    same_graph = self.graph.require_store(self.ctx.store, ready=True) is self.graph
                     self.ctx.store.sql('SELECT 1')
                     record('cleanup-dependency-read', sameGraph=same_graph)
                     if not same_graph:
@@ -99,7 +97,7 @@ def main():
         manifest={'schema': 1, 'evidenceMode': 'controlled-process'},
         limits={'totalSeconds': 180, 'experimentSeconds': 30, 'maxExperiments': 1,
                 'toolCalls': 32, 'outputBytes': 65536},
-        runtime_factory=lambda ctx, _service: Runtime(ctx), context_reader=lambda: {},
+        runtime_factory=lambda ctx, service: Runtime(ctx, service.research), context_reader=lambda: {},
         candidate_validator=lambda _: {}, experiment=forbidden_experiment, external_session=True)
     settings = bootstrap.settings(db_url=config['database'], workspace=root, preset=preset)
     # Same explicit controlled accounting seam as the external-session PG test.
@@ -108,13 +106,12 @@ def main():
     settings.max_user_tasks = settings.max_total_tasks = 1
     settings.storage_low_water_bytes = 1
     original_create = deployment.create_app
-    original_release = assembly.release_services
 
     def observe_app(*args, **kwargs):
         app = original_create(*args, **kwargs)
         state = deployment.factory_state(app)
         store = state['store']
-        graph = services_for(store)
+        graph = state['research']
         published = bootstrap.publish_application(state, preset, author='alice')
         state['settings'].autoresearch_presets[published.id] = published
         graph.autoresearch.presets[published.id] = published
@@ -152,11 +149,13 @@ def main():
 
             setattr(owner, attribute, observed)
 
-        def observe_release(released_store):
-            record('graph-release', pending=pending(), sameGraph=services_for(released_store) is graph)
-            return original_release(released_store)
+        original_release = graph.release
 
-        assembly.release_services = observe_release
+        def observe_release():
+            record('graph-release', pending=pending(), sameGraph=state['research'] is graph)
+            return original_release()
+
+        graph.release = observe_release
         record('application-created')
         return app
 

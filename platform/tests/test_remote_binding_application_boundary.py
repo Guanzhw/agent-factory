@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 from fastapi import HTTPException
 from sqlalchemy import Column, MetaData, String, Table
 
+from agent_factory.application_runtime import ApplicationRuntimeRegistry
 from agent_factory.remote_bindings import RemoteBindingService
 from agent_factory.remote_handoff import PreparedHandoffService
 from agent_factory.store import digest
@@ -99,14 +100,18 @@ class RemoteBindingApplicationBoundaryTests(unittest.TestCase):
 
 class RemoteReceiptApplicationBoundaryTests(unittest.IsolatedAsyncioTestCase):
     async def test_completed_native_ticket_waits_for_registered_runtime_stop_proof(self):
-        task = {'id': 'receiver-task', 'run_id': 'original-run',
+        task = {'id': 'receiver-task', 'run_id': 'original-run', 'owner_id': 'receiver-owner', 'plan_id': 'receiver-plan',
             'admission': 'accepted', 'cancel_requested': False}
         row = {'id': 'receipt', 'state': 'ACCEPTED', 'body': {'remoteTaskId': task['id']}}
-        effect = {'status': 'DONE', 'effect_key': 'external-adapter-work'}
+        effect = {'status': 'DONE', 'effect_key': 'original-run:external-adapter-work'}
         service = object.__new__(PreparedHandoffService)
         service.store = SimpleNamespace(task=Mock(return_value=task), sql=Mock(),
             effects=Mock(return_value=[effect]), events=Mock(return_value=[]), artifacts=Mock(return_value=[]),
-            runtime_effect_held=Mock(return_value=True))
+            plan=Mock(return_value={}))
+        effect_held = Mock(return_value=True)
+        service.store.application_runtime = ApplicationRuntimeRegistry(service.store)
+        service.store.application_runtime.register('fixture-owner', SimpleNamespace(effect_held=effect_held),
+            effects=('external-adapter-work',))
         service.bridge = SimpleNamespace(find_run=AsyncMock(return_value={'run_id': 'original-run'}),
             detail=AsyncMock(return_value={'run_id': 'original-run', 'status': 'completed'}))
         service._row = Mock(return_value=row)
@@ -115,8 +120,8 @@ class RemoteReceiptApplicationBoundaryTests(unittest.IsolatedAsyncioTestCase):
         receipt = await service.receipt('receiver-owner', 'receipt')
         self.assertIs(receipt['allStopped'], False)
         self.assertEqual(receipt['applicationStatus'], 'unknown')
-        service.store.runtime_effect_held.assert_called_with(effect)
-        service.store.runtime_effect_held.return_value = False
+        effect_held.assert_called_with(effect)
+        effect_held.return_value = False
         receipt = await service.receipt('receiver-owner', 'receipt')
         self.assertIs(receipt['allStopped'], True)
         self.assertEqual(receipt['applicationStatus'], 'completed')

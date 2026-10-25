@@ -71,10 +71,8 @@ class Store:
         self.workflow: Any = None
         self.workflow_control: Any = None
         self.native_workflows: Any = None
-        self.runtime_effect_held: Any = None
-        self.runtime_cancel_owned: Any = None
-        self.runtime_ended_reason: Any = None
-        self.runtime_mark_cancel_requested: Any = None
+        from .application_runtime import ApplicationRuntimeRegistry
+        self.application_runtime = ApplicationRuntimeRegistry(self)
         self.external_execution_handlers: dict[str, Any] = {}
         self.execution_guards: dict[str, Any] = {}
         self.tool_independent_execution_guards: dict[str, Any] = {}
@@ -508,8 +506,8 @@ class Store:
     def request_cancel(self, task_id):
         with self.transaction():
             self.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id", id=task_id)
-            if self.runtime_mark_cancel_requested is not None:
-                self.runtime_mark_cancel_requested(task_id)
+            if self.application_runtime:
+                self.application_runtime.mark_cancel(self.task(task_id))
             self.event(task_id, "cancel_requested", "Cancellation requested; waiting for native run and experiments to stop", {})
 
     def cancellation_requested(self, identifier):

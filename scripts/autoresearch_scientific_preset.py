@@ -13,6 +13,7 @@ import hashlib
 from typing import Any, Awaitable, Callable, cast
 
 from agent_factory_research.autoresearch import ResearchPreset
+from agent_factory_research.services import ResearchFactory
 from agent_factory_research.research_assessment import assess_observations
 from agent_factory_research.research_manifest import manifest_fingerprint, validate_manifest
 from agent_factory_research.research_profile import verify_upstream_source
@@ -69,11 +70,12 @@ def make_preset(config: OperatorScientificConfig, *, runtime_factory,
         verify_upstream_source(files)
         return dict(files)
 
-    async def baseline():
+    async def baseline(ctx, research):
         # Legacy synchronous custody readers may run their own event loop. Run
         # them offloop; genuinely async readers are awaited on the current loop.
         # No observation or acceptance is cached across context/experiment calls.
-        observation = await asyncio.to_thread(config.baseline_reader)
+        observation = (config.baseline_reader.bind(research)(ctx) if isinstance(config.baseline_reader, ResearchFactory)
+                       else await asyncio.to_thread(config.baseline_reader))
         if inspect.isawaitable(observation):
             observation = await observation
         assess_observations(observation, observation)
@@ -82,13 +84,13 @@ def make_preset(config: OperatorScientificConfig, *, runtime_factory,
                 and observation['variantSha256'] == manifest['baselineSourceManifestSha256'])
         return deepcopy(observation)
 
-    async def context_reader():
+    async def context_reader(ctx, research):
         files = await asyncio.to_thread(upstream)
         return {'schema': 1, 'evidenceKind': 'approved-scientific-project-context',
             'programMd': files['program.md'].decode('utf-8'),
             'trainSha256': hashlib.sha256(files['train.py']).hexdigest(),
             'candidateParameters': parameter_context(files['train.py'], microbatch=config.microbatch),
-            'baselineObservation': await baseline(), 'comparisonManifestSha256': fingerprint,
+            'baselineObservation': await baseline(ctx, research), 'comparisonManifestSha256': fingerprint,
             'scientificConclusionVerified': False}
 
     def candidate_builder(changes):
@@ -104,21 +106,23 @@ def make_preset(config: OperatorScientificConfig, *, runtime_factory,
         return {'schema': 1, 'trainSha256': hashlib.sha256(raw).hexdigest(),
             'adaptation': receipt, 'executionVerified': False, 'scientificConclusionVerified': False}
 
-    async def experiment(ctx, candidate, call_id):
+    async def experiment(ctx, research, candidate, call_id):
         if not callable(subordinate_executor) or not callable(result_verifier):
             raise ValueError(ERROR)
         require(type(call_id) is str and 1 <= len(call_id) <= 200 and type(candidate) is dict
                 and set(candidate) == {'hypothesis', 'trainPy', 'validated'})
         require(candidate_validator(candidate['trainPy']) == candidate['validated'])
-        await baseline()  # Original baseline still has readable, verified custody.
+        await baseline(ctx, research)  # Original baseline still has readable, verified custody.
         def parent_guard():
-            from agent_factory_research.services import services_for
-            preset = services_for(ctx.store).autoresearch.current(ctx)
+            research.require_store(ctx.store, ready=True)
+            preset = research.autoresearch.current(ctx)
             require(preset.id == config.id and preset.owner_id == config.owner_id)
         parent_guard()
-        result = await subordinate_executor(ctx, deepcopy(candidate), call_id, parent_guard=parent_guard)
+        execute = subordinate_executor.bind(research) if isinstance(subordinate_executor, ResearchFactory) else subordinate_executor
+        result = await execute(ctx, deepcopy(candidate), call_id, parent_guard=parent_guard)
         parent_guard()
-        verified = await result_verifier(ctx, result)
+        verify = result_verifier.bind(research) if isinstance(result_verifier, ResearchFactory) else result_verifier
+        verified = await verify(ctx, result)
         parent_guard()
         require(type(verified) is dict and verified.get('cleanupConfirmed') is True
                 and verified.get('independentResult') is True
@@ -145,5 +149,5 @@ def make_preset(config: OperatorScientificConfig, *, runtime_factory,
     return ResearchPreset(id=config.id, name=config.name, default_goal=config.default_goal,
         owner_id=config.owner_id, instructions='Read research_context before proposing an eleven-literal-only candidate.',
         manifest=manifest, limits=deepcopy(config.limits), runtime_factory=runtime_factory,
-        context_reader=context_reader, candidate_validator=candidate_validator, candidate_builder=candidate_builder, experiment=experiment,
+        context_reader=ResearchFactory(context_reader), candidate_validator=candidate_validator, candidate_builder=candidate_builder, experiment=ResearchFactory(experiment),
         blockers=tuple(blockers), external_session=True)

@@ -19,7 +19,7 @@ _spec.loader.exec_module(assembly)
 from agent_factory.gpu_custody import GpuBinding
 from agent_factory.process_enforcement import ResearchProcessLimits, UvResearchProcessSpec
 from agent_factory_research.research_manifest import manifest_fingerprint
-from agent_factory_research.services import services_for
+from agent_factory_research.services import ResearchServices
 from agent_factory.resources import PersistentResourceService, RemoteTarget
 from agent_factory.store import digest
 import test_interpreter_identity as interpreter_fixture  # pyright: ignore[reportMissingImports]
@@ -66,8 +66,8 @@ class CandidateAssemblyTests(unittest.TestCase):
                 artifact=Mock(), plan=Mock())
             auth = SimpleNamespace(require=Mock())
             resources = PersistentResourceService(state_store, auth, settings.remote_targets)
-            services_for(state_store).research_runtime = SimpleNamespace(resources=resources)
-            state = {'store': state_store, 'auth': auth}
+            research = ResearchServices(state_store, installed=True, research_runtime=SimpleNamespace(resources=resources))
+            state = {'store': state_store, 'auth': auth, 'research': research}
             self.created.append(state)
             return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(factory=state)))
 

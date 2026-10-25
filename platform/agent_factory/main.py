@@ -314,6 +314,16 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
         # Arm a deployment-selected process policy only when shutdown begins,
         # before any application/native context exits; keep it through cleanup.
         with ExitStack() as shutdown:
+            armed = False
+            def begin_shutdown():
+                nonlocal armed
+                if not armed:
+                    armed = True
+                    if shutdown_guard is not None:
+                        deadline = shutdown.enter_context(shutdown_guard())
+                        if deadline is not None:
+                            native.state.factory['shutdown_deadline'] = deadline
+            native.state.factory['begin_shutdown'] = begin_shutdown
             try:
                 async with native_lifespan(app) as state:
                     async with observer.lifespan(app):
@@ -321,9 +331,10 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                             try:
                                 yield state or {}
                             finally:
-                                if shutdown_guard is not None:
-                                    shutdown.enter_context(shutdown_guard())
+                                begin_shutdown()
             finally:
+                begin_shutdown()
+                native.state.factory.pop('begin_shutdown', None)
                 # Observer and native worker finish before their shared lock pool.
                 try:
                     store.dispose_root_locks()

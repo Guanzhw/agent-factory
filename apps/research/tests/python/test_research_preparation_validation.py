@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from agent_factory_research import research_bootstrap_assembly as assembly
+from agent_factory_research.services import ResearchServices
 from agent_factory.process_enforcement import ProcessLimits
 from agent_factory_research.research_preparation_harness import tokenizer_payload
 from agent_factory_research.research_preparation_provider import PreparationProvider
@@ -47,7 +48,8 @@ class PreparationConstructionTests(unittest.TestCase):
                 program.mkdir(mode=0o700); custody.mkdir(mode=0o700)
                 info = program.stat()
                 bootstrap, store = Mock(), Mock()
-                state = {'store': store, 'auth': Mock()}
+                research = ResearchServices(store, installed=True)
+                state = {'store': store, 'auth': Mock(), 'research': research}
                 app = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(factory=state)))
                 application_constructor = Mock(return_value=app)
                 with patch.object(assembly, 'Store', return_value=bootstrap) as store_constructor, \
@@ -64,6 +66,7 @@ class PreparationConstructionTests(unittest.TestCase):
                     else:
                         result = assembly.prepare_application(**arguments)
                         application_constructor.assert_called_once()
+                        self.assertIs(result['state']['research'], research)
                         self.assertIsInstance(result['target'].provider, PreparationProvider)
                         self.assertEqual(result['target'].provider.limits,
                                          ProcessLimits(cpu_seconds=1, address_space_mb=128,

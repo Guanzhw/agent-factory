@@ -5,7 +5,6 @@ import unittest
 from unittest.mock import AsyncMock, Mock
 
 from agent_factory.store import digest
-from agent_factory_research.services import services_for
 import test_remote_scientific_receiver as fixtures
 
 
@@ -94,7 +93,7 @@ class ScientificHistoryReadTests(unittest.IsolatedAsyncioTestCase):
         body = self.store.rows['receipt-training']['body']
         body.update(state='UNKNOWN', targetFingerprint='f' * 64,
                     runtimeSnapshot={'body': {'synthetic': True}, 'sha256': digest({'synthetic': True})})
-        runtime = services_for(self.store).research_runtime
+        runtime = self.fixture.research.research_runtime
         runtime._original.return_value = {'owner_id': 'receiver-alice', 'native_run_id': 'run-training', 'lease_id': 'original-lease'}
         runtime.resources.targets[body['config']['targetRef']] = object()
         lease = {'id': 'original-lease', 'state': 'UNKNOWN', 'capacityHeld': True}

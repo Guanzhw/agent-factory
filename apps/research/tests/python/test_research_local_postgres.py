@@ -1,6 +1,5 @@
 # pyright: reportMissingImports=false
 """Real native queue and stdlib guardian; device observations are explicit mocks."""
-from agent_factory_research.services import services_for
 import asyncio
 from contextlib import ExitStack
 from dataclasses import asdict, replace
@@ -237,8 +236,8 @@ print(json.dumps({{'schema':1,'evaluationContractSha256':p['contractFingerprint'
         settings = replace(settings, fee_management_enabled=True, platform_paid_models_enabled=True, runtime_adapters=[*settings.runtime_adapters, *evaluator_adapters],
             usage_pricing=(*settings.usage_pricing, replace(settings.usage_pricing[0], adapter_id=settings.usage_pricing[0].adapter_id + '-evaluator')))
         self.app = create_app(settings); self.state = self.app.app.state.factory
-        self.store, self.auth = self.state['store'], self.state['auth']; self.runtime = services_for(self.store).research_runtime
-        self.checkpoints = ResearchCheckpointStore(self.store, self.auth, self.runtime.resources, self.store.storage)
+        self.store, self.auth = self.state['store'], self.state['auth']; self.runtime = self.state['research'].research_runtime
+        self.checkpoints = ResearchCheckpointStore(self.store, self.auth, self.runtime.resources, self.store.storage, research=self.state['research'])
         self.requirements = {}
         self.destination = {}
         self.training_contract = {}
@@ -350,7 +349,7 @@ print(json.dumps({{'schema':1,'evaluationContractSha256':p['contractFingerprint'
             raise ValueError('SYNTHETIC_ACK_LOSS')
         with patch.object(BoundedProcessAdapter, 'launch', lose_ack):
             lease = self.portal.call(self.runtime.submit, 'alice', task['id'])
-        restarted = ResearchProcessRuntimeService(self.store, self.auth, self.runtime.resources)
+        restarted = ResearchProcessRuntimeService(self.store, self.auth, self.runtime.resources, research=self.state['research'])
         with patch.object(BoundedProcessAdapter, 'launch', side_effect=AssertionError('NO_REPLAY')):
             again = self.portal.call(restarted.submit, 'alice', task['id'])
             self.assertEqual(again['id'], lease['id'])
@@ -391,7 +390,7 @@ print(json.dumps({{'schema':1,'evaluationContractSha256':p['contractFingerprint'
         settled = self.settled(evaluation['id'])
         self.assertEqual(settled['executionStatus'], 'COMPLETED')
         service = ResearchEvaluationService(self.store, self.auth, self.runtime.resources,
-            {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=self.checkpoints.identity)
+            {digest(self.manifest['evaluator']): 'evaluator'}, checkpoint_reader=self.checkpoints.identity, research=self.state['research'])
         with patch.object(self.provider, 'read_completed_output', side_effect=AssertionError('TRAINING_STDOUT_IS_NOT_EVIDENCE')):
             receipt = self.portal.call(service.verify, 'alice', self.evaluation_contract)
         self.assertTrue(receipt['evaluatorCustodyVerified'])

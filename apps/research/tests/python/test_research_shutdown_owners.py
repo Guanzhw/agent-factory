@@ -8,19 +8,20 @@ from agent_factory_research.assembly import research_lifespan
 from agent_factory_research.autoresearch import AutoResearchService
 from agent_factory_research.autoresearch_session_control import AutoResearchSessionControl
 from agent_factory_research.remote_scientific_receiver import RemoteScientificReceiver
-from agent_factory_research.services import services_for, release_services
+from agent_factory_research.services import ResearchServices
 
 
 class ResearchShutdownOwnerTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.tasks = []
         self.store = SimpleNamespace()
+        self.research = ResearchServices(self.store, installed=True)
 
     async def asyncTearDown(self):
         for task in self.tasks:
             task.cancel()
         await asyncio.gather(*self.tasks, return_exceptions=True)
-        release_services(self.store)
+        self.research.release()
 
     def pending(self):
         task = asyncio.create_task(asyncio.Event().wait())
@@ -29,13 +30,13 @@ class ResearchShutdownOwnerTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_controller_close_covers_original_research_cleanup(self):
         original = self.pending()
-        graph = services_for(self.store)
+        graph = self.research
         graph.autoresearch = SimpleNamespace(cleanups={'original': original})
-        control = AutoResearchSessionControl(self.store, None)
+        control = AutoResearchSessionControl(self.store, None, research=self.research)
         done = await control.close(deadline=asyncio.get_running_loop().time() + .01)
         self.assertFalse(done)
         self.assertFalse(original.done())
-        self.assertIs(graph, services_for(self.store))
+        self.assertIs(graph, self.research)
         self.assertIs(graph.autoresearch.cleanups['original'], original)
 
     async def test_receiver_timeout_does_not_recancel_or_forget_original_drive(self):
@@ -91,7 +92,7 @@ class ResearchShutdownOwnerTests(unittest.IsolatedAsyncioTestCase):
         service.executions = {}
         service.cleanups = {}
         self.assertTrue(await service.close(deadline=0))
-        control = AutoResearchSessionControl(self.store, None)
+        control = AutoResearchSessionControl(self.store, None, research=self.research)
         self.assertTrue(await control.close(deadline=0))
         receiver = RemoteScientificReceiver.__new__(RemoteScientificReceiver)
         receiver._drives = {}

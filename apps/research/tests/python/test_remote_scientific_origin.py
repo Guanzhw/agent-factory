@@ -1,5 +1,5 @@
 """In-memory contract tests, not PostgreSQL locking or remote execution proof."""
-from research_services_fixture import with_research_services
+from agent_factory_research.services import ResearchServices
 from contextlib import contextmanager
 from copy import deepcopy
 import json
@@ -64,9 +64,10 @@ class Fixture:
         self.auth = SimpleNamespace(require_member=self.require_member)
         self.delegation = SimpleNamespace(_link=lambda _: self.link, _mandate=lambda *_: None,
             _root_lock=self.root_lock, _descendants=lambda task: [self.link] if task == self.parent['id'] else [])
-        self.store = with_research_services(SimpleNamespace(sql=self.sql, task=self.task, plan=self.get_plan, has_failures=lambda _: False, require_plan_execution=lambda *_, **kw: None, delegation=self.delegation, lifecycle_observer=SimpleNamespace(_binding=lambda _: self.ticket), process_runtime=SimpleNamespace(_context=lambda task: SimpleNamespace(run_id=task['run_id'])), transaction=self.transaction), autoresearch=SimpleNamespace(current=lambda _: SimpleNamespace(manifest=self.manifest), row=lambda *_: {'body': self.session}))
+        self.store = SimpleNamespace(sql=self.sql, task=self.task, plan=self.get_plan, has_failures=lambda _: False, require_plan_execution=lambda *_, **kw: None, delegation=self.delegation, lifecycle_observer=SimpleNamespace(_binding=lambda _: self.ticket), process_runtime=SimpleNamespace(_context=lambda task: SimpleNamespace(run_id=task['run_id'])), transaction=self.transaction)
+        self.research = ResearchServices(self.store, installed=True, autoresearch=SimpleNamespace(current=lambda _: SimpleNamespace(manifest=self.manifest), row=lambda *_: {'body': self.session}))
         self.variant = 'e' * 64
-        self.service = RemoteScientificOrigin(self.store, self.auth, handoff_client=self.handoff,
+        self.service = RemoteScientificOrigin(self.store, self.auth, research=self.research, handoff_client=self.handoff,
                                              project_validator=lambda *_: self.variant)
         self.envelope = self.service.prepare_placement('alice', self.parent, self.child, self.plan, self.placement)
         self.cancelled = []

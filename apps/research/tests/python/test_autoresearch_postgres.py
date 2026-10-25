@@ -5,7 +5,6 @@ No ORX container, network provider, model inference, GPU or scientific result is
 claimed. The real ORXResearchModel.aresponse delegates into the service once.
 """
 from __future__ import annotations
-from agent_factory_research.services import services_for
 
 import asyncio
 from dataclasses import replace
@@ -103,7 +102,7 @@ class AutoResearchPostgresTests(unittest.TestCase):
         self.open_application()
         self.preset = bootstrap.publish_application(self.state, self.preset, author='manager')
         self.settings.autoresearch_presets[self.preset.id] = self.preset
-        services_for(self.store).autoresearch.presets[self.preset.id] = self.preset
+        self.state['research'].autoresearch.presets[self.preset.id] = self.preset
         self.login('alice')
         self.assertEqual(self.factory_calls, [])
         self.assertEqual(self.outer_calls, [])
@@ -164,7 +163,7 @@ class AutoResearchPostgresTests(unittest.TestCase):
         self.post('/api/factory/autoresearch/runs', {'presetId': self.preset.id, 'requestId': request, 'goal': '另一个不同目标'}, 409)
         blocked = replace(self.preset, blockers=('Synthetic operator prerequisite unavailable',))
         self.settings.autoresearch_presets[self.preset.id] = blocked
-        services_for(self.store).autoresearch.presets[self.preset.id] = blocked
+        self.state['research'].autoresearch.presets[self.preset.id] = blocked
         self.post('/api/factory/autoresearch/runs', {'presetId': self.preset.id, 'requestId': str(uuid4())}, 409)
         self.assertEqual(self.runtime.run_calls, 1)
         self.assertEqual(len(self.store.sql('SELECT task_id FROM af_autoresearch_runs')), 1)
@@ -265,7 +264,7 @@ class AutoResearchPostgresTests(unittest.TestCase):
         preset = replace(self.preset, runtime_factory=runtime_factory,
             limits={**self.preset.limits, 'modelRequests': 4, 'modelOutputTokens': 16})
         self.settings.autoresearch_presets[preset.id] = preset
-        services_for(self.store).autoresearch.presets[preset.id] = preset
+        self.state['research'].autoresearch.presets[preset.id] = preset
         run = self.start()
         self.wait_for(completed.is_set)
         self.wait_for(lambda: self.runtime.stop_calls == 1)

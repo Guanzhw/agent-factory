@@ -1,5 +1,4 @@
 """Real reconstructed provider fingerprints, mocked source/DB; no GPU dispatch."""
-from agent_factory_research.services import services_for
 import importlib.util
 from pathlib import Path
 import sys
@@ -48,7 +47,7 @@ class CandidateReopenTests(unittest.TestCase):
             upstream_files={'train.py': b'synthetic original'}, candidate_files={'train.py': b'synthetic candidate'},
             training=args['training'], microbatch=8)
         state = result['state']
-        state['resources'] = services_for(state['store']).research_runtime.resources
+        state['resources'] = state['research'].research_runtime.resources
         return result, snapshot
 
     def test_training_and_evaluation_reconstruct_exact_target_and_policy_fingerprints(self):

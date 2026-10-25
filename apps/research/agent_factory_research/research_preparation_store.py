@@ -27,7 +27,8 @@ def _require(value):
 
 
 class ResearchPreparationStore:
-    def __init__(self, store, auth, resources, storage, *, preparation_manifest_sha256, source_sha256):
+    def __init__(self, store, auth, resources, storage, *, research, preparation_manifest_sha256, source_sha256):
+        self.research = research.require_store(store)
         for value in (preparation_manifest_sha256, source_sha256):
             _require(type(value) is str and re.fullmatch('[a-f0-9]{64}', value))
         self.store, self.auth, self.resources, self.storage = store, auth, resources, storage
@@ -42,7 +43,7 @@ class ResearchPreparationStore:
         _require(task['id'] == lease['localTaskId'] and task['run_id'] == lease['nativeRunId']
                  and task['plan_id'] == plan['id'] and lease['planHash'] == digest(plan))
         from .autoresearch_custody import require_original_custody
-        require_original_custody(self.store, owner, plan, runtime._context(task), stopped=stopped)
+        require_original_custody(self.store, owner, plan, runtime._context(task), research=self.research, stopped=stopped)
         authorized = self.resources._authorize(owner, lease['connectionRef'])
         _require(lease['targetFingerprint'] == self.resources._target_fingerprint(authorized)
                  and self.resources._target_fingerprint(target) == lease['targetFingerprint'])
