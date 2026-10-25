@@ -15,6 +15,11 @@
 - **WHEN** 同一操作改用不同goal或mode
 - **THEN** 拒绝冲突，不更换请求身份或创建新child
 
+
+#### Scenario: 普通委派入口不能占用原operation请求
+- **WHEN** 已取消原custody尚无child，成员从公开委派入口提供同parent和`operation:<原ID>`请求
+- **THEN** 拒绝保留namespace，zerochild/zerodispatch；仅可信adapter携带精确原operation绑定才可进入原锁内核对
+
 ### Requirement: 未知只核对原身份
 系统 SHALL 在操作或child回执未知时只查询原持久关联，不通过lookup重新创建或派发任务。
 
@@ -32,6 +37,10 @@
 #### Scenario: 子效果未知
 - **WHEN** child native已结束但仍有未解效果或未确认停止的后代
 - **THEN** 原操作仍未闭合，不因进程结束或cancel回执伪造停止
+
+#### Scenario: 后代创建与停止观察互斥
+- **WHEN** 后代create持原root锁但其新link尚未完整提交
+- **THEN** 子树停止观察等待同一原锁并重读关联，不能以旧集合提前allStopped；新后代未停/UNKNOWN时保留custody
 
 ### Requirement: 撤权后的原custody清理
 系统 SHALL 在核对原操作、parent/run/plan与child绑定后允许原效果观察/取消，同时拒绝撤权后的新执行或跨身份操作。
