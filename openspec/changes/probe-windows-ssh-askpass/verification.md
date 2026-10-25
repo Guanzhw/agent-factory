@@ -38,3 +38,13 @@ Root cause verified against installed cryptography source and a local synthetic 
 Spec `d57cf00` preceded the repair. The isolated `ssh-probe` group now pins bcrypt 5.0.0; existing locked package versions and runtime dependencies are unchanged. The first lock command could not write the default read-only cache; using a task-owned `/tmp` cache resolved the environment issue without modifying the shared environment.
 
 Installed the hash-checked export of only this group into a separate `/tmp` target, then used the existing cryptography environment: encrypted OpenSSH serialization/round-trip passed, missing password rejected, wrong password rejected (three checks, no key output). `uv lock --check --offline` and `git diff --check` passed. This confirms the fixture encryption prerequisite only; Windows OpenSSH/ASKPASS mechanism is still unvalidated. The probe job must use `uv sync --frozen --group ssh-probe`; product adoption would separately require an explicit production dependency.
+
+## Second Stage A Windows run: job-wrapper argument failure
+
+[Run 40239375015](https://github.com/Guanzhw/agent-factory/actions/runs/40239375015), job 121307679066, [artifact 12616145848](https://github.com/Guanzhw/agent-factory/actions/runs/40239375015/artifacts/12616145848): bcrypt installation and encryption advanced, but no loader was invoked. Safe first result:
+
+```json
+{"candidateAccepted":false,"experimentCompleted":false,"cases":{"normal":{"errorType":"TypeError","fixtureComplete":false,"stage":"CREATE_PIPE_JOB","winerror":null}},"sshVersion":"OpenSSH_for_Windows_9.5p2","windowsVersion":[10,0,26100]}
+```
+
+A definite argument-contract bug exists in this exact stage: the probe calls `win32job.CreateJobObject(None, None)`, but pinned pywin32 b312 declares the name as ordinary `WCHAR *lpName` ([win32job.i](https://github.com/mhammond/pywin32/blob/b312/win32/src/win32job.i)), whose [SWIG mapping](https://github.com/mhammond/pywin32/blob/b312/SWIG/swig_lib/python/pywintypes.i#L143-L146) explicitly passes `FALSE` for None acceptance. [PyUnicode.cpp](https://github.com/mhammond/pywin32/blob/b312/win32/src/PyUnicode.cpp#L45-L52) raises TypeError for that argument. The retained CI result lacks a traceback and therefore does not independently identify the line; the invalid call is established by the pinned wrapper source. No speculative named-pipe/ACL change is justified.
