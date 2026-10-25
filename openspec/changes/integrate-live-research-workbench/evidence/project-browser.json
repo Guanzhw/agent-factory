@@ -1,0 +1,24 @@
+[
+  {
+    "viewport": [
+      1487,
+      1058
+    ],
+    "result": "passed",
+    "pageErrors": [],
+    "consoleErrors": [],
+    "writes": [],
+    "identity": "synthetic transport only, no real research execution"
+  },
+  {
+    "viewport": [
+      390,
+      844
+    ],
+    "result": "passed",
+    "pageErrors": [],
+    "consoleErrors": [],
+    "writes": [],
+    "identity": "synthetic transport only, no real research execution"
+  }
+]
