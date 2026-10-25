@@ -1966,3 +1966,24 @@ P7定向经验问答/主动关联、P8可复现成果包、完整自主多轮仍
 | 私密peerQA预算基础 | assistant_messages；pr104_independent_review规范审查 | spec9de16ab，待补完整原start请求指纹绑定；复用scope/request/queue，不将私人问句发布team；root独占store/main钩子 |
 
 P5–P9仍未整体完成；真实C/D参数缺项继续BLOCKED/NOTRUN。当前云端PG串行，不新增公网服务、付费调用或凭据权限。历史MCP长尾与整套提速证据限制不因个别复验通过而关闭。
+
+## 2026-10-25 Final deterministic research integration
+
+The current evidence supersedes the earlier in-progress entries without deleting
+first failures. See [17-case/P0–P9 matrix](plans/research-acceptance-progress-20261025.md)
+and [publication/review register](plans/research-release-register-20261025.md).
+
+| Owner / scope | Current state | Remaining gate |
+| --- | --- | --- |
+| root: native integration, exact-head CI and merges | #104–134 merged; #135 closes supplemental acceptance and evidence | Final #135 independent review/CI and resulting main checks |
+| research_frontend + independent pr104 reviewer | Approved formal UI, QA, source associations, evidence/delivery implemented; 490 Web and two actual browser journeys passed | Real provider/identity acceptance remains separate |
+| research_app_spec / assistant_messages + independent reviewers | P7/P8 deterministic implementation and source/withdrawal/actual CLI reproduction/continuation passed | C01–C04 real research value and frozen oracle/data/model/budget |
+| foundation_review / pr104_independent_review | Full diff, simplicity, corrections and retarget equivalence recorded | Historical missing review fields and post-merge supplemental reviews explicitly identified in register |
+| root: acceptance / local resources | Backend full 40211745245 passed; 3 later seams plus original restart 4/4 passed; temporary PG stopped, evidence retained | D01–D03 target GPU/deployment/capacity and external IdP parameters |
+
+No remaining known deterministic P7/P8 implementation gap is currently identified.
+This does not close real-resource acceptance or prove general scientific quality.
+There has been no deployment, paid model/GPU call or new credential grant. The
+historical MCP long-tail investigation and lack of whole-suite speedup evidence
+remain disclosed. Final main SHA/CI are reported from the actual merged result,
+not inferred from the earlier combined full run.
