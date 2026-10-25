@@ -34,3 +34,19 @@
 Spec 535ae70 adopts the independently reviewed simplification: core content stores and authorizes the full selected publication; no application shadow body or read-back proxy. Existing delivery implementation already uses that interface. Added portable coverage checks full sourceIds vs selected recordIds, rich selected body, no dependency-only body/artifact export, author losing a peer dependency, manifest/list/download denial and generic selected content denial.
 
 First run `/tmp/research-delivery-peer-portable-first.log`: 6 tests, 1 fixture error (missing required publication request_id), exit 1. Fixed the fixture to use the actual publish contract; `/tmp/research-delivery-peer-portable-fixed.log`: 6 passed, 0 skipped, 1.345s, exit 0. Ruff and whitespace checks passed. These use real core content permissions with portable storage and synthetic execution; they do not establish actual P7 native consumption or PostgreSQL concurrency. P7 final reviewed round publication merge and final serialized PG integration remain outstanding.
+
+## Final combined native/PG delivery boundary
+
+Independent validation checkout: `/workspace/agent-factory-peer-delivery-validation`, base `73772989537c25ad4a3e7a1c8a4eabd0e16f595c` (P7 full source-bound publications + P8 selection/delivery + permanent-error queue fence). Added an actual native CLI case where Bob's original team record is shown to the synthetic model, Alice executes the original CLI child, and the three selected artifacts inherit that original source. Alice can download before withdrawal. After Bob withdraws the source, even derived author Alice cannot read the generic selected publication/artifact or delivery/list/download; task identities remain unchanged. Full dependency IDs remain separate from selected export record IDs. No application shadow-body port is used.
+
+First command `/tmp/research-peer-delivery-integrated-first.log`: omitted deployment from PYTHONPATH, collection ImportError, exit 1; no test body or database creation occurred. Corrected runner environment only, preserving tests and deadlines:
+
+```sh
+FACTORY_TEST_DATABASE_URL=<isolated synthetic PG server> \
+PYTHONPATH=platform:applications:deployment:platform/tests:applications/tests \
+timeout 150 .venv/bin/python -X faulthandler -m unittest test_research_delivery_postgres -v
+```
+
+`/tmp/research-peer-delivery-integrated-path-fixed.log`: **4 passed, 0 skipped, 92.059s, exit 0**. The group also covers actual artifact-write fault rollback without CLI replay; both admission/withdrawal lock orders; and another member reproducing the exported recipe in a clean directory then continuing under a new owner task/allocation. Fixture worker/scheduler shutdown completed and isolated database cleanup returned normally. Ruff and whitespace checks passed. This is real native queue/MemberCliAdapter/PostgreSQL/local process evidence with synthetic model decisions, not real-model team-value/C04 or remote GPU/D02 acceptance.
+
+The later P7 prompt-only correction `030016a` was not in this PG base. This new fixture already constructs sourceAssessments solely from actually displayed peerEvidence.sources, not the complete authorization dependency set; no claim is made that this run evaluates real-model prompt compliance.

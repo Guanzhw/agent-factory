@@ -156,6 +156,70 @@ class ResearchDeliveryPostgresTests(unittest.TestCase):
         # No generic content manifest exists to bypass the application check.
         self.assertNotIn('research.delivery', json.dumps(self.state['application_content'].list('bob')))
 
+    def test_peer_source_follows_actual_cli_artifact_and_revocation_denies_author(self):
+        content = self.state['application_content']
+        source = content.publish('bob', ContentPublication(source={'application': 'research',
+            'record': 'prior-sum-measurement', 'revision': '1'}, visibility='team',
+            content={'kind': 'research.experiment.start', 'hypothesis': 'Measure sum against target four',
+                'conditions': {'recommendedGoal': 'Reproduce the prior sum before comparing target four'}}),
+            'publish-prior-sum')
+        original_response = native.ResearchModel._response
+        seen_sources = set()
+        def response(model, messages):
+            result = original_response(model, messages)
+            if model.context.plan.get('mode') == 'experiment' or result.content is None:
+                return result
+            inputs = next((item for item in native.objects(messages) if 'peerEvidence' in item), None)
+            if inputs and result.content.startswith('{'):
+                value = json.loads(result.content)
+                records = [record for item in inputs['peerEvidence'] for record in item['sources']]
+                seen_sources.update(record['id'] for record in records)
+                value['sourceAssessments'] = [{'contentId': record['id'], 'disposition': 'reproduce',
+                    'reason': 'Check the prior sum using the selected actual CLI'} for record in records]
+                if value.get('action') == 'experiment':
+                    value['goal'] = records[0]['content']['conditions']['recommendedGoal']
+                result.content = json.dumps(value)
+            return result
+        with patch.object(native.ResearchModel, '_response', response):
+            parent_id = self.start()
+        self.assertEqual(seen_sources, {source['id']})
+        delivery = self.client.post(self.url + '/deliveries', json={
+            'requestId': 'peer-evidence-delivery', 'expectedVersion': 1})
+        self.assertEqual(delivery.status_code, 201, delivery.text)
+        manifest = delivery.json()
+        self.assertEqual(manifest['missingEvidence'], [])
+        self.assertIn(source['id'], manifest['sourceIds'])
+        self.assertNotIn(source['id'], manifest['recordIds'])
+        self.assertEqual(len(manifest['recordIds']), 1)
+        selected_id = manifest['recordIds'][0]
+        selected = content.read('alice', selected_id)
+        self.assertIn(source['id'], selected['sourceContentIds'])
+        self.assertEqual(len(selected['artifacts']), 3)
+        artifact_id = selected['artifacts'][0]['artifactId']
+        metadata, raw = content.artifact('alice', selected_id, artifact_id)
+        self.assertEqual(metadata['id'], artifact_id)
+        self.assertTrue(raw)
+        path = '/api/factory/research/deliveries/' + manifest['id']
+        downloaded = self.client.get(path + '/download')
+        self.assertEqual(downloaded.status_code, 200)
+        with ZipFile(BytesIO(downloaded.content)) as bundle:
+            self.assertEqual(len(bundle.namelist()), 4)
+        tasks_before = {task['id'] for task in self.state['store'].tasks('alice')}
+        self.assertIn(parent_id, tasks_before)
+        self.assertEqual(len(tasks_before), 2)
+        content.set_visibility('bob', source['id'], 'personal', 'withdraw-prior-sum')
+        from fastapi import HTTPException
+        for action in (lambda: content.read('alice', selected_id),
+                       lambda: content.artifact('alice', selected_id, artifact_id)):
+            with self.assertRaises(HTTPException) as denied:
+                action()
+            self.assertIn(denied.exception.status_code, {403, 404})
+        self.assertNotIn(selected_id, {item['id'] for item in content.list('alice')['items']})
+        self.assertIn(self.client.get(path).status_code, {403, 404})
+        self.assertIn(self.client.get(path + '/download').status_code, {403, 404})
+        self.assertEqual(self.client.get('/api/factory/research/deliveries').json()['items'], [])
+        self.assertEqual({task['id'] for task in self.state['store'].tasks('alice')}, tasks_before)
+
     def test_manifest_source_withdrawal_is_serial_with_authorized_snapshots(self):
         service = self.state['research_delivery']
         content = self.state['application_content']
