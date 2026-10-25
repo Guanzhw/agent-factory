@@ -49,7 +49,7 @@ export function AssistantSettings({ ownerId, assistant, setupId, onSetup, onSave
       {assistant.qa.state === 'unconfigured' ? <p>尚未配置问答，不能接收新问题。</p> : <article className="rw-agreement"><h3>已保存问答配置</h3><p>{assistant.qa.available ? '当前可接收问题' : `当前不可用：${assistant.qa.unavailableCode}`}</p><p>{assistant.qa.accounting.notice}</p><p>总上限 {assistant.qa.budget.caps.rounds} 个问题 / {assistant.qa.budget.caps.toolCalls} 次工具操作；每问 {assistant.qa.budget.perQuestionCaps.toolCalls} 次。</p><p>截止：{new Date(assistant.qa.budget.deadline * 1000).toLocaleString()}</p><p className="rw-id">{assistant.qa.applicationRef.id} v{assistant.qa.applicationRef.version}</p></article>}
       <div className="rw-actions"><button onClick={onReload}>核对我的助手</button><button onClick={() => { setEditing(true); setSelection(null); onSetup(''); }}>准备新的QA配置</button></div>
       {editing && !selection && <QASetupForm key={`${ownerId}:${setupId ?? 'new'}`} ownerId={ownerId} setupId={setupId} onSetup={onSetup} onPublished={setSelection} onResources={onResources}/>}
-      {selection && <AllowanceForm ownerId={ownerId} assistant={assistant} setup={selection} onReload={onReload} onSaved={value => { onSaved(value); setEditing(false); setSelection(null); onSetup(''); }}/>} 
+      {selection && <AllowanceForm ownerId={ownerId} assistant={assistant} setup={selection} onReload={onReload} onSaved={value => { onSaved(value); setEditing(false); setSelection(null); onSetup(''); }}/>}
     </>}
   </section>;
 }
