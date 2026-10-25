@@ -5,14 +5,13 @@ from dataclasses import asdict
 import hashlib
 from inspect import isawaitable, iscoroutine
 import json
-import os
 from pathlib import Path
-import selectors
 import shlex
 from tempfile import TemporaryDirectory
 import time
 import threading
 
+from .ssh_exchange import SSHExchangeCancelled, exchange as pipe_exchange
 from .ssh_identity import pinned_ssh
 from .process_runtime import process_reservation
 from .ssh_process_contract import (PROTOCOL, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, OUTPUT_BYTES,
@@ -29,58 +28,27 @@ class SSHProcessTransport:
                 and all(c.isprintable() for c in interpreter))
         self.server, self.lease_for, self.interpreter = server, lease_for, interpreter
 
-    def __call__(self, value, *, before_effect=None):
+    def __call__(self, value, *, before_effect=None, cancelled=None):
+        deadline = time.monotonic() + 30
         value = request(value)
         raw = encoded(value, MAX_REQUEST_BYTES)
         lease = self.lease_for(value['action'])
-        lease.validate()
-        command = shlex.quote(self.interpreter) + ' -I -B -m agent_factory.ssh_process_helper'
-        with TemporaryDirectory(prefix='af-ssh-process-') as folder:
+
+        def fresh():
+            lease.validate()
             if before_effect is not None:
                 before_effect()
+
+        command = shlex.quote(self.interpreter) + ' -I -B -m agent_factory.ssh_process_helper'
+        with TemporaryDirectory(prefix='af-ssh-process-') as folder:
+            fresh()
+            if time.monotonic() >= deadline:
+                raise TimeoutError('SSH_PROCESS_UNCONFIRMED')
             process = pinned_ssh(self.server, lease, Path(folder), command)
-            try:
-                assert process.stdin is not None and process.stdout is not None
-                os.set_blocking(process.stdin.fileno(), False)
-                os.set_blocking(process.stdout.fileno(), False)
-                pending, output, eof = memoryview(raw), bytearray(), False
-                deadline = time.monotonic() + 30
-                with selectors.DefaultSelector() as selector:
-                    selector.register(process.stdin, selectors.EVENT_WRITE)
-                    selector.register(process.stdout, selectors.EVENT_READ)
-                    while not eof:
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise TimeoutError('SSH_PROCESS_UNCONFIRMED')
-                        for key, _ in selector.select(remaining):
-                            if key.fileobj is process.stdin:
-                                if before_effect is not None:
-                                    before_effect()
-                                sent = os.write(process.stdin.fileno(), pending[:4096])
-                                pending = pending[sent:]
-                                if not pending:
-                                    if before_effect is not None:
-                                        before_effect()
-                                    selector.unregister(process.stdin)
-                                    process.stdin.close()
-                            else:
-                                chunk = os.read(process.stdout.fileno(), 65536)
-                                if not chunk:
-                                    eof = True
-                                    break
-                                output.extend(chunk)
-                                require(len(output) <= MAX_RESPONSE_BYTES)
-                require(process.wait(timeout=max(.01, deadline - time.monotonic())) == 0)
-                lease.validate()
-                return json.loads(output)
-            finally:
-                if process.poll() is None:
-                    process.kill()
-                process.wait()
-                if process.stdin is not None:
-                    process.stdin.close()
-                if process.stdout is not None:
-                    process.stdout.close()
+            output = pipe_exchange(process, raw, deadline=deadline, max_output=MAX_RESPONSE_BYTES,
+                                   before_write=fresh, cancelled=cancelled)
+            lease.validate()
+            return json.loads(output)
 
 
 class SSHProcessProvider:
@@ -137,9 +105,9 @@ class SSHProcessProvider:
         return request({'protocol': PROTOCOL, 'action': action, 'binding': self._binding(lease),
                         'root': self.server.allowed_root, 'spec': asdict(self.spec), 'limits': asdict(self.limits)})
 
-    def _observe(self, lease, action, before_effect=None):
+    def _observe(self, lease, action, before_effect=None, cancelled=None):
         sent = self._request(lease, action)
-        result = self.exchange(sent, before_effect=before_effect)
+        result = self.exchange(sent, before_effect=before_effect, cancelled=cancelled)
         encoded(result, MAX_RESPONSE_BYTES)
         require(type(result) is dict and result.get('protocol') == PROTOCOL
                 and result.get('binding') == sent['binding'] and 'error' not in result)
@@ -182,18 +150,30 @@ class SSHProcessProvider:
         cancelled = threading.Event()
         def fresh():
             if cancelled.is_set():
-                raise ValueError('SSH_PROCESS_SUBMIT_CANCELLED')
+                raise SSHExchangeCancelled('SSH_PROCESS_SUBMIT_CANCELLED')
             outcome = before_effect()
             if isawaitable(outcome):
                 if iscoroutine(outcome):
                     outcome.close()
                 raise ValueError('SSH_PROCESS_SYNC_AUTHORITY_REQUIRED')
             if cancelled.is_set():
-                raise ValueError('SSH_PROCESS_SUBMIT_CANCELLED')
+                raise SSHExchangeCancelled('SSH_PROCESS_SUBMIT_CANCELLED')
+        worker = asyncio.create_task(asyncio.to_thread(self._observe, lease, 'submit', fresh, cancelled))
         try:
-            return (await asyncio.to_thread(self._observe, lease, 'submit', fresh))[0]
+            return (await asyncio.shield(worker))[0]
         except asyncio.CancelledError:
             cancelled.set()
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    cancelled.set()
+                except SSHExchangeCancelled:
+                    break
+            try:
+                worker.result()
+            except SSHExchangeCancelled:
+                pass
             raise
 
     async def _original(self, lease_id, owner, action):

@@ -266,7 +266,7 @@ class SSHLaunchPreflightTests(unittest.IsolatedAsyncioTestCase):
         from unittest.mock import patch
         context = self.prepare_launch()
         actions = []
-        def exchange(transport, value, *, before_effect):
+        def exchange(transport, value, *, before_effect, cancelled=None):
             before_effect()
             actions.append(value['action'])
             self.assertEqual(value['root'], self.server.allowed_root)
@@ -289,7 +289,7 @@ class SSHLaunchPreflightTests(unittest.IsolatedAsyncioTestCase):
                     {**self.capabilities(), 'rlimits': False},
                     {**self.capabilities(), 'rootReady': False}]
         for failure in failures:
-            def exchange(transport, value, *, before_effect):
+            def exchange(transport, value, *, before_effect, cancelled=None):
                 if isinstance(failure, Exception):
                     raise failure
                 return failure
