@@ -147,3 +147,42 @@ The failed trace contains 22 authorization / 7 credential callbacks, versus 49 /
 Executor enqueue/return delays cannot account for most of the slowdown. Heartbeat-to-loop delay reached 0.913s in the failure versus 0.017s in the single pass, indicating some scheduling delay without locating SQL/pool/CPU contention. Gen1/2 collection **within** the failed SDK window totals only 0.0219s; the long generation-2 collection preceded submission. There is no evidence that this invocation directly spent its deadline in GC, that the native queue stopped progressing, or that an old fixture retained a specific pool/lock/thread.
 
 Per-engine acquisition/query timing, callback thread CPU and safe thread-stack locations were not recorded. SQL pool/lock delays, repeated current-authority reads and host scheduling therefore remain competing hypotheses. The next observation should first use already-running CI diagnostics; any additional authorized experiment should attribute time to concrete callback functions/SQL acquisition rather than repeat an unchanged schema test. No additional runtime experiment accompanied this comparison.
+
+## Published CI checkpoint — 2026-10-25, head ba08307
+
+PR [#136](https://github.com/Guanzhw/agent-factory/pull/136) exact head
+`ba083074df8e1f049174f39b654315bd1ef5e8df` has successful
+[fast CI 40223992140](https://github.com/Guanzhw/agent-factory/actions/runs/40223992140).
+This does not replace the failed full run at the earlier head.
+
+[Full CI 40223312294](https://github.com/Guanzhw/agent-factory/actions/runs/40223312294)
+at `d6c8f620322eb4fe246c300000da93b53a2d4163` ended **FAIL**.
+Platform PostgreSQL discovery ran 2068 cases in 1347.913s:
+**2018 passed, 36 failures, 9 errors, 5 skips**. The raw summary is retained in
+`/tmp/no-demo-full-ci-failures.log`. Research discovery completion is not
+established by this log; no research full result is inferred. The 45 failing
+platform cases remain under fixture diagnosis/correction by assistant_messages
+and assistant_endpoints. They are not recorded as fixed or passed.
+
+The old Linux frontend failure is separately identified: the synthetic
+`personal_tools_smoke.py` API returned `auth/config.enabled=False`. The product
+correctly showed the unconfigured-identity screen, so the resource button timed
+out at the unchanged 10-second limit. The same failure appears in the
+[first fast frontend job](https://github.com/Guanzhw/agent-factory/actions/runs/40223285963/job/121259321047).
+The npm check (487 tests) and audits had passed before this browser failure.
+
+`ba08307` changes only that test fixture to an explicitly configured browser
+session, provides synthetic CSRF and checks the mutation header. It removes the
+fixture's demo status label. All original configure/bind lost-acknowledgement,
+owner-change, descriptor-withdrawal and credential-rejection assertions remain.
+Actual Chromium then passed **8/8 scenarios**, including narrow viewports, exit 0:
+`python platform/tests/browser/personal_tools_smoke.py --dist /tmp/af-no-demo-core-browser-dist --browser /usr/bin/chromium --output /tmp/af-no-demo-personal-tools-first`.
+Results: `/tmp/af-no-demo-personal-tools-first/results.json`; log:
+`/tmp/af-no-demo-personal-tools-first.log`. Independent incremental review PASS.
+This is browser interaction with a wholly synthetic API, not real OIDC or
+CLI/MCP integration. The earlier real local-OIDC runs remain separate evidence.
+No product timeout, authentication boundary or business assertion was relaxed.
+
+The historical MCP transport failure remains unresolved; neither a fast green
+run nor this browser fixture correction establishes its cause. No real external
+IdP, paid model or GPU acceptance is added by this checkpoint.
