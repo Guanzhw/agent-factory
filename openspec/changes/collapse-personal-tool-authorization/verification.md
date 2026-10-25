@@ -27,3 +27,11 @@
 ## Limits
 
 真实PostgreSQL与loopback MCP使用合成身份/凭据；不证明真实模型、生产身份或外部MCP兼容。没有跨callback缓存、凭据缓存、新恢复控制链或超时放宽。尚待独立完整diff审查。
+
+## Adapter fixture follow-up
+
+PR114 head e11e31d 的fast run40194639419出现3项adapter integration失败，原日志 `/tmp/tool-authorization-first-ci-failed.log` 保留。完整adapter模块本地首复现3失败/3项，1.070秒（`tool-auth-adapter-first.log`）。
+
+根因是该模块native_call复用Store便携fixture但没有登记新增的原run→plan映射；authorize_tool因此KeyError并被工具边界拒绝。仅在fixture补同原plan映射，不更改产品guard、期限或断言。修后adapter模块3项与execution模块36项合计39通过/0跳过，1.834秒（`tool-auth-adapter-fixed.log`）。这同时暴露最初只跑execution模块的覆盖遗漏。
+
+修后daily Python仅运行一次：362通过/0跳过，58.072秒，exit0，所有required groups通过；`tool-auth-daily-python-fixed.log`。本轮无PG重跑。
