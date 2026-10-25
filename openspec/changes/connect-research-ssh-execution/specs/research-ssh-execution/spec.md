@@ -129,3 +129,18 @@ Core SHALL expose a read-only original delegated-child lookup and bounded privat
 - **THEN** it fails with SSH_PROCESS_OUTPUT_LIMIT_UNSUPPORTED before target registration, preflight, operation intent or submit, without silently truncating output
 - **AND** exact supported upper bounds remain admissible and retain the existing complete output/receipt archive before release; a cap one byte above is rejected
 - **AND** an original UNKNOWN replay does not acquire this new-launch restriction or create a replacement operation
+
+#### Scenario: Browser explicitly grants execution without launching a task
+- **GIVEN** the real application uses isolated test OIDC and a synthetic SSH credential whose connection preparation is enabled but execution is not
+- **WHEN** the member visits the existing connections page and explicitly permits configured training, and the network loses the successful response
+- **THEN** the UI retains the original request across refresh and recovers its actual server receipt without a second bind request; execution becomes enabled while task, delegation and SSH launch counts remain zero
+- **AND** this is unknown HTTP acknowledgement recovery, not proof of an UNKNOWN remote process reconciliation
+
+#### Scenario: Browser selects only explicit SSH evidence fields
+- **WHEN** the member creates a project with no selected evidence, switches between CLI and SSH sources and chooses an exact published SSH launch material
+- **THEN** incompatible material/field selections clear, missing configuration remains visible, and saving/reloading preserves only the chosen SSH kind, exact pin and explicitly selected metrics/source/recipe fields
+- **AND** no run or fabricated evidence is created by configuration; actual execution/evidence authority is established by the separate native integration case
+
+#### Scenario: QA publication cannot acquire the SSH launch tool
+- **WHEN** QA is prepared and published while SSH adapters are registered
+- **THEN** its exact published tool set remains research_qa_context and research_qa_record, its model has no callable tools, and an unsolicited provider tool call fails without tool dispatch or a delegated child
