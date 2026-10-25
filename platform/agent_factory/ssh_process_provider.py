@@ -54,9 +54,13 @@ class SSHProcessTransport:
                             raise TimeoutError('SSH_PROCESS_UNCONFIRMED')
                         for key, _ in selector.select(remaining):
                             if key.fileobj is process.stdin:
+                                if before_effect is not None:
+                                    before_effect()
                                 sent = os.write(process.stdin.fileno(), pending[:4096])
                                 pending = pending[sent:]
                                 if not pending:
+                                    if before_effect is not None:
+                                        before_effect()
                                     selector.unregister(process.stdin)
                                     process.stdin.close()
                             else:

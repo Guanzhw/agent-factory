@@ -58,3 +58,7 @@
 #### Scenario: Target is not configured
 - **WHEN** 本机真实 sshd 的原身份恢复测试通过但目标集群资料/资源尚缺
 - **THEN** 仅报告机制通过，真实目标训练与 D01 标为 BLOCKED，并列出最小缺项
+
+#### Scenario: Cancellation during request transmission
+- **WHEN** submit 在 SSH 可写等待或分片传输期间被取消
+- **THEN** 每次写入及正常发送 EOF 前重新核对原准入/取消状态，不继续发送剩余完整请求；已完整发送或可能送达的原操作保持 UNKNOWN/hold，并只按原身份核对，不能声称已撤回远端执行

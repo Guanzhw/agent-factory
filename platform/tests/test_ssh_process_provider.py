@@ -1,4 +1,9 @@
+import asyncio
 import copy
+import os
+import selectors
+import threading
+from unittest.mock import patch
 import hashlib
 from types import SimpleNamespace
 import unittest
@@ -6,7 +11,7 @@ import unittest
 from agent_factory.process_enforcement import ProcessLimits, ProcessSpec
 from agent_factory.resources import PersistentResourceService
 from agent_factory.ssh_process_contract import PROTOCOL, MAX_REQUEST_BYTES, encoded
-from agent_factory.ssh_process_provider import EFFECT, SSHProcessProvider
+from agent_factory.ssh_process_provider import EFFECT, SSHProcessProvider, SSHProcessTransport
 
 
 class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
@@ -101,3 +106,58 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
         self.provider.exchange = self.exchange
         await self.provider.inspect('lease-1', 'alice')
         self.assertEqual(self.calls, ['submit', 'inspect'])
+
+    async def test_cancellation_while_transport_waits_never_finishes_submit(self):
+        for pause_on in (1, 2):
+            with self.subTest(pause_on=pause_on):
+                self.provider.server.allowed_root = '/' + 'r' * 4000
+                read_fd, write_fd = os.pipe()
+                output_read, output_write = os.pipe()
+                os.write(output_write, b'{}')
+                os.close(output_write)
+                process = SimpleNamespace(stdin=os.fdopen(write_fd, 'wb', buffering=0),
+                    stdout=os.fdopen(output_read, 'rb', buffering=0),
+                    poll=lambda: 0, wait=lambda **_: 0, kill=lambda: None)
+                entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+                selector = selectors.DefaultSelector()
+                original_select = selector.select
+                count = 0
+                def gated_select(timeout=None):
+                    nonlocal count
+                    count += 1
+                    if count == pause_on:
+                        entered.set()
+                        if not release.wait(3):
+                            raise TimeoutError('fixture gate')
+                    ready = original_select(timeout)
+                    writes = [(key, mask) for key, mask in ready if key.fileobj is process.stdin]
+                    return writes or ready
+                transport = SSHProcessTransport(self.provider.server,
+                    lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
+                def exchange(value, **kwargs):
+                    try:
+                        return transport(value, **kwargs)
+                    finally:
+                        finished.set()
+                self.provider.exchange = exchange
+                try:
+                    with patch('agent_factory.ssh_process_provider.pinned_ssh', return_value=process), \
+                         patch('agent_factory.ssh_process_provider.selectors.DefaultSelector', return_value=selector):
+                        selector.select = gated_select
+                        task = asyncio.create_task(self.provider.allocate_bound(
+                            self.lease, before_effect=lambda: None))
+                        self.assertTrue(await asyncio.to_thread(entered.wait, 3))
+                        task.cancel()
+                        with self.assertRaises(asyncio.CancelledError):
+                            await task
+                        release.set()
+                        self.assertTrue(await asyncio.to_thread(finished.wait, 3))
+                    raw = os.read(read_fd, MAX_REQUEST_BYTES)
+                    self.assertEqual(len(raw), 0 if pause_on == 1 else 4096)
+                    self.assertLess(len(raw), len(encoded(self.provider._request(self.lease, 'submit'),
+                                                         MAX_REQUEST_BYTES)))
+                finally:
+                    release.set()
+                    os.close(read_fd)
+                    process.stdin.close()
+                    process.stdout.close()
