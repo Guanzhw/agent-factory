@@ -1,0 +1,5 @@
+- [ ] Review original nested identity evidence and minimal matching rule independently.
+- [ ] Reproduce the representation mismatch in the existing identity regression before changing production code.
+- [ ] Preserve foreign identity rejections and run focused native workflow tests.
+- [ ] Verify the original real nested child workflow after repair; retain earlier failures.
+- [ ] Independently review the complete exact diff before publishing.
