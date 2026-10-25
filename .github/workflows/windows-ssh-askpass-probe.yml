@@ -57,7 +57,10 @@ jobs:
           code = """
           import sys, unittest
           modules = ['test_ssh_exchange', 'test_ssh_process_paths',
-                     'test_ssh_operation_runtime', 'test_ssh_process_provider', 'test_ssh_tool_factory',
+                     'test_ssh_operation_runtime.SSHOperationProjectionTests',
+                     'test_ssh_operation_runtime.SSHPersonalTargetTests',
+                     'test_ssh_operation_runtime.SSHLaunchPreflightTests',
+                     'test_ssh_process_provider', 'test_ssh_tool_factory',
                      'test_personal_ssh.PersonalSSHTests.test_probe_cleanup_error_propagates_without_becoming_unconfirmed']
           suite = unittest.defaultTestLoader.loadTestsFromNames(modules)
           result = unittest.TextTestRunner(verbosity=2).run(suite)
