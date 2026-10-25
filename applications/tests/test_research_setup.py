@@ -41,15 +41,18 @@ class ResearchSetupTests(unittest.TestCase):
         self.models.register(self.bindings)
         self.pin = {'kind': 'workflow', 'id': WORKFLOW_ID, 'revision': '1', 'sha256': 'a' * 64}
         self.store.native_workflows = SimpleNamespace(pin=lambda _: deepcopy(self.pin))
+        self.controllers = []
         for name in [*FUNCTION_TOOLS, 'factory_wait_operations', 'synthetic_compute']:
-            self.bindings.register('tool', name.replace('_', '-') + '-v1', '1', self.no_dispatch,
+            registration = self.bindings.register('tool', name.replace('_', '-') + '-v1', '1', self.no_dispatch,
                 tool_name=name, permissions=('research:execute',))
+            if name != 'synthetic_compute':
+                self.controllers.append(registration)
         self.bindings.register('environment', 'synthetic-environment-v1', '1', self.no_dispatch)
         self.governance = MaterialGovernance(self.store, self.auth)
         self.store.material_governance = self.governance
         self.apps = ApplicationService(self.store, self.auth)
         self.store.applications = self.apps
-        self.setup = ResearchSetup(self.store, self.auth, self.connections, self.models)
+        self.setup = ResearchSetup(self.store, self.auth, self.connections, self.models, controller_registrations=self.controllers)
 
     def no_dispatch(self, _):
         self.fail('Setup must never instantiate an execution adapter')
@@ -90,7 +93,7 @@ class ResearchSetupTests(unittest.TestCase):
         self.assertEqual(self.setup.prepare('alice', self.body), draft)
         result = self.setup.publish('alice', draft['id'], PublishSetup(requestId='publish-original'))
         after = self.counts()
-        fresh = ResearchSetup(self.store, self.auth, self.connections, self.models)
+        fresh = ResearchSetup(self.store, self.auth, self.connections, self.models, controller_registrations=self.controllers)
         self.assertEqual(fresh.request_result('alice', 'publish-original'), result)
         self.assertEqual(fresh.publish('alice', draft['id'], PublishSetup(requestId='publish-original')), result)
         self.assertEqual(self.counts(), after)

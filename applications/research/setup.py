@@ -38,9 +38,10 @@ class PublishSetup(BaseModel):
 
 
 class ResearchSetup:
-    def __init__(self, store, auth, connections, models):
+    def __init__(self, store, auth, connections, models, *, controller_registrations):
         self.store, self.auth, self.connections, self.models = store, auth, connections, models
         self.apps, self.materials = store.applications, store.material_governance
+        self.controller_registrations = tuple(controller_registrations)
         self.db = GovernedStorage(store, 'research_setup_v1')
         metadata = MetaData()
         self.drafts = Table('research_setup', metadata,
@@ -171,9 +172,11 @@ class ResearchSetup:
         if missing:
             raise HTTPException(409, {'code': 'RESEARCH_SETUP_BINDINGS_UNAVAILABLE', 'missing': missing})
         controllers = []
-        for name in [*FUNCTION_TOOLS, 'factory_wait_operations']:
-            entry = next((x for x in descriptors if x['kind'] == 'tool' and x['toolName'] == name and not x['demoOnly']), None)
-            if entry is None:
+        if {entry.tool_name for entry in self.controller_registrations} != self._controllers():
+            raise HTTPException(409, 'RESEARCH_SETUP_CONTROLLER_UNAVAILABLE')
+        for registration in self.controller_registrations:
+            entry = descriptor('tool', registration.adapter_id, registration.revision)
+            if entry['toolName'] != registration.tool_name:
                 raise HTTPException(409, 'RESEARCH_SETUP_CONTROLLER_UNAVAILABLE')
             controllers.append(entry)
         return refs, pins, list(requirements.values()), tools, model, environment, controllers
