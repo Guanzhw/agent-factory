@@ -223,3 +223,57 @@ class SSHNativePostgresTests(unittest.TestCase):
             self.client.portal.call(self.state['lifecycle_observer'].observe_root, task_id)
         self.assertEqual(self.store.sql('SELECT command_id FROM af_control_commands WHERE task_ref=:task', task=task_id), receipts)
         self.assertEqual(self.started.read_text().splitlines(), ['started'])
+
+    def test_uncertain_continuation_receipt_is_not_redispatched_after_restart(self):
+        """Lost acknowledgement at the boundary; delivery itself is not proven."""
+        started = self.request('POST', '/application-interface/v1/starts',
+            {'application': 'ssh-native', 'mode': 'train', 'goal': 'Keep the original uncertain continuation',
+             'requestId': 'uncertain-continuation', 'connectionRefs': {'compute': self.connection}}, expected=202)
+        task_id = started['job']['id']
+        run_id = self.store.task(task_id, 'alice')['run_id']
+        self.until(lambda: self.started.exists(), 'helper training process start')
+        self.until(lambda: (self.store.native_db.get_job(run_id) or {}).get('status') == 'paused', 'native external wait')
+        operations = self.store.sql('SELECT id FROM af_external_operations WHERE task_id=:task', task=task_id)
+        self.assertEqual(len(operations), 1)
+        attempts = []
+
+        async def unavailable_ack(bridge, original_run, original_task, owner, requirements, **kwargs):
+            attempts.append((original_run, original_task, owner, kwargs['command_proof']))
+            raise ConnectionError('Synthetic continuation acknowledgement unavailable')
+
+        bridge_type = type(self.state['factory_api'].commands.bridge)
+        with patch.object(bridge_type, 'continue_run', new=unavailable_ack):
+            self.release.touch()
+            rows = self.until(lambda: self.store.sql(
+                "SELECT command_id FROM af_control_commands WHERE task_ref=:task AND state='DISPATCHING'",
+                task=task_id), 'original command dispatch boundary')
+            self.assertEqual(len(rows), 1)
+            command_id = rows[0]['command_id']
+            self.until(lambda: len(attempts) == 1, 'one uncertain continuation attempt')
+            receipt = self.client.portal.call(self.state['factory_api'].commands.recover,
+                                              'alice', task_id, command_id)
+            self.assertEqual(receipt['state'], 'UNKNOWN')
+            self.assertFalse(receipt['decisionRecorded'])
+            self.assertFalse(receipt['canDispatch'])
+            self.assertEqual(attempts[0][:3], (run_id, task_id, 'alice'))
+            self.assertEqual(attempts[0][3]['commandId'], command_id)
+            self.assertTrue(self.store.workflow.read('alice', operations[0]['id'])['closed'])
+            self.stop()
+            self.start()
+            for _ in range(2):
+                self.client.portal.call(self.state['lifecycle_observer'].observe_root, task_id)
+                recovered = self.client.portal.call(self.state['factory_api'].commands.recover,
+                                                     'alice', task_id, command_id)
+                self.assertEqual(recovered['state'], 'UNKNOWN')
+                self.assertFalse(recovered['canDispatch'])
+                for key in ('commandId', 'fingerprint', 'binding', 'requirementId', 'version'):
+                    self.assertEqual(recovered[key], receipt[key])
+            self.assertEqual(len(attempts), 1)
+            self.assertEqual(self.store.native_db.get_job(run_id)['status'], 'paused')
+            self.assertEqual(self.store.task(task_id, 'alice')['run_id'], run_id)
+            self.assertFalse(self.store.task(task_id, 'alice')['terminal'])
+            self.assertEqual(self.store.sql('SELECT id FROM af_external_operations WHERE task_id=:task',
+                                            task=task_id), operations)
+            self.assertEqual(self.store.sql('SELECT command_id FROM af_control_commands WHERE task_ref=:task',
+                                            task=task_id), rows)
+            self.assertEqual(self.started.read_text().splitlines(), ['started'])
