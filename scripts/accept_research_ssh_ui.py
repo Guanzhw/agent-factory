@@ -73,12 +73,13 @@ def run(browser, dist, output):
         context = browser.new_context(ignore_https_errors=True, viewport={'width': 1487, 'height': 1058}, service_workers='block')
         page = context.new_page()
         page.on('pageerror', lambda error: errors.append(str(error)))
+        logged_in = False
         def console(message):
             if message.type != 'error':
                 return
             url = message.location.get('url', '').split('?', 1)[0]
             value = {'text': message.text, 'path': url.removeprefix(origin)}
-            if ('401' in message.text and url.endswith('/api/factory/auth/session')) or ('ERR_FAILED' in message.text and url.endswith('/bind-execution')):
+            if (not logged_in and '401' in message.text and url.endswith(('/api/factory/session', '/api/factory/auth/session'))) or ('ERR_FAILED' in message.text and url.endswith('/bind-execution')):
                 expected_console.append(value)
             else:
                 console_errors.append(value)
@@ -86,6 +87,7 @@ def run(browser, dist, output):
         page.goto(origin + '/?tab=connections')
         page.get_by_role('button', name='使用企业账号登录', exact=True).click()
         expect(page.get_by_role('heading', name='我的凭据与连接', exact=True)).to_be_visible()
+        logged_in = True
         expect(page.get_by_text('尚未允许训练执行', exact=True)).to_be_visible()
         assert fixture.store.tasks('alice') == [] and not fixture.started.exists()
 

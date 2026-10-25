@@ -18,3 +18,9 @@ The existing CLI browser journey does not cover the new SSH selectors or explici
 The narrow browser fixture additionally prepares/publishes QA while the real SSH adapters/materials are registered and asserts the same exact tool set excludes `LAUNCH_TOOL`. That new assertion has not yet been reached in this first run. No extra QA PG matrix is needed.
 
 HTTP lost-response recovery is distinct from runtime UNKNOWN reconciliation, which remains covered separately. Synthetic local OIDC/resource credentials/probe are test prerequisites, not real identity, host, GPU or provider acceptance. No research task is started by this browser scenario.
+
+## Second run — completed business checks, console classification failed
+
+- Tested head `bb10f29ed4ed851ab918e38cc4fcbfdccf6192c1`, same command/deadline/viewport with output `/tmp/af-research-ssh-ui-second`; exit 1.
+- All consent, original-receipt, source-kind clearing, exact selected-field save/reload, QA publication with SSH registered and zero-task/helper assertions completed. Final console assertion failed on the initial unauthenticated `/api/factory/session` HTTP 401; pageErrors remained empty. The script recognized only `/auth/session`, unlike the existing browser suite which recognizes both login session endpoints.
+- [Original second failure](evidence/browser-ssh-second/failure.txt) and [console evidence](evidence/browser-ssh-second/browser-errors.json) retained. Corrected only known session HTTP 401 classification **before login**; post-login or other endpoint errors still fail. No product or timeout change. This run is not labelled PASS.
