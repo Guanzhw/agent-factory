@@ -400,7 +400,7 @@ real external runtime or production identity acceptance is inferred.
 
 ### Lost prepare ACK: control the observation boundary
 
-Full CI `40228654327` at `624bf82` failed with 2068 tests, 2 failures,
+Full CI `40228654327` at `624bf82` failed with 2068 tests: 2057 passed, 2 failed,
 4 lifecycle-unit errors and 5 skips in 2091.848s. The separate lifecycle fix
 does not explain `test_04_lost_prepare_reply_owner_request_lookup_has_no_execution`:
 its origin placement was `PREPARING`, not the expected pre-reconciliation
