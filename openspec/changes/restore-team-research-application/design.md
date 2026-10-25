@@ -107,7 +107,7 @@ native技术失败、取消、拒绝或缺最终模型决定时保存原事实�
 
 已选core前置移除独立20硬上限：接收者配置非负maxDepth，lineage逐次递增；实际轮数由同一scope预算、每delivery caps.rounds=1和TTL分别执行，maxCandidates=20与现有fanout上限不变。研究自定向订阅才按总rounds推导depth（总rounds至少2时为rounds-2）；该公式不进入core，普通QA订阅仍可保持原20配置。非研究fixture须证明depth>20仍在scope额度处截止、原20配置语义不变、无重置lineage。该依赖尚未集成前，preflight明确阻塞无法兑现的自动轮数承诺，不静默截断、不将技术上限记科学not_met。
 
-预算剩余不足一轮、deadline到达或用户停止时不发新event，保留实际已用额度、停止理由和可继续成果引用。目标修订也不重置scope或事件lineage；确认新版本前无新自动轮，新版本与在途操作的继续/停止说明沿A07执行。新的原始研究约定才建立新scope，不把技术暂停变成隐式新预算。
+预算剩余不足一轮、deadline到达或用户停止时不发新event，保留实际已用额度、停止理由和可继续成果引用。目标修订也不重置scope或事件lineage；确认新版本前无新自动轮，新版本与在途操作的继续/停止说明沿A07执行。新的原始研究约定才建立新scope，不把技术暂停变成隐式新预算。 修订已确认且旧轮已终态时，显式start命令只在原scope和上一终态记录/parent delivery lineage内产生一次去重后继事件，不直接allocate或submit；旧轮未终态则保留原attempt。当前执行配置固定首次选定的application/mode/materialChoices/connectionRefs/perRoundCaps及endpoint，目标修订不能暗换执行配置，变更执行配置需后续明确迁移设计。总rounds=1不建立后继订阅且不生成后继事件。
 
 #### P7/P8接点与本轮验收边界
 
