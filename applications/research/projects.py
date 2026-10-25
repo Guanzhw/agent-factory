@@ -111,6 +111,7 @@ class ResearchProjects:
     def __init__(self, store, auth, endpoints, *, assistants=None):
         self.auth, self.endpoints = auth, endpoints
         self.assistants = assistants
+        self.peer_sources = None
         self.execution: Any = None
         self.db = GovernedStorage(store, 'research_projects_v1')
         metadata = MetaData()
@@ -137,23 +138,36 @@ class ResearchProjects:
             reject('RESEARCH_PROJECT_NOT_FOUND', '未找到自己的研究项目', 404)
         return row
 
+    def _write(self):
+        return self.peer_sources.guard() if self.peer_sources is not None else self.db.write()
+
     def _summary(self, row):
         execution = {'available': False, 'reason': 'RESEARCH_EXECUTION_NOT_INSTALLED'}
         if self.execution is not None:
             with self.db.read() as conn:
                 execution = self.execution.availability(conn, row)
-        return {'id': row['id'], 'ownerId': row['owner_id'], 'title': row['title'],
+        return self._protect(row['owner_id'], {'id': row['id'], 'ownerId': row['owner_id'], 'title': row['title'],
             'assistantId': row['assistant_id'], 'researchAssistantId': row['research_assistant_id'], 'state': row['state'],
             'currentGoalVersion': row['goal_version'], 'ending': deepcopy(row['ending']),
             'createdAt': row['created_at'],
-            'execution': execution}
+            'execution': execution})
+
+    def _protect(self, owner, result):
+        if self.peer_sources and not self.peer_sources.available(owner, self.peer_sources.project_dependencies(result['id'])):
+            result = deepcopy(result)
+            result['ending'] = {'state': 'ended'} if result.get('ending') else None
+            if 'goals' in result:
+                result['goals'] = [{'version': goal['version'], 'confirmedAt': goal['confirmedAt'],
+                                   'sourceUnavailable': True} for goal in result['goals']]
+            result['sourceUnavailable'] = True
+        return result
 
     def _detail(self, conn, row):
         goals = conn.execute(select(self.goals).where(self.goals.c.project_id == row['id'])
             .order_by(self.goals.c.version)).mappings().all()
-        return {**self._summary(row), 'goals': [{'version': goal['version'],
+        return self._protect(row['owner_id'], {**self._summary(row), 'goals': [{'version': goal['version'],
             'agreement': deepcopy(goal['agreement']), 'createdAt': goal['created_at'],
-            'confirmedAt': goal['confirmed_at']} for goal in goals]}
+            'confirmedAt': goal['confirmed_at']} for goal in goals]})
 
     def create(self, owner, body: CreateProject):
         self.auth.require_member(owner)
@@ -161,10 +175,10 @@ class ResearchProjects:
         if body.researchAssistantId is None:
             value.pop('researchAssistantId')
         fingerprint = digest({'action': 'create', **value})
-        with self.db.write() as conn:
+        with self._write() as conn:
             old = self.db.old(conn, self.commands, owner, body.requestId, fingerprint)
             if old is not None:
-                return old
+                return self._protect(owner, old)
             if body.assistantId is not None:
                 self.endpoints.owned(owner, body.assistantId)
             if body.researchAssistantId is not None:
@@ -195,11 +209,11 @@ class ResearchProjects:
         self.auth.require_member(owner)
         value = body.model_dump(exclude={'requestId'})
         fingerprint = digest({'action': action, 'project': identifier, **value})
-        with self.db.write() as conn:
+        with self._write() as conn:
             row = self._owned(conn, owner, identifier)
             old = self.db.old(conn, self.commands, owner, body.requestId, fingerprint)
             if old is not None:
-                return old
+                return self._protect(owner, old)
             if row['goal_version'] != body.expectedVersion:
                 reject('RESEARCH_GOAL_VERSION_CONFLICT', '目标版本已变化，请读取当前版本')
             if row['state'] == 'ended':

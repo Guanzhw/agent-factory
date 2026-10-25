@@ -28,7 +28,7 @@ from test_research_runs import executable_agreement
 PIN = {'kind': 'workflow', 'id': 'research-round', 'revision': '1', 'sha256': 'b' * 64}
 
 
-class ResearchRoundsTests(fixtures.ApplicationCompositionFixture):
+class ResearchRoundsFixture(fixtures.ApplicationCompositionFixture):
     def setUp(self):
         super().setUp()
         self.store.transaction = MethodType(Store.transaction, self.store)
@@ -85,6 +85,8 @@ class ResearchRoundsTests(fixtures.ApplicationCompositionFixture):
             with self.service.finalization_context(conn, task) as complete:
                 complete({'task': task, 'group': [task], 'settlement': {'state': 'SETTLED'}})
 
+
+class ResearchRoundsTests(ResearchRoundsFixture):
     def test_start_replays_original_root_without_invented_experiment(self):
         result = self.start()
         self.assertEqual(self.start(), result)
