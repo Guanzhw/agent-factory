@@ -145,7 +145,9 @@ class WindowsSSHCredentials:
             w.write_private(Path(str(identity) + '.pub'), (lease.public_key + '\n').encode())
             known = folder / 'known_hosts'
             w.write_private(known, ('factory-pinned ' + server.host_key + '\n').encode())
-            ssh, helper = self.paths()
+            ssh, installed_helper = self.paths()
+            helper = folder / 'askpass.exe'
+            w.write_private(helper, installed_helper.read_bytes())
             pipe_name = r'\\.\pipe\af-ssh-' + uuid.uuid4().hex
             pipe = w.server_pipe(pipe_name)
             args = [str(ssh), '-F', 'none', '-a', '-T', '-o', 'HostKeyAlias=factory-pinned',
@@ -162,7 +164,7 @@ class WindowsSSHCredentials:
                 args += ['-R', forward]
             args += ['-l', server.username, '-p', str(server.port), server.address, command]
             env = {name: os.environ[name] for name in ('SystemRoot', 'WINDIR', 'ProgramData', 'TEMP', 'TMP') if name in os.environ}
-            env.update({'PATH': str(ssh.parent), 'SSH_ASKPASS': str(helper), 'SSH_ASKPASS_REQUIRE': 'force',
+            env.update({'PATH': str(ssh.parent), 'SSH_ASKPASS': './askpass.exe', 'SSH_ASKPASS_REQUIRE': 'force',
                         'FACTORY_SSH_KEY': str(identity), 'FACTORY_SSH_PIPE': pipe_name,
                         'FACTORY_SSH_CONTROLLER': str(os.getpid())})
             spawned = WindowsSSHProcess(args, env, cwd=str(folder))

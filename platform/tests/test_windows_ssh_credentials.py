@@ -25,7 +25,7 @@ class WindowsCredentialScopeTests(unittest.TestCase):
         self.support.write_private = lambda p, data: p.write_bytes(data)
         self.support.server_pipe = lambda _: SimpleNamespace(Close=Mock())
         self.support.connect = lambda *args: None
-        self.support.check_client = lambda *args: None
+        self.support.check_client = Mock()
         self.support.image = lambda _: 'base-python'
         self.support.win32api = SimpleNamespace(GetCurrentProcess=lambda: 1)
         self.reads = 0
@@ -56,7 +56,7 @@ class WindowsCredentialScopeTests(unittest.TestCase):
                     shutil.rmtree(self.manager.root)
         self.addCleanup(cleanup)
         self.binary = Path(self.temp) / 'synthetic-binary'
-        self.binary.touch()
+        self.binary.write_bytes(b'synthetic-installed-launcher\x00\xff')
         self.stack.enter_context(patch.object(self.manager, 'paths', return_value=(self.binary, self.binary)))
         self.key = SimpleNamespace(private_bytes=lambda *args: b'encrypted-synthetic-fixture')
         self.stack.enter_context(patch.object(self.manager, '_key', return_value=self.key))
@@ -72,6 +72,7 @@ class WindowsCredentialScopeTests(unittest.TestCase):
             process_handle = 3
             def __init__(self, args, env, *, cwd=None):
                 self.env = env
+                self.cwd = cwd
                 self.resumed = False
                 self.killed = False
                 self.closed = False
@@ -113,6 +114,10 @@ class WindowsCredentialScopeTests(unittest.TestCase):
             while self.reads < 2 and time.monotonic() < end:
                 time.sleep(.001)
             self.assertTrue(process.resumed)
+            helper = Path(process.cwd) / 'askpass.exe'
+            self.assertEqual(helper.read_bytes(), self.binary.read_bytes())
+            self.assertEqual(process.env['SSH_ASKPASS'], './askpass.exe')
+            self.assertEqual(self.support.check_client.call_args.args[3], helper)
             self.assertEqual(self.releases, 1)
             self.assertFalse(self.password_in_environment)
         self.assertTrue(process.closed)
