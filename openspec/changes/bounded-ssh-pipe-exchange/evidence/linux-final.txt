@@ -1,0 +1,17 @@
+test_async_guard_is_rejected_without_awaiting (test_ssh_exchange.SSHExchangeTests.test_async_guard_is_rejected_without_awaiting) ... ok
+test_cancellation_while_waiting_for_output_reaps_without_io_thread (test_ssh_exchange.SSHExchangeTests.test_cancellation_while_waiting_for_output_reaps_without_io_thread) ... ok
+test_expired_deadline_and_invalid_input_still_reap (test_ssh_exchange.SSHExchangeTests.test_expired_deadline_and_invalid_input_still_reap) ... ok
+test_guard_rejection_or_cancellation_before_eof_does_not_complete_request (test_ssh_exchange.SSHExchangeTests.test_guard_rejection_or_cancellation_before_eof_does_not_complete_request) ... ok
+test_guard_that_crosses_deadline_cannot_write (test_ssh_exchange.SSHExchangeTests.test_guard_that_crosses_deadline_cannot_write) ... ok
+test_inherited_output_does_not_extend_deadline (test_ssh_exchange.SSHExchangeTests.test_inherited_output_does_not_extend_deadline) ... ok
+test_overflow_and_nonzero_exit_fail (test_ssh_exchange.SSHExchangeTests.test_overflow_and_nonzero_exit_fail) ... ok
+test_pipe_configuration_failure_still_reaps (test_ssh_exchange.SSHExchangeTests.test_pipe_configuration_failure_still_reaps) ... ok
+test_short_writes_preserve_every_byte (test_ssh_exchange.SSHExchangeTests.test_short_writes_preserve_every_byte) ... ok
+test_simultaneous_backpressure_and_exact_response_cap (test_ssh_exchange.SSHExchangeTests.test_simultaneous_backpressure_and_exact_response_cap) ... ok
+test_stalled_input_or_output_and_process_alive_after_eof_are_bounded (test_ssh_exchange.SSHExchangeTests.test_stalled_input_or_output_and_process_alive_after_eof_are_bounded) ... ok
+test_unconfirmed_reap_is_explicit_and_never_waits_without_timeout (test_ssh_exchange.SSHExchangeTests.test_unconfirmed_reap_is_explicit_and_never_waits_without_timeout) ... ok
+
+----------------------------------------------------------------------
+Ran 12 tests in 2.335s
+
+OK
