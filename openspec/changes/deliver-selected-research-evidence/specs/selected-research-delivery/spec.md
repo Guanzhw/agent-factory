@@ -61,3 +61,10 @@
 #### Scenario: Missing real environment
 - **WHEN** 真实模型/GPU/数据或科学容差尚未冻结
 - **THEN** 对应正式验收保持BLOCKED，确定性CLI机制通过不解除这些门槛
+
+#### Scenario: Peer dependency constrains access without expanding exported records
+- **WHEN** a selected terminal publication contains complete sourceContentIds and depends on a teammate's record
+- **THEN** delivery sourceIds include both the selected record and its original dependencies, while recordIds contain only the selected terminal records
+- **AND** the manifest and ZIP read the source-bound rich publication through core content.read/artifact using the current actor, without an application shadow-body fallback
+- **AND** dependency-only content and attachments are not implicitly exported
+- **AND** withdrawing any original dependency denies the derived manifest, download and generic selected publication access while preserving already downloaded bytes

@@ -71,7 +71,7 @@ Agreement新增可选字段，旧值无配置；attempt仅加nullable selection�
 
 ### 跨应用集成中的真实来源权限接缝
 
-P7实际consumer会让选中证据依赖peer来源；仅应用manifest检查不够，因为精选artifact自身也可能通过generic content访问。coordinator为此另立最小固定sourceContentIds契约（de32456，独立review/实现中），所有core read/list/artifact统一核对原来源，非通用任意DAG框架。P8的精选publication需继承P7实际使用来源并集；manifest仍应用持有，逐次检查所有来源，不能只取安全public shell丢掉依赖。未接入该已审定端口前只验无peer路径，不声称peer派生附件权限通过。应用之间以实际peer_sources服务读口衔接，禁止以owner代理整job下载弥补授权缺口。
+P7实际consumer会让精选证据依赖peer来源。已审定core固定sourceContentIds契约统一保护正文、read/list/artifact及重放；精选publication继承P7实际使用的完整来源集合。直接使用core content.read/artifact读取受来源保护的完整正文与字节，不再需要safe-shell、影子正文或应用回填读取口。manifest仍应用持有，每次检查完整sourceIds；recordIds另行标识实际交付的实验记录。依赖来源可以约束读取权，但不会因此把其正文、selectedEvidence或附件额外纳入导出。授权使用当前actor，不代理owner。
 
 ### 当前配方的有限完整性判据（实现审查整改）
 
