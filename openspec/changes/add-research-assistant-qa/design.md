@@ -2,7 +2,7 @@
 
 ## Context
 
-基线3b467519；只写spec。事实依据：`applications/research/projects.py`现assistantId为core endpoint；`rounds.py::_prepare`为项目创建内部执行endpoint；`workflow.py`已采用顶层原生步骤，避免Agno 3.1嵌套wait恢复丢后续节点；`public.py`显式装配。`assistant_messages.py::message_for_task`返回原messageId/senderId/recipientId/endpointId/text并校验任务/预算关联；`assistant_endpoints.py::AutomaticBudget`引用接收者scope。`application_content.py`拥有当前内容读权；`execution_bindings.py::build`要求一个model和environment，EnvironmentLimits是已有纯本地边界数据契约。
+基线3b467519；本地实现遵循已审规范。事实依据：`applications/research/projects.py`现assistantId为core endpoint；`rounds.py::_prepare`为项目创建内部执行endpoint；`workflow.py`已采用顶层原生步骤，避免Agno 3.1嵌套wait恢复丢后续节点；`public.py`显式装配。`assistant_messages.py::message_for_task`返回原messageId/senderId/recipientId/endpointId/text并校验任务/预算关联；`assistant_endpoints.py::AutomaticBudget`引用接收者scope。`application_content.py`拥有当前内容读权；`execution_bindings.py::build`要求一个model和environment，EnvironmentLimits是已有纯本地边界数据契约。
 
 独立core change提供`reply_for_task(receiver, task_id, text, content_ids=())`，没有HTTP写答案端点；原消息read返回reply投影。该依赖须review并集成后才实现QA提交，应用不复制答案存储或双方ACL。
 
@@ -24,7 +24,7 @@
 
 ### Fixed QA component and setup
 
-新增固定`research-qa` Workflow，仅三个顶层步骤：受治理`research_qa_context` → tool-free选定模型 → 受治理`research_qa_record`。两个函数是可信静态executor，不作为模型可调用工具；模型tools=[]。精确pin、唯一QA mode与tool集合在配置时验证。不得带研究launch、delegation、CLI、MCP、remote或GPU工具/compute模式；拒绝任意用户app冒充QA组件。无外部操作/等待，不注册第二恢复器或自己的worker。
+新增固定`research-qa` Workflow，仅三个顶层步骤：受治理`research_qa_context` → tool-free选定模型 → 受治理`research_qa_record`。两个函数是可信静态executor，不作为模型可调用工具；模型tools=[]；沿现有owner模型文本协议显式要求单个JSON对象，由record用严格Answer schema本地验证，不传provider response_format/output_schema，不增加修复模型、重试或静默fallback。精确pin、唯一QA mode与tool集合在配置时验证。不得带研究launch、delegation、CLI、MCP、remote或GPU工具/compute模式；拒绝任意用户app冒充QA组件。无外部操作/等待，不注册第二恢复器或自己的worker。
 
 QA环境是应用显式注册的固定adapter，只返回已有EnvironmentLimits，无prepare、远程target、连接或外部执行。不能任选研究compute环境。core Budget当前maxChildren/maxDepth最小为1；不能写0伪称已有该能力。无训练能力来自完整固定组件/模式及可达工具集合，而非提示词或伪造零数值。实测模型恶意tool请求、伪造研究消息均零训练/GPU dispatch。
 
