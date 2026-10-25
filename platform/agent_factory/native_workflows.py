@@ -256,8 +256,8 @@ class NativeWorkflows:
             root = self._root(identifier, response)
             actual_step_id = response.workflow_step_id
             if actual_step_id is not None:
-                # Agno's OS copies mint runtime step UUIDs; continuation restores
-                # those original UUIDs. A declaration ID is not that runtime ID.
+                # Native copies mint runtime UUIDs; nested continuation can retain
+                # the declaration ID on its original executor instead.
                 from agno.db.base import SessionType
                 session = self.native_db.get_session(root.session_id,
                     session_type=SessionType.WORKFLOW, user_id=root.user_id)
@@ -278,7 +278,8 @@ class NativeWorkflows:
                         yield item
                         yield from results(getattr(item, 'steps', None))
                 matched = any(item.step_id == actual_step_id and item.step_name == step.name
-                    for item in results(run.step_results)) or any(req.step_id == actual_step_id
+                    for item in results(run.step_results)) or any(
+                    (req.step_id == actual_step_id or actual_step_id == step.step_id)
                     and req.step_name == step.name and req.executor_run_id == response.run_id
                     and req.executor_id == step.agent.id for req in run.step_requirements or [])
                 if not matched:

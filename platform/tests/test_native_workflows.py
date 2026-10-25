@@ -359,6 +359,22 @@ class NativeWorkflowsTests(TestCase):
         with self.assertRaises(PermissionError):
             validate(child, task, plan)
 
+        # Nested native resume keeps the declaration ID on the executor but a UUID on its requirement.
+        run.step_requirements[0].executor_run_id = 'child'
+        child.workflow_step_id = step.step_id
+        run.step_executor_runs[0].workflow_step_id = step.step_id
+        self.assertEqual(validate(child, task, plan).metadata['factory_native_step_id'], step.step_id)
+        for field in ('step_name', 'executor_run_id', 'executor_id'):
+            requirement = run.step_requirements[0]
+            original = getattr(requirement, field)
+            setattr(requirement, field, 'foreign')
+            with self.subTest(nested_requirement_field=field), self.assertRaises(PermissionError):
+                validate(child, task, plan)
+            setattr(requirement, field, original)
+        child.workflow_step_id = run.step_executor_runs[0].workflow_step_id = 'unregistered'
+        with self.assertRaises(PermissionError):
+            validate(child, task, plan)
+
     def test_guard_error_cannot_be_configured_as_successful_skip(self):
         for field in ('skip_on_failure', 'on_error'):
             with self.subTest(field=field):
