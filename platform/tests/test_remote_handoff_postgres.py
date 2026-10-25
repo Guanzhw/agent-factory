@@ -1,3 +1,4 @@
+from fixture_identity import access_token
 """Two actual Factory apps and isolated PostgreSQL databases; synthetic models.
 
 The HTTP transport is explicitly controlled ASGI. This proves backend/native
@@ -81,8 +82,8 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         for state in (cls.origin, cls.remote):
             cls.addClassCleanup(state["store"].engine.dispose)
             cls.addClassCleanup(state["store"].native_db.db_engine.dispose)
-        target = HandoffTarget("receiver", "origin-fixture", "http://receiver.factory.invalid", {"alice": "bob"},
-                               lambda owner: {"Authorization": "Bearer " + cls.remote["auth"]._issue_native_token("bob")},
+        target = HandoffTarget("receiver", "origin-fixture", "https://receiver.factory.invalid", {"alice": "bob"},
+                               lambda owner: {"Authorization": "Bearer " + access_token("bob")},
                                transport=httpx.ASGITransport(app=cls.remote_app))
         cls.handoff = TrustedHandoffClient(cls.origin["store"], cls.origin["auth"], {"receiver": target})
         cls.handoff.install_guard()
@@ -130,7 +131,7 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         return self.remote_client.portal.call(function, *args)
 
     def headers(self, state, owner):
-        return {"Authorization": "Bearer " + state["auth"]._issue_native_token(owner)}
+        return {"Authorization": "Bearer " + access_token(owner)}
 
     def reserve(self, goal="sort", mode="literature", request=None, application="fixture-text"):
         response = self.origin_client.post("/api/factory/plans", headers=self.headers(self.origin, "alice"),

@@ -103,7 +103,7 @@ def attach_fixture_bindings(settings, store, plan):
         if kind in {'skill','prompt','knowledge'} and plan['application'] == 'fixture-checksum': continue
         material = {'id':mid,'kind':kind,'name':name,'content':content,'permissions':permissions,'version':1}
         if mid in FIXTURE_BINDINGS:
-            material['runtimeBinding'] = copy.deepcopy(FIXTURE_BINDINGS[mid])
+            material['runtimeBinding'] = {'adapterId': FIXTURE_BINDINGS[mid][1], 'revision': '1', 'config': {}}
         material['sha256'] = digest(material)
         selected.append(material)
     if 'fixture_operation' in plan['tools']:
