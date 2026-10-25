@@ -10,7 +10,7 @@ export interface ResearchAgreement {
     connectionRefs: Record<string, string>;
     deadline: number;
     perRoundCaps: ResearchAgreement['budget'];
-  };
+  } | null;
   budget: { rounds: number; toolCalls: number; tokenLimit: number | null; amountMicros: number | null; currency: 'USD' | 'EUR' | 'CNY' | null };
 }
 export interface ResearchGoal {
@@ -27,7 +27,7 @@ export interface ResearchProjectSummary {
   state: 'draft' | 'ready' | 'ended';
   currentGoalVersion: number;
   createdAt: string;
-  ending: null | { outcome: 'not_met' | 'cancelled'; reason: string; endedAt: string; goalVersion: number; resourceCleanup: 'not_observed' };
+  ending: null | { outcome: 'met' | 'not_met' | 'cancelled'; reason: string; endedAt: string; goalVersion: number; resourceCleanup: 'not_observed' | 'stopped'; verificationStatus?: 'agent_analysis' };
   execution: { available: boolean; reason: string | null };
 }
 export interface ResearchProject extends ResearchProjectSummary { goals: ResearchGoal[] }

@@ -11,7 +11,7 @@ export function useProjectCommand(ownerId: string, projectId: string | undefined
       const raw = window.sessionStorage.getItem(storageKey);
       if (!raw) return { pending: null, error: '' };
       const saved = JSON.parse(raw) as ProjectCommand;
-      const actions = projectId ? ['goal', 'confirm', 'end'] : ['create'];
+      const actions = projectId ? ['goal', 'confirm', 'end', 'start'] : ['create'];
       if (!saved || !actions.includes(saved.action) || typeof saved.body?.requestId !== 'string' || !saved.body.requestId) throw new Error('invalid command');
       return { pending: saved, error: '' };
     } catch { return { pending: null, error: '无法读取原研究请求；请保留本页存储并排查，暂不提交新请求。' }; }

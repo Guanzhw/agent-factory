@@ -8,6 +8,7 @@ export const researchApi = {
   create: (owner: string, body: { requestId: string; title: string; assistantId: string | null }) => factoryRequest<ResearchProject>('/research/projects', 'POST', body, undefined, owner),
   goal: (owner: string, id: string, body: { requestId: string; expectedVersion: number; agreement: ResearchAgreement }) => factoryRequest<ResearchProject>(`${projectPath(id)}/goals`, 'POST', body, undefined, owner),
   confirm: (owner: string, id: string, body: { requestId: string; expectedVersion: number }) => factoryRequest<ResearchProject>(`${projectPath(id)}/confirm`, 'POST', body, undefined, owner),
+  start: (owner: string, id: string, body: { requestId: string; expectedVersion: number }) => factoryRequest(`${projectPath(id)}/start`, 'POST', body, undefined, owner),
   end: (owner: string, id: string, body: { requestId: string; expectedVersion: number; outcome: 'not_met' | 'cancelled'; reason: string }) => factoryRequest<ResearchProject>(`${projectPath(id)}/end`, 'POST', body, undefined, owner),
 };
 
@@ -15,13 +16,17 @@ export type ProjectCommand =
   | { action: 'create'; body: Parameters<typeof researchApi.create>[1] }
   | { action: 'goal'; body: Parameters<typeof researchApi.goal>[2] }
   | { action: 'confirm'; body: Parameters<typeof researchApi.confirm>[2] }
+  | { action: 'start'; body: Parameters<typeof researchApi.start>[2] }
   | { action: 'end'; body: Parameters<typeof researchApi.end>[2] };
 
-export function sendProjectCommand(owner: string, projectId: string | undefined, command: ProjectCommand) {
+export async function sendProjectCommand(owner: string, projectId: string | undefined, command: ProjectCommand) {
   switch (command.action) {
     case 'create': return researchApi.create(owner, command.body);
     case 'goal': return researchApi.goal(owner, projectId!, command.body);
     case 'confirm': return researchApi.confirm(owner, projectId!, command.body);
+    case 'start':
+      await researchApi.start(owner, projectId!, command.body);
+      return researchApi.project(owner, projectId!);
     case 'end': return researchApi.end(owner, projectId!, command.body);
   }
 }

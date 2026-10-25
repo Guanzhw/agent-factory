@@ -3,7 +3,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ApiError } from '../../api.js';
-import { ResearchWorkspace } from './ResearchWorkspace.js';
+import { ResearchWorkbench } from './ResearchWorkspace.js';
 import { researchApi } from './client.js';
 import type { ResearchAgreement, ResearchProject } from './types.js';
 
@@ -15,6 +15,9 @@ const drafted: ResearchProject = { ...empty, currentGoalVersion: 1, goals: [{ ve
 const confirmed: ResearchProject = { ...drafted, state: 'ready', goals: [{ ...drafted.goals[0], confirmedAt: empty.createdAt }] };
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() } as unknown as MediaQueryList);
+  vi.spyOn(HTMLDialogElement.prototype, 'showModal').mockImplementation(function (this: HTMLDialogElement) { this.open = true; });
+  vi.spyOn(HTMLDialogElement.prototype, 'close').mockImplementation(function (this: HTMLDialogElement) { this.open = false; });
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   onProject.mockReset(); onResources.mockReset(); window.sessionStorage.clear();
   vi.spyOn(researchApi, 'projects').mockResolvedValue({ items: [], nextCursor: null });
@@ -27,7 +30,10 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const button = (text: string) => [...host.querySelectorAll('button')].find(item => item.textContent === text)!;
-async function mount(projectId?: string, ownerId = 'alice') { await act(async () => root.render(createElement(ResearchWorkspace, { ownerId, projectId, onProject, onResources }))); }
+async function mount(projectId?: string, ownerId = 'alice') {
+  await act(async () => root.render(createElement(ResearchWorkbench, { key: ownerId, user: { id: ownerId, name: ownerId, role: 'user' }, route: { tab: 'research', task: '', project: projectId }, onLogout: vi.fn(), sessionBusy: false, sessionError: '', navigate: patch => { if (patch.tab === 'resources') onResources(); else if (patch.project) onProject(patch.project); } })));
+  if (!projectId) await act(async () => button('新建项目').click());
+}
 async function field(label: string, value: string) {
   const wrapper = [...host.querySelectorAll('label')].find(item => item.firstChild?.textContent === label)!;
   const input = wrapper.querySelector('input,textarea,select')!;
@@ -36,7 +42,7 @@ async function field(label: string, value: string) {
 }
 it('offers personal project creation and real resource navigation without a fake execution action', async () => {
   await mount(); expect(host.textContent).toContain('还没有研究项目'); expect(host.textContent).not.toContain('同事助手');
-  await act(async () => button('打开资源中心').click()); expect(onResources).toHaveBeenCalledOnce();
+  await act(async () => button('配置模型与资源').click()); expect(onResources).toHaveBeenCalledOnce();
   await field('项目名称', '新研究'); await field('关联我的助手', 'a');
   await act(async () => button('创建项目').click());
   expect(researchApi.create).toHaveBeenCalledWith('alice', { requestId: expect.any(String), title: '新研究', assistantId: 'a' });
@@ -52,7 +58,7 @@ it('saves an agreement before separate confirmation and retains the old goal whe
   vi.mocked(researchApi.goal).mockResolvedValueOnce({ ...drafted, currentGoalVersion: 2, goals: [...confirmed.goals, { ...drafted.goals[0], version: 2, agreement: { ...agreement, objective: '改为评估延迟' } }] });
   await act(async () => button('保存研究约定').click());
   expect(vi.mocked(researchApi.goal).mock.calls[1][2]).toMatchObject({ expectedVersion: 1, agreement: { objective: '改为评估延迟' } });
-  expect(host.textContent).toContain('目标版本 1'); expect(host.textContent).toContain('目标版本 2'); expect(host.textContent).toContain('减少错误率');
+  expect(host.textContent).toContain('版本 1'); expect(host.textContent).toContain('版本 2'); expect(host.textContent).toContain('减少错误率');
 });
 it.each([0, 408])('preserves the exact request after ambiguous HTTP %s without automatic retries', async status => {
   vi.mocked(researchApi.create).mockRejectedValueOnce(new ApiError('响应未确认', status));
@@ -64,15 +70,15 @@ it.each([0, 408])('preserves the exact request after ambiguous HTTP %s without a
 it('does not optimistically overwrite a goal on version conflict and can reload the current version', async () => {
   vi.mocked(researchApi.project).mockResolvedValue(confirmed); vi.mocked(researchApi.goal).mockRejectedValueOnce(new ApiError('版本冲突', 409, 'RESEARCH_GOAL_CONFLICT'));
   await mount('project-1'); await act(async () => button('修改目标').click()); await field('研究目标', '冲突修改'); await act(async () => button('保存研究约定').click());
-  expect(host.querySelector('[role="alert"]')?.textContent).toContain('版本冲突'); expect(host.textContent).toContain('当前目标 · 版本 1'); expect(button('重试原操作')).toBeUndefined();
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('版本冲突'); expect(host.textContent).toContain('研究约定 · 版本 1'); expect(button('重试原操作')).toBeUndefined();
   vi.mocked(researchApi.project).mockResolvedValue({ ...confirmed, currentGoalVersion: 2, goals: [...confirmed.goals, { ...confirmed.goals[0], version: 2 }] });
-  await act(async () => button('刷新项目详情').click()); expect(host.textContent).toContain('当前目标 · 版本 2');
+  await act(async () => button('刷新项目').click()); expect(host.textContent).toContain('研究约定 · 版本 2');
 });
 it('keeps domain ending distinct from resource cleanup', async () => {
   vi.mocked(researchApi.project).mockResolvedValue(confirmed); await mount('project-1');
   await act(async () => button('结束研究').click()); await field('结束依据与剩余问题', '已有证据不支持继续'); await act(async () => button('保存结束理由').click());
   expect(researchApi.end).toHaveBeenCalledWith('alice', 'project-1', { requestId: expect.any(String), expectedVersion: 1, outcome: 'not_met', reason: '已有证据不支持继续' });
-  expect(host.textContent).toContain('未达标结束'); expect(host.textContent).toContain('资源清理状态：尚未核对'); expect(button('修改目标')).toBeUndefined();
+  expect(host.textContent).toContain('未达标结束'); expect(host.textContent).toContain('资源清理尚未核对'); expect(button('修改目标')).toBeUndefined();
 });
 it('ignores a late private read after switching owners', async () => {
   let resolve!: (project: ResearchProject) => void;
