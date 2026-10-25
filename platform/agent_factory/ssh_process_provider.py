@@ -7,6 +7,7 @@ from inspect import isawaitable, iscoroutine
 import json
 from pathlib import Path
 import shlex
+import subprocess
 from tempfile import TemporaryDirectory
 import time
 import threading
@@ -49,8 +50,11 @@ class SSHProcessTransport:
             if time.monotonic() >= deadline:
                 raise TimeoutError('SSH_PROCESS_UNCONFIRMED')
             process = pinned_ssh(self.server, lease, Path(folder), command)
-            output = pipe_exchange(process, raw, deadline=deadline, max_output=MAX_RESPONSE_BYTES,
-                                   before_write=fresh, cancelled=cancelled)
+            try:
+                output = pipe_exchange(process, raw, deadline=deadline, max_output=MAX_RESPONSE_BYTES,
+                                       before_write=fresh, cancelled=cancelled)
+            except subprocess.CalledProcessError as error:
+                raise ValueError('SSH_PROCESS_PROTOCOL_INVALID') from error
             lease.validate()
             return json.loads(output)
 
