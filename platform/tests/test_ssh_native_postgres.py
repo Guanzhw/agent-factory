@@ -38,19 +38,32 @@ from test_personal_tool_native_postgres import InventoryModel
 
 
 class SSHSequenceModel(InventoryModel):
+    def __init__(self, inputs, observed):
+        super().__init__()
+        self.inputs = dict(inputs)
+        self.observed = observed
+
     def response(self, messages):
         results = [m for m in messages if m.role == 'tool']
         if any(m.tool_call_error for m in results):
             raise AssertionError('SSH_NATIVE_TOOL_REJECTED')
         waits = [m for m in results if m.tool_name == WAIT_TOOL]
         if waits:
-            return ModelResponse(role='assistant', content='Original training operation finished.')
+            result = json.loads(waits[-1].content)['operations'][0]
+            assert result['allStopped'] and result['executionStatus'] == 'COMPLETED'
+            assert result['exitCode'] == 0
+            output = result['output']
+            assert output['utf8Valid'] and not output['truncated']
+            actual = json.loads(output['text'])
+            self.observed.append({'operationId': result['operationId'], 'actual': actual,
+                                  'artifact': output['artifact']})
+            return ModelResponse(role='assistant', content=json.dumps(actual))
         launches = [m for m in results if m.tool_name == LAUNCH_TOOL]
         if launches:
             value = ast.literal_eval(launches[-1].content)
             name, args, identifier = WAIT_TOOL, {'operationIds': [value['operationId']]}, 'original-ssh-wait'
         else:
-            name, args, identifier = LAUNCH_TOOL, {}, 'original-ssh-launch'
+            name, args, identifier = LAUNCH_TOOL, {'inputs': self.inputs}, 'original-ssh-launch'
         return ModelResponse(role='assistant', tool_calls=[{'id': identifier, 'type': 'function',
             'function': {'name': name, 'arguments': json.dumps(args)}}])
 
@@ -68,11 +81,15 @@ class SSHNativePostgresTests(unittest.TestCase):
         self.remote.mkdir()
         self.release = self.folder / 'release'
         self.started = self.folder / 'starts'
+        self.model_inputs = {'width': 1, 'label': 'first'}
+        self.model_results = []
         executable = str(Path(sys.executable).resolve())
-        program = ("from pathlib import Path; import time; "
-                   f"p=Path({str(self.started)!r}); p.open('a').write('started\\n'); "
+        program = ("from pathlib import Path; import json, sys, time; "
+                   "assert sys.argv[1] == '--experiment-json'; values=json.loads(sys.argv[2]); "
+                   f"p=Path({str(self.started)!r}); p.open('a').write(json.dumps(values)+'\\n'); "
                    f"release=Path({str(self.release)!r}); "
-                   "exec('while not release.exists():\\n time.sleep(.05)'); print('training-finished')")
+                   "exec('while not release.exists():\\n time.sleep(.05)'); "
+                   "print(json.dumps({'received': values, 'argv': sys.argv[1:]}), flush=True)")
         self.profile = SSHTrainingProfile(
             ResearchProcessSpec(executable, hashlib.sha256(Path(executable).read_bytes()).hexdigest(),
                 ('-I', '-S', '-c', program), str(self.remote),
@@ -81,10 +98,16 @@ class SSHNativePostgresTests(unittest.TestCase):
                 (self.remote.stat().st_dev, self.remote.stat().st_ino)),
             ResearchProcessLimits(cpu_seconds=2, address_space_mb=128, file_size_bytes=65536,
                 wall_seconds=60, disk_bytes=1048576, output_bytes=65536),
-            executable, ComputePool('native-fixture', 2, 512, 8, max_leases=1, max_owner_leases=1))
+            executable, ComputePool('native-fixture', 2, 512, 8, max_leases=1, max_owner_leases=1),
+            input_schema={'type': 'object', 'properties': {
+                'width': {'type': 'integer', 'minimum': 1, 'maximum': 8},
+                'label': {'type': 'string', 'maxLength': 100}},
+                'required': ['width', 'label'], 'additionalProperties': False},
+            input_argument='--experiment-json')
         self.settings = Settings(db_url=self.database.url, workspace=self.folder / 'factory', max_workers=1,
             ssh_training_profiles={'native-fixture': self.profile},
-            runtime_adapters=[AdapterRegistration('model', 'ssh-native-model', '1', lambda _: SSHSequenceModel()),
+            runtime_adapters=[AdapterRegistration('model', 'ssh-native-model', '1',
+                                                 lambda _: SSHSequenceModel(self.model_inputs, self.model_results)),
                 AdapterRegistration('environment', 'ssh-native-environment', '1', lambda _: EnvironmentLimits())],
             credential_vault_factory=lambda engine: EncryptedCredentialVault(engine, b'n' * 32,
                 {PROVIDER_ID: SSHCredentialPolicy()}))
@@ -214,7 +237,10 @@ class SSHNativePostgresTests(unittest.TestCase):
         self.until(lambda: (self.store.native_db.get_job(run_id) or {}).get('status') == 'completed', 'same native run completed')
         self.until(lambda: self.store.task(task_id, 'alice')['terminal'], 'original task finalization')
         self.assertEqual(self.store.task(task_id, 'alice')['run_id'], run_id)
-        self.assertEqual(self.started.read_text().splitlines(), ['started'])
+        self.assertEqual([json.loads(line) for line in self.started.read_text().splitlines()], [self.model_inputs])
+        self.assertEqual(self.model_results[0]['operationId'], operation_id)
+        self.assertEqual(self.model_results[0]['actual']['received'], self.model_inputs)
+        self.assertEqual(self.model_results[0]['artifact']['taskId'], task_id)
         self.assertTrue(self.store.workflow.read('alice', operation_id)['closed'])
         receipts = self.store.sql('SELECT command_id FROM af_control_commands WHERE task_ref=:task', task=task_id)
         self.assertEqual(len(receipts), 1)
@@ -222,7 +248,7 @@ class SSHNativePostgresTests(unittest.TestCase):
         for _ in range(2):
             self.client.portal.call(self.state['lifecycle_observer'].observe_root, task_id)
         self.assertEqual(self.store.sql('SELECT command_id FROM af_control_commands WHERE task_ref=:task', task=task_id), receipts)
-        self.assertEqual(self.started.read_text().splitlines(), ['started'])
+        self.assertEqual([json.loads(line) for line in self.started.read_text().splitlines()], [self.model_inputs])
 
     def test_uncertain_continuation_receipt_is_not_redispatched_after_restart(self):
         """Lost acknowledgement at the boundary; delivery itself is not proven."""
@@ -276,4 +302,57 @@ class SSHNativePostgresTests(unittest.TestCase):
                                             task=task_id), operations)
             self.assertEqual(self.store.sql('SELECT command_id FROM af_control_commands WHERE task_ref=:task',
                                             task=task_id), rows)
-            self.assertEqual(self.started.read_text().splitlines(), ['started'])
+            self.assertEqual([json.loads(line) for line in self.started.read_text().splitlines()], [self.model_inputs])
+            self.assertEqual(self.model_results, [])
+
+    def test_distinct_inputs_reach_real_helper_and_restart_retains_original(self):
+        first_inputs = dict(self.model_inputs)
+        first = self.request('POST', '/application-interface/v1/starts',
+            {'application': 'ssh-native', 'mode': 'train', 'goal': 'First typed training',
+             'requestId': 'typed-first', 'connectionRefs': {'compute': self.connection}}, expected=202)
+        first_task = first['job']['id']
+        first_run = self.store.task(first_task, 'alice')['run_id']
+        self.until(lambda: self.started.exists(), 'first actual helper argv')
+        self.until(lambda: self.store.native_db.get_job(first_run)['status'] == 'paused', 'first native wait')
+        first_operation = self.store.sql('SELECT id FROM af_external_operations WHERE task_id=:task',
+                                         task=first_task)[0]['id']
+        retained = self.store.workflow._load('alice', first_operation)['inputs']
+        self.assertEqual(retained['inputs'], first_inputs)
+        self.model_inputs = {'width': 3, 'label': "quoted '; $(not-a-shell-command)"}
+        second_inputs = dict(self.model_inputs)
+        self.stop()
+        self.release.touch()
+        self.start()
+        self.until(lambda: self.store.task(first_task, 'alice')['terminal'], 'first original completion')
+        self.assertEqual(self.store.task(first_task, 'alice')['run_id'], first_run)
+        self.assertEqual(self.store.workflow._load('alice', first_operation)['inputs'], retained)
+        first_output = self.model_results[0]
+        self.assertEqual(first_output['operationId'], first_operation)
+        self.assertEqual(first_output['actual']['received'], first_inputs)
+        second = self.request('POST', '/application-interface/v1/starts',
+            {'application': 'ssh-native', 'mode': 'train', 'goal': 'Second typed training',
+             'requestId': 'typed-second', 'connectionRefs': {'compute': self.connection}}, expected=202)
+        second_task = second['job']['id']
+        self.until(lambda: self.store.task(second_task, 'alice')['terminal'], 'second actual helper completion')
+        second_run = self.store.task(second_task, 'alice')['run_id']
+        second_operation = self.store.sql('SELECT id FROM af_external_operations WHERE task_id=:task',
+                                          task=second_task)[0]['id']
+        self.assertNotEqual(first_task, second_task)
+        self.assertNotEqual(first_run, second_run)
+        self.assertNotEqual(first_operation, second_operation)
+        second_retained = self.store.workflow._load('alice', second_operation)['inputs']
+        self.assertEqual(second_retained['inputs'], second_inputs)
+        self.assertNotEqual(retained['targetRef'], second_retained['targetRef'])
+        self.assertEqual(len(self.model_results), 2)
+        for output, expected, task, operation in (
+            (first_output, first_inputs, first_task, first_operation),
+            (self.model_results[1], second_inputs, second_task, second_operation)):
+            self.assertEqual(output['operationId'], operation)
+            self.assertEqual(output['artifact']['taskId'], task)
+            self.assertEqual(output['actual']['received'], expected)
+            argv = output['actual']['argv']
+            self.assertEqual(len(argv), 2)
+            self.assertEqual(argv[0], '--experiment-json')
+            self.assertEqual(json.loads(argv[1]), expected)
+        self.assertEqual([json.loads(line) for line in self.started.read_text().splitlines()],
+                         [first_inputs, second_inputs])
