@@ -1,5 +1,6 @@
 """Stable research identities backed by core endpoints and original messages."""
 from copy import deepcopy
+from contextlib import nullcontext
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -9,6 +10,7 @@ from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, select
 from agent_factory.applications import GovernedStorage
 from agent_factory.assistant_endpoints import AutomaticBudget, EndpointConfiguration
 from agent_factory.assistant_messages import SendAssistantMessage
+from agent_factory.assistant_events import EventSubscription
 from agent_factory.material_governance import PinnedRef
 from agent_factory.store import digest
 from .projects import Budget, Reference, RequestId
@@ -34,6 +36,12 @@ class QuestionBudget(BaseModel):
         return self
 
 
+class AssociationConfiguration(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    enabled: bool
+    maxRecipients: int = Field(default=2, strict=True, ge=1, le=20)
+
+
 class ConfigureAssistant(BaseModel):
     model_config = ConfigDict(extra='forbid')
     requestId: RequestId
@@ -41,13 +49,15 @@ class ConfigureAssistant(BaseModel):
     applicationRef: PinnedRef
     connectionRefs: dict[Reference, Reference] = Field(max_length=12)
     budget: QuestionBudget
+    associations: AssociationConfiguration | None = None
 
 
 class ResearchAssistants:
     def __init__(self, store, auth, endpoints, messages, scopes, *, pin,
-                 tool_registrations, environment_registration):
+                 tool_registrations, environment_registration, events=None):
         self.store, self.auth, self.endpoints, self.messages, self.scopes = store, auth, endpoints, messages, scopes
         self.pin, self.tools, self.environment = pin, tuple(tool_registrations), environment_registration
+        self.events = events
         self.db = GovernedStorage(store, 'research_assistants_v1')
         metadata = MetaData()
         self.identities = Table('research_assistants', metadata,
@@ -157,12 +167,14 @@ class ResearchAssistants:
         self.auth.require_member(owner)
         if body.budget.caps.tokenLimit is not None or body.budget.perQuestionCaps.tokenLimit is not None:
             raise HTTPException(422, 'RESEARCH_QA_BYOK_METERING_UNSUPPORTED')
-        value = body.model_dump(exclude={'requestId', 'expectedRevision'})
+        value = body.model_dump(exclude={'requestId', 'expectedRevision'}, exclude_none=True)
+        # Caps intentionally retain explicit null BYOK accounting fields.
+        value['budget'] = body.budget.model_dump()
         fingerprint = digest({'action': 'configure', 'expectedRevision': body.expectedRevision, **value})
         with self.store.transaction() as conn:
             if self.store.engine.dialect.name == 'postgresql':
                 self.scopes.admission_lock(conn)
-            with self.db.write(), self.endpoints.db.write():
+            with self.db.write(), (self.events.db.write() if self.events is not None else nullcontext()), self.endpoints.db.write():
                 old = self.db.old(conn, self.commands, owner, body.requestId, fingerprint)
                 if old is not None:
                     return old
@@ -178,6 +190,12 @@ class ResearchAssistants:
                 endpoint = self.endpoints.configure(owner, EndpointConfiguration(name='Research assistant QA',
                     applicationRef=body.applicationRef, mode='qa', connectionRefs=body.connectionRefs,
                     automaticBudget=AutomaticBudget(scopeId=scope_id, caps=budget['perQuestionCaps'], deadline=budget['deadline'])), str(uuid4()))
+                if body.associations and body.associations.enabled:
+                    if self.events is None:
+                        raise HTTPException(409, 'RESEARCH_ASSOCIATIONS_NOT_INSTALLED')
+                    self.events.configure(owner, EventSubscription(endpointId=endpoint['id'], namespace='research',
+                        eventType='evidence.available', scopeId=scope_id, caps=budget['perQuestionCaps'],
+                        deadline=budget['deadline'], maxDepth=0, maxCandidates=20), 'research-associations:' + endpoint['id'])
                 if row['qa_endpoint_id']:
                     self.endpoints.set_enabled(owner, row['qa_endpoint_id'], False, str(uuid4()))
                 revision = row['configuration_revision'] + 1
@@ -187,6 +205,21 @@ class ResearchAssistants:
                     configuration_revision=revision, qa_endpoint_id=endpoint['id']))
                 result = self._projection(conn, self._identity(conn, row['id']))
                 return self.db.record(conn, self.commands, owner, body.requestId, fingerprint, 'configure', result)
+
+    def association_configuration(self, owner):
+        self.auth.require_member(owner)
+        with self.db.read() as conn:
+            row = conn.execute(select(self.identities).where(self.identities.c.owner_id == owner)).mappings().first()
+            if row is None or not row['qa_endpoint_id']:
+                return None
+            configuration = conn.execute(select(self.configurations.c.body).where(
+                self.configurations.c.assistant_id == row['id'],
+                self.configurations.c.revision == row['configuration_revision'])).scalar_one()
+            if not (configuration.get('associations') or {}).get('enabled'):
+                return None
+            if not self._availability(row)['available']:
+                return None
+            return {'assistantId': row['id'], 'endpointId': row['qa_endpoint_id'], **deepcopy(configuration)}
 
     def _availability(self, row):
         if row['qa_endpoint_id'] is None:

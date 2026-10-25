@@ -1,6 +1,7 @@
 """Persist only original QA inputs; core owns replies and current source authority."""
 import json
 import re
+from contextlib import contextmanager
 
 from fastapi import HTTPException
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
@@ -9,8 +10,9 @@ from agent_factory.applications import GovernedStorage
 
 
 class ResearchQA:
-    def __init__(self, store, assistants, messages, runs, content):
+    def __init__(self, store, assistants, messages, runs, content, *, associations=None):
         self.assistants, self.messages, self.runs, self.content = assistants, messages, runs, content
+        self.associations = associations
         self.db = GovernedStorage(store, 'research_qa_v1')
         metadata = MetaData()
         self.inputs = Table('research_qa_inputs', metadata,
@@ -18,6 +20,15 @@ class ResearchQA:
             Column('run_id', String, nullable=False), Column('message_id', String, nullable=False),
             Column('configuration', JSON, nullable=False), Column('content_ids', JSON, nullable=False))
         metadata.create_all(store.engine)
+
+    @contextmanager
+    def _write(self):
+        if self.associations is None:
+            with self.db.write() as conn:
+                yield conn
+        else:
+            with self.associations.sources.guard(), self.db.write() as conn:
+                yield conn
 
     def _original(self, ctx):
         owner, task = ctx.user_id, ctx.session_id
@@ -32,8 +43,9 @@ class ResearchQA:
         return message, config
 
     def _source(self, message, identifier):
-        source = self.content.read(message['senderId'], identifier)
-        self.content.read(message['recipientId'], identifier)
+        read = self.associations.sources.read_publication if self.associations is not None else self.content.read
+        source = read(message['senderId'], identifier)
+        read(message['recipientId'], identifier)
         if source['visibility'] != 'team' or source['source']['application'] != 'research':
             raise HTTPException(403, 'RESEARCH_QA_TEAM_SOURCE_REQUIRED')
         return {key: source[key] for key in ('id', 'source', 'content', 'verificationStatus')}
@@ -66,8 +78,12 @@ class ResearchQA:
         return selected
 
     def context(self, ctx):
-        with self.db.write() as conn:
+        with self._write() as conn:
             message, config = self._original(ctx)
+            if self.associations is not None:
+                delivery = self.associations.events.delivery_for_task(ctx.user_id, ctx.session_id)
+                if delivery is not None:
+                    return self.associations.context(ctx, message, delivery)
             row = conn.execute(select(self.inputs).where(self.inputs.c.task_id == ctx.session_id)).mappings().first()
             if row is None:
                 sources = self._select(message)
@@ -88,8 +104,12 @@ class ResearchQA:
             raise HTTPException(409, 'RESEARCH_QA_ORIGINAL_INPUT_REQUIRED')
 
     def record(self, ctx, answer):
-        with self.db.read() as conn:
+        with self._write() as conn:
             message, config = self._original(ctx)
+            if self.associations is not None:
+                delivery = self.associations.events.delivery_for_task(ctx.user_id, ctx.session_id)
+                if delivery is not None:
+                    return self.associations.record(ctx, delivery, answer)
             row = conn.execute(select(self.inputs).where(self.inputs.c.task_id == ctx.session_id)).mappings().first()
             if row is None:
                 raise HTTPException(409, 'RESEARCH_QA_ORIGINAL_INPUT_REQUIRED')

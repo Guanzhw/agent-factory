@@ -20,11 +20,13 @@ from .projects import Agreement, reject
 
 
 class ResearchRounds:
-    def __init__(self, legacy_runs, *, events, endpoints, custody, control, pin):
+    def __init__(self, legacy_runs, *, events, endpoints, custody, control, pin, associations=None):
         self.legacy = legacy_runs
         self.projects, self.db = legacy_runs.projects, legacy_runs.projects.db
         self.events, self.endpoints, self.custody, self.control = events, endpoints, custody, control
         self.scopes, self.content, self.pin = legacy_runs.scopes, legacy_runs.records.content, dict(pin)
+        self.associations = associations
+        self.peer_sources = associations.sources if associations is not None else None
         metadata = MetaData()
         self.rounds = Table('research_rounds', metadata,
             Column('id', String, primary_key=True), Column('owner_id', String, nullable=False),
@@ -114,10 +116,23 @@ class ResearchRounds:
             with self.db.write(), self.content.db.write(), self.events.db.write(), self.endpoints.db.write():
                 yield conn
 
-    def _publish(self, owner, identifier, revision, content):
-        return self.content.publish(owner, ContentPublication(source=ContentSource(
-            application='research', record=identifier, revision=revision), content=content, visibility='team'),
-            'research-record:' + identifier + ':' + revision)['id']
+    def _publish(self, owner, identifier, revision, content, *, round_id=None):
+        if self.peer_sources is not None:
+            result = self.peer_sources.publication(owner, round_id or identifier, identifier, revision, content)
+        else:
+            result = self.content.publish(owner, ContentPublication(source=ContentSource(
+                application='research', record=identifier, revision=revision), content=content, visibility='team'),
+                'research-record:' + identifier + ':' + revision)['id']
+        if self.associations is not None:
+            sources = self.associations.sources
+            if sources.available(owner, sources.dependencies(round_id or identifier)):
+                with self.db.read() as conn:
+                    self.associations.prepare(conn, owner, result)
+        return result
+
+    def _require_peer_sources(self, owner, round_id):
+        if self.peer_sources is not None:
+            self.peer_sources.require(owner, self.peer_sources.dependencies(round_id))
 
     def _prepare(self, owner, project_id, body):
         self.projects.auth.require_member(owner)
@@ -229,12 +244,14 @@ class ResearchRounds:
         with self._write() as conn:
             row = self._bound(conn, run_context)
             agreement = self._goal(conn, row['project_id'], row['goal_version'])
+            peers = self.associations.for_round(row['owner_id'], row['id'], row['project_id'], agreement) if self.associations else []
             sources = []
             previous_observation = None
             if row['predecessor_id']:
                 prior = conn.execute(select(self.rounds).where(self.rounds.c.id == row['predecessor_id'])).mappings().one()
                 if prior['terminal_record']:
-                    sources.append(self.content.read(row['owner_id'], prior['terminal_record']))
+                    reader = self.peer_sources.read_publication if self.peer_sources else self.content.read
+                    sources.append(reader(row['owner_id'], prior['terminal_record']))
                 attempt = conn.execute(select(self.legacy.attempts).where(
                     self.legacy.attempts.c.round_id == prior['id'])).mappings().first()
                 if attempt and attempt['operation_id']:
@@ -246,7 +263,8 @@ class ResearchRounds:
                 'agreement': agreement.model_dump(exclude={'execution', 'resourceRefs'}),
                 'scope': self.scopes.inspect(row['owner_id'], row['scope_id']), 'sources': sources,
                 'previousObservation': previous_observation,
-                'evidenceIds': [item['id'] for item in sources]}
+                'peerEvidence': peers, 'evidenceIds': sorted({item['id'] for item in sources}
+                    | {identifier for item in peers for identifier in item['sourceIds']})}
 
     async def launch(self, run_context, decision):
         def prepare():
@@ -260,6 +278,8 @@ class ResearchRounds:
                     if old['request'] != decision.model_dump():
                         reject('RESEARCH_DECISION_CONFLICT', '原轮次不能替换实验意图')
                     return row, dict(old)
+                self._require_peer_sources(row['owner_id'], row['id'])
+                self._assessments(row, decision.model_dump())
                 experiment_id, attempt_id = str(uuid4()), str(uuid4())
                 conn.execute(self.legacy.experiments.insert().values(id=experiment_id, project_id=row['project_id'],
                     goal_version=row['goal_version'], hypothesis=decision.hypothesis,
@@ -269,7 +289,7 @@ class ResearchRounds:
                 self._publish(row['owner_id'], attempt_id, 'start', {'kind': 'research.experiment.start',
                     'state': 'pending_admission', 'projectId': row['project_id'], 'goalVersion': row['goal_version'],
                     'roundId': row['id'], 'experimentId': experiment_id, 'attemptId': attempt_id,
-                    'hypothesis': decision.hypothesis, 'conditions': decision.conditions})
+                    'hypothesis': decision.hypothesis, 'conditions': decision.conditions}, round_id=row['id'])
                 return row, {'id': attempt_id, 'operation_id': None}
         row, attempt = await asyncio.to_thread(prepare)
         operation = await self.custody.start(run_context, 'research_launch', 'experiment',
@@ -281,18 +301,27 @@ class ResearchRounds:
     def results(self, run_context):
         with self._write() as conn:
             row = self._bound(conn, run_context)
+            self._require_peer_sources(row['owner_id'], row['id'])
             attempt = conn.execute(select(self.legacy.attempts).where(self.legacy.attempts.c.round_id == row['id'])).mappings().one()
             operation = self.custody.read(row['owner_id'], attempt['operation_id'])
             if operation['taskId'] != row['task_id'] or operation['nativeRunId'] != run_context.run_id or not operation['closed']:
                 reject('RESEARCH_ORIGINAL_RESULT_REQUIRED', '原操作尚未确认结束')
             agreement = self._goal(conn, row['project_id'], row['goal_version'])
+            bound = self.peer_sources.bound(row['id']) if self.peer_sources else None
+            peers = [self.associations.read(row['owner_id'], identifier) for identifier in bound['association_ids']] if bound and self.associations else []
             return {'agreement': agreement.model_dump(exclude={'execution', 'resourceRefs'}),
-                'evidenceIds': [operation['id']], 'operation': deepcopy(operation['observation'])}
+                'evidenceIds': sorted({operation['id']} | {identifier for item in peers for identifier in item['sourceIds']}), 'peerEvidence': peers,
+                'operation': deepcopy(operation['observation'])}
 
     def record_decision(self, run_context, decision):
         with self._write() as conn:
             row = self._bound(conn, run_context)
+            self._require_peer_sources(row['owner_id'], row['id'])
+            self._assessments(row, decision)
             valid = set()
+            if self.peer_sources:
+                bound = self.peer_sources.bound(row['id'])
+                valid.update(bound['source_ids'] if bound else [])
             if row['predecessor_id']:
                 prior = conn.execute(select(self.rounds).where(self.rounds.c.id == row['predecessor_id'])).mappings().one()
                 if prior['terminal_record']:
@@ -311,6 +340,16 @@ class ResearchRounds:
                 reject('RESEARCH_DECISION_CONFLICT', '原轮次决定不可替换')
             conn.execute(self.rounds.update().where(self.rounds.c.id == row['id']).values(decision=decision))
             return {'roundId': row['id'], 'decision': deepcopy(decision), 'verificationStatus': 'agent_analysis'}
+
+    def _assessments(self, row, decision):
+        if self.peer_sources is None:
+            return
+        bound = self.peer_sources.bound(row['id'])
+        expected = {source_id for identifier in bound['association_ids']
+                    for source_id in self.associations.read(row['owner_id'], identifier)['sourceIds']} if bound and self.associations else set()
+        supplied = decision.get('sourceAssessments', [])
+        if {item['contentId'] for item in supplied} != expected or len(supplied) != len(expected):
+            reject('RESEARCH_SOURCE_ASSESSMENTS_REQUIRED', '必须说明实际读取的经验是否适用或需要独立复现')
 
     def _remaining(self, owner, row, agreement):
         scope = self.scopes.inspect(owner, row['scope_id'])
@@ -352,6 +391,7 @@ class ResearchRounds:
         reason = self._remaining(owner, tail, agreement)
         if reason:
             reject(reason, '原项目承诺不再允许下一轮')
+        self._require_peer_sources(owner, tail['id'])
         content_id = self._publish(owner, tail['id'], 'goal-' + str(body.expectedVersion), {
             'kind': 'research.goal.resume', 'projectId': project['id'], 'goalVersion': body.expectedVersion,
             'roundId': tail['id'], 'previousRecordId': tail['terminal_record'],
@@ -395,6 +435,10 @@ class ResearchRounds:
             terminal['sharing'] = 'authorization_withdrawn'
             terminal['continuationBlocked'] = 'AUTHORIZATION_WITHDRAWN'
         content_id = None
+        if (terminal['sharing'] == 'published' and self.peer_sources
+                and not self.peer_sources.available(task['owner_id'], self.peer_sources.dependencies(row['id']))):
+            terminal['sharing'] = 'source_unavailable'
+            terminal['continuationBlocked'] = 'RESEARCH_SOURCE_UNAVAILABLE'
         if terminal['sharing'] == 'published':
             evidence = None
             attempt = conn.execute(select(self.legacy.attempts).where(
@@ -416,6 +460,7 @@ class ResearchRounds:
             if row['decision'] and row['decision']['action'] == 'continue':
                 reason = ('RESEARCH_PROJECT_ENDED' if project['state'] == 'ended' else
                           'RESEARCH_GOAL_VERSION_CONFLICT' if project['state'] != 'ready' or project['goal_version'] != row['goal_version']
+                          else 'RESEARCH_SOURCE_UNAVAILABLE' if self.peer_sources and not self.peer_sources.available(task['owner_id'], self.peer_sources.dependencies(row['id']))
                           else self._remaining(task['owner_id'], row, agreement))
                 if reason is None and succeeded:
                     self._emit(conn, row, agreement, content_id, row['goal_version'])
@@ -474,13 +519,24 @@ class ResearchRounds:
             items = []
             for experiment in experiments:
                 attempts = conn.execute(select(self.legacy.attempts).where(self.legacy.attempts.c.experiment_id == experiment['id'])).mappings().all()
+                if self.peer_sources and not self.peer_sources.available(owner, self.peer_sources.dependencies(experiment['round_id'])):
+                    items.append({'id': experiment['id'], 'projectId': project_id, 'goalVersion': experiment['goal_version'],
+                                  'sourceUnavailable': True, 'attempts': [{'id': a['id'], 'operationId': a['operation_id']} for a in attempts]})
+                    continue
                 items.append({'id': experiment['id'], 'projectId': project_id, 'goalVersion': experiment['goal_version'],
                     'hypothesis': experiment['hypothesis'], 'conditions': deepcopy(experiment['conditions']),
                     'attempts': [{'id': a['id'], 'operationId': a['operation_id'],
                                   'operation': self.custody.read(owner, a['operation_id']) if a['operation_id'] else None} for a in attempts]})
-            return {'items': items, 'rounds': [{'id': row['id'], 'goalVersion': row['goal_version'],
+            result = {'items': items, 'rounds': [{'id': row['id'], 'goalVersion': row['goal_version'],
                 'scopeId': row['scope_id'], 'allocationId': row['allocation_id'], 'taskId': row['task_id'],
                 'deliveryId': row['delivery_id'], 'decision': deepcopy(row['decision']), 'terminal': deepcopy(row['terminal']),
                 'terminalRecordId': row['terminal_record'], 'continuations': [
                     {**trigger, 'delivery': self.events.event(owner, trigger['eventId'])}
                     for trigger in row['continuations']]} for row in rows]}
+            if self.peer_sources:
+                for item in result['rounds']:
+                    if not self.peer_sources.available(owner, self.peer_sources.dependencies(item['id'])):
+                        item['decision'] = None
+                        item['terminal'] = {'state': 'ended'} if item['terminal'] else None
+                        item['sourceUnavailable'] = True
+            return result
