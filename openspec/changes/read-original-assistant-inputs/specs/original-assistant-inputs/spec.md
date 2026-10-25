@@ -19,8 +19,8 @@
 - **THEN** 不因旧硬上限拒绝；超出已配置深度或预算仍拒绝，不重置根或创建额外额度
 
 ### Requirement: 技术错误记录不保存任意消息
-系统 SHALL 只记录有限安全大写HTTP code或异常类型；不能保存任意provider正文、敏感消息或把技术拒绝解释为科学结论。
+系统 SHALL 只记录显式有限集合内的Factory HTTP code或异常类型；不能保存任意provider正文、敏感消息或把技术拒绝解释为科学结论。
 
 #### Scenario: 结构化code与不安全说明
-- **WHEN** HTTP错误包含合法code，或只包含任意说明/其他异常文本
-- **THEN** 前者保留code，后者只保留异常类型，原delivery身份不变
+- **WHEN** HTTP错误包含集合内已知code，或只包含任意说明/其他异常文本
+- **THEN** 前者保留code，后者（含全大写敏感样式文本）只保留异常类型，原delivery身份不变
