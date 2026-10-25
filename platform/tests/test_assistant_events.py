@@ -50,11 +50,11 @@ class AssistantEventsTests(ApplicationCompositionFixture):
         with self.service.db.write() as conn:
             conn.execute(self.service.deliveries.insert().values(id='rejected-delivery',
                 event_id=event['id'], endpoint_id=self.endpoint['id'], state='rejected',
-                error='LOCAL_BUDGET_SCOPE_EXHAUSTED', attempted_at=time.time()))
+                error='LOCAL_BUDGET_EXHAUSTED', attempted_at=time.time()))
         self.assertEqual(self.service.event('alice', event['id']), {
             'id': event['id'], 'scanned': False, 'errorCode': None,
             'deliveries': [{'id': 'rejected-delivery', 'endpointId': self.endpoint['id'],
-                'state': 'rejected', 'errorCode': 'LOCAL_BUDGET_SCOPE_EXHAUSTED'}]})
+                'state': 'rejected', 'errorCode': 'LOCAL_BUDGET_EXHAUSTED'}]})
         for owner, identifier in [('bob', event['id']), ('alice', 'missing-event')]:
             with self.subTest(owner=owner, identifier=identifier), self.assertRaises(HTTPException) as caught:
                 self.service.event(owner, identifier)
