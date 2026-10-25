@@ -45,7 +45,6 @@ jobs:
       - run: node --test scripts/check_web_architecture.test.mjs
       - run: node scripts/check_web_architecture.mjs --config scripts/architecture-web.json
       - run: npm run check
-      - run: npm run build:research
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         if: runner.os == 'Linux'
         with:
@@ -62,6 +61,7 @@ jobs:
       - name: Real Chromium personal-tool configured and lost-binding-ack smoke
         if: runner.os == 'Linux'
         run: uv run --no-sync python platform/tests/browser/personal_tools_smoke.py --desktop-only --scenario configured --scenario bind-loss --output "${{ runner.temp }}/personal-tool-browser"
+      - run: npm run build:research
   python:
     needs: scope
     if: needs.scope.outputs.mode != 'docs'

@@ -17,6 +17,7 @@ P4只实现可选项目、研究约定、目标历史及中文入口；execution
 - 首浏览器未配置已安装browser目录，启动失败；显式PLAYWRIGHT_BROWSERS_PATH后启动。
 - 真实browser发现research Vite入口hook执行过晚，构建仍是core入口；改为pre hook后研究入口出现。
 - 真实点击发现material-row三列布局使项目标题被状态遮挡；改应用自有纵向卡片，正常click复验通过，没有force click。Bob拒绝提示断言从内部code纠正为实际中文文案，HTTP隔离另由PG用例明确404验证。
+- 精确diff复审发现CI研究构建覆盖core dist后才运行原core浏览器smoke；将研究构建移到core smoke之后，保留两种构建与原core检查边界。
 - 初次Pyright缺应用import root，配置applications extraPaths后0错误。
 
 日志在本任务/tmp/af-research-next-evidence/p4-*及projects-pg-first.log；未将临时日志当公开下载附件。合成demo身份不是组织生产身份，未调用真实模型、GPU或外部账户；C/D仍BLOCKED/NOTRUN。最终精确head独立review/CI待完成。
