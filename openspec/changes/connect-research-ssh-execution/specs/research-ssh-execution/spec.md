@@ -92,6 +92,7 @@ Core SHALL expose a read-only original delegated-child lookup and bounded privat
 - **WHEN** the controller OS process is killed without shutdown callbacks, and a different controller PID opens the same isolated database/workspace
 - **THEN** the original helper child identity survives the kill, its retained inputs and task/run/operation/lease identities remain unchanged, and its completion resumes the original wait exactly once
 - **AND** tests reuse the existing process-worker lifecycle and local helper transport substitute; they do not claim real remote networking, provider or GPU acceptance
+- **AND** before killing the controller, the test records only its own SSH-agent PID/birth and socket-directory metadata; cleanup verifies those identities and terminates only those agents, then removes only their unchanged empty directories. This explicit test cleanup does not prove production bare-PID crash recovery of agents; deployment supervisor/process-namespace behavior remains a separate gate.
 
 #### Scenario: Failed child remains attributable
 - **WHEN** an owned original delegated operation failed or was cancelled

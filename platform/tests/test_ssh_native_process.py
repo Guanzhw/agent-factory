@@ -5,8 +5,10 @@ the local subprocess substitute; no external server, model or GPU is contacted.
 """
 import json
 import os
+from pathlib import Path
 import shutil
 import signal
+import stat
 import sys
 import unittest
 
@@ -28,6 +30,7 @@ class SSHNativeProcessTests(unittest.TestCase):
             if not shutil.which(name):
                 self.skipTest(name + ' is unavailable')
         self.cleanup_registered = False
+        self.orphan_agents = []
         self.server = command_fixture.CommandProcessTests('runTest')
         setattr(self.server, 'worker_module', 'controlled_ssh_command_worker')
         self.server.start = self.start
@@ -54,7 +57,51 @@ class SSHNativeProcessTests(unittest.TestCase):
                 stopped = adapter.wait(owner_id='alice', timeout=7)
                 self.assertTrue(stopped['stoppedProof'], stopped)
         finally:
-            self.server.tearDown()
+            try:
+                self.cleanup_orphan_agents()
+            finally:
+                self.server.tearDown()
+
+    def cleanup_orphan_agents(self):
+        # This is test-owned recovery after bare-PID kill, not a product claim
+        # that key expiry terminates an orphan ssh-agent.
+        roots = {}
+        for agent in self.orphan_agents:
+            root, folder, sock = agent['paths']
+            for metadata in (root, folder, sock):
+                path = Path(metadata['path'])
+                if not path.exists():
+                    continue
+                info = path.lstat()
+                self.assertEqual((info.st_dev, info.st_ino, info.st_uid, info.st_mode),
+                    tuple(metadata[key] for key in ('dev', 'ino', 'uid', 'mode')))
+                self.assertEqual(info.st_uid, os.getuid())
+                self.assertFalse(stat.S_ISLNK(info.st_mode))
+            expected = agent['birth']
+            actual = birth(expected['pid'])
+            if actual is not None and actual['state'] != 'Z':
+                with os.fdopen(os.pidfd_open(expected['pid']), 'rb') as descriptor:
+                    self.assertTrue(same_birth(birth(expected['pid']), expected))
+                    command = Path(f"/proc/{expected['pid']}/cmdline").read_bytes().split(b'\0')
+                    self.assertEqual(Path(os.fsdecode(command[0])).name, 'ssh-agent')
+                    self.assertIn(b'-D', command)
+                    self.assertEqual(os.fsdecode(command[command.index(b'-a') + 1]), sock['path'])
+                    signal.pidfd_send_signal(descriptor.fileno(), signal.SIGTERM)
+                    self.until(lambda: (value := birth(expected['pid'])) is None or value['state'] == 'Z',
+                               'owned orphan ssh-agent exits')
+            socket_path = Path(sock['path'])
+            if socket_path.exists():
+                socket_path.unlink()
+            folder_path = Path(folder['path'])
+            if folder_path.exists():
+                folder_path.rmdir()  # Fail rather than delete unexpected contents.
+            roots[root['path']] = root
+        for path, metadata in roots.items():
+            root_path = Path(path)
+            if root_path.exists():
+                info = root_path.lstat()
+                self.assertEqual((info.st_dev, info.st_ino), (metadata['dev'], metadata['ino']))
+                root_path.rmdir()
 
     def rows(self, sql, **parameters):
         with self.engine.connect() as conn:
@@ -86,6 +133,9 @@ class SSHNativeProcessTests(unittest.TestCase):
         process = self.server.process
         assert process is not None
         controller_pid = process.pid
+        self.orphan_agents = [json.loads(path.read_text())
+            for path in self.server.root.glob(f'ssh-agent-{controller_pid}-*.json')]
+        self.assertTrue(self.orphan_agents, 'record exact test-owned agents before controller death')
         process.kill()
         self.assertEqual(process.wait(timeout=10), -signal.SIGKILL)
         self.assertTrue(same_birth(birth(child['pid']), child), 'helper must survive actual controller death')
