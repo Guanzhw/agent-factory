@@ -36,6 +36,7 @@ class SSHOperationWaits:
         ids = (tool.get('tool_args') or {}).get('operationIds')
         require(type(ids) is list and 0 < len(ids) <= 16 and all(isinstance(value, str) for value in ids)
                 and len(ids) == len(set(ids)))
+        assert isinstance(ids, list)
         operations = [self.custody.read(task['owner_id'], identifier) for identifier in ids]
         require(all(op['taskId'] == task['id'] and op['nativeRunId'] == task['run_id']
                     and op['adapterPin'] == self.operation_pin for op in operations))

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import json
 import re
 import threading
-from typing import Any, Awaitable, Callable, Mapping, Protocol, cast
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping, Protocol, cast
 from urllib.parse import quote, urlsplit
 from uuid import uuid4
 
@@ -20,6 +20,9 @@ from sqlalchemy import text
 
 from .store import canonical, digest, now
 from .gpu_custody import GpuBinding, validate_binding, validate_gpu_evidence
+
+if TYPE_CHECKING:
+    from .ssh_operation_runtime import SSHOperationRuntime
 
 TERMINAL = {"COMPLETED", "FAILED", "CANCEL_CONFIRMED"}
 NATIVE_STATES = {"PENDING": "ACCEPTED", "RUNNING": "RUNNING", "PAUSED": "PAUSED",
@@ -201,7 +204,7 @@ class PersistentResourceService:
         self.store, self.auth = store, auth
         self.targets = {}
         self._targets_lock = threading.RLock()
-        self.ssh_targets = None
+        self.ssh_targets: SSHOperationRuntime | None = None
         self.execution_runtimes: dict[str, Any] = {}
         for ref, target in targets.items():
             self.register_target(ref, target)
