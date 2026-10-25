@@ -85,3 +85,7 @@ A08测确定性收件规则、无匹配零发送、重复/restart原event/messag
 - 同QA scope供私问和主动联系共用，自动联系可能先耗尽额度；配置需明确展示共同额度与截止，绝不自动续额。可调整显式配置而不重置原研究项目预算。
 - 派生分析不能复制到普通content是当前core能力的真实边界；若未来要通用派生内容分享，须另立core规范，不在此偷偷加第二ACL。
 - 需要独立审查event分支与私问分支的职责、发布原子锁序及源依赖读路径，确认没有过度通用化。审核通过后才开始产品实现。
+
+### 当前selected-app入口的同事务start触发
+
+P6仍支持的selected-app首root入口也使用`ResearchRecords.start`，不能仅接固定研究Workflow而遗漏此实际入口。`ResearchRuns._prepare`在原admission→research/content之后、usage之前预取现有events namespace；随后原start publication与association intent/outbox同事务写入。此路径不新增终态finalizer，不改变任意selected app归属，也不恢复旧Research/ORX。无关联装配时保留原入口行为。

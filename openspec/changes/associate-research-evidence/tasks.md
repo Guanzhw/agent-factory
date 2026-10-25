@@ -6,7 +6,7 @@
 
 ## 2. Bounded trigger and original delivery
 
-- [ ] 2.1 首次资源配置明确启用后自动处理事件、无逐条审批，验证旧未配置不冒充完整旅程；复用原QA scope/endpoint订阅；研究精选start/terminal与关联intent/outbox同事务。固定词项规则、窗口/默认fanout，测试有/无匹配、停用、额度耗尽/到期、重复/restart和回滚的原event/message/task/allocation（A05/A08）。
+- [ ] 2.1 首次资源配置明确启用后自动处理事件、无逐条审批，验证旧未配置不冒充完整旅程；复用原QA scope/endpoint订阅；研究精选start/terminal与关联intent/outbox同事务；覆盖现有selected-app首root的ResearchRecords.start，events锁在usage之前，不注册legacyfinalizer。固定词项规则、窗口/默认fanout，测试有/无匹配、停用、额度耗尽/到期、重复/restart和回滚的原event/message/task/allocation（A05/A08）。
 - [ ] 2.2 QA原event分支验证精确intent/delivery/task，保留全部input依赖；tool-free模型输出related/conditions_differ/not_related及出处。正常私问仍core reply，事件分支只写领域关联，不反向send或循环事件。实际OwnerChatModel合成wire验证非法train工具一次有界拒绝、zerochild/训练（A03/A08）。
 
 ## 3. Shared projections and actual research use
