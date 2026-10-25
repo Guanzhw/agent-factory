@@ -98,3 +98,7 @@ Core SHALL expose a read-only original delegated-child lookup and bounded privat
 #### Scenario: Parameter bounds and original recovery
 - **WHEN** inputs contain quoted/shell-like text, violate the declared schema or total argv bounds, or a restarted operation is presented different inputs
 - **THEN** quoted text remains inert data; invalid inputs cause zero SSH/target registration; restart reconstructs only the stored original inputs and changed replay conflicts without dispatch
+
+#### Scenario: Invalid UTF-8 remains invalid evidence
+- **WHEN** archived output contains invalid UTF-8 bytes
+- **THEN** the private display may use replacement characters but reports utf8Valid false from the complete original bytes; evidence selection cannot treat repaired display text as valid scientific JSON
