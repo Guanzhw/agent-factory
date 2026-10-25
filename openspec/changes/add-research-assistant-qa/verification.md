@@ -22,3 +22,14 @@
 - `test_research_qa_postgres.py`已编写实际部署/HTTP/原生队列、合成owner模型/定价/有限预算用例，尚未运行。PG须按协调槽串行；未运行不得记PASS。
 - 作者外完整diff审查、实际浏览器QA、真实C02/C03模型/任务/预算参数和D资源验收尚未完成；主动关联仍后续P7任务。
 - 当前测试计时仅运行记录，不是无争用性能基线或整体加速证据。
+
+## Native consumer first attempts
+
+已集成core reply已审序列`207bf39/7809462/31b1faf/764aa6f`（本分支等价`ef0382b/3012f3d/ea5b09c/62db666`）。实际QA consumer尚未PASS：
+
+- `/tmp/research-qa-native-collection.log`首次collection因fixture引用factory_state模块错误失败，改为实际deployment.main后正常collect（未提供PG时显式skip）。
+- `/tmp/research-qa-native-first.log`：1 fail，5.016s。fixture声明finite metered caps和synthetic pricing却漏启用fee管理，配置409 `LOCAL_BUDGET_METERING_UNAVAILABLE`，模型未调用。
+- `/tmp/research-qa-native-metered.log`：fixture明确`fee_management_enabled=True`后1 fail，4.865s，准入409 `Current registered execution binding inspection denied`。定位core `billing_mode.require_available`将非local pricing视作managed，而`ledger_for_plan`对owner BYOK固定返回None；因此当前“owner模型实际调用+scope计量”不能以设置pricing当作已支持。已向core coordinator报告，未开启platform paid权限、未改为无限或去掉usage断言。
+- 两次均为一次性PG数据库，TestClient/lifecycle正常关闭，PG槽已释放。Registry报告QA与research函数/输入schema同名，随后给QA函数及输入类型独立名称；相应portable6项通过（`/tmp/research-qa-unique-registration.log`）。
+
+身份作者额外证据：PG初轮3项中2 pass、1fixture缺真实Store schema error，补fixture后targeted1 pass；P2 disabled-recipient恢复先403反例失败，修复`cacfecd`后portable6 pass及实际PG目标1 pass/1.452s。这些分次证据不冒充最新head完整组合通过。

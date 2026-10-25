@@ -50,7 +50,7 @@ class ResearchQANativeTests(unittest.TestCase):
             'synthetic-qa-accounting-v1', per_attempt_input_tokens=32, per_attempt_output_tokens=32,
             usage_reader=native_response_usage, request_guard=qa_wire_guard)
         settings = Settings(db_url=isolated.url, workspace=Path(directory), max_workers=1,
-            usage_pricing=(pricing,), owner_model_transport_factory=lambda: httpx.MockTransport(wire))
+            fee_management_enabled=True, usage_pricing=(pricing,), owner_model_transport_factory=lambda: httpx.MockTransport(wire))
         app = create_app(settings)
         state = factory_state(app)
         store = state['store']

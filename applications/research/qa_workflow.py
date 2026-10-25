@@ -61,11 +61,11 @@ class ResearchQAWorkflow:
         return self.service
 
     def _workflow(self):
-        async def context(step_input: StepInput, run_context: RunContext):
+        async def research_qa_context(step_input: StepInput, run_context: RunContext):
             result = await asyncio.to_thread(self._service().context, run_context)
             return StepOutput(content=json.dumps(result, ensure_ascii=False))
 
-        async def record(step_input: StepInput, run_context: RunContext):
+        async def research_qa_record(step_input: StepInput, run_context: RunContext):
             value = step_input.get_step_content('research_qa_answer')
             answer = Answer.model_validate_json(value) if isinstance(value, str) else Answer.model_validate(value)
             result = await asyncio.to_thread(self._service().record, run_context, answer)
@@ -76,11 +76,13 @@ class ResearchQAWorkflow:
             'State insufficient evidence and the bounded search window when applicable. Distinguish agent analysis from validated findings. '
             'Return ONLY one JSON object, without markdown, matching this schema: '
             + json.dumps(Answer.model_json_schema(), ensure_ascii=False))
-        return Workflow(id=WORKFLOW_ID, name='研究经验私问', input_schema=input_model(INPUT_SCHEMA),
-            steps=cast(Any, [Step(name=FUNCTION_TOOLS[0], step_id=FUNCTION_TOOLS[0], executor=cast(Any, context),
+        schema = input_model(INPUT_SCHEMA)
+        schema.__name__ = schema.__qualname__ = 'ResearchQAInput'
+        return Workflow(id=WORKFLOW_ID, name='研究经验私问', input_schema=schema,
+            steps=cast(Any, [Step(name=FUNCTION_TOOLS[0], step_id=FUNCTION_TOOLS[0], executor=cast(Any, research_qa_context),
                 max_retries=0, human_review=HumanReview(on_error=OnError.fail)),
                 Step(name='research_qa_answer', step_id='research_qa_answer',
                     agent=Agent(id='research_qa_answer', instructions=instructions, tools=[], telemetry=False),
                     max_retries=0, human_review=HumanReview(on_error=OnError.fail)),
-                Step(name=FUNCTION_TOOLS[1], step_id=FUNCTION_TOOLS[1], executor=cast(Any, record),
+                Step(name=FUNCTION_TOOLS[1], step_id=FUNCTION_TOOLS[1], executor=cast(Any, research_qa_record),
                     max_retries=0, human_review=HumanReview(on_error=OnError.fail))]), telemetry=False)
