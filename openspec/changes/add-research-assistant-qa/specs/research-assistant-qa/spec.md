@@ -84,3 +84,7 @@ P7后续交付 SHALL 包含少数相关记录的主动关联及来源对实际�
 #### Scenario: Configuration transaction fails
 - **WHEN** 新scope/endpoint创建或旧endpoint停用后配置事务失败
 - **THEN** scope、endpoint启用状态、配置revision与current指针整体回滚，不留下有效孤立资源或部分配置
+
+#### Scenario: Original sender recovery after recipient disablement
+- **WHEN** 接收者禁用后，仍有效的sender以相同requestId和正文重读原问题
+- **THEN** core验证sender原消息权限后，应用只核对不可变历史endpoint归属并返回原回执，不要求recipient启用、不新派发；runtime配置读取仍拒绝禁用owner

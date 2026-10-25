@@ -61,7 +61,7 @@ core原消息read返回`reply:null`、`{state:'available',text,contentIds,create
 | POST `/assistants/{id}/questions` | `{requestId,text}`，原core文本限制 | 解析当前QA endpoint并用当前sender调用core send，返回原message投影；不可调用他人私有原task |
 | GET `/assistant-questions/{messageId}` | none | 直接投影core双方read，包括delivery和reply，不另设应用ACL |
 
-项目create的`researchAssistantId`为可选新字段，read保留旧assistantId与新字段。未配置/到期/撤权使用可解释的blocked状态与core安全code，不抛provider正文；提问先以sender/requestId查core原request收据；存在时核对正文一致且原endpoint属于目标稳定助手的不可变历史配置，返回原message。只有明确原request不存在才解析当前endpoint并发送；其他assistant/异正文冲突，其他错误原样传播。发送UNKNOWN保留原message/request，只读/同ID恢复，不新建问题。QA问题不自动变团队研究记录。前端在已确认视觉方案中使用助手入口、显式setup/configuration、私有问答与来源状态，未配置时引导现有资源入口。
+项目create的`researchAssistantId`为可选新字段，read保留旧assistantId与新字段。未配置/到期/撤权使用可解释的blocked状态与core安全code，不抛provider正文；提问先以sender/requestId查core原request收据；存在时核对正文一致且原endpoint属于目标稳定助手的不可变历史配置，返回原message。只有明确原request不存在才解析当前endpoint并发送；其他assistant/异正文冲突，其他错误原样传播。原收据由core验证当前sender后，历史endpoint→assistant归属核对不额外要求recipient仍启用；因此recipient禁用不抹去sender原问句/回执。runtime context的configuration_for_endpoint仍要求owner当前有效，禁用不能开始或继续新QA执行。发送UNKNOWN保留原message/request，只读/同ID恢复，不新建问题。QA问题不自动变团队研究记录。前端在已确认视觉方案中使用助手入口、显式setup/configuration、私有问答与来源状态，未配置时引导现有资源入口。
 
 ### Remaining P7 value path
 
