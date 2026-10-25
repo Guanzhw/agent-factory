@@ -1,0 +1,38 @@
+
+> agent-factory@0.2.0 check
+> npm run lint && npm run typecheck && npm test && npm run build
+
+
+> agent-factory@0.2.0 lint
+> eslint web shared tests *.ts *.js
+
+
+> agent-factory@0.2.0 typecheck
+> tsc --noEmit
+
+
+> agent-factory@0.2.0 test
+> vitest run
+
+
+ RUN  v4.1.12 /workspace/agent-factory-research-workbench-live
+
+ ❯ tests/department-publication-ui.test.ts (25 tests | 1 failed) 9070ms
+   × lets a member publish an exact material version while legacy review APIs are unavailable 2472ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/department-publication-ui.test.ts > lets a member publish an exact material version while legacy review APIs are unavailable
+Error: Timed out in waitFor!
+ ❯ settle tests/department-publication-ui.test.ts:31:53
+
+ ❯ tests/department-publication-ui.test.ts:67:31
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 47 passed (48)
+      Tests  1 failed | 457 passed (458)
+   Start at  13:49:09
+   Duration  47.99s (transform 10.48s, setup 0ms, import 25.48s, tests 57.64s, environment 25.90s)
+

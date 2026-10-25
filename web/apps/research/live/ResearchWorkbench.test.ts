@@ -22,6 +22,7 @@ beforeEach(() => {
   vi.spyOn(researchApi, 'assistants').mockResolvedValue({ items: [], nextCursor: null });
   vi.spyOn(researchApi, 'create').mockResolvedValue(project);
   vi.spyOn(researchApi, 'goal').mockResolvedValue(project);
+  vi.spyOn(researchApi, 'start').mockResolvedValue({ projectId: 'p1', goalVersion: 1, roundId: 'original-round', execution: null });
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const button = (label: string) => [...host.querySelectorAll('button')].find(item => item.textContent === label)!;
@@ -57,4 +58,13 @@ it('shows read errors as errors rather than an empty research space', async () =
 it('keeps platform logout feedback and busy state in the application view', async () => {
   await mount('', 'alice', true, '退出失败'); await act(async () => (host.querySelector('.rw-identity > button') as HTMLButtonElement).click());
   expect(host.querySelector('[role="alert"]')?.textContent).toBe('退出失败'); expect(button('正在退出…').disabled).toBe(true); expect(logout).not.toHaveBeenCalled();
+});
+
+it('recovers a start timeout with the original key rather than dispatching a new research request', async () => {
+  vi.mocked(researchApi.start).mockRejectedValueOnce(new ApiError('运行准入未确认', 408));
+  await mount('p1'); await act(async () => button('按当前约定启动或续接研究').click());
+  expect(researchApi.start).toHaveBeenCalledTimes(1);
+  await act(async () => button('重试原操作').click());
+  expect(vi.mocked(researchApi.start).mock.calls[1]).toEqual(vi.mocked(researchApi.start).mock.calls[0]);
+  expect(host.textContent).not.toContain('研究执行成功');
 });

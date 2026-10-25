@@ -97,7 +97,7 @@ export function ResearchWorkbench({ user, route, navigate, onLogout, sessionBusy
         </>}
         {projectError && <div className="rw-error" role="alert"><p>{projectError}</p><button onClick={home}>返回研究工作台</button></div>}
         {selectedId && !project && !projectError && <p role="status">正在读取项目详情…</p>}
-        {project && <ProjectDetails key={project.id} project={project} tab={tab} onTab={value => navigate({ researchTab: value === 'overview' ? '' : value })} onUpdate={result => { setProject(result); setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === result.id ? result : item) } : previous); }}/>}
+        {project && <ProjectDetails onApplications={() => navigate({ tab: 'applications' })} onResources={resources} onTask={task => navigate({ tab: 'tasks', task })} key={project.id} project={project} tab={tab} onTab={value => navigate({ researchTab: value === 'overview' ? '' : value })} onUpdate={result => { setProject(result); setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === result.id ? result : item) } : previous); }}/>}
       </>}
     </main>
     {!mobile && <aside className="rw-assistant" aria-label="研究助手">{assistant}</aside>}{mobile && <button className="rw-mobile-assistant" onClick={() => setAssistantOpen(true)}><IconMessageCircle size={22}/>研究助手</button>}

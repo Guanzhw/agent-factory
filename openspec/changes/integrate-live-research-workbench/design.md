@@ -30,3 +30,13 @@
 ## Risks / Trade-offs
 
 后端轮次契约未冻结前，不能宣称完整自主研究已接通；项目路径仍可独立完成。布局确认不等于真实交互或模型验收；合成测试不解除真实C/D门槛。独立review检查完整diff、重复状态机及无消费者抽象。
+
+## 冻结轮次接口接线（后端bb999e5，待集成验收）
+
+`GET projects/{id}/experiments`原生固定pin返回items[].attempts（operationId/operation nullable）与rounds[]（id/goalVersion/taskId/decision/terminal/terminalRecordId/continuations）。旧首轮记录保留items[].attempt.execution；这是明确的领域旧记录，不假造新round。decision/terminal/record均可为空。terminal.verificationStatus=unverified；decision只作agent分析，即使outcome=met也不改称已验证科学结论。operation.observation.state与closed区分原操作结果/是否关闭。运行taskId只导航现core任务页，不造第二inspect/cancel控制链。
+
+POST start沿原requestId/expectedVersion返回准入或续接事件收据。UI继续复用原命令恢复，收到收据后读取原project/experiments；读后失败仍保留同键意图，不生成新键。无运行数据时展示未建立运行，不绘图。原生实验终态/后继仍有后端恢复故障在独立诊断，不能将前端合成fixture当其通过。
+
+## 已发布执行配置
+
+项目先建立研究约定，再从core现applications列表显式选择发布版本和mode；材料选项只取该mode允许的固定pin，资源只取现有可用连接并按kind/capability筛选。deadline与每轮caps由用户填写，不预设费用/资源，不输入秘密，不创建第二composer预检。保存通过同goals命令追加待确认版本；后端固定pin及已冻结承诺仍是权威，任何拒绝清楚显示。初始无发布应用时指向现应用管理/发布与资源入口，不虚构默认研究定义；后续研究模板由应用setup集成提供。
