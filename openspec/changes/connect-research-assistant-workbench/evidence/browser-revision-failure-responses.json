@@ -1,0 +1,98 @@
+{
+  "api": [
+    {
+      "path": "/api/factory/auth/config",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/session",
+      "status": 401
+    },
+    {
+      "path": "/api/factory/auth/login",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/dev-identity/authorize",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/dev-identity/select",
+      "status": 303
+    },
+    {
+      "path": "/api/factory/auth/callback",
+      "status": 303
+    },
+    {
+      "path": "/api/factory/auth/config",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/session",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/status",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/execution-targets",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/projects",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants/me",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/jobs",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/materials",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/auth/session",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/setup",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/setup/qa/drafts",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/setup/2be28728-36e0-47cc-9835-5d20d87d06d8",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/setup/2be28728-36e0-47cc-9835-5d20d87d06d8/publish",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants/me/configurations",
+      "status": 409
+    },
+    {
+      "path": "/api/factory/research/assistants/me",
+      "status": 200
+    },
+    {
+      "path": "/api/factory/research/assistants/me/configurations",
+      "status": 200
+    }
+  ],
+  "errors": [],
+  "consoleErrors": []
+}

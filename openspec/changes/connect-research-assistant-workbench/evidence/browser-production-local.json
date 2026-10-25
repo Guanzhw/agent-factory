@@ -1,0 +1,340 @@
+{
+  "ok": true,
+  "results": [
+    {
+      "mode": "production-local",
+      "database": "af_test_4cab122a6e714964968e9854c386ba22",
+      "assistantId": "7df5b897-e41a-44ab-bf03-e5c6c64b6e00",
+      "questionId": "e7d26ce2-192d-4335-bf8d-0ae56ff36c58",
+      "taskId": "ef5c29c6-7325-43a2-9ecb-422e0d0c1e34",
+      "sourceIds": [
+        "f5498a19-3f35-41e8-828d-d3563a671c86",
+        "6751339c-8e1c-42a5-83df-27daec9187c3"
+      ],
+      "configurationRevision": 2,
+      "modelCalls": 1,
+      "trainingDispatches": 0,
+      "childLinks": 0,
+      "pageErrors": [],
+      "consoleErrors": [],
+      "expectedConsole": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+          "path": "/api/factory/session"
+        },
+        {
+          "text": "Failed to load resource: the server responded with a status of 409 (Conflict)",
+          "path": "/api/factory/research/assistants/me/configurations"
+        },
+        {
+          "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+          "path": "/api/factory/session"
+        }
+      ],
+      "apiResponses": [
+        {
+          "path": "/api/factory/auth/config",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/session",
+          "status": 401
+        },
+        {
+          "path": "/api/factory/auth/login",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/auth/callback",
+          "status": 303
+        },
+        {
+          "path": "/api/factory/auth/config",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/session",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/status",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants/me",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/projects",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/jobs",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/materials",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/execution-targets",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/auth/session",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/setup",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/setup/qa/drafts",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/setup/44794bad-60a6-4df1-84c3-817c9a8fdf6a",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/setup/44794bad-60a6-4df1-84c3-817c9a8fdf6a/publish",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants/me/configurations",
+          "status": 409
+        },
+        {
+          "path": "/api/factory/research/assistants/me",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants/me/configurations",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/logout",
+          "status": 204
+        },
+        {
+          "path": "/api/factory/auth/config",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/session",
+          "status": 401
+        },
+        {
+          "path": "/api/factory/auth/login",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/auth/callback",
+          "status": 303
+        },
+        {
+          "path": "/api/factory/auth/config",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/session",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/status",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants/me",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/execution-targets",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/projects",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/jobs",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/materials",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/auth/session",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants/7df5b897-e41a-44ab-bf03-e5c6c64b6e00/questions",
+          "status": 202
+        },
+        {
+          "path": "/api/factory/research/assistant-questions/e7d26ce2-192d-4335-bf8d-0ae56ff36c58",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistant-questions/e7d26ce2-192d-4335-bf8d-0ae56ff36c58",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistant-questions/e7d26ce2-192d-4335-bf8d-0ae56ff36c58",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/application-content/f5498a19-3f35-41e8-828d-d3563a671c86",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/status",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/execution-targets",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/jobs",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/materials",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants/me",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/projects",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistant-questions/e7d26ce2-192d-4335-bf8d-0ae56ff36c58",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/auth/config",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/session",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/status",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/projects",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants/me",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/execution-targets",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/jobs",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/materials",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistant-questions/e7d26ce2-192d-4335-bf8d-0ae56ff36c58",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/auth/session",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/logout",
+          "status": 204
+        },
+        {
+          "path": "/api/factory/auth/login",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/auth/callback",
+          "status": 303
+        },
+        {
+          "path": "/api/factory/auth/config",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/session",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/status",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/projects",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants/me",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/execution-targets",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/materials",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/jobs",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistants",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistant-questions/e7d26ce2-192d-4335-bf8d-0ae56ff36c58",
+          "status": 200
+        },
+        {
+          "path": "/api/factory/research/assistant-questions/e7d26ce2-192d-4335-bf8d-0ae56ff36c58",
+          "status": 200
+        }
+      ],
+      "businessAPIsMocked": false,
+      "modelConfiguredVia": "actual core HTTP fixture, not model configuration UI",
+      "evidenceCreatedVia": "actual content service fixture, not research publication UI",
+      "identity": "local synthetic HTTPS OIDC",
+      "realProviderOrGPU": false,
+      "lateResponseOwnerIsolation": "deterministic UI tests; not timing-injected into browser"
+    }
+  ]
+}

@@ -2,6 +2,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { assistantApi } from './assistantClient.js';
 import { ApiError } from '../../../api.js';
 import { researchApi } from '../client.js';
 import type { ResearchProject } from '../types.js';
@@ -19,7 +20,7 @@ beforeEach(() => {
   navigate.mockReset(); logout.mockReset();
   vi.spyOn(researchApi, 'projects').mockResolvedValue({ items: [], nextCursor: null });
   vi.spyOn(researchApi, 'project').mockResolvedValue(project);
-  vi.spyOn(researchApi, 'assistants').mockResolvedValue({ items: [], nextCursor: null });
+  vi.spyOn(assistantApi, 'me').mockResolvedValue({ assistant: { id: 'a', ownerId: 'alice', configurationRevision: 0, qa: { state: 'unconfigured' } } });
   vi.spyOn(researchApi, 'create').mockResolvedValue(project);
   vi.spyOn(researchApi, 'goal').mockResolvedValue(project);
   vi.spyOn(researchApi, 'start').mockResolvedValue({ projectId: 'p1', goalVersion: 1, roundId: 'original-round', execution: null });

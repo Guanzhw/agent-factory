@@ -2,6 +2,7 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { assistantApi } from './live/assistantClient.js';
 import { ApiError } from '../../api.js';
 import { ResearchWorkbench } from './ResearchWorkspace.js';
 import { researchApi } from './client.js';
@@ -21,7 +22,7 @@ beforeEach(() => {
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   onProject.mockReset(); onResources.mockReset(); window.sessionStorage.clear();
   vi.spyOn(researchApi, 'projects').mockResolvedValue({ items: [], nextCursor: null });
-  vi.spyOn(researchApi, 'assistants').mockResolvedValue({ items: [{ id: 'a', ownerId: 'alice', name: '我的助手', enabled: true }, { id: 'b', ownerId: 'bob', name: '同事助手', enabled: true }], nextCursor: null });
+  vi.spyOn(assistantApi, 'me').mockResolvedValue({ assistant: { id: 'a', ownerId: 'alice', configurationRevision: 0, qa: { state: 'unconfigured' } } });
   vi.spyOn(researchApi, 'project').mockResolvedValue(empty);
   vi.spyOn(researchApi, 'create').mockResolvedValue(empty);
   vi.spyOn(researchApi, 'goal').mockResolvedValue(drafted);
@@ -45,7 +46,7 @@ it('offers personal project creation and real resource navigation without a fake
   await act(async () => button('配置模型与资源').click()); expect(onResources).toHaveBeenCalledOnce();
   await field('项目名称', '新研究'); await field('关联我的助手', 'a');
   await act(async () => button('创建项目').click());
-  expect(researchApi.create).toHaveBeenCalledWith('alice', { requestId: expect.any(String), title: '新研究', assistantId: 'a' });
+  expect(researchApi.create).toHaveBeenCalledWith('alice', { requestId: expect.any(String), title: '新研究', assistantId: null, researchAssistantId: 'a' });
   expect(onProject).toHaveBeenCalledWith('project-1'); expect(button('启动研究')).toBeUndefined();
 });
 it('saves an agreement before separate confirmation and retains the old goal when revising', async () => {

@@ -28,8 +28,7 @@ export function useResearchCommand<Command extends SavedCommand, Result>(storage
     running.current = true; setBusy(true); setError(''); setPending(command);
     try {
       const result = await send(command);
-      window.sessionStorage.removeItem(storageKey);
-      if (active.current) { setPending(null); onSuccess(result); }
+      if (active.current) { window.sessionStorage.removeItem(storageKey); setPending(null); onSuccess(result); }
     } catch (reason) {
       let uncertain = pending !== null || !(reason instanceof ApiError) || reason.status === 0 || reason.status === 408 || reason.status >= 500 || reason.code === 'INVALID_RESPONSE';
       if (!uncertain) {
