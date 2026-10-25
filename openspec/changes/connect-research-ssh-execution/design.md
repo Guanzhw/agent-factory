@@ -60,7 +60,7 @@ ResourceService lease、准入、总额度与 PostgreSQL 记账始终留在 Fact
 
 ### 4a. Frozen first-slice protocol
 
-固定协议 `factory-ssh-process-v1`，operation adapter `ssh-process-operation-v1` revision `1`，空静态adapter配置的指纹沿现digest({})；每个operation实际target/config已包含在原inputs与lease，不能用此固定pin替代目标身份。工具adapter `ssh-process-launch-v1@1`（toolName `ssh_process_launch`）与 `ssh-process-wait-v1@1`（toolName `factory_wait_operations`）归唯一owner `core-ssh-process`。等待hooks签名 `SSHOperationWaits(store, custody, operation_pin)`，由composition显式将两个exact tool bindings注册一次；pin及tool binding常量由新增`ssh_process_contract.py`集中提供。它不负责新提交、选目标或研究finalizer，也不再装配第二cleanup链；现runtime_hooks已调用同store.workflow的task_held/cancel_task。
+固定协议 `factory-ssh-process-v1`，operation adapter `ssh-process-operation-v1` revision `1`，空静态adapter配置的指纹沿现digest({})；每个operation实际target/config已包含在原inputs与lease，不能用此固定pin替代目标身份。工具adapter `ssh-process-launch-v1@1`（toolName `ssh_process_launch`）与 `ssh-process-wait-v1@1`（toolName `factory_wait_operations`）归唯一owner `core-ssh-process`。等待hooks签名 `SSHOperationWaits(store, custody, operation_pin, *, commands)`，由composition显式将两个exact tool bindings注册一次；commands显式注入现factory_api.commands，不经Store私有服务绕行。pin及tool binding常量由新增`ssh_process_contract.py`集中提供。它不负责新提交、选目标或研究finalizer，也不再装配第二cleanup链；现runtime_hooks已调用同store.workflow的task_held/cancel_task。
 
 应用/模型可见launch参数只含已声明训练参数；工具config固定 `targetRef`，首切片训练spec来自该目标上明确注册的不可变规格，不接受模型shell/host/key。launch调用原custody时inputs固定 `{targetRef}`；原native tool_call_id确定effect-slot（长度规整沿现digest），context绑定原child/run。operation handle.id为原operation UUID，不是SSH PID或远端URL。对lookup/inspect/cancel由原operation绑定找回唯一lease；无新allocate。
 
