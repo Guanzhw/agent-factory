@@ -1,4 +1,4 @@
-name: Windows SSH ASKPASS candidate experiment
+name: Windows SSH authentication candidate experiment
 on:
   pull_request:
     paths:
@@ -7,7 +7,7 @@ on:
 permissions:
   contents: read
 jobs:
-  askpass-candidate:
+  authentication-candidate:
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -21,21 +21,21 @@ jobs:
       - run: uv sync --frozen --group ssh-probe
       - name: Install only the synthetic probe entry points
         run: uv pip install --python .venv/Scripts/python.exe --no-deps --no-build-isolation ./scripts/windows_ssh_askpass_probe
-      - name: Exercise system OpenSSH encrypted key loader and one-use IPC
+      - name: Exercise actual system SSH authentication over isolated loopback
         timeout-minutes: 1
         shell: pwsh
         run: |
-          $report = & ./.venv/Scripts/af-windows-ssh-askpass-probe.exe
+          $report = & ./.venv/Scripts/af-windows-ssh-askpass-probe.exe --stage-b
           $probeExitCode = $LASTEXITCODE
-          $report | Set-Content -Encoding utf8 "$env:RUNNER_TEMP/windows-ssh-askpass-probe.json"
-          Get-Content "$env:RUNNER_TEMP/windows-ssh-askpass-probe.json"
+          $report | Set-Content -Encoding utf8 "$env:RUNNER_TEMP/windows-ssh-stage-b.json"
+          Get-Content "$env:RUNNER_TEMP/windows-ssh-stage-b.json"
           exit $probeExitCode
       - name: Preserve the first candidate result, including rejection
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: windows-ssh-askpass-candidate-${{ github.run_id }}
-          path: ${{ runner.temp }}/windows-ssh-askpass-probe.json
+          name: windows-ssh-authentication-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/windows-ssh-stage-b.json
           if-no-files-found: error
 
   portable-pipes:
