@@ -39,3 +39,9 @@ endpoint停用或budget到期不改写原身份，不因其停止新准入而阻
 ## Migration Plan
 
 沿仓库既有逐列检查迁移模式，在metadata.create_all后为旧表补nullable JSON列，PG/SQLite均验证旧行null、已有命令和任务ID不变；新表直接定义列。重启幂等；回退旧程序忽略多余列，不删数据。无破坏性迁移。
+
+### 已授权消息的原收据接点（实现审查整改）
+
+ApplicationRuns.request公开入口保留require_member。提取内部`_request_receipt(owner, request_id)`复用原只读plan/request/task投影；该方法不暴露HTTP。AssistantMessages仅在原消息已经确定及当前actor属于双方的路径，通过持久message.recipient_id和固定_request_id(message)读取，最终只投影state/taskId/runId，不返回plan/handoff/完整run。
+
+接收者禁用时，当前有效sender仍可read/request/重复send读取原问句及原收据，reply为source_unavailable；不把403捕获成unconfirmed。receiver自己的公开读取仍拒绝。真实ApplicationRuns和PG测试覆盖该接缝，不能只用不鉴权的Runs mock证明。
