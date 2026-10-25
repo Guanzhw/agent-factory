@@ -2,7 +2,7 @@
 
 Material specifications are inert data. Only operator-registered Python factories
 can create adapters; no import paths, code, credentials or endpoint discovery are
-loaded from a material. Legacy seed mapping is an explicit demo-only contract.
+loaded from a material. Every executable material requires an explicit binding.
 """
 from __future__ import annotations
 
@@ -77,7 +77,6 @@ class AdapterRegistration:
     connection_kind: str | None = None
     required_capabilities: tuple[str, ...] = ()
     permissions: tuple[str, ...] = ()
-    demo_only: bool = False
     validator: Callable[[dict[str, Any]], None] | None = field(default=None, repr=False)
     # Optional operator-selected shared handle identity for a narrow tool family.
     # It never changes a material's exact adapter/tool identity or capabilities.
@@ -85,17 +84,15 @@ class AdapterRegistration:
 
 
 class ExecutionBindings:
-    def __init__(self, settings: Any, store: Any, connections: Any = None, *, legacy_materials=(), legacy_bindings=None):
+    def __init__(self, settings: Any, store: Any, connections: Any = None):
         self.settings, self.store, self.connections = settings, store, connections
-        self.legacy_materials = tuple(legacy_materials)
-        self.legacy_bindings = dict(legacy_bindings or {})
         self._adapters: dict[tuple[str, str, str], AdapterRegistration] = {}
         self._models: weakref.WeakValueDictionary[int, Model] = weakref.WeakValueDictionary()
         self._lock = threading.RLock()
 
     def register(self, kind: str, adapter_id: str, revision: str, factory: Callable[[BindingContext], Any], *,
                  tool_name: str | None = None, connection_kind: str | None = None, required_capabilities=(),
-                 permissions=(), demo_only: bool = False, validator=None, connection_adapter_ref: str | None = None) -> AdapterRegistration:
+                 permissions=(), validator=None, connection_adapter_ref: str | None = None) -> AdapterRegistration:
         if kind not in KINDS or not _IDENTIFIER.fullmatch(adapter_id) or not _IDENTIFIER.fullmatch(revision) or not callable(factory):
             raise ValueError("Invalid trusted adapter registration")
         if kind == "tool" and (not isinstance(tool_name, str) or not _IDENTIFIER.fullmatch(tool_name)):
@@ -105,7 +102,7 @@ class ExecutionBindings:
         if connection_adapter_ref is not None and (connection_kind is None or not _IDENTIFIER.fullmatch(connection_adapter_ref)):
             raise ValueError("A shared connection identity must be an exact operator registration")
         entry = AdapterRegistration(kind, adapter_id, revision, factory, tool_name, connection_kind,
-                                    tuple(required_capabilities), tuple(permissions), demo_only, validator, connection_adapter_ref)
+                                    tuple(required_capabilities), tuple(permissions), validator, connection_adapter_ref)
         with self._lock:
             key = (kind, adapter_id, revision)
             if key in self._adapters:
@@ -123,8 +120,7 @@ class ExecutionBindings:
             entries = sorted(self._adapters.values(), key=lambda entry: (entry.kind, entry.adapter_id, entry.revision))
         return [{"kind": entry.kind, "adapterId": entry.adapter_id, "revision": entry.revision,
                  "toolName": entry.tool_name, "connectionKind": entry.connection_kind,
-                 "requiredCapabilities": list(entry.required_capabilities), "permissions": list(entry.permissions),
-                 "demoOnly": entry.demo_only, "availableForMode": not entry.demo_only or bool(self.settings.demo)}
+                 "requiredCapabilities": list(entry.required_capabilities), "permissions": list(entry.permissions)}
                 for entry in entries]
 
     def withdraw(self, kind: str, adapter_id: str, revision: str) -> None:
@@ -164,7 +160,7 @@ class ExecutionBindings:
             self.store.personal_tools.ensure_registered(adapter_id)
             with self._lock:
                 entry = self._adapters.get((kind, adapter_id, revision))
-        if entry is None or entry.demo_only and not self.settings.demo:
+        if entry is None:
             raise HTTPException(409, "BINDING_ADAPTER_UNAVAILABLE: exact trusted adapter revision is unavailable")
         return entry
 
@@ -172,15 +168,7 @@ class ExecutionBindings:
         kind = material["kind"]
         binding = material.get("runtimeBinding")
         if binding is None:
-            legacy = self.legacy_bindings.get(material["id"])
-            if not self.settings.demo or legacy is None or legacy[0] != kind:
-                raise HTTPException(409, "BINDING_SPEC_REQUIRED: material has no explicit trusted runtime binding")
-            # This exact inert seed content is the published legacy demo adapter,
-            # never a substitute for an unavailable newly selected provider.
-            seed = next((row for row in self.legacy_materials if row[0] == material["id"]), None)
-            if seed is None or material.get("content") != seed[3]:
-                raise HTTPException(409, "BINDING_SPEC_REQUIRED: changed material needs its own runtime binding")
-            binding = {"adapterId": legacy[1], "revision": "1", "config": {}}
+            raise HTTPException(409, "BINDING_SPEC_REQUIRED: material has no explicit trusted runtime binding")
         if not isinstance(binding, dict) or set(binding) - {"adapterId", "revision", "config"}:
             raise HTTPException(409, "BINDING_SPEC_INVALID: unrecognized runtime binding fields")
         from .material_governance import normalize_runtime_binding
@@ -463,6 +451,6 @@ class ExecutionBindings:
         return value
 
 
-def default_bindings(settings: Any, store: Any, connections: Any = None, *, legacy_materials=(), legacy_bindings=None) -> ExecutionBindings:
+def default_bindings(settings: Any, store: Any, connections: Any = None) -> ExecutionBindings:
     """Installed adapters plus lazily registered member resource adapters."""
-    return ExecutionBindings(settings, store, connections, legacy_materials=legacy_materials, legacy_bindings=legacy_bindings)
+    return ExecutionBindings(settings, store, connections)

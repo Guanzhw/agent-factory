@@ -164,8 +164,7 @@ class GovernanceConfig:
 
 
 class MaterialGovernance:
-    def __init__(self, store: Any, auth: Any, config: GovernanceConfig | None = None, *, seed_materials=()):
-        self.seed_materials = tuple(seed_materials)
+    def __init__(self, store: Any, auth: Any, config: GovernanceConfig | None = None):
         self.store, self.auth = store, auth
         self.metadata = MetaData()
         self.materials = Table("af_materials", MetaData(), autoload_with=store.engine)
@@ -331,12 +330,6 @@ class MaterialGovernance:
             self._validate_tool(value)
         elif not set(value["permissions"]) <= self._known_capabilities():
             raise HTTPException(422, "Material requests capabilities outside current tool declarations")
-        reserved = next((seed for seed in self.seed_materials if seed[0] == value.get("id")), None)
-        if reserved and reserved[1] != value["kind"]:
-            raise HTTPException(422, "Reserved material kind cannot change")
-        if value["kind"] == "tool":
-            if reserved and reserved[3] != value["content"]:
-                raise HTTPException(422, "Reserved tool binding cannot change")
         return value
 
     @staticmethod
@@ -376,8 +369,7 @@ class MaterialGovernance:
         if version["state"] != "published" or not material["published"]:
             raise HTTPException(409, "INACTIVE_MATERIAL: exact version is draft, withdrawn or archived")
         if version["bootstrap"]:
-            if not self.store.settings.demo:
-                raise HTTPException(409, "Demo bootstrap approval cannot authorize production")
+            raise HTTPException(409, "BOOTSTRAP_MATERIAL_DISABLED: historical bootstrap cannot authorize execution")
         return version
 
     def _dependencies(self, conn, body, config, allowed_refs=None, *, materials=None, versions=None):
@@ -610,35 +602,6 @@ class MaterialGovernance:
                     if error.status_code not in {404, 409}:
                         raise
         return active
-
-    def adopt_demo_bootstrap(self):
-        """Trusted startup only; proves original seed and matching seed audit."""
-        if not self.store.settings.demo:
-            raise ValueError("Demo bootstrap publication is forbidden in production")
-        adopted = []
-        with self._write() as conn:
-            for mid, kind, name, content, permissions in self.seed_materials:
-                material = self._material(conn, mid, 1)
-                body = material["body"]
-                if not material["published"] or body.get("kind") != kind or body.get("name") != name or body.get("content") != content or body.get("permissions") != permissions or body.get("origin") != "factory synthetic fixture" or body.get("license") != "MIT" or body.get("dependencies") != []:
-                    raise HTTPException(409, "Demo bootstrap seed differs from trusted original")
-                proof = conn.execute(select(self.audit.c.id).where(self.audit.c.actor_id == "demo-bootstrap",
-                    self.audit.c.action == "material.seed", self.audit.c.target_id == mid,
-                    self.audit.c.body["version"].as_integer() == 1,
-                    self.audit.c.body["sha256"].as_string() == body["sha256"])).first()
-                if not proof:
-                    raise HTTPException(409, "Demo bootstrap is missing its original seed receipt")
-                existing = conn.execute(select(self.versions).where(self.versions.c.material_id == mid, self.versions.c.version == 1)).mappings().first()
-                if not existing:
-                    conn.execute(self.versions.insert().values(material_id=mid, version=1, author_id="demo-bootstrap",
-                        material_sha=body["sha256"], immutable_digest=self._immutable(body), state="published", bootstrap=True,
-                        created_at=body["createdAt"], updated_at=now()))
-                    adopted.append(mid)
-        return {"adopted": adopted, "approvalMode": "verified-demo-bootstrap", "productionAllowed": False}
-
-    def publish_demo_compatibility(self, actor, material_id, version, request_id):
-        self._require_write(actor)
-        raise HTTPException(410, "Publication reviews are read-only; publish the exact version directly")
 
 
 class Command(BaseModel):

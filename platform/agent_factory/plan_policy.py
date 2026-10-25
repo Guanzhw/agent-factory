@@ -34,7 +34,7 @@ def application_tool_catalog(store):
     bindings = getattr(store, "execution_bindings", None)
     if bindings is not None:
         for entry in bindings.describe():
-            if entry["kind"] == "tool" and entry["availableForMode"]:
+            if entry["kind"] == "tool":
                 catalog.setdefault(entry["toolName"], next(iter(entry["permissions"]), "tool:invoke"))
     personal = getattr(store, "personal_tools", None)
     if personal is not None:

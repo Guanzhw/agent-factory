@@ -2,8 +2,8 @@
 
 Shared dispatch and admission may recognize these historical plans without
 loading their campaign, provider, transport or accounting implementation.
-Recognition never grants execution; the original development preflight still
-owns the exact profile, connection and campaign checks.
+Recognition never grants execution. The development profile is removed; these
+identifiers remain for historical accounting and original-operation custody.
 """
 from typing import Any
 
