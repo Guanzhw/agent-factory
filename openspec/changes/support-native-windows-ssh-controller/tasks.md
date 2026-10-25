@@ -19,3 +19,5 @@ Implementation/review checks above are complete through f8d59fb; exact fast CI40
 
 - [x] 3.5 Independently review invocation-local fixed helper filename design against the observed NOT_FOUND/error-2 failure; implement only after review.
 - [ ] 3.6 Verify byte-preserving copy and identity/cleanup wiring, then run the unchanged actual installed Windows acceptance with Unicode-and-space parents; retain all failed reports and keep the Windows-to-Linux gate separate.
+
+- [ ] 3.7 Independently review and correct fixed known_hosts lookup under a space-containing child cwd; retain run40246732528 and require the unchanged actual Windows consumer/wrong-pin gates.

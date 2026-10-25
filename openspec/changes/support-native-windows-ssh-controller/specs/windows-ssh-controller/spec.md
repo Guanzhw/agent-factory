@@ -38,3 +38,10 @@ The production fixed helper SHALL be available from the standalone core installa
 - **AND** authenticate that exact copied helper and the original installed interpreter chain before releasing the password
 - **AND** preserve strict host pinning, one-use release, cancellation and cleanup without changing system locale or using an alternate credential path
 - **AND** a launcher that cannot run from that location fails closed rather than weakening identity checks
+
+
+#### Scenario: Space-containing private known-hosts path
+- **WHEN** the protected carrier parent contains spaces or Unicode
+- **THEN** resolve the fixed known_hosts filename only from the original owned SSH child cwd with the original exact pinned host key
+- **AND** strict host checking and exclusion of global trust files remain enabled
+- **AND** a wrong host pin is rejected before any password release
