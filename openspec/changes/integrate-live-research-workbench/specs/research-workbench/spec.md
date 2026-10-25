@@ -29,6 +29,10 @@
 - **WHEN** 原运行回执或操作结果未知
 - **THEN** 展示原身份与UNKNOWN及核对入口，不以新请求重派或宣称清理完成
 
+#### Scenario: Original operation has no observation
+- **WHEN** 原操作身份已建立但 observation 为 null（尚未观察或启动应答丢失）
+- **THEN** 保留原操作身份并显示 UNKNOWN/尚未确认，页面不崩溃、不推定失败、不提供重派动作
+
 #### Scenario: Evidence-backed assistant
 - **WHEN** 真实助手响应或团队记录可读取
 - **THEN** 展示真实来源和事实/agent分析区别，未接入接口时不伪造消息、记录或指标

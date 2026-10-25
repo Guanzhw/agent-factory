@@ -21,3 +21,13 @@ it('shows a met decision as agent analysis with original evidence references', a
   await act(async () => root.render(createElement(RunRecords, { ownerId: 'alice', projectId: 'p', evidence: true, onTask })));
   expect(host.textContent).toContain('Agent 分析 · 尚未独立验证'); expect(host.textContent).toContain('operation-2'); expect(host.textContent).toContain('record-1'); expect(host.textContent).toContain('尚未取得终态记录');
 });
+
+it('preserves the original operation when its observation is null', async () => {
+  vi.spyOn(runs, 'readResearchRuns').mockResolvedValue({ items: [{ id: 'experiment', projectId: 'p', goalVersion: 1, hypothesis: '等待原观察', conditions: {}, attempts: [{ id: 'attempt', operationId: 'operation-unobserved', operation: { id: 'operation-unobserved', closed: false, observation: null } }] }], rounds: [] });
+  await act(async () => root.render(createElement(RunRecords, { ownerId: 'alice', projectId: 'p', evidence: true, onTask })));
+  expect(host.textContent).toContain('operation-unobserved');
+  expect(host.textContent).toContain('UNKNOWN');
+  expect(host.textContent).toContain('尚未确认');
+  expect([...host.querySelectorAll('button')].map(button => button.textContent)).toEqual(['核对原运行记录']);
+  expect(onTask).not.toHaveBeenCalled();
+});
