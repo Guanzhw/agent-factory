@@ -168,11 +168,14 @@ class WindowsSSHProcessTests(unittest.TestCase):
 
     def test_spawn_failure_does_not_leak_parent_handles(self):
         import win32api
+        import msvcrt
         import ctypes
         from ctypes import wintypes as wt
         kernel = ctypes.WinDLL('kernel32', use_last_error=True)
         kernel.GetProcessHandleCount.argtypes = [wt.HANDLE, ctypes.POINTER(wt.DWORD)]
         kernel.GetProcessHandleCount.restype = wt.BOOL
+        kernel.GetHandleInformation.argtypes = [wt.HANDLE, ctypes.POINTER(wt.DWORD)]
+        kernel.GetHandleInformation.restype = wt.BOOL
         current = win32api.GetCurrentProcess()
         def handle_count():
             count = wt.DWORD()
@@ -180,7 +183,17 @@ class WindowsSSHProcessTests(unittest.TestCase):
                 raise ctypes.WinError(ctypes.get_last_error())
             return count.value
         from agent_factory import windows_ssh_process as owned
-        stages = []
+        stages, completed, inventory = [], [], []
+        acquired = {'job': [], 'parent': [], 'child': []}
+        original_fdopen, original_duplicate = os.fdopen, win32api.DuplicateHandle
+        def tracked_fdopen(*args, **kwargs):
+            stream = original_fdopen(*args, **kwargs)
+            acquired['parent'].append((msvcrt.get_osfhandle(stream.fileno()), stream))
+            return stream
+        def tracked_duplicate(*args):
+            handle = original_duplicate(*args)
+            acquired['child'].append(int(handle))
+            return handle
         original_error, original_close = owned._error, WindowsSSHProcess.close
         def record(stage):
             saved_error = ctypes.get_last_error()
@@ -203,6 +216,13 @@ class WindowsSSHProcessTests(unittest.TestCase):
         def measured_kernel():
             native = original_kernel()
             create = native.CreateProcessW
+            create_job = native.CreateJobObjectW
+            def tracked_job(*args):
+                handle = create_job(*args)
+                if handle:
+                    acquired['job'].append(handle)
+                return handle
+            native.CreateJobObjectW = tracked_job
             def measured_create(*args):
                 record('CreateProcessW.before')
                 result = create(*args)
@@ -213,12 +233,29 @@ class WindowsSSHProcessTests(unittest.TestCase):
         before = handle_count()
         with (patch.object(owned, '_error', measured_error),
               patch.object(owned, '_kernel', measured_kernel),
-              patch.object(WindowsSSHProcess, 'close', measured_close)):
+              patch.object(WindowsSSHProcess, 'close', measured_close),
+              patch.object(os, 'fdopen', tracked_fdopen),
+              patch.object(win32api, 'DuplicateHandle', tracked_duplicate)):
             for index in range(3):
+                for values in acquired.values():
+                    values.clear()
                 record(f'spawn.{index}.before')
                 with self.assertRaises(OSError):
                     WindowsSSHProcess([str(Path(sys.executable).parent / 'missing-ssh-fixture.exe')], dict(os.environ))
                 record(f'spawn.{index}.after')
+                completed.append(handle_count())
+                self.assertEqual({kind: len(values) for kind, values in acquired.items()},
+                                 {'job': 1, 'parent': 2, 'child': 3})
+                handles = acquired['job'] + acquired['child'] + [raw for raw, _ in acquired['parent']]
+                for raw in handles:
+                    flags = wt.DWORD()
+                    ctypes.set_last_error(0)
+                    valid = kernel.GetHandleInformation(raw, ctypes.byref(flags))
+                    error = ctypes.get_last_error()
+                    self.assertFalse(valid, f'attempt {index}: owned handle {raw} remains open')
+                    self.assertEqual(error, 6, f'attempt {index}: expected ERROR_INVALID_HANDLE')
+                self.assertTrue(all(stream.closed for _, stream in acquired['parent']))
+                inventory.append({'attempt': index, 'closedOwnedHandles': len(handles)})
         after = handle_count()
         control_program = """
 import ctypes, json
@@ -282,8 +319,10 @@ print(json.dumps({'nativeMissingExecutable': counts, 'errors': errors}))
 """
         native_control = subprocess.run([sys.executable, '-I', '-S', '-c', native_program],
                                         capture_output=True, text=True, timeout=10, check=True)
-        self.assertEqual(after, before, json.dumps({'stages': stages, 'control': json.loads(control.stdout),
-                                                   'nativeControl': json.loads(native_control.stdout)}))
+        evidence = {'coldCounts': [before, after], 'stages': stages, 'owned': inventory,
+                    'control': json.loads(control.stdout), 'nativeControl': json.loads(native_control.stdout)}
+        print('FAILED_SPAWN_OWNERSHIP ' + json.dumps(evidence))
+        self.assertEqual(completed, [completed[0]] * 3, json.dumps(evidence))
 
     def test_unicode_long_child_cwd_reads_relative_identity_without_parent_chdir(self):
         original_cwd = os.getcwd()
