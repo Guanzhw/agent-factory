@@ -17,8 +17,8 @@ from agent_factory.windows_ssh_process import WindowsSSHProcess
 
 @unittest.skipUnless(sys.platform == 'win32', 'Requires actual Windows process, Job and handle-list APIs')
 class WindowsSSHProcessTests(unittest.TestCase):
-    def process(self, program, *args):
-        return WindowsSSHProcess([sys.executable, '-I', '-S', '-c', program, *args], dict(os.environ))
+    def process(self, program, *args, cwd=None):
+        return WindowsSSHProcess([sys.executable, '-I', '-S', '-c', program, *args], dict(os.environ), cwd=cwd)
 
     def test_suspended_until_resume_then_exact_pipe_roundtrip(self):
         with TemporaryDirectory() as folder:
@@ -168,14 +168,39 @@ class WindowsSSHProcessTests(unittest.TestCase):
 
     def test_spawn_failure_does_not_leak_parent_handles(self):
         import win32api
-        import win32process
-        # Warm up the API before comparing process handle ownership.
+        import ctypes
+        from ctypes import wintypes as wt
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.GetProcessHandleCount.argtypes = [wt.HANDLE, ctypes.POINTER(wt.DWORD)]
+        kernel.GetProcessHandleCount.restype = wt.BOOL
         current = win32api.GetCurrentProcess()
-        before = win32process.GetProcessHandleCount(current)
+        def handle_count():
+            count = wt.DWORD()
+            if not kernel.GetProcessHandleCount(int(current), ctypes.byref(count)):
+                raise ctypes.WinError(ctypes.get_last_error())
+            return count.value
+        before = handle_count()
         for _ in range(3):
             with self.assertRaises(OSError):
                 WindowsSSHProcess([str(Path(sys.executable).parent / 'missing-ssh-fixture.exe')], dict(os.environ))
-        self.assertEqual(win32process.GetProcessHandleCount(current), before)
+        self.assertEqual(handle_count(), before)
+
+    def test_unicode_long_child_cwd_reads_relative_identity_without_parent_chdir(self):
+        original_cwd = os.getcwd()
+        with TemporaryDirectory() as temporary:
+            folder = Path(temporary) / ('研究目录-' + 'long-path-' * 12)
+            folder.mkdir()
+            self.assertGreater(len(str(folder).encode('utf-8')), 100)
+            (folder / 'identity').write_text('controlled identity', encoding='utf-8')
+            program = ('import json,os,pathlib; '
+                       'print(json.dumps({"cwd":os.getcwd(),'
+                       '"identity":pathlib.Path("identity").read_text(encoding="utf-8")}))')
+            with self.process(program, cwd=str(folder)) as process:
+                process.resume()
+                result = json.loads(exchange(process, b'', deadline=time.monotonic() + 5, max_output=4096))
+                self.assertEqual(Path(result['cwd']).resolve(), folder.resolve())
+                self.assertEqual(result['identity'], 'controlled identity')
+            self.assertEqual(os.getcwd(), original_cwd)
 
     def test_wait_requires_explicit_finite_bound(self):
         with self.process('import time; time.sleep(60)') as process:
