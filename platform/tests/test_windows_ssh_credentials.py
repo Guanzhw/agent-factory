@@ -3,6 +3,7 @@ from contextlib import ExitStack
 from dataclasses import replace
 from pathlib import Path
 import tempfile
+import shutil
 import threading
 import time
 from types import ModuleType, SimpleNamespace
@@ -10,7 +11,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 import agent_factory
-from agent_factory.windows_ssh_credentials import WindowsSSHCredentials
+from agent_factory.windows_ssh_credentials import WindowsSSHCredentials, _Carrier
+from agent_factory.ssh_exchange import SSHExchangeCleanupError
 
 
 class WindowsCredentialScopeTests(unittest.TestCase):
@@ -41,7 +43,18 @@ class WindowsCredentialScopeTests(unittest.TestCase):
         self.stack.enter_context(patch.object(agent_factory, 'windows_ssh_support', self.support, create=True))
         self.vault = SimpleNamespace(authorize=Mock(return_value=True), resolve=Mock())
         self.manager = WindowsSSHCredentials(self.vault, max_agents=1, seconds=30)
-        self.addCleanup(self.manager.close)
+        self.cleanup_failed_expected = False
+        def cleanup():
+            try:
+                if self.cleanup_failed_expected:
+                    with self.assertRaises(SSHExchangeCleanupError):
+                        self.manager.close()
+                else:
+                    self.manager.close()
+            finally:
+                if self.manager.root.exists():
+                    shutil.rmtree(self.manager.root)
+        self.addCleanup(cleanup)
         self.binary = Path(self.temp) / 'synthetic-binary'
         self.binary.touch()
         self.stack.enter_context(patch.object(self.manager, 'paths', return_value=(self.binary, self.binary)))
@@ -160,9 +173,55 @@ class WindowsCredentialScopeTests(unittest.TestCase):
         self.assertTrue(all(not p.resumed and p.closed for p in self.processes))
         self.assertFalse(self.manager.active)
 
-    def test_process_cleanup_failure_does_not_leave_slot_reserved(self):
-        with self.assertRaisesRegex(RuntimeError, 'synthetic-cleanup-failure'):
+    def test_process_cleanup_failure_closes_admission_and_retains_failure(self):
+        self.cleanup_failed_expected = True
+        with self.assertRaisesRegex(SSHExchangeCleanupError, 'SSH_CARRIER_CLEANUP_INCOMPLETE'):
             with self.open() as process:
                 process.close = Mock(side_effect=RuntimeError('synthetic-cleanup-failure'))
-        self.assertFalse(self.manager.active)
+        self.assertTrue(self.manager.closed)
+        self.assertEqual(len(self.manager.active), 1)
+        self.assertTrue(next(iter(self.manager.active)).failed)
+        self.manager._key.reset_mock()
+        self.vault.resolve.reset_mock()
+        process_count = len(self.processes)
+        with self.assertRaisesRegex(Exception, 'SSH_CREDENTIAL_UNAVAILABLE'):
+            with self.open(): pass
+        with self.assertRaisesRegex(Exception, 'SSH_CREDENTIAL_UNAVAILABLE'):
+            self.manager.acquire(self.server, 'ssh://fixture.invalid', self.guard)
+        self.manager._key.assert_not_called()
+        self.vault.resolve.assert_not_called()
+        self.assertEqual(len(self.processes), process_count)
+        with self.assertRaises(SSHExchangeCleanupError):
+            self.manager.close()
         self.assertEqual(list(self.manager.root.iterdir()), [])
+
+    def test_close_attempts_other_original_carriers_after_one_kill_fails(self):
+        self.cleanup_failed_expected = True
+        carriers = [_Carrier(), _Carrier()]
+        self.manager.active.update(carriers)
+        first, second = tuple(self.manager.active)
+        for carrier in carriers:
+            carrier.process = SimpleNamespace(kill=Mock())
+            carrier.done = Mock()
+            carrier.done.wait.return_value = True
+        first.process.kill.side_effect = RuntimeError('synthetic-kill-failure')
+        with self.assertRaises(SSHExchangeCleanupError):
+            self.manager.close()
+        first.process.kill.assert_called_once_with()
+        second.process.kill.assert_called_once_with()
+        first.done.wait.assert_called_once()
+        second.done.wait.assert_called_once()
+        self.assertTrue(first.cancelled.is_set() and second.cancelled.is_set())
+        self.assertEqual(self.manager.active, {first})
+        with self.assertRaises(SSHExchangeCleanupError):
+            self.manager.close()
+        first.process.kill.assert_called_once_with()
+        second.process.kill.assert_called_once_with()
+
+    def test_closed_manager_rejects_acquire_before_secret_resolution(self):
+        self.manager.close()
+        self.manager._key.reset_mock()
+        with self.assertRaisesRegex(Exception, 'SSH_CREDENTIAL_UNAVAILABLE'):
+            self.manager.acquire(self.server, 'ssh://fixture.invalid', self.guard)
+        self.manager._key.assert_not_called()
+        self.vault.resolve.assert_not_called()

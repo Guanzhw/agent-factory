@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives import serialization
 
 from .personal_remote_provider import RemoteConnectionError
 from .ssh_credentials import PROVIDER_ID
+from .ssh_exchange import SSHExchangeCleanupError
 
 
 def _unavailable():
@@ -34,6 +35,7 @@ class _Carrier:
     cancelled: threading.Event = field(default_factory=threading.Event)
     done: threading.Event = field(default_factory=threading.Event)
     process: WindowsSSHProcess | None = None
+    failed: bool = False
 
 
 @dataclass(frozen=True, repr=False)
@@ -87,6 +89,9 @@ class WindowsSSHCredentials:
         return key.public_key().public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH).decode()
 
     def acquire(self, server, destination, guard):
+        with self.lock:
+            if self.closed:
+                raise _unavailable()
         if code := self.diagnostic():
             raise RemoteConnectionError(code)
         guard()
@@ -160,7 +165,7 @@ class WindowsSSHCredentials:
             env.update({'PATH': str(ssh.parent), 'SSH_ASKPASS': str(helper), 'SSH_ASKPASS_REQUIRE': 'force',
                         'FACTORY_SSH_KEY': str(identity), 'FACTORY_SSH_PIPE': pipe_name,
                         'FACTORY_SSH_CONTROLLER': str(os.getpid())})
-            spawned = WindowsSSHProcess(args, env, cwd=folder)
+            spawned = WindowsSSHProcess(args, env, cwd=str(folder))
             process = spawned
             broker_deadline = min(deadline, time.monotonic() + 6)
 
@@ -182,9 +187,12 @@ class WindowsSSHCredentials:
                     try:
                         spawned.kill()
                     except Exception:
-                        errors.append(RuntimeError('SSH_PROCESS_CLEANUP_INCOMPLETE'))
+                        errors.append(SSHExchangeCleanupError('SSH_PROCESS_CLEANUP_INCOMPLETE'))
                 finally:
-                    pipe.Close()
+                    try:
+                        pipe.Close()
+                    except Exception:
+                        errors.append(SSHExchangeCleanupError('SSH_PIPE_CLEANUP_INCOMPLETE'))
 
             thread = threading.Thread(target=broker, name='factory-ssh-askpass', daemon=True)
             lease.validate()
@@ -208,20 +216,28 @@ class WindowsSSHCredentials:
                 if thread is not None and thread.ident is not None:
                     thread.join(timeout=7)
                     if thread.is_alive():
-                        cleanup_error = RuntimeError('SSH_BROKER_CLEANUP_INCOMPLETE')
+                        cleanup_error = SSHExchangeCleanupError('SSH_BROKER_CLEANUP_INCOMPLETE')
                 elif pipe is not None:
                     pipe.Close()
                 if folder.exists():
                     shutil.rmtree(folder)
+                if any(isinstance(error, SSHExchangeCleanupError) for error in errors):
+                    cleanup_error = SSHExchangeCleanupError('SSH_CARRIER_CLEANUP_INCOMPLETE')
             except Exception as exc:
                 cleanup_error = exc
             finally:
                 password[:] = b'\0' * len(password)
                 with self.lock:
-                    self.active.discard(carrier)
+                    if carrier.failed and cleanup_error is None:
+                        cleanup_error = SSHExchangeCleanupError('SSH_CARRIER_CLEANUP_INCOMPLETE')
+                    if cleanup_error is None:
+                        self.active.discard(carrier)
+                    else:
+                        carrier.failed = True
+                        self.closed = True
                     carrier.done.set()
             if cleanup_error is not None:
-                raise cleanup_error
+                raise SSHExchangeCleanupError('SSH_CARRIER_CLEANUP_INCOMPLETE') from cleanup_error
         if errors:
             raise errors[-1]
 
@@ -231,12 +247,30 @@ class WindowsSSHCredentials:
             active = tuple(self.active)
             for carrier in active:
                 carrier.cancelled.set()
+        failed = any(carrier.failed for carrier in active)
         for carrier in active:
+            if carrier.failed:
+                continue
             if carrier.process is not None:
-                carrier.process.kill()
+                try:
+                    carrier.process.kill()
+                except Exception:
+                    with self.lock:
+                        carrier.failed = True
+                    failed = True
         end = time.monotonic() + 12
         for carrier in active:
-            if not carrier.done.wait(max(0, end - time.monotonic())):
-                raise RuntimeError('SSH_CARRIER_CLEANUP_INCOMPLETE')
+            completed = carrier.done.wait(max(0, end - time.monotonic()))
+            with self.lock:
+                if not completed or carrier.failed:
+                    carrier.failed = True
+                    failed = True
+                else:
+                    self.active.discard(carrier)
+        if failed:
+            raise SSHExchangeCleanupError('SSH_CARRIER_CLEANUP_INCOMPLETE')
         if self.root.exists():
-            shutil.rmtree(self.root)
+            try:
+                shutil.rmtree(self.root)
+            except Exception as exc:
+                raise SSHExchangeCleanupError('SSH_CARRIER_CLEANUP_INCOMPLETE') from exc
