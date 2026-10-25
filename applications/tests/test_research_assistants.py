@@ -46,6 +46,10 @@ class ResearchAssistantsTests(fixtures.ApplicationCompositionFixture):
         body = SendAssistantMessage(requestId='original-question', text=original['text'])
         self.assertEqual(asyncio.run(self.service.question('bob', identity['id'], body)), original)
         self.messages.send.assert_not_called()
+        self.auth.directory.set_disabled('alice', True)
+        self.assertEqual(asyncio.run(self.service.question('bob', identity['id'], body)), original)
+        with self.assertRaises(HTTPException):
+            self.service.configuration_for_endpoint('alice', 'old-endpoint')
         for target, value in [(identity['id'], 'changed text'), ('other-assistant', original['text'])]:
             with self.assertRaises(HTTPException) as error:
                 asyncio.run(self.service.question('bob', target, body.model_copy(update={'text': value})))

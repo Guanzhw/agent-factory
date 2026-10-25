@@ -50,6 +50,8 @@ class ResearchAssistantsPostgresTests(unittest.TestCase):
     def setUp(self):
         fixtures.ResearchSetupTests.setUp(self)
         self.store.transaction = MethodType(Store.transaction, self.store)
+        self.store.sql = MethodType(Store.sql, self.store)
+        Store.initialize(self.store)
         self.store.connections = self.connections
         self.scopes = LocalBudgetScopes(self.store, UsageLedger(self.store))
         self.store.local_budget_scopes = self.scopes
@@ -134,3 +136,9 @@ class ResearchAssistantsPostgresTests(unittest.TestCase):
         self.assertEqual(self.service.configuration_for_endpoint('alice', message['endpointId'])['revision'], 1)
         self.assertFalse(self.endpoints.owned('alice', message['endpointId'])['enabled'])
         self.assertEqual(self.service.list('bob')['items'][0]['qaAvailable'], True)
+        self.auth.directory.set_disabled('alice', True)
+        self.assertEqual(asyncio.run(self.service.question('bob', identity['id'], body)), message)
+        self.assertEqual(self.counts(), before)
+        self.assertEqual(len(self.admission.calls), 1)
+        with self.assertRaises(HTTPException):
+            self.service.configuration_for_endpoint('alice', message['endpointId'])

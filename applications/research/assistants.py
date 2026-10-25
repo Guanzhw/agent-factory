@@ -73,12 +73,15 @@ class ResearchAssistants:
     def configuration_for_endpoint(self, owner, endpoint_id):
         self.auth.require_member(owner)
         with self.db.read() as conn:
-            row = conn.execute(select(self.configurations).join(self.identities,
-                self.identities.c.id == self.configurations.c.assistant_id).where(
-                    self.identities.c.owner_id == owner, self.configurations.c.endpoint_id == endpoint_id)).mappings().first()
-            if row is None:
-                raise HTTPException(404, 'RESEARCH_ASSISTANT_CONFIGURATION_NOT_FOUND')
-            return {'id': row['assistant_id'], 'revision': row['revision'], 'endpointId': row['endpoint_id']}
+            return self._historical_configuration(conn, owner, endpoint_id)
+
+    def _historical_configuration(self, conn, owner, endpoint_id):
+        row = conn.execute(select(self.configurations).join(self.identities,
+            self.identities.c.id == self.configurations.c.assistant_id).where(
+                self.identities.c.owner_id == owner, self.configurations.c.endpoint_id == endpoint_id)).mappings().first()
+        if row is None:
+            raise HTTPException(404, 'RESEARCH_ASSISTANT_CONFIGURATION_NOT_FOUND')
+        return {'id': row['assistant_id'], 'revision': row['revision'], 'endpointId': row['endpoint_id']}
 
     def _projection(self, conn, row):
         qa = {'state': 'unconfigured'}
@@ -237,7 +240,8 @@ class ResearchAssistants:
             if error.status_code != 404 or error.detail != 'ASSISTANT_MESSAGE_NOT_FOUND':
                 raise
         else:
-            configuration = self.configuration_for_endpoint(original['recipientId'], original['endpointId'])
+            with self.db.read() as conn:
+                configuration = self._historical_configuration(conn, original['recipientId'], original['endpointId'])
             if original['text'] != body.text or configuration['id'] != identifier:
                 raise HTTPException(409, 'RESEARCH_QUESTION_REQUEST_CONFLICT')
             return original
