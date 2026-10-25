@@ -479,42 +479,55 @@ class PersonalSSHTests(unittest.TestCase):
                 self.service.probe.assert_called_once()
         asyncio.run(observe())
 
-    def test_native_windows_agent_acquisition_rejects_before_secret_or_process(self):
+    def test_windows_manager_missing_client_delegates_without_posix_secret_or_process(self):
+        """Synthetic manager routing, not actual Windows client acceptance."""
         agents = object.__new__(SSHAgents)
         agents.vault = Mock()
+        agents.windows = Mock()
+        agents.windows.acquire.side_effect = RemoteConnectionError('SSH_SYSTEM_CLIENT_UNAVAILABLE')
+        agents.windows.diagnostic.return_value = 'SSH_SYSTEM_CLIENT_UNAVAILABLE'
         guard = Mock()
-        with patch('agent_factory.personal_ssh.sys.platform', 'win32'), \
-                patch('agent_factory.personal_ssh.subprocess.Popen') as process, \
+        with patch('agent_factory.personal_ssh.subprocess.Popen') as process, \
                 patch('agent_factory.personal_ssh.base64.b64decode') as decode:
-            with self.assertRaisesRegex(RemoteConnectionError, '^SSH_CONTROLLER_PLATFORM_UNSUPPORTED$'):
+            with self.assertRaisesRegex(RemoteConnectionError, '^SSH_SYSTEM_CLIENT_UNAVAILABLE$'):
                 agents.acquire(None, None, guard)
+            self.assertEqual(agents.controller_diagnostic(), 'SSH_SYSTEM_CLIENT_UNAVAILABLE')
+            agents.close()
+        agents.windows.acquire.assert_called_once_with(None, None, guard)
+        agents.windows.diagnostic.assert_called_once_with()
+        agents.windows.close.assert_called_once_with()
         guard.assert_not_called()
         agents.vault.resolve.assert_not_called()
         decode.assert_not_called()
         process.assert_not_called()
 
-    def test_native_windows_diagnostic_preserves_configuration_management(self):
+    def test_missing_windows_client_diagnostic_preserves_configuration_management(self):
         server, _, _ = self.registered()
         original_acquire = SSHAgents.acquire.__get__(self.service.agents, SSHAgents)
-        with patch('agent_factory.personal_ssh.sys.platform', 'win32'), \
+        manager = Mock()
+        manager.acquire.side_effect = RemoteConnectionError('SSH_SYSTEM_CLIENT_UNAVAILABLE')
+        manager.diagnostic.return_value = 'SSH_SYSTEM_CLIENT_UNAVAILABLE'
+        with patch.object(self.service.agents, 'windows', manager), \
                 patch.object(self.service.agents, 'acquire', original_acquire), \
                 patch.object(self.vault, 'resolve') as resolve, \
                 patch('agent_factory.personal_ssh.subprocess.Popen') as process:
             capabilities = self.client.get(self.root + '/capabilities', headers=self.headers).json()
             self.assertTrue(capabilities['enabled'])
-            self.assertEqual(capabilities['controllerDiagnostic'], 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+            self.assertEqual(capabilities['controllerDiagnostic'], 'SSH_SYSTEM_CLIENT_UNAVAILABLE')
+            manager.diagnostic.assert_called_once_with()
             response, request_id = self.command(server, 'verify')
             self.assertEqual(response.status_code, 409, response.text)
-            self.assertEqual(response.json()['detail']['code'], 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+            self.assertEqual(response.json()['detail']['code'], 'SSH_SYSTEM_CLIENT_UNAVAILABLE')
             rows = self.client.get(self.root, headers=self.headers).json()
             self.assertEqual(rows[0]['reference'], server['reference'])
-            self.assertEqual(rows[0]['diagnostic'], 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+            self.assertEqual(rows[0]['diagnostic'], 'SSH_SYSTEM_CLIENT_UNAVAILABLE')
             self.assertEqual(rows[0]['lastCheckRequestId'], request_id)
             revoked, _ = self.command(server, 'revoke')
             self.assertEqual(revoked.status_code, 200, revoked.text)
             self.assertEqual(revoked.json()['status'], 'revoked')
             resolve.assert_not_called()
             process.assert_not_called()
+            manager.acquire.assert_called_once()
         self.service.probe.assert_not_called()
 
     def test_stale_agent_expiry_callback_cannot_close_replacement_agent(self):
