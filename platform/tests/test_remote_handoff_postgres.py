@@ -593,16 +593,36 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
                 reviews = conn.scalar(select(func.count()).select_from(policy.reviews).where(
                     policy.reviews.c.plan_id == plan['id']))
             self.assertEqual(reviews, 0)
-        self.origin['store'].request_cancel(row['task_id'])
-        with self.assertRaises(HTTPException) as ended:
-            self.receiver.prepare('bob', self.body(row))
-        self.assertEqual(ended.exception.status_code, 409)
-        self.assertEqual(ended.exception.detail, 'Origin cancellation ended this immutable handoff')
-        self.assertEqual(self.ticket_count(self.remote, prepared['remoteTaskId']), 0)
-        self.assertEqual(self.ticket_count(self.origin), 0)
-        retained = self.receiver._row(prepared['id'], 'bob')
-        self.assertEqual(retained['state'], 'PREPARED')
-        self.assertEqual(retained['body']['remoteTaskId'], prepared['remoteTaskId'])
+        # Separate rejection from the independent cleanup owner; both states
+        # have exact assertions rather than racing a background observation.
+        self.call(self.origin['lifecycle_observer'].stop)
+        self.call_remote(self.remote['lifecycle_observer'].stop)
+        try:
+            self.origin['store'].request_cancel(row['task_id'])
+            with self.assertRaises(HTTPException) as ended:
+                self.receiver.prepare('bob', self.body(row))
+            self.assertEqual(ended.exception.status_code, 409)
+            self.assertEqual(ended.exception.detail, 'Origin cancellation ended this immutable handoff')
+            self.assertEqual(self.ticket_count(self.remote, prepared['remoteTaskId']), 0)
+            self.assertEqual(self.ticket_count(self.origin), 0)
+            retained = self.receiver._row(prepared['id'], 'bob')
+            self.assertEqual(retained['state'], 'PREPARED')
+            self.assertEqual(retained['body']['remoteTaskId'], prepared['remoteTaskId'])
+
+            observed = self.call_remote(self.remote['lifecycle_observer'].observe_root, prepared['remoteTaskId'])
+            self.assertEqual(observed['errors'], [], observed)
+            settled = self.call_remote(self.receiver.reconcile, 'bob', prepared['id'])
+            self.assertEqual(settled['state'], 'CANCELLED_NO_DISPATCH')
+            self.assertTrue(settled['allStopped'])
+            for key in ('id', 'originTaskId', 'requestId', 'remoteTaskId', 'remotePlanId', 'manifestHash'):
+                self.assertEqual(settled[key], prepared[key])
+            self.assertIsNone(settled['remoteRunId'])
+            self.assertEqual(self.ticket_count(self.remote, prepared['remoteTaskId']), 0)
+            self.assertEqual(self.ticket_count(self.origin), 0)
+        finally:
+            self.call(self.origin['lifecycle_observer'].start)
+            self.call_remote(self.remote['lifecycle_observer'].start)
+
 
     def test_12_immutable_material_changes_and_server_change_do_not_admit(self):
         row = self.reserve()
