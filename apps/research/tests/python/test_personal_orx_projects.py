@@ -245,10 +245,15 @@ class ProjectTests(unittest.TestCase):
         self.wire.request = request
         with ThreadPoolExecutor(max_workers=2) as pool:
             first = pool.submit(self.service.create, 'alice', command)
-            self.assertTrue(entered.wait(5))
-            second = self.service.create('alice', command)
-            self.assertEqual(second['state'], 'ack_unknown')
-            release.set(); self.assertEqual(first.result()['state'], 'acknowledged')
+            try:
+                self.assertTrue(entered.wait(5))
+                second = self.service.create('alice', command)
+                self.assertEqual(second['state'], 'ack_unknown')
+            finally:
+                # Preserve the first assertion/error while releasing our own
+                # worker gate before the executor joins, including late entry.
+                release.set()
+            self.assertEqual(first.result()['state'], 'acknowledged')
         self.assertEqual(self.wire.creation_posts, 1)
 
     def test_owner_revocation_expiry_and_cancellation_after_blocking_dns_fail_closed(self):

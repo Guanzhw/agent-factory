@@ -47,13 +47,14 @@ class AcceptanceResult(unittest.TextTestResult):
         super().addSuccess(test)
 
 
-def run_checks(discovered, required, *, subset=False, stream=None):
+def run_checks(discovered, required, *, subset=False, stream=None, resultclass=None):
     """Consume discovered so unittest can release each completed test instance."""
     selected = set().union(*required.values()) if subset else set(discovered)
     # One original instance per ID, even when multiple groups select it.
     suite = unittest.TestSuite(case for identity, case in discovered.items() if identity in selected)
     discovered.clear()
-    result = unittest.TextTestRunner(stream=stream, verbosity=2, resultclass=AcceptanceResult).run(suite)
+    result = unittest.TextTestRunner(stream=stream, verbosity=2,
+        resultclass=AcceptanceResult if resultclass is None else resultclass).run(suite)
     groups = {group: {'requiredCases': len(identities),
         'passed': len(identities & result.successful_ids),
         'notPassed': sorted(identities - result.successful_ids)}

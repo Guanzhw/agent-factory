@@ -45,6 +45,32 @@ This uses the same discovery as the ordinary Python entrypoint, covering `platfo
 
 The five old `check_*_postgres.py` commands remain focused local entrypoints; CI does not run them before the full suite. For example, `uv run python scripts/check_postgres.py --group platform_application_boundaries` runs that subset. Preserve existing platform prerequisites, including SSH fixture tools, rather than turning missing requirements into optional coverage. Manual full verification retains a separate Windows compatibility environment; Linux ordinary and database tests execute together in the PostgreSQL job. Its complete log retains case results and skip reasons. Run `uv run python scripts/check_python.py` for complete local Python discovery without a database.
 
+### Optional cost profiling
+
+Use the same disposable database and resource limits, with no competing heavy
+checks, to record full-suite or selected-group timings:
+
+```sh
+uv run python scripts/profile_tests.py --output /tmp/factory-test-profile
+# Optional: --group platform_application_boundaries
+```
+
+The profiler delegates discovery and acceptance to `check_postgres`; it does not
+retry, change deadlines, or turn skipped required tests into passes. It writes
+`summary.json` and `timings.jsonl`: per-case setup/test/teardown/cleanup, separate
+class/module fixtures, and selected owned database/process lifecycle helpers.
+Helpers overlap their containing phases and must not be added to wall time.
+Asyncio runner creation and final loop/executor shutdown occur outside unittest's
+case callbacks and remain in total wall time, not individual case phases.
+Compare the same observer, resource limits and prerequisites, and preserve failed
+runs. Use timings to examine independent behavior and duplicated work, not to
+delete tests solely because they are slow or to target a test count.
+
+The Node architecture fixture executes the real checker CLI with `spawnSync`.
+A sandbox `EPERM` at that boundary is an environment execution restriction;
+retain its failure and run acceptance in an environment permitting local child
+processes. Do not skip the CLI assertions or silently substitute direct imports.
+
 ## Personal CLI and MCP verification
 
 The [connection lifecycle](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md) and

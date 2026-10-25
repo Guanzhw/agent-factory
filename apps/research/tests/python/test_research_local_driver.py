@@ -140,7 +140,9 @@ class LocalDriverTests(unittest.TestCase):
         driver = self.driver()
         static = driver.configuration_fingerprint
         proof = driver(self.record)
-        config = json.loads((self.program / 'run-config.json').read_bytes())
+        config_path = self.program / 'run-config.json'
+        original_config = config_path.read_bytes()
+        config = json.loads(original_config)
         self.assertEqual(config['binding']['providerJobId'], 'provider-original')
         self.assertEqual(config['binding']['planFingerprint'], self.plan['fingerprint'])
         self.assertNotEqual(config['binding']['planFingerprint'], self.record['binding']['planHash'])
@@ -151,6 +153,7 @@ class LocalDriverTests(unittest.TestCase):
         self.assertIsNone(proof['checkpoint'])
         self.assertIsNone(proof['evaluationContractSha256'])
         self.assertEqual(driver(self.record), proof)
+        self.assertEqual(config_path.read_bytes(), original_config)
         self.assertGreaterEqual(len(self.guards), 4)
         changed = deepcopy(self.record)
         changed['processPin']['id'] = 'other-provider'

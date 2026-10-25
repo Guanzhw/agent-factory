@@ -53,8 +53,9 @@ class MCPPhaseRing:
 
     @staticmethod
     def native_identity(value):
-        # Agno jobs rows use id/attempt, not run_id/attempts.
-        return (value['id'], value.get('status'), value.get('attempt'), value.get('worker_id'))
+        # Persisted native jobs use locked_by; worker_id belongs to the worker
+        # object. Mixing them hides actual claim ownership in failure traces.
+        return (value['id'], value.get('status'), value.get('attempt'), value.get('locked_by'))
 
     @contextmanager
     def lifecycle_trace(self):

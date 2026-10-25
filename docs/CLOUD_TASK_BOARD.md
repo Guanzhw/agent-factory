@@ -1813,6 +1813,20 @@ release proofs retaining cleanupConfirmed:false. Superseded3fa4ec43 CI had
 New exact-head CI is the only final acceptance source.
 
 
+## 2026-10-24 测试成本与共同MCP故障后续
+
+root唯一集成；backend负责fresh材料JOIN和fixture generation；remote负责scratch时序/GC诊断；reviewer独立验证，重型检查串行。#103原b458028 fast/full成功，云端完整两轮失败仍保留。新增迟到凭据UNKNOWN反例、每次fresh材料读取83/189→55/133 SQL（无单例总耗时收益）、确定fixture LIFO错序修复及诊断去强引用；最终daily Python241/0skip，相关PG、GC前缀12项与同app6任务通过。历史MCP/ORX/remote等待尚未完整归因；不放宽期限、不强制GC、不重复完整本地套件。
+
+#97独立Draft现c1230a9，原full5个旧fixture接口错误已定向修复，fast与新Windows full通过，PG待终态；#98独立Draft5799403，真实35秒进程关闭/原身份恢复验证、fast与Windows full通过，PG待终态。#99–102未扩展，先完成当前精确CI与稳定性判断。禁止合并、部署及付费模型。
+
+## 2026-10-24 final stability / combined validation
+Root owns diagnosis integration, validation-only union branch and serialized heavy runs. history_remote owns scalar fixed-prefix MCP probe/read-only causal review; shutdown_tests owns ORX gate+predecessor probe and remote-parent evidence review; history_backend owns full-coverage/merge-risk audit. No newfeatures. #103 stability-followup.md records distinct failures, predeclared predictions and final full gap; only#98 currenthead has full success. Validation union retains seven independent Drafts, no mainmerge/deploy/paid calls. Initial native claim diagnostic worker_id→locked_by calibration failed as expected, corrected6pass. One ORX six-case experiment running; MCP13case preparation, complete union PG/Windows deferred until targeted experiment/fix point is frozen.
+
+## 2026-10-24 final stability investigation and union acceptance
+
+Root integrated the ORX failure-path gate cleanup and exact locked_by diagnostics in #103 source0d157ff; independent reviewers approved assertion preservation and memory-only failure snapshots. One6case ORX prefix and one13case MCP prefix passed without retries; historical root cause remains open. Existing trace shows substantial fresh authority/credential cost, not a proven removable guard.
+
+Validation-only8de058a includes current#97–103 and passed full40129163038:PG3446pass/71skip,Windows2228pass/1289skip,bothWeb728pass,sevenrequiredgroupszero skips,Chromium/core/static/auditspassed. This is union coverage, not seven independent full certifications or proof of suite acceleration. #1030d157fffast40129100361also passed. OwnedPG stopped. CLI watch401credential error is separate from CI success; no new authentication attempted. Public evidence: openspec/changes/profile-and-simplify-test-cost/stability-followup.md and experiments/final-validation-summary.json. No newfeatures/mainmerge/deploy/paidcalls.
 ## 2026-10-24 #98 独立关闭交付
 
 root负责core/部署集成；shutdown_design负责研究owner；shutdown_tests负责真实进程fixture，独立review完成。用户明确选择35秒后自行非零退出，UNKNOWN和原身份保留、不重新派发。owner5、真实PG进程3、policy真实子进程2、既有native PG6通过；旧控制器fixture两项错误修正后targeted2通过。Ruff/Pyright/架构/OpenSpec及独立core通过，完整证据见openspec/changes/propagate-research-shutdown-outcomes/verification.md。精确CI待运行，保持Draft。
