@@ -267,7 +267,7 @@ class ResourceCapacityPostgresTests(unittest.TestCase):
             self.assertEqual(persisted[key], lease[key])
         # Cleanup cannot grant account authority or touch another owner's lease.
         self.auth.directory.set_disabled('alice', True)
-        self.request("alice", "POST", f"/resources/leases/{lease['id']}/cancel", expected=403)
+        disabled_member_request(self, self.state, self.client, "POST", f"/api/factory/resources/leases/{lease['id']}/cancel")
         self.assertEqual(self.request("manager", "POST", "/resources/maintenance").json()["scanned"], 0)
         self.assertEqual((self.peer.cancellations, self.peer.reclaims), (1, 1))
         # A separately authorized user's explicit allocation observes free pool.

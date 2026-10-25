@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 """Twenty test identities against actual PostgreSQL, auth and native queue.
 
 The deterministic model is an explicit fixture. These tests verify admission,
@@ -199,8 +200,8 @@ class CapacityPostgresTests(unittest.TestCase):
         self.assertEqual(self.held(), 3)
         self.auth.directory.set_disabled(owner, True)
         try:
-            self.request(owner, "POST", "/instances", expected=403, json=denied_body)
-            self.request(owner, "GET", "/jobs/" + first["id"], expected=403)
+            disabled_member_request(self, self.state, self.client, 'POST', '/api/factory/instances', owner=owner, json=denied_body)
+            disabled_member_request(self, self.state, self.client, 'GET', '/api/factory/jobs/' + first['id'], owner=owner)
         finally:
             # Explicit fixture account restoration inside the disposable DB.
             self.auth.directory.set_disabled(owner, False)
