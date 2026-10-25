@@ -1813,6 +1813,11 @@ release proofs retaining cleanupConfirmed:false. Superseded3fa4ec43 CI had
 New exact-head CI is the only final acceptance source.
 
 
+## 2026-10-24 #98 独立关闭交付
+
+root负责core/部署集成；shutdown_design负责研究owner；shutdown_tests负责真实进程fixture，独立review完成。用户明确选择35秒后自行非零退出，UNKNOWN和原身份保留、不重新派发。owner5、真实PG进程3、policy真实子进程2、既有native PG6通过；旧控制器fixture两项错误修正后targeted2通过。Ruff/Pyright/架构/OpenSpec及独立core通过，完整证据见openspec/changes/propagate-research-shutdown-outcomes/verification.md。精确CI待运行，保持Draft。
+
+#103 b458028 fast/full成功，但云端两轮失败仍未关闭；#97 daily PG两项第二任务等待失败仍在共同MCP授权/清理诊断，不以该CI通过掩盖。#99–102暂停扩展以免混淆根因。4 CPU/16 GiB串行重型验证，不合并、部署或付费调用。
 ## 2026-10-24 云端连续交付
 
 Coordinator唯一主集成；4 CPU/16 GiB，重型检查串行。禁止合并、部署及付费模型。

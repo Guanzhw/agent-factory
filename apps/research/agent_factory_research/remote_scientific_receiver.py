@@ -536,14 +536,19 @@ class RemoteScientificReceiver:
             if isinstance(error, asyncio.CancelledError):
                 raise
 
-    async def close(self):
+    async def close(self, *, deadline=None):
+        loop = asyncio.get_running_loop()
+        end = loop.time() + 35 if deadline is None else deadline
         self._closing = True
         owned = tuple(self._drives.items())
         tasks = tuple(task for _, task in owned)
         for task in tasks:
             task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        pending = {task for task in tasks if not task.done()}
+        if pending and end > loop.time():
+            _, pending = await asyncio.wait(pending, timeout=end - loop.time())
+        if pending:
+            return False
         for receipt_id, _ in owned:
             try:
                 body = self._read(receipt_id)
@@ -552,6 +557,7 @@ class RemoteScientificReceiver:
                     updated['driveRequest']['status'] = 'UNKNOWN'; self._save(body, updated)
             except Exception:
                 pass  # Durable pending intent still forbids restart dispatch.
+        return True
 
     async def project_baseline(self, remote_owner, project_id, project_pin):
         self.auth.require_member(remote_owner)

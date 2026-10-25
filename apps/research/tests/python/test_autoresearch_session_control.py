@@ -27,7 +27,7 @@ class Harness:
         self.result = {'allStopped': True, 'cancelled': False, 'research': {'original': 'actual-result'},
                        'scientificConclusionVerified': False}
         self.store = Mock()
-        services_for(self.store).autoresearch = Mock()
+        services_for(self.store).autoresearch = Mock(cleanups={})
         self.store.settings = SimpleNamespace(demo=True)
         self.store.task.return_value = self.task
         self.store.plan.return_value = self.plan
