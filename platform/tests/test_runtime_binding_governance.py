@@ -128,7 +128,7 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
         registry = self.store.execution_bindings
         registry.register("tool", "member-fixture-adapter", "1", lambda _: None,
                           tool_name="member_fixture_tool", permissions=("member:fixture",))
-        configuration = GovernanceConfig(tool_contract="registered-runtime-v1", revision="material-governance-v1")
+        configuration = GovernanceConfig(tool_contract="legacy-v1", revision="material-governance-v1")
         self.service.replace_configuration(configuration, expected_revision="material-governance-v1")
         definition = governance_fixture.definition(kind="tool", content="member_fixture_tool", permissions=["member:fixture"],
             runtimeBinding=binding("member-fixture-adapter"))

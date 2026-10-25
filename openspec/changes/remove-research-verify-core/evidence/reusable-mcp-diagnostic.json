@@ -1,0 +1,75 @@
+{
+  "result": {
+    "testsRun": 1,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "internalElapsedSeconds": 66.57,
+  "callbackCount": 377,
+  "eventCount": 53186,
+  "sql": {
+    "count": 28328,
+    "sumCursorSeconds": 38.657,
+    "maxCursorSeconds": 0.17351
+  },
+  "categories": {
+    "pool.connect_including_pre_ping": {
+      "count": 16512,
+      "sumSeconds": 14.06,
+      "maxSeconds": 0.038811
+    },
+    "fn.vault_authorize": {
+      "count": 2425,
+      "sumSeconds": 4.68,
+      "maxSeconds": 0.023716
+    },
+    "fn.connection_preflight": {
+      "count": 1868,
+      "sumSeconds": 45.618,
+      "maxSeconds": 0.071088
+    },
+    "fn.bindings_recheck": {
+      "count": 1311,
+      "sumSeconds": 35.184,
+      "maxSeconds": 0.071488
+    },
+    "fn.require_plan_execution": {
+      "count": 874,
+      "sumSeconds": 48.377,
+      "maxSeconds": 0.250414
+    },
+    "fn.authorize_tool": {
+      "count": 437,
+      "sumSeconds": 30.565,
+      "maxSeconds": 0.266582
+    },
+    "fn.handle_check": {
+      "count": 557,
+      "sumSeconds": 24.652,
+      "maxSeconds": 0.094776
+    },
+    "callback.worker": {
+      "count": 377,
+      "sumSeconds": 91.528,
+      "maxSeconds": 0.643884
+    },
+    "callback.await_total": {
+      "count": 377,
+      "sumSeconds": 91.07,
+      "maxSeconds": 0.644649
+    },
+    "fn.vault_resolve": {
+      "count": 60,
+      "sumSeconds": 0.216,
+      "maxSeconds": 0.009691
+    },
+    "fn.handle_resolve": {
+      "count": 60,
+      "sumSeconds": 5.305,
+      "maxSeconds": 0.156315
+    }
+  },
+  "durationNote": "Nested inclusive durations and concurrent callback sums cannot be added or compared directly to elapsed time.",
+  "limitation": "This passing isolated run did not reproduce the full-suite 7.148s authorization callback or 20s wait failure, so it cannot establish or exclude the original pool/SQL/GC cause."
+}

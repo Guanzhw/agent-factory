@@ -22,11 +22,17 @@ class _UnixHTTP(HTTPConnection):
     """Local transport for the actual broker's bounded HTTP protocol."""
     def __init__(self, path, *, timeout=10):
         super().__init__('localhost', timeout=timeout)
-        self.socket_path = str(path)
+        self.socket_path = Path(path)
     def connect(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
-        self.sock.connect(self.socket_path)
+        # Match the real broker's directory-relative AF_UNIX address while
+        # retaining private directory inode custody for long workspace paths.
+        descriptor = os.open(self.socket_path.parent, os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            self.sock.connect(f'/proc/self/fd/{descriptor}/{self.socket_path.name}')
+        finally:
+            os.close(descriptor)
 
 
 

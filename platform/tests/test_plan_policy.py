@@ -8,6 +8,7 @@ import secrets
 from tempfile import TemporaryDirectory
 import time
 from types import SimpleNamespace
+from typing import cast
 import unittest
 from unittest.mock import Mock, patch
 from uuid import uuid4
@@ -24,7 +25,7 @@ from agent_factory.auth import AuthService
 from agent_factory.config import Settings
 from core_native_fixture import FixtureModel as DemoModel
 from core_native_fixture import create_fixture_app as create_app
-from agent_factory.plan_policy import PlanPolicyConfig, PlanPolicyService, plan_policy_router
+from agent_factory.plan_policy import PlanPolicyConfig, PlanPolicyService, ToolContract, plan_policy_router
 from agent_factory.store import Store, digest
 from pg_fixture import IsolatedPostgres
 
@@ -79,6 +80,12 @@ def historical_review(service, plan, *, decision=None):
                 request_id=str(uuid4()), intent_hash="original-decision", decision=decision,
                 decided_at="2026-01-01T00:30:00+00:00"))
     return value
+
+
+class PlanPolicyConfigurationTests(unittest.TestCase):
+    def test_unknown_tool_contract_is_rejected(self):
+        with self.assertRaises(ValueError):
+            PlanPolicyConfig(tool_contract=cast(ToolContract, "unknown-fixture-contract"))
 
 
 class PlanPolicyTests(unittest.TestCase):

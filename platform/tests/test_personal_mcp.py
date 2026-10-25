@@ -163,17 +163,23 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             authority = Authority()
             adapter = MCPToolAdapter(descriptor('wait'), url=server.url, authorization_interval=0.01)
             pending = asyncio.create_task(adapter.invoke(authority.invocation()))
-            await asyncio.wait_for(server.wait_started['alice'].wait(), 2)
-            authority.revoked = True
-            with self.assertRaises(ToolInvocationError) as failure:
-                await asyncio.wait_for(pending, 2)
-            self.assert_error(failure.exception, 'MCP_AUTHORIZATION_REJECTED')
-            self.assertEqual(server.calls, [('wait', 'alice')])
-            previous_requests = len(server.requests)
-            with self.assertRaises(ToolInvocationError) as later:
-                await adapter.invoke(authority.invocation())
-            self.assert_error(later.exception, 'MCP_AUTHORIZATION_REJECTED', outcome='failed', stopped=True)
-            self.assertEqual(len(server.requests), previous_requests)
+            try:
+                await asyncio.wait_for(server.wait_started['alice'].wait(), 2)
+                authority.revoked = True
+                with self.assertRaises(ToolInvocationError) as failure:
+                    await asyncio.wait_for(pending, 2)
+                self.assert_error(failure.exception, 'MCP_AUTHORIZATION_REJECTED')
+                self.assertEqual(server.calls, [('wait', 'alice')])
+                previous_requests = len(server.requests)
+                with self.assertRaises(ToolInvocationError) as later:
+                    await adapter.invoke(authority.invocation())
+                self.assert_error(later.exception, 'MCP_AUTHORIZATION_REJECTED', outcome='failed', stopped=True)
+                self.assertEqual(len(server.requests), previous_requests)
+            finally:
+                if not pending.done():
+                    pending.cancel()
+                await asyncio.gather(pending, return_exceptions=True)
+
 
     async def test_rotation_invalidates_inflight_revision_and_next_call_uses_new_token(self):
         async with MCPProtocolServer(stateless=False) as server:

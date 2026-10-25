@@ -46,3 +46,28 @@
 远程批准首次403来自未声明的fixture_operation；改为真实bounded-process-v1与精确scope后409来自两端独立发布应用的createdAt导致不同digest。接收端现通过真实snapshot import复用origin精确版本，不mock校验或扩大生产allowlist。单用例（含批准/拒绝）18.576秒通过，整class5项57.924秒通过，正常关闭全部worker/scheduler。
 
 最终源码冻结前：所有已知迁移失败均有针对性修复/通过证据；将对这一修复集合执行完整core PG和精确提交CI，当前尚未宣称全量通过。
+
+## First frozen full verification (a79ffc0)
+
+[PR104](https://github.com/Guanzhw/agent-factory/pull/104) 保持 Draft。精确提交 `a79ffc0870a5db94808a4c2fc287e39e25c3acb6` 的 [fast CI40168238226](https://github.com/Guanzhw/agent-factory/actions/runs/40168238226) 通过；[full CI40168529122](https://github.com/Guanzhw/agent-factory/actions/runs/40168529122) 失败，不能宣称全量通过。
+
+- 本地完整 PG：1815 tests，2303.599秒（含包装2319.448秒），failures=14/errors=6/skipped=5，exit1。失败数包含subtest，不等于失败用例ID数。required五组中四组全通过；owner_byok_default_off为101/102，长路径broker夹具错误。
+- 完整CI：Windows 1815项，201.665秒，errors=2/skipped=736；PG 1815项，1194.436秒，failures=11/errors=5/skipped=5。两平台前端与Linux Python静态检查通过。
+- 以上是不同运行环境的结果，不能把耗时差或测试移除数量作为整套提速证据。CI控制台最终输出缺少部分traceback，新增固定版本官方artifact步骤只保存完整PG日志7天，仍传播原测试退出状态。
+
+已确认迁移缺陷及修复对应：Go Settings重复关键字、Luna旧fixture入口/peer；remote模型provider与定价标识不一致、定价变更误触zero-local条目；模板仍期望Research产物；broker测试transport丢失长路径目录FD连接；测试残留已删除科学合同。保持模型/usage/ledger、材料hash、权限撤回、真实原操作身份断言。未知合同拒绝断言迁至通用policy测试，未随科学合同测试删除。
+
+未闭合的时序问题：MCP撤回测试在撤回前启动屏障超时；MCP容量测试第二次调用在DELETE授权总期限内未完成；可复用MCP第二账号任务在派发前授权读取耗时；remote断读测试尚未launch就遇origin authority通信不可达。不能把UNKNOWN当已释放、把native completed当清理完成，或提高期限掩盖问题。原始日志与精简分析均保留。
+
+有界诊断：MCP单例1项1.422秒、相邻两例加目标3项4.753秒均通过，原2秒断言不变；只补pending的finally cancel/gather，避免失败后遗漏任务异常。诊断runner首次因重复注入已应用的清理代码产生IndentationError（未执行case），修正runner后才得到上述结果。容量单例一次通过（包装30.237秒），保留采样未见PG锁/池耗尽；事件环仅保留末段且未覆盖pre-ping，不足以关闭原慢回调原因。独立review确认候选未弱化断言或生产授权，但不是执行验收。
+
+
+Remote有界诊断一次：77.729秒测试/82.780秒包装，exit1。原full在无lease阶段出现ORIGIN_AUTHORITY_UNAVAILABLE；本次30次origin授权均200、无HTTPError，进入allocation剩4.812秒，五次before_effect累计4.789秒，最后越过原5秒期限，最终never-dispatched/allStopped并回收。没有进入read-disconnect目标阶段，故不算该场景通过。510条同步trace约57.6KB可能扰动临界时序，尚未量化；未调整生产期限、未重置lease、未重试追绿。
+
+
+迁移修复针对性32项：226.769秒（包装231.129秒），全部通过、零跳过、exit0；包含两个Go模型、Luna512输出上限、六类材料发布/原生产物hash、长路径broker、未知合同拒绝、真实TCP远程进程与远程计费/恢复。完整源码变更仍须最终精确CI验收。命令/UTC/退出码见[结构化运行证据](evidence/verification-runs.json)。
+
+
+可复用MCP多账号单例聚合诊断一次通过，内部66.570秒（包装75.113秒），377 callbacks、53186观测事件；完整pool connect（含pre-ping）、SQL与固定函数类别聚合，避免早期环形日志丢失。保留原期限和全部断言；本次通过不关闭完整运行慢因。未进行生产授权优化或重复全量追绿。
+
+最终修复静态：Ruff通过、Pyright 0 errors（16.055秒）、CI scope/summary9项通过、diff whitespace通过。[MCP安全聚合摘要](evidence/reusable-mcp-diagnostic.json)保留完整统计；pool connect最大38.811ms、SQL最大173.510ms、callback最大643.884ms，未复现完整运行慢因。

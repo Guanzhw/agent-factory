@@ -1,5 +1,5 @@
 # pyright: reportMissingImports=false
-"""Native public coding research uses a newly pinned Luna output revision."""
+"""Native synthetic coding uses a newly pinned Luna output revision."""
 import argparse
 import os
 import tempfile
@@ -12,9 +12,8 @@ from agent_factory.opencode_go import GoDevelopmentModel
 from pg_fixture import IsolatedPostgres
 import test_go_project_workflow_postgres as workflow
 import json
-from test_go_live_product_postgres import SyntheticCampaignPeer
 
-class CodingPeer(SyntheticCampaignPeer):
+class CodingPeer(workflow.CodingPeer):
     def __init__(self):
         super().__init__()
         self.bodies = []
@@ -36,9 +35,9 @@ class PublicCodingRevisionPostgresTests(unittest.TestCase):
 
     def test_luna_revision_two_pins_512_wire_cap_material_and_pricing(self):
         captured = {}
-        original_create = workflow.runner.create_app
-        def create_app(settings):
-            app = original_create(settings)
+        original_create = workflow.runner.create_fixture_app
+        def create_app(settings, **kwargs):
+            app = original_create(settings, **kwargs)
             captured["state"] = app.app.state.factory
             return app
         def offline_model(**kwargs):
@@ -51,7 +50,7 @@ class PublicCodingRevisionPostgresTests(unittest.TestCase):
         with IsolatedPostgres(os.environ["FACTORY_TEST_DATABASE_URL"]) as database, \
                 tempfile.TemporaryDirectory(prefix="luna-revision-native-fixture-") as directory, \
                 patch.object(workflow.runner, "credential", self.credential), \
-                patch.object(workflow.runner, "create_app", side_effect=create_app), \
+                patch.object(workflow.runner, "create_fixture_app", side_effect=create_app), \
                 patch("agent_factory.go_development.GoDevelopmentModel", side_effect=offline_model):
             args = argparse.Namespace(model="gpt-6-luna", database_url=database.url,
                                       evidence_directory=directory, luna_output_revision="2")

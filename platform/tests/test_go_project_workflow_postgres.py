@@ -41,11 +41,12 @@ class GoProjectWorkflowPostgresTests(unittest.TestCase):
     history: list[dict]
 
     def setUp(self):
-        # Opt the strictly fake provider/campaign fixture into compatibility
-        # accounting. The actual operator runner retains disabled defaults.
+        # The runner enables accounting; only this strictly synthetic fixture
+        # enables managed-model compatibility. Merge overrides before calling
+        # Settings so the runner's explicit accounting flag is not duplicated.
         original_settings = runner.Settings
         settings_patch = patch.object(runner, 'Settings', side_effect=lambda **values:
-            original_settings(**values, fee_management_enabled=True, platform_paid_models_enabled=True))
+            original_settings(**{**values, "fee_management_enabled": True, "platform_paid_models_enabled": True}))
         settings_patch.start(); self.addCleanup(settings_patch.stop)
         # Reuse fixture construction only; do not inherit its policy unit tests.
         policy_helpers.ProjectCampaignTests.setUp(self)

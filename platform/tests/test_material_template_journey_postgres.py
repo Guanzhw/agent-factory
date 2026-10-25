@@ -48,7 +48,7 @@ class MaterialTemplateJourneyPostgresTests(unittest.TestCase):
         response = self.client.get('/api/factory/applications/fixture-text/versions/1')
         self.assertEqual(response.status_code, 200, response.text)
         source = response.json()['application']
-        definition = {key: deepcopy(source[key]) for key in ApplicationDefinition.model_fields}
+        definition = {key: deepcopy(source[key]) for key in ApplicationDefinition.model_fields if key in source}
         definition.update(id='department-literature-' + uuid4().hex[:10], name='部门受控文献模板',
             description='Synthetic governed template roundtrip, not scientific findings.',
             discoveryKeywords=['部门模板验收'], defaultForDiscovery=False, defaultMode='literature')
@@ -105,12 +105,13 @@ class MaterialTemplateJourneyPostgresTests(unittest.TestCase):
         self.assertIsNotNone(detail)
         assert detail is not None
         self.assertEqual(detail['job']['status'], 'completed', detail)
-        artifact = next(row for row in detail['artifacts'] if row['name'] == 'synthetic-literature.json')
+        artifact = next(row for row in detail['artifacts'] if row['name'] == 'checksum.json')
         path = f"/api/factory/jobs/{task['id']}/artifacts/{artifact['id']}"
         raw = self.client.get(path)
         self.assertEqual(raw.status_code, 200)
         self.assertEqual(hashlib.sha256(raw.content).hexdigest(), artifact['sha256'])
-        self.assertEqual(raw.json()['evidenceKind'], 'synthetic')
+        self.assertEqual(raw.json()['evidenceKind'], 'synthetic-input-real-computation')
+        self.assertEqual(raw.json()['sha256'], hashlib.sha256(plan['normalizedGoal'].encode()).hexdigest())
         self.assertEqual(self.store.plan(plan['id'], 'alice'), original_plan)
         receipt = self.client.get('/api/factory/requests/' + request['requestId'])
         self.assertEqual(receipt.json()['taskId'], task['id'])

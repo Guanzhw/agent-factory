@@ -145,6 +145,22 @@ jobs:
           wait "$progress_pid" 2>/dev/null || true
           cat "$RUNNER_TEMP/postgres-tests.log"
           exit "$test_status"
+      - name: Locate full PostgreSQL evidence log
+        if: always() && needs.scope.outputs.mode == 'full'
+        id: postgres_log
+        shell: bash
+        run: |
+          if [[ -f "$RUNNER_TEMP/postgres-tests.log" ]]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Preserve full PostgreSQL evidence log
+        if: always() && needs.scope.outputs.mode == 'full' && steps.postgres_log.outputs.exists == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: postgres-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/postgres-tests.log
+          retention-days: 7
+          if-no-files-found: error
   summary:
     name: CI summary
     if: always()

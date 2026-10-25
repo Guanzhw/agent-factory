@@ -1,0 +1,128 @@
+{
+  "baseline": "a2e021c97ba2257d86c1ec484296bbeda0b6c05a",
+  "firstFrozenHead": "a79ffc0870a5db94808a4c2fc287e39e25c3acb6",
+  "environment": {
+    "cpuQuota": 4,
+    "memoryGiB": 16,
+    "python": "3.12.14",
+    "node": "24.19.0",
+    "uv": "0.12.19",
+    "postgres": "17.11"
+  },
+  "runs": [
+    {
+      "label": "full-core-a79ffc0",
+      "command": [
+        "timeout",
+        "2400",
+        "env",
+        "FACTORY_TEST_DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:55439/postgres",
+        "PYTHONPATH=scripts",
+        ".venv/bin/python",
+        "/workspace/scratch/core-only-20261025/full_with_failure_traces.py"
+      ],
+      "startedUTC": "2026-10-25T06:11:03.593535+00:00",
+      "seconds": 2319.448,
+      "exitCode": 1
+    },
+    {
+      "label": "mcp-startup-diagnostic",
+      "command": [
+        "timeout",
+        "200",
+        "env",
+        "PYTHONPATH=platform:deployment:platform/tests",
+        ".venv/bin/python",
+        "/workspace/scratch/core-only-20261025/mcp_startup_diagnostic.py"
+      ],
+      "startedUTC": "2026-10-25T06:50:05.858157+00:00",
+      "seconds": 4.634,
+      "exitCode": 1
+    },
+    {
+      "label": "mcp-startup-diagnostic-fixed",
+      "command": [
+        "timeout",
+        "200",
+        "env",
+        "PYTHONPATH=platform:deployment:platform/tests",
+        ".venv/bin/python",
+        "/workspace/scratch/core-only-20261025/mcp_startup_diagnostic.py"
+      ],
+      "startedUTC": "2026-10-25T06:50:45.865910+00:00",
+      "seconds": 15.257,
+      "exitCode": 0
+    },
+    {
+      "label": "mcp-callback-diagnostic",
+      "command": [
+        "timeout",
+        "120",
+        "env",
+        "FACTORY_TEST_DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:55439/postgres",
+        "PYTHONPATH=platform:deployment:platform/tests",
+        ".venv/bin/python",
+        "/workspace/scratch/core-only-20261025/diagnose-mcp-callback.py"
+      ],
+      "startedUTC": "2026-10-25T06:51:13.388568+00:00",
+      "seconds": 30.237,
+      "exitCode": 0
+    },
+    {
+      "label": "remote-read-diagnostic",
+      "command": [
+        "timeout",
+        "120",
+        "env",
+        "FACTORY_TEST_DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:55439/postgres",
+        "PYTHONPATH=platform:deployment:platform/tests",
+        ".venv/bin/python",
+        "/workspace/scratch/core-only-20261025/diagnose-remote-process-read.py"
+      ],
+      "startedUTC": "2026-10-25T06:52:01.768623+00:00",
+      "seconds": 82.78,
+      "exitCode": 1
+    },
+    {
+      "label": "migration-fixes-targeted",
+      "command": [
+        "timeout",
+        "900",
+        "env",
+        "FACTORY_TEST_DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:55439/postgres",
+        "PYTHONPATH=platform:deployment:platform/tests",
+        ".venv/bin/python",
+        "/workspace/scratch/core-only-20261025/run-migration-fixes.py"
+      ],
+      "startedUTC": "2026-10-25T06:53:39.736365+00:00",
+      "seconds": 231.129,
+      "exitCode": 0
+    },
+    {
+      "label": "reusable-mcp-diagnostic",
+      "command": [
+        "timeout",
+        "130",
+        "env",
+        "FACTORY_TEST_DATABASE_URL=postgresql+psycopg://postgres@127.0.0.1:55439/postgres",
+        "PYTHONPATH=platform:deployment:platform/tests",
+        ".venv/bin/python",
+        "/workspace/scratch/core-only-20261025/reusable_mcp_diagnostic.py"
+      ],
+      "startedUTC": "2026-10-25T06:57:43.097024+00:00",
+      "seconds": 75.113,
+      "exitCode": 0
+    }
+  ],
+  "realExternalProvider": false,
+  "realOrganizationIdentity": false,
+  "oldDataDeletion": {
+    "confirmedUTC": "2026-10-25T05:40:00Z",
+    "filesDeletedAndAbsent": 5,
+    "emptyDirectoriesDeletedAndAbsent": 52,
+    "stoppedContainerDeletedAndAbsent": 1,
+    "soleVolumeDeletedAndAbsent": 1,
+    "uncertainOutcomes": 0,
+    "developmentEnvironmentConfigurationPreserved": true
+  }
+}

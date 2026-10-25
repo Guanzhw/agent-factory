@@ -273,7 +273,7 @@ def main():
         port=configuration["port"], max_workers=1, max_user_tasks=12, max_total_tasks=24)
     settings.fixture_role = role
     if configuration.get("registeredTools"):
-        settings.runtime_tool_contract = "registered-runtime-v1"
+        settings.runtime_tool_contract = "legacy-v1"
         settings.policy_revision = "fixture-registered-plan-policy-v1"
         settings.material_policy_revision = "fixture-registered-material-policy-v1"
     owner = ORIGIN_OWNER if role == "origin" else RECEIVER_OWNER
@@ -294,7 +294,7 @@ def main():
     else:
         # Existing remote fixtures explicitly install this exact no-provider
         # native class; missing/unregistered adapters are never free by default.
-        settings.usage_pricing = tuple(PricingRevision(identifier, "1", "local-synthetic", identifier,
+        settings.usage_pricing = tuple(PricingRevision(identifier, "1", "controlled-fixture", identifier,
             "fixture-zero-local-v1", local_model_type=ControlledModel) for identifier in (MODEL_SOURCE, MODEL_RECEIVER))
     def model(context):
         if context.connection is not provider or context.run_context.user_id != owner:
@@ -317,7 +317,7 @@ def main():
             credential_provider=lambda source_owner: token(configuration["originJwtKey"], RECEIVER_OWNER))
         origin_options = {"tools": frozenset({"ask_scope", "checksum"}),
             "capabilities": frozenset({"question:ask", "checksum:read"}),
-            "configuration_revision": "fixture-registered-origin-v1", "tool_contract": "registered-runtime-v1"} if configuration.get("registeredTools") else {}
+            "configuration_revision": "fixture-registered-origin-v1", "tool_contract": "legacy-v1"} if configuration.get("registeredTools") else {}
         settings.handoff_origins = {ORIGIN_REF: TrustedOrigin(ORIGIN_REF, {ORIGIN_OWNER: RECEIVER_OWNER}, transport, **origin_options)}
         source = configuration["sourceSpec"]
         effective = {**copy.deepcopy(source), "adapterId": MODEL_RECEIVER, "connection": connection_pin}
@@ -411,7 +411,7 @@ def main():
             controls["unknownUsage"] = op == "usage-unknown"
         elif op in {"usage-price-change", "usage-model-change", "usage-price-restore"}:
             ledger = state["store"].usage_ledger
-            ledger.by_adapter = {(price.adapter_id, price.adapter_revision): price if op == "usage-price-restore" else
+            ledger.by_adapter = {(price.adapter_id, price.adapter_revision): price if op == "usage-price-restore" or price.adapter_id not in {MODEL_SOURCE, MODEL_RECEIVER} else
                 replace(price, revision="fixture-tariff-v2", input_micros_per_million=2_000_000) if op == "usage-price-change" else
                 replace(price, model="changed-controlled-model-v2") for price in settings.usage_pricing}
         elif op in {"role-revoke", "role-restore"}:
