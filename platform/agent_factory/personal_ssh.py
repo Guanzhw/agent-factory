@@ -7,10 +7,8 @@ import asyncio
 import base64
 from dataclasses import dataclass, replace
 import json
-import os
 from pathlib import Path, PurePosixPath
 import secrets
-import select as io_select
 import shlex
 import subprocess
 import sys
@@ -26,6 +24,7 @@ from sqlalchemy import select, or_
 
 from .personal_remote_provider import RemoteConnectionError
 from .ssh_credentials import PROVIDER_ID, endpoint
+from .ssh_exchange import exchange as pipe_exchange
 from .ssh_identity import SSHAgentLease, SSHServer, pinned_ssh
 from .resource_sharing import SharingCommand
 
@@ -298,6 +297,7 @@ class PersonalSSHServers:
         return self.agents.acquire(server, configuration['origin'], guard)
 
     def probe(self, server, lease, action):
+        deadline = time.monotonic() + 30
         lease.validate()
         nonce = secrets.token_hex(12)
         if action == 'inspect':
@@ -315,19 +315,15 @@ class PersonalSSHServers:
         else:
             raise RemoteConnectionError('SSH_CHECK_UNCONFIRMED')
         with TemporaryDirectory(dir=folder_root, prefix='probe-') as folder:
-            process = transport(server, lease, Path(folder), command)
-            assert process.stdin is not None and process.stdout is not None
+            payload = (json.dumps({'nonce': nonce, 'root': server.allowed_root, 'action': action}).encode() + b'\n'
+                       if action == 'prepare' else b'')
             try:
-                if action == 'prepare':
-                    process.stdin.write(json.dumps({'nonce': nonce, 'root': server.allowed_root, 'action': action}).encode() + b'\n')
-                process.stdin.close(); output = b''; deadline = time.monotonic() + 30
-                while b'\n' not in output:
-                    remaining = deadline - time.monotonic()
-                    if remaining <= 0 or not io_select.select([process.stdout], [], [], remaining)[0]: raise ValueError()
-                    chunk = os.read(process.stdout.fileno(), 4096)
-                    if not chunk: raise ValueError()
-                    output += chunk
-                    if len(output) > 8192: raise ValueError()
+                lease.validate()
+                if time.monotonic() >= deadline: raise TimeoutError('SSH_CHECK_UNCONFIRMED')
+                process = transport(server, lease, Path(folder), command)
+                output = pipe_exchange(process, payload, deadline=deadline, max_output=8192,
+                                       before_write=lease.validate)
+                if b'\n' not in output: raise ValueError()
                 result = json.loads(output)
                 if result.get('nonce') != nonce or type(result.get('ok')) is not bool: raise ValueError()
                 if not result['ok']:
@@ -335,16 +331,9 @@ class PersonalSSHServers:
                     raise RemoteConnectionError(code if code in CODES else 'SSH_CHECK_UNCONFIRMED')
                 if (result.get('code') != ('SSH_CONNECTION_READY' if action == 'inspect' else 'SSH_PREREQUISITES_READY')
                         or type(result.get('directoryExists')) is not bool): raise ValueError()
-                if process.wait(timeout=max(.1, deadline - time.monotonic())) != 0: raise ValueError()
                 lease.validate(); return result
             except RemoteConnectionError: raise
             except Exception: raise RemoteConnectionError('SSH_CHECK_UNCONFIRMED') from None
-            finally:
-                if process.poll() is None:
-                    process.terminate()
-                    try: process.wait(timeout=5)
-                    except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=5)
-                process.stdin.close(); process.stdout.close()
 
     def close(self): self.agents.close()
 

@@ -1,7 +1,11 @@
 import asyncio
 import copy
 import os
-import selectors
+import subprocess
+import sys
+import time
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import threading
 from unittest.mock import AsyncMock, patch
 import hashlib
@@ -32,7 +36,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
         self.state, self.stopped = 'RUNNING', False
         self.mutate = lambda result: result
 
-    def exchange(self, sent, *, before_effect=None):
+    def exchange(self, sent, *, before_effect=None, cancelled=None):
         if before_effect:
             before_effect()
         self.calls.append(sent['action'])
@@ -120,19 +124,16 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                     stdout=os.fdopen(output_read, 'rb', buffering=0),
                     poll=lambda: 0, wait=lambda **_: 0, kill=lambda: None)
                 entered, release, finished = threading.Event(), threading.Event(), threading.Event()
-                selector = selectors.DefaultSelector()
-                original_select = selector.select
                 count = 0
-                def gated_select(timeout=None):
+                def gated_guard():
                     nonlocal count
                     count += 1
-                    if count == pause_on:
+                    # First guard precedes spawn; the following guards precede
+                    # the first and second actual pipe write respectively.
+                    if count == pause_on + 1:
                         entered.set()
                         if not release.wait(3):
                             raise TimeoutError('fixture gate')
-                    ready = original_select(timeout)
-                    writes = [(key, mask) for key, mask in ready if key.fileobj is process.stdin]
-                    return writes or ready
                 transport = SSHProcessTransport(self.provider.server,
                     lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
                 def exchange(value, **kwargs):
@@ -142,16 +143,17 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                         finished.set()
                 self.provider.exchange = exchange
                 try:
-                    with patch('agent_factory.ssh_process_provider.pinned_ssh', return_value=process), \
-                         patch('agent_factory.ssh_process_provider.selectors.DefaultSelector', return_value=selector):
-                        selector.select = gated_select
+                    with patch('agent_factory.ssh_process_provider.pinned_ssh', return_value=process):
                         task = asyncio.create_task(self.provider.allocate_bound(
-                            self.lease, before_effect=lambda: None))
+                            self.lease, before_effect=gated_guard))
                         self.assertTrue(await asyncio.to_thread(entered.wait, 3))
                         task.cancel()
+                        await asyncio.sleep(0)
+                        self.assertFalse(task.done())
+                        release.set()
                         with self.assertRaises(asyncio.CancelledError):
                             await task
-                        release.set()
+                        self.assertTrue(finished.is_set())
                         self.assertTrue(await asyncio.to_thread(finished.wait, 3))
                     raw = os.read(read_fd, MAX_REQUEST_BYTES)
                     self.assertEqual(len(raw), 0 if pause_on == 1 else 4096)
@@ -162,6 +164,53 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                     os.close(read_fd)
                     process.stdin.close()
                     process.stdout.close()
+
+    async def test_cancellation_waiting_for_stdout_reaps_original_process_before_return(self):
+        with TemporaryDirectory() as folder:
+            ready = Path(folder) / 'ready'
+            processes = []
+            finished = threading.Event()
+            def spawn(*args):
+                process = subprocess.Popen([sys.executable, '-c',
+                    'import sys,time; from pathlib import Path; sys.stdin.buffer.read(); '
+                    'Path(sys.argv[1]).write_text("received"); time.sleep(60)', str(ready)],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                processes.append(process)
+                return process
+            transport = SSHProcessTransport(self.provider.server,
+                lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
+            def exchange(value, **kwargs):
+                try:
+                    return transport(value, **kwargs)
+                finally:
+                    finished.set()
+            self.provider.exchange = exchange
+            with patch('agent_factory.ssh_process_provider.pinned_ssh', side_effect=spawn):
+                task = asyncio.create_task(self.provider.allocate_bound(self.lease, before_effect=lambda: None))
+                try:
+                    deadline = time.monotonic() + 3
+                    while not ready.exists() and time.monotonic() < deadline:
+                        await asyncio.sleep(.01)
+                    self.assertTrue(ready.exists())
+                    task.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await task
+                    self.assertTrue(finished.is_set())
+                    self.assertEqual(len(processes), 1)
+                    self.assertIsNotNone(processes[0].poll())
+                    self.assertTrue(processes[0].stdin.closed)
+                    self.assertTrue(processes[0].stdout.closed)
+                finally:
+                    if not task.done():
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+                    for process in processes:
+                        if process.poll() is None:
+                            process.kill()
+                        process.wait(timeout=3)
 
     def test_host_aliases_share_capacity_but_keep_original_configuration(self):
         namespace = self.provider.capacity_namespace
