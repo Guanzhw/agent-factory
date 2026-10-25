@@ -1,6 +1,6 @@
 """Owner research agreements; native tasks remain the execution authority."""
 from copy import deepcopy
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NoReturn
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, model_validator
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, select
 
 from agent_factory.applications import GovernedStorage
+from agent_factory.material_governance import PinnedRef
 from agent_factory.store import digest, now
 
 RequestId = Annotated[str, Field(min_length=8, max_length=80, pattern=r'^[A-Za-z0-9][A-Za-z0-9_.:-]+$')]
@@ -33,6 +34,22 @@ class Budget(BaseModel):
         return self
 
 
+class ExecutionConfiguration(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    applicationRef: PinnedRef
+    mode: Annotated[str, Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_.:-]+$')]
+    materialChoices: dict[Reference, PinnedRef] = Field(default_factory=dict, max_length=30)
+    connectionRefs: dict[Reference, Reference] = Field(default_factory=dict, max_length=30)
+    deadline: Annotated[float, Field(gt=0, allow_inf_nan=False, strict=True)]
+    perRoundCaps: Budget
+
+    @model_validator(mode='after')
+    def one_round(self):
+        if self.perRoundCaps.rounds != 1:
+            raise ValueError('Each native root allocation is exactly one round')
+        return self
+
+
 class Agreement(BaseModel):
     model_config = ConfigDict(extra='forbid')
     objective: Text
@@ -40,6 +57,25 @@ class Agreement(BaseModel):
     stopConditions: Text
     resourceRefs: dict[Reference, Reference] = Field(default_factory=dict, max_length=30)
     budget: Budget
+    execution: ExecutionConfiguration | None = None
+
+    def execution_goal(self):
+        return f'研究目标：{self.objective}\n评价标准：{self.evaluation}\n停止条件：{self.stopConditions}'
+
+    @model_validator(mode='after')
+    def allocation_within_commitment(self):
+        if self.execution is None:
+            return self
+        if len(self.execution_goal()) > 2000:
+            raise ValueError('Complete executable agreement must fit 2000 characters without truncation')
+        round_caps = self.execution.perRoundCaps
+        if (round_caps.tokenLimit is None) != (self.budget.tokenLimit is None) or round_caps.currency != self.budget.currency:
+            raise ValueError('Round and project metering must agree')
+        for field in ('toolCalls', 'tokenLimit', 'amountMicros'):
+            total, requested = getattr(self.budget, field), getattr(round_caps, field)
+            if total is not None and requested > total:
+                raise ValueError('Round allocation exceeds project commitment')
+        return self
 
 
 class CreateProject(BaseModel):
@@ -64,13 +100,14 @@ class EndProject(ProjectCommand):
     reason: Text
 
 
-def reject(code, message, status=409):
+def reject(code, message, status=409) -> NoReturn:
     raise HTTPException(status, {'code': code, 'message': message})
 
 
 class ResearchProjects:
     def __init__(self, store, auth, endpoints):
         self.auth, self.endpoints = auth, endpoints
+        self.execution = None
         self.db = GovernedStorage(store, 'research_projects_v1')
         metadata = MetaData()
         self.projects = Table('research_projects', metadata,
@@ -92,13 +129,16 @@ class ResearchProjects:
             reject('RESEARCH_PROJECT_NOT_FOUND', '未找到自己的研究项目', 404)
         return row
 
-    @staticmethod
-    def _summary(row):
+    def _summary(self, row):
+        execution = {'available': False, 'reason': 'RESEARCH_EXECUTION_NOT_INSTALLED'}
+        if self.execution is not None:
+            with self.db.read() as conn:
+                execution = self.execution.availability(conn, row)
         return {'id': row['id'], 'ownerId': row['owner_id'], 'title': row['title'],
             'assistantId': row['assistant_id'], 'state': row['state'],
             'currentGoalVersion': row['goal_version'], 'ending': deepcopy(row['ending']),
             'createdAt': row['created_at'],
-            'execution': {'available': False, 'reason': 'RESEARCH_EXECUTION_NOT_INSTALLED'}}
+            'execution': execution}
 
     def _detail(self, conn, row):
         goals = conn.execute(select(self.goals).where(self.goals.c.project_id == row['id'])
@@ -152,6 +192,8 @@ class ResearchProjects:
                 reject('RESEARCH_PROJECT_ENDED', '项目已结束，请建立新项目继续研究')
             if action == 'revise':
                 assert isinstance(body, ReviseGoal)
+                if self.execution is not None:
+                    self.execution.require_same_commitment(conn, identifier, body.agreement)
                 version = row['goal_version'] + 1
                 conn.execute(self.goals.insert().values(project_id=identifier, version=version,
                     agreement=body.agreement.model_dump(), created_at=now(), confirmed_at=None))
@@ -167,6 +209,8 @@ class ResearchProjects:
                 assert action == 'end' and isinstance(body, EndProject)
                 if body.outcome == 'not_met' and row['goal_version'] == 0:
                     reject('RESEARCH_AGREEMENT_REQUIRED', '未建立目标，不能记录未达标结论')
+                if self.execution is not None:
+                    self.execution.stop(conn, owner, identifier)
                 updates = {'state': 'ended', 'ending': {'outcome': body.outcome, 'reason': body.reason,
                     'goalVersion': row['goal_version'], 'endedAt': now(), 'resourceCleanup': 'not_observed'}}
             changed = conn.execute(self.projects.update().where(self.projects.c.id == identifier,
