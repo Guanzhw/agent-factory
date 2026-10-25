@@ -26,7 +26,7 @@ EndpointConfiguration新增可选`automaticBudget: {scopeId, caps, deadline}`；
 
 ### 3. 最小core接点（coordinator集成）
 
-- `AssistantMessages.validate_admission(conn, owner, request_id, plan, allocation_id)`：同步、无提交。Store.reserve_task在现有admission事务内、仅fresh task分支调用；预算消息重查原message.recipient、endpoint owner/enabled、双方当前成员、原默认application/mode/goal、request/allocation、scope/caps/deadline。非消息请求和未配置预算endpoint保持既有路径。普通instances同原request/plan也必须经过该hook，不能省略allocation逃逸。已存在task只沿现有身份检查/观察路径，不因scope/endpoint到期拒绝cleanup。
+- `AssistantMessages.validate_admission(conn, owner, request_id, plan, allocation_id)`：同步、无提交。Store.reserve_task在现有admission事务内、仅fresh task分支调用；预算消息重查原message.recipient、endpoint owner/enabled、双方当前成员、原request/allocation、scope/caps/deadline，并以_start_body重建完整ApplicationStart规范请求，按ApplicationRuns._prepare的model_dump(exclude={interfaceVersion, requestId})计算既有digest，与af_plan_requests的fingerprint及plan_id核对，包含materialChoices/connectionRefs/inputValues而非仅app/mode/goal。非消息请求和未配置预算endpoint保持既有路径。普通instances同原request/plan也必须经过该hook，不能省略allocation逃逸。已存在task只沿现有身份检查/观察路径，不因scope/endpoint到期拒绝cleanup。
 - main将当前AssistantMessages实例装配到Store；不用任意callback插件表，不改变HTTP InstanceRequest字段。
 - `recover(recipient, identifier, *, allocation_id=None, delivery_id=None)`：预算消息读取原映射；调用者提供的allocation必须一致。未配置endpoint保留现有可信恢复语义。
 - `_reserve(sender, endpoint_id, body, *, allocation_id=None, delivery_id=None)`：后两个参数仅可信内部P3调用，HTTP不接受。有已分配allocation时核对并绑定，绝不再allocate。

@@ -51,3 +51,7 @@ P3送达预算endpoint SHALL 复用其原allocation/request，不额外分配。
 #### Scenario: 伪造或损坏关联
 - **WHEN** 外人task、request、allocation或delivery不匹配，或消息命名空间中缺记录
 - **THEN** 明确拒绝；普通非消息task才返回None，不能把损坏关联当作无消息
+
+#### Scenario: 同目标替换绑定不能旁路
+- **WHEN** 普通instances使用同app/mode/goal但改变materialChoices、connectionRefs或inputValues的prepared plan请求预算消息原身份
+- **THEN** 完整规范请求与原af_plan_requests fingerprint不匹配，fresh准入拒绝且零dispatch，不建立额外hash表
