@@ -1982,3 +1982,15 @@ P5–P9仍未整体完成；真实C/D参数缺项继续BLOCKED/NOTRUN。当前�
 P7：assistant_messages拥有原消息reply独立core spec/实现；research_app_spec拥有单成员长期助手及tool-free QA spec；foundation_review独立审查。P8仅完成真实源码差距与精选证据/复现包草稿，未实现。root优先收敛既有PR、实际浏览器及精确CI，重PG串行。真实模型科学价值、真实GPU、生产身份/部署容量仍BLOCKED/NOTRUN，非所有后端停工理由。
 
 单HTML固定交付：[GitHub文件](https://github.com/Guanzhw/agent-factory/blob/b2a2460dbb18aab299a5a04bd5c5b85955486a24/docs/demos/research-workbench-demo.html)。Download raw file后双击即可，无真实backend/model/GPU；实际Linux Chromium file验收，不冒充Windows实跑。Library401未重试。
+
+### 15:12 正式终态浏览器与 P7 接线
+
+#117–120 已合并；main `1ed1d72b06141fbdd7614c3622d7c2502db1e962` 的 CI40203166521 全部成功。#122 原消息回复 head90de4cd、CI40204515619成功，合并a877268；#123原生等待工具元数据 head4956857、CI40204577365成功，合并b5c4bfe。两者完整独立review通过。最新main a877268的CI40205579401正在运行，不能提前报通过。
+
+#121固定原生研究工作流/用户配置发布仍Draft，head5ffb7c3、CI40205542084运行中。首fast40204034535失败为实际CI discovery下测试包导入冲突；修正为已声明research包，无产品/断言变化。独立增量review PASS；1992 discovered/370 selected只是collection，executed=false。既有硬重启、两轮、事务回滚证据不外推真实科研。
+
+正式UI真实后端浏览器两场景通过（demo desktop、本地合成OIDC mobile），实际root/child均completed，checksum产物、终态记录、证据引用、刷新/历史/重登和跨owner拒绝均断言；console/page errors零，临时DB剩余零。加强后的原45秒期限未改变。精确代码9ce15e4，持久证据提交1b58d79，独立增量review PASS：[安全JSON及四张截图](https://github.com/Guanzhw/agent-factory/tree/1b58d79a7686303dca5183e748f3644d5f564942/openspec/changes/integrate-live-research-workbench/evidence)。前两次真实接线失败（JSON schema格式、SDK工具元数据）保留。正式UI正在整理独立stacked PR；没有把demo数据写入真实结果。
+
+P7 research_app_spec负责QA、acceptance_doc_review负责稳定身份、root装配、pr104_independent_review审查。正常真实native QA已通过，模型HTTP仍合成；当前BYOK只支持明确有限的轮次/工具/期限，不伪称token/费用计量。非空费用/token硬预算拒绝，界面明确未计量。恶意未声明工具暴露Agno继续请求问题；独立core修复Draft #124 headbb1d11b完整review PASS、17便携通过，精确CI及P7消费验证另计。最终PG小组首轮3通过/2失败，具体预算拒绝错误被全局Pydantic净化，正在将业务拒绝移到事务前；未覆盖首失败。
+
+P8 assistant_messages在隔离worktree先做精选真实CLI receipt/复现证据spec，尚未实现；模型正文不当作执行事实。P7主动关联、团队价值对照及P8另一成员复现仍未闭合。新增组合尚未运行必要完整验收，旧1941项full不替代这些新head。真实C/D任务/模型/预算/硬件参数仍待冻结，无真实provider/GPU、新凭据或公网部署。
