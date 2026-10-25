@@ -4,7 +4,7 @@ import type { ResearchAgreement, Page } from '../types.js';
 import type { SetupIntent } from './setupClient.js';
 
 export type QuestionBudget = { caps: ResearchAgreement['budget']; perQuestionCaps: ResearchAgreement['budget']; deadline: number };
-export interface AssistantConfiguration { applicationRef: MaterialReference; connectionRefs: Record<string, string>; budget: QuestionBudget }
+export interface AssistantConfiguration { associations?: { enabled: boolean; maxRecipients: number } | null; applicationRef: MaterialReference; connectionRefs: Record<string, string>; budget: QuestionBudget }
 export interface ResearchAssistant {
   id: string; ownerId: string; configurationRevision: number;
   qa: { state: 'unconfigured' } | (AssistantConfiguration & { state: 'configured'; endpointId: string; scopeId: string; available: boolean; unavailableCode?: string; accounting: { mode: 'operational_limits_only'; tokenMetered: false; costMetered: false; notice: string } });

@@ -53,7 +53,7 @@ it('retains allowance inputs across CAS conflict and requires explicit confirmat
   await mount(); await prepare(); await allowance();
   await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   const first = configure.mock.calls[0][1]; expect(host.textContent).toContain('配置修订冲突');
-  await act(async () => button('读取最新助手配置').click()); expect(configure).toHaveBeenCalledOnce(); expect((host.querySelector('input[type=number]') as HTMLInputElement).value).toBe('3'); expect(button('按修订 2 确认问答配置')).toBeDefined();
+  await act(async () => button('读取最新助手配置').click()); expect(configure).toHaveBeenCalledOnce(); expect(([...host.querySelectorAll('label')].find(item => item.firstChild?.textContent === '最多回答问题数')!.querySelector('input') as HTMLInputElement).value).toBe('3'); expect(button('按修订 2 确认问答配置')).toBeDefined();
   await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   expect(configure.mock.calls[1][1].expectedRevision).toBe(2); expect(configure.mock.calls[1][1].budget).toEqual(first.budget); expect(configure.mock.calls[1][1].requestId).not.toBe(first.requestId);
 });
@@ -61,4 +61,18 @@ it('shows missing real model connections and links to the existing resource entr
   vi.mocked(setupApi.candidates).mockResolvedValue({ workflowPin: { kind: 'workflow', id: 'qa', revision: '1', sha256: 'a'.repeat(64) }, models: [], connections: [], environments: [], experimentMaterials: [] });
   await mount(); await act(async () => button('准备新的QA配置').click()); expect(button('保存私人QA草稿').disabled).toBe(true); expect(host.textContent).toContain('缺少可用模型连接');
   await act(async () => button('配置我的模型与资源').click()); expect(resources).toHaveBeenCalledOnce(); expect(assistantApi.draft).not.toHaveBeenCalled();
+});
+it('shows first association consent and does not enable it by opening an old private-QA configuration', async () => {
+  const configure = vi.spyOn(assistantApi, 'configure').mockResolvedValue(original);
+  await mount(); await prepare(); await allowance();
+  expect((host.querySelector('input[type=checkbox]') as HTMLInputElement).checked).toBe(true);
+  expect(configure).not.toHaveBeenCalled();
+  await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
+  expect(configure.mock.calls[0][1].associations).toEqual({ enabled: true, maxRecipients: 2 });
+  await act(async () => root.unmount()); root = createRoot(host);
+  const caps = { rounds: 3, toolCalls: 12, tokenLimit: null, amountMicros: null, currency: null };
+  await mount({ ...original, configurationRevision: 1, qa: { state: 'configured', endpointId: 'e', scopeId: 's', available: true, applicationRef: published.applicationRef!, connectionRefs: published.connectionRefs, budget: { caps, perQuestionCaps: { ...caps, rounds: 1, toolCalls: 4 }, deadline: 2000000000 }, accounting: { mode: 'operational_limits_only', tokenMetered: false, costMetered: false, notice: '操作额度受限，token/费用未计量' } } });
+  expect(host.textContent).toContain('主动关联未启用'); await prepare(); await allowance();
+  expect((host.querySelector('input[type=checkbox]') as HTMLInputElement).checked).toBe(false);
+  expect(configure).toHaveBeenCalledTimes(1);
 });

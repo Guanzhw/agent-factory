@@ -1,0 +1,52 @@
+/workspace/agent-factory-research-evidence-ui/platform/agent_factory/remote_authority.py:37: UserWarning: Field name "schema" in "AuthorityCheck" shadows an attribute in parent "BaseModel"
+  class AuthorityCheck(BaseModel):
+WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+WARNING Registry: multiple distinct schema classes share the name 'ApplicationInputs'; keeping the first. Rename one to avoid it being shadowed.
+INFO    Adding AgentOS auth middleware (JWT algorithm: HS256)
+INFO    The user directory is configured without managed roles. It works as a roster; roles are not available and provisioned users get none. Define roles on Authorization(...) to enable roles and the /authz API.
+INFO    Scheduler poller started (worker=worker-f1ec26c9, interval=15s)
+INFO    Database ready: PostgresDb id=factory-native-postgres
+WARNING Queued-run streams are replica-local; configure queue.redis for cross-replica streaming.
+INFO    Job queue worker started: worker=worker-3bd2f600 poll=0.2s
+INFO    Workflow queued: research-round run=20b0ab75-a29c-4b03-b814-2c888c278195
+INFO    Agent queued: factory-executor run=7711ccfa-1a4d-44a8-9ded-88b305ee0b0d
+SYNTHETIC_MODEL_FIXTURE_ERROR AssertionError
+  File "/workspace/agent-factory-research-evidence-ui/scripts/accept_research_evidence_ui.py", line 68, in model_wire
+    return model_response(request)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-research-evidence-ui/scripts/accept_research_evidence_ui.py", line 54, in model_response
+    if not hold_child.wait(30): raise AssertionError('Browser did not complete its bounded goal revision')
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ERROR   Non-retryable model provider error: PERSONAL_MODEL_REQUEST_FAILED
+ERROR   Error in Agent run: PERSONAL_MODEL_REQUEST_FAILED
+INFO    Job queue worker stopped
+INFO    Scheduler poller stopped
+Traceback (most recent call last):
+  File "/workspace/agent-factory-research-evidence-ui/scripts/accept_research_evidence_ui.py", line 308, in <module>
+    main()
+  File "/workspace/agent-factory-research-evidence-ui/scripts/accept_research_evidence_ui.py", line 299, in main
+    result = run_mode(browser, args, mode)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-research-evidence-ui/scripts/accept_research_evidence_ui.py", line 282, in run_mode
+    result = scenario(browser, origin, output, mode, identity, viewport, state, material)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-research-evidence-ui/scripts/accept_research_evidence_ui.py", line 161, in scenario
+    page.get_by_role('button', name='确认当前约定', exact=True).click()
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/sync_api/_generated.py", line 15631, in click
+    self._sync(
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/_impl/_sync_base.py", line 115, in _sync
+    return task.result()
+           ^^^^^^^^^^^^^
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/_impl/_locator.py", line 162, in click
+    return await self._frame._click(self._selector, strict=True, **params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/_impl/_frame.py", line 566, in _click
+    await self._channel.send("click", self._timeout, locals_to_params(locals()))
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/_impl/_connection.py", line 69, in send
+    return await self._connection.wrap_api_call(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-core-only/.venv/lib/python3.12/site-packages/playwright/_impl/_connection.py", line 559, in wrap_api_call
+    raise rewrite_error(error, f"{parsed_st['apiName']}: {error}") from None
+playwright._impl._errors.TimeoutError: Locator.click: Timeout 30000ms exceeded.
+Call log:
+  - waiting for get_by_role("button", name="确认当前约定", exact=True)

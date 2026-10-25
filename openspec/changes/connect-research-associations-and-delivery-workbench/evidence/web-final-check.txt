@@ -1,0 +1,43 @@
+
+> agent-factory@0.2.0 check
+> npm run lint && npm run typecheck && npm test && npm run build
+
+
+> agent-factory@0.2.0 lint
+> eslint web shared tests *.ts *.js
+
+
+> agent-factory@0.2.0 typecheck
+> tsc --noEmit
+
+
+> agent-factory@0.2.0 test
+> vitest run
+
+
+ RUN  v4.1.12 /workspace/agent-factory-research-evidence-ui
+
+
+ Test Files  52 passed (52)
+      Tests  490 passed (490)
+   Start at  16:44:57
+   Duration  22.25s (transform 7.21s, setup 0ms, import 14.98s, tests 22.65s, environment 13.03s)
+
+
+> agent-factory@0.2.0 build
+> vite build
+
+vite v7.3.7 building client environment for production...
+transforming...
+✓ 98 modules transformed.
+rendering chunks...
+computing gzip size...
+../dist/index.html                   0.40 kB │ gzip:   0.28 kB
+../dist/assets/index-COf_-oJG.css   29.43 kB │ gzip:   6.66 kB
+../dist/assets/index-DhngpH0G.js   566.40 kB │ gzip: 169.63 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 2.05s

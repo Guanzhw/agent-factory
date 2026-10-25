@@ -10,3 +10,5 @@
 .rw-answer { white-space: pre-wrap; overflow-wrap: anywhere; }
 .rw-source pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .rw-assistant-content > section, .rw-assistant-content > form { padding: 24px; }
+
+.rw-evidence { margin-top: 24px; min-width: 0; }.rw-evidence pre { white-space: pre-wrap; overflow-wrap: anywhere; }.rw-evidence .rw-id { overflow-wrap: anywhere; max-width: 100%; }.rw-evidence h2,.rw-evidence h3 { margin: 12px 0; }

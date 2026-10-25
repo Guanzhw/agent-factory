@@ -6,14 +6,14 @@ import { assistantApi } from './live/assistantClient.js';
 import { ApiError } from '../../api.js';
 import { ResearchWorkbench } from './ResearchWorkspace.js';
 import { researchApi } from './client.js';
-import type { ResearchAgreement, ResearchProject } from './types.js';
+import type { ResearchAgreement, ResearchProject, VisibleResearchGoal } from './types.js';
 
 let host: HTMLDivElement; let root: Root;
 const onProject = vi.fn(); const onResources = vi.fn();
 const agreement: ResearchAgreement = { objective: '减少错误率', evaluation: '固定评估集误差小于 0.1', stopConditions: '预算耗尽停止', resourceRefs: { gpu: 'connection:saved' }, budget: { rounds: 3, toolCalls: 8, tokenLimit: null, amountMicros: null, currency: null } };
 const empty: ResearchProject = { id: 'project-1', ownerId: 'alice', title: '误差研究', assistantId: null, state: 'draft', currentGoalVersion: 0, goals: [], ending: null, createdAt: '2026-10-25T12:00:00Z', execution: { available: false, reason: 'RESEARCH_EXECUTION_NOT_INSTALLED' } };
-const drafted: ResearchProject = { ...empty, currentGoalVersion: 1, goals: [{ version: 1, agreement, createdAt: empty.createdAt, confirmedAt: null }] };
-const confirmed: ResearchProject = { ...drafted, state: 'ready', goals: [{ ...drafted.goals[0], confirmedAt: empty.createdAt }] };
+const drafted: Omit<ResearchProject, 'goals'> & { goals: VisibleResearchGoal[] } = { ...empty, currentGoalVersion: 1, goals: [{ version: 1, agreement, createdAt: empty.createdAt, confirmedAt: null }] };
+const confirmed: Omit<ResearchProject, 'goals'> & { goals: VisibleResearchGoal[] } = { ...drafted, state: 'ready', goals: [{ ...drafted.goals[0], confirmedAt: empty.createdAt }] };
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() } as unknown as MediaQueryList);
@@ -52,7 +52,7 @@ it('offers personal project creation and real resource navigation without a fake
 it('saves an agreement before separate confirmation and retains the old goal when revising', async () => {
   await mount('project-1'); await field('研究目标', agreement.objective); await field('评价与达标标准', agreement.evaluation); await field('停止与放弃条件', agreement.stopConditions); await field('最多实验轮数', '3'); await field('最多工具调用', '8');
   await act(async () => button('保存研究约定').click());
-  expect(researchApi.goal).toHaveBeenLastCalledWith('alice', 'project-1', { requestId: expect.any(String), expectedVersion: 0, agreement: { ...agreement, resourceRefs: {} } });
+  expect(researchApi.goal).toHaveBeenLastCalledWith('alice', 'project-1', { requestId: expect.any(String), expectedVersion: 0, agreement: { ...agreement, evidence: null, resourceRefs: {} } });
   expect(researchApi.confirm).not.toHaveBeenCalled();
   await act(async () => button('确认当前约定').click()); expect(researchApi.confirm).toHaveBeenCalledWith('alice', 'project-1', { requestId: expect.any(String), expectedVersion: 1 });
   await act(async () => button('修改目标').click()); await field('研究目标', '改为评估延迟');
