@@ -275,3 +275,42 @@ class AssistantEventsPostgresTests(unittest.TestCase):
             self.fixture.stop()
             submit.assert_not_called()
         self.assertEqual(observations, ['application cleanup fenced before any fresh task'])
+
+    def test_original_task_input_port_uses_actual_request_and_allocation_binding(self):
+        event = self.emit('pg-input-event')
+        delivery = self.service.prepare(event['id'], self.endpoint['id'])
+        with self.service.db.read() as conn:
+            message = self.service.messages._row(conn, delivery['message_id'])
+        endpoint = self.service.endpoints.resolve(delivery['endpoint_id'])
+        body = self.service.messages._start_body(message, endpoint)
+        plan, request_id = self.service.messages.runs._prepare('bob', body)
+        task, fresh = self.fixture.store.reserve_task(plan, request_id)
+        self.assertTrue(fresh)
+        expected = {'contentId': self.publication['id'], 'eventId': event['id'],
+            'deliveryId': delivery['id'], 'rootId': event['id'], 'depth': 0,
+            'scopeId': 'pg-peer-scope', 'allocationId': delivery['allocation_id']}
+        with patch.object(self.fixture.state['bridge'], 'submit', AsyncMock()) as submit:
+            self.assertEqual(self.service.delivery_for_task('bob', task['id']), expected)
+            with self.assertRaises(HTTPException) as denied:
+                self.service.delivery_for_task('alice', task['id'])
+            self.assertEqual(denied.exception.status_code, 404)
+            self.fixture.state['application_content'].set_visibility('alice', self.publication['id'],
+                'personal', 'pg-input-content-revoke')
+            self.assertEqual(self.service.delivery_for_task('bob', task['id']), expected)
+            with self.assertRaises(HTTPException):
+                self.fixture.state['application_content'].read('bob', expected['contentId'])
+            manual_plan, manual_request = self.service.messages.runs._prepare('bob',
+                body.model_copy(update={'requestId': 'manual-original-request'}))
+            manual, manual_fresh = self.fixture.store.reserve_task(manual_plan, manual_request)
+            self.assertTrue(manual_fresh)
+            self.assertIsNone(self.service.delivery_for_task('bob', manual['id']))
+            with self.fixture.store.transaction() as conn:
+                conn.execute(self.service.deliveries.update().where(self.service.deliveries.c.id == delivery['id'])
+                    .values(owner_id='alice'))
+            with self.assertRaises(HTTPException) as mismatch:
+                self.service.delivery_for_task('bob', task['id'])
+            self.assertEqual(mismatch.exception.detail, 'ASSISTANT_EVENT_TASK_BINDING_MISMATCH')
+            submit.assert_not_called()
+        with self.fixture.store.engine.connect() as conn:
+            self.assertEqual(conn.execute(select(func.count()).select_from(self.scopes.allocations)).scalar(), 1)
+        self.assertEqual(len(self.fixture.store.tasks('bob')), 2)

@@ -16,7 +16,7 @@ EventSubscription.maxDepth保留非负整数，移除le=20。不会新增configu
 
 ### 安全错误码
 
-集中一个小格式函数：HTTPException.detail若为dict则取code；若为str则直接作为候选。只接受长度至多120且完全匹配`[A-Z][A-Z0-9_]*`的code；不接受含空格、冒号说明或任意provider文本。其他情况保留异常类名。已有error列兼容，不增加字段/报告框架。该码表达技术拒绝，不表示科学未达标或实际停止证明。
+集中一个小格式函数：HTTPException.detail若为dict则取code；若为str则直接作为候选。只保留本交付路径显式列出的Factory预算耗尽/过期、端点停用、内容不可读、传播限制和原身份冲突code；有限常量集合之外均退回异常类名。大写正则不能证明安全，全大写敏感文本也不得保存。其他情况保留异常类名。已有error列兼容，不增加字段/报告框架。该码表达技术拒绝，不表示科学未达标或实际停止证明。
 
 ## Verification
 
