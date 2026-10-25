@@ -1,0 +1,3 @@
+# Verification
+
+Spec `5c076b9` preceded production edits. The new focused regression failed before the repair: an `outer-owned` material remained after the outer transaction raised (`/tmp/material-outer-before.log`, 1 failure, 0.062s). After borrowing the original connection, all 18 MaterialGovernance portable cases passed, zero skips, 2.870s (`/tmp/material-outer-after.log`). The regression checks material and original command receipts roll back, then standalone retry publishes version 1 and releases the context. This is SQLite evidence; real PostgreSQL setup concurrency/restart and independent review remain pending.

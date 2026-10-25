@@ -217,9 +217,14 @@ class MaterialGovernance:
 
     @contextmanager
     def _write(self):
+        shared = getattr(self.store, "_connection", None)
+        existing = shared.get() if shared is not None else None
+        if existing is not None:
+            self._lock(existing)
+            yield existing
+            return
         with self.store.engine.begin() as conn:
             self._lock(conn)
-            shared = getattr(self.store, "_connection", None)
             token = shared.set(conn) if shared is not None else None
             try:
                 yield conn

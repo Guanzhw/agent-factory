@@ -76,6 +76,30 @@ class PortableMetadata:
 
 
 class MaterialGovernanceTests(unittest.TestCase):
+    def test_outer_rollback_owns_material_publication_and_original_receipts(self):
+        with self.assertRaisesRegex(RuntimeError, 'composite publication failed'):
+            with self.store.engine.begin() as conn:
+                token = self.store._connection.set(conn)
+                try:
+                    material = self.service.create_draft('alice', definition(id='outer-owned'), 'outer:draft')
+                    self.service.publish('alice', material['id'], material['version'], 'outer:publish')
+                    raise RuntimeError('composite publication failed')
+                finally:
+                    self.store._connection.reset(token)
+        with self.store.engine.connect() as conn:
+            self.assertIsNone(conn.execute(select(self.store.materials.c.id).where(
+                self.store.materials.c.id == 'outer-owned')).first())
+            self.assertIsNone(conn.execute(select(self.service.commands.c.request_id).where(
+                self.service.commands.c.actor_id == 'alice',
+                self.service.commands.c.request_id.in_(['outer:draft', 'outer:publish']))).first())
+        self.assertIsNone(self.store._connection.get())
+        material = self.service.create_draft('alice', definition(id='outer-owned'), 'outer:draft')
+        published = self.service.publish('alice', material['id'], material['version'], 'outer:publish')
+        self.assertEqual(material['version'], 1)
+        self.assertTrue(published['published'])
+        self.assertEqual(self.service.create_draft('alice', definition(id='outer-owned'), 'outer:draft'), material)
+        self.assertIsNone(self.store._connection.get())
+
     def setUp(self):
         self.directory = TemporaryDirectory()
         self.db = SqliteDb(db_file=str(Path(self.directory.name) / "owned-governance.sqlite"))
