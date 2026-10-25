@@ -80,7 +80,7 @@ def case(root, mode, system, experiment_deadline):
             'PasswordAuthentication no', 'KbdInteractiveAuthentication no', 'PermitEmptyPasswords no',
             'AllowTcpForwarding no', 'AllowAgentForwarding no', 'X11Forwarding no',
             'PermitTunnel no', 'PermitUserRC no', 'LogLevel ERROR',
-            f'ForceCommand "{(Path(os.environ["SystemRoot"]) / "System32" / "cmd.exe").as_posix()}" /d /c echo {nonce}',
+            f'ForceCommand echo {nonce}',
         ]) + '\n'
         w.write_private(config, config_text.encode('ascii'))
         env = {name: os.environ[name] for name in ('SystemRoot', 'WINDIR', 'ProgramData', 'TEMP', 'TMP') if name in os.environ}
