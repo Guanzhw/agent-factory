@@ -334,6 +334,19 @@ class PersonalSSHTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             self.service.lease(profile, require_binding=False, required_capability='ssh:execute')
 
+    def test_generic_omitted_capabilities_do_not_enable_execution(self):
+        server, _, _ = self.enabled()
+        original = self.connections.bind('alice', server['reference'], 'generic-prepare-only')
+        self.assertEqual(original['capabilities'], ['ssh:prepare'])
+        self.assertFalse(self.service.inspect('alice', server['reference'])['executionEnabled'])
+        explicit = self.connections.bind('alice', server['reference'], 'generic-execute-explicit',
+            capabilities=['ssh:prepare', 'ssh:execute'])
+        self.assertEqual(set(explicit['capabilities']), {'ssh:prepare', 'ssh:execute'})
+        self.assertTrue(self.service.inspect('alice', server['reference'])['executionEnabled'])
+        replay = self.connections.bind('alice', server['reference'], 'generic-prepare-only')
+        self.assertEqual(replay['ref'], original['ref'])
+        self.assertEqual(replay['capabilities'], ['ssh:prepare'])
+
     def test_authoritative_dependency_failure_is_actionable_and_can_recover_without_reprobe(self):
         server, _, _ = self.registered()
         self.service.probe.side_effect = RemoteConnectionError('SSH_PYTHON_MISSING')

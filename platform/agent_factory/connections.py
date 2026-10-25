@@ -423,7 +423,9 @@ class ConnectionService:
                         or row["body"]["trustedFingerprint"] != expected_trusted_fingerprint):
                     raise HTTPException(409, "CONNECTION_VERIFICATION_CHANGED")
                 return self._project(conn, owner, row)
-            requested = requested if requested is not None else trusted.capabilities
+            # SSH execution is an explicit choice; older clients only enabled
+            # preparation by omitting the optional capability list.
+            requested = requested if requested is not None else trusted.capabilities - {'ssh:execute'}
             if not requested <= trusted.capabilities:
                 raise HTTPException(409, "CONNECTION_SCOPE_INVALID: requested capability exceeds trusted binding")
             task_id = self._task(owner, task_id)

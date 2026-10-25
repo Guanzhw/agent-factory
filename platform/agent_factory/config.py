@@ -55,6 +55,7 @@ class Settings:
     credential_vault_factory: Callable | None = field(default=None, repr=False)
     personal_connection_provider_factories: dict = field(default_factory=dict, repr=False)
     ssh_self_service: object | None = field(default=None, repr=False)
+    ssh_training_profiles: dict = field(default_factory=dict, repr=False)
     # Shared schemas/installed adapters only. Authentication is resolved per owner.
     personal_tool_adapters: tuple = field(default_factory=tuple, repr=False)
     runtime_adapters: list = field(default_factory=list)
