@@ -24,6 +24,7 @@ class WindowsFiles:
         self.bind(self.advapi, 'GetTokenInformation', [w.HANDLE, ctypes.c_int, w.LPVOID, w.DWORD, ctypes.POINTER(w.DWORD)], w.BOOL)
         self.bind(self.advapi, 'ConvertSidToStringSidW', [w.LPVOID, ctypes.POINTER(w.LPWSTR)], w.BOOL)
         self.bind(self.advapi, 'ConvertStringSecurityDescriptorToSecurityDescriptorW', [w.LPCWSTR, w.DWORD, ctypes.POINTER(w.LPVOID), w.LPVOID], w.BOOL)
+        self.bind(self.advapi, 'GetSecurityInfo', [w.HANDLE, ctypes.c_int, w.DWORD, w.LPVOID, w.LPVOID, w.LPVOID, w.LPVOID, ctypes.POINTER(w.LPVOID)], w.DWORD)
         self.bind(self.advapi, 'GetNamedSecurityInfoW', [w.LPCWSTR, ctypes.c_int, w.DWORD, w.LPVOID, w.LPVOID, w.LPVOID, w.LPVOID, ctypes.POINTER(w.LPVOID)], w.DWORD)
         self.bind(self.advapi, 'ConvertSecurityDescriptorToStringSecurityDescriptorW', [w.LPVOID, w.DWORD, w.DWORD, ctypes.POINTER(w.LPWSTR), w.LPVOID], w.BOOL)
         self.bind(self.kernel, 'CreateDirectoryW', [w.LPCWSTR, w.LPVOID], w.BOOL)
@@ -48,6 +49,11 @@ class WindowsFiles:
                 self.kernel.LocalFree(ctypes.cast(text, w.HLOCAL))
         finally:
             self.kernel.CloseHandle(token)
+        attrs = self.attributes()
+        try:
+            self.expected_sddl = self.descriptor_text(attrs.descriptor)
+        finally:
+            self.kernel.LocalFree(attrs.descriptor)
 
     @staticmethod
     def bind(library, name, arguments, result):
@@ -66,21 +72,29 @@ class WindowsFiles:
         self.check(self.advapi.ConvertStringSecurityDescriptorToSecurityDescriptorW(self.sddl, 1, ctypes.byref(descriptor), None))
         return Attributes(ctypes.sizeof(Attributes), descriptor, False)
 
-    def verify(self, path):
+    def descriptor_text(self, descriptor):
+        text = w.LPWSTR()
+        self.check(self.advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1, 5, ctypes.byref(text), None))
+        try:
+            return text.value
+        finally:
+            self.kernel.LocalFree(ctypes.cast(text, w.HLOCAL))
+
+    def verify(self, path, handle=None):
         attrs = self.kernel.GetFileAttributesW(str(path))
         if attrs == 0xFFFFFFFF or attrs & 0x400:
             raise RuntimeError('PATH_ATTRIBUTES_REJECTED')
-        descriptor, text = w.LPVOID(), w.LPWSTR()
-        code = self.advapi.GetNamedSecurityInfoW(str(path), 1, 5, None, None, None, None, ctypes.byref(descriptor))
+        descriptor = w.LPVOID()
+        if handle is None:
+            code = self.advapi.GetNamedSecurityInfoW(str(path), 1, 5, None, None, None, None, ctypes.byref(descriptor))
+        else:
+            code = self.advapi.GetSecurityInfo(handle, 1, 5, None, None, None, None, ctypes.byref(descriptor))
         if code:
-            raise OSError(code, 'SECURITY_QUERY_FAILED')
+            raise ctypes.WinError(code)
         try:
-            self.check(self.advapi.ConvertSecurityDescriptorToStringSecurityDescriptorW(descriptor, 1, 5, ctypes.byref(text), None))
-            if text.value != self.sddl:
+            if self.descriptor_text(descriptor) != self.expected_sddl:
                 raise RuntimeError('OWNER_DACL_MISMATCH')
         finally:
-            if text:
-                self.kernel.LocalFree(ctypes.cast(text, w.HLOCAL))
             self.kernel.LocalFree(descriptor)
 
     def directory(self, path):
@@ -97,12 +111,13 @@ class WindowsFiles:
             # CREATE_NEW; read/write/delete access; share read/write/delete;
             # DELETE_ON_CLOSE and non-inheritable SECURITY_ATTRIBUTES.
             handle = self.kernel.CreateFileW(str(path), 0xC0010000, 7, ctypes.byref(attrs), 1, 0x04000000, None)
+            creation_error = ctypes.get_last_error()
         finally:
             self.kernel.LocalFree(attrs.descriptor)
         if handle == ctypes.c_void_p(-1).value:
-            raise ctypes.WinError(ctypes.get_last_error())
+            raise ctypes.WinError(creation_error)
         try:
-            self.verify(path)
+            self.verify(path, handle)
             flags = w.DWORD()
             self.check(self.kernel.GetHandleInformation(handle, ctypes.byref(flags)))
             if flags.value & 1:
@@ -123,26 +138,37 @@ def error_code(exc):
     return {'type': type(exc).__name__, 'winerror': getattr(exc, 'winerror', None)}
 
 
-def keeper(root, mode, keygen):
+def save_result(root, mode, result):
+    pending = root / f'{mode}.pending'
+    pending.write_text(json.dumps(result), encoding='utf-8')
+    pending.replace(root / f'{mode}.json')
+
+
+def keeper(root, mode, keygen, progress):
+    progress['stage'] = 'IMPORT_CRYPTOGRAPHY'
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    progress['stage'] = 'INIT_SECURITY'
     api = WindowsFiles()
+    progress['stage'] = 'VERIFY_ROOT'
     api.verify(root)
     folder = root / mode
+    progress['stage'] = 'CREATE_PRIVATE_DIRECTORY'
     api.directory(folder)
+    progress['stage'] = 'GENERATE_SYNTHETIC_KEY'
     key = Ed25519PrivateKey.generate()
     payload = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH, serialization.NoEncryption())
     public = key.public_key().public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
+    progress['stage'] = 'CREATE_VERIFY_WRITE_KEY'
     handle = api.key(folder / 'key', payload)
     try:
+        progress['stage'] = 'KEY_LOADER'
         loaded = subprocess.run([keygen, '-y', '-P', '', '-f', str(folder / 'key')], capture_output=True, timeout=8)
         readable = loaded.returncode == 0 and loaded.stdout.strip() == public
         sharing = any(marker in loaded.stderr.lower() for marker in (b'sharing violation', b'used by another process'))
-        result = {'readable': readable, 'loaderExitCode': loaded.returncode,
+        result = {'stage': 'LOADER_COMPLETE', 'fixtureComplete': True, 'readable': readable, 'loaderExitCode': loaded.returncode,
                   'errorCode': None if readable else ('SHARING_VIOLATION' if sharing else 'KEY_LOADER_REJECTED')}
-        pending = root / f'{mode}.pending'
-        pending.write_text(json.dumps(result), encoding='utf-8')
-        pending.replace(root / f'{mode}.json')
+        save_result(root, mode, result)
         if mode == 'forced':
             # Parent terminates this process after observing the safe result file.
             time.sleep(30)
@@ -173,24 +199,28 @@ def experiment():
                     time.sleep(0.05)
                 if not ready.exists():
                     raise RuntimeError('KEEPER_NOT_READY')
-                if mode == 'forced':
+                results[mode] = json.loads(ready.read_text(encoding='utf-8'))
+                fixture_complete = results[mode].get('fixtureComplete') is True
+                if mode == 'forced' and fixture_complete:
                     if process.poll() is not None:
                         raise RuntimeError('KEEPER_EXITED_BEFORE_TERMINATION')
                     process.kill()  # Popen.kill on Windows invokes TerminateProcess.
+                    results[mode]['terminatedWhileKeeperAlive'] = True
                 process.wait(timeout=3)
-                if mode == 'normal' and process.returncode != 0:
+                if fixture_complete and mode == 'normal' and process.returncode != 0:
                     raise RuntimeError('NORMAL_KEEPER_FAILED')
-                results[mode] = json.loads(ready.read_text(encoding='utf-8'))
                 results[mode]['keyAbsentAfterExit'] = not (root / mode / 'key').exists()
                 results[mode]['keeperExitCode'] = process.returncode
             finally:
                 if process.poll() is None:
                     process.kill()
                     process.wait(timeout=3)
-        accepted = all(item['readable'] and item['keyAbsentAfterExit'] for item in results.values())
-        return {'experimentCompleted': True, 'candidateAccepted': accepted,
+        completed = all(item.get('fixtureComplete') is True for item in results.values())
+        accepted = completed and all(item['readable'] and item['keyAbsentAfterExit'] for item in results.values())
+        return {'experimentCompleted': completed, 'candidateAccepted': accepted,
+                'windowsVersion': list(sys.getwindowsversion()[:3]),
                 'sshVersion': match.group().decode('ascii') if match else 'UNRECOGNIZED',
-                'cases': results}, 0 if accepted else 2
+                'cases': results}, (0 if accepted else 2) if completed else 1
     finally:
         # Only this invocation's synthetic fixture; never sweep user directories.
         shutil.rmtree(root)
@@ -198,11 +228,12 @@ def experiment():
 
 def main():
     if len(sys.argv) == 5 and sys.argv[1] == '--keeper':
+        progress = {'stage': 'KEEPER_START'}
         try:
-            keeper(Path(sys.argv[2]), sys.argv[3], sys.argv[4])
+            keeper(Path(sys.argv[2]), sys.argv[3], sys.argv[4], progress)
             return 0
-        except Exception:
-            # Never emit a traceback containing key-handling source or buffers.
+        except Exception as exc:
+            save_result(Path(sys.argv[2]), sys.argv[3], {**progress, 'fixtureComplete': False, 'error': error_code(exc)})
             return 1
     try:
         result, code = experiment()
