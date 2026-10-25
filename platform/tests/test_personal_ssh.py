@@ -203,6 +203,14 @@ class PersonalSSHTests(unittest.TestCase):
         self.assertEqual((profile.owner, profile.actor), ('alice', 'bob'))
         lease = self.service.lease(profile); lease.validate()
         self.assertEqual(self.acquire.call_args.args[0].owner, 'alice')
+        self.assertFalse(bound.json()['executionEnabled'])
+        execute = self.client.post(f'{self.root}/{reference}/bind-execution', headers=bob,
+            json={'requestId': 'bob-explicit-execution'})
+        self.assertEqual(execute.status_code, 200)
+        execution = self.service.server('bob', reference, required_capability='ssh:execute')
+        execution_lease = self.service.lease(execution, required_capability='ssh:execute')
+        execution_lease.validate()
+        self.assertFalse(self.service.inspect('alice', reference)['executionEnabled'])
         for action in ('verify', 'revoke'):
             response = self.client.post(f'{self.root}/{reference}/{action}', headers=bob,
                 json={'requestId': 'bob-cannot-' + action})
@@ -211,6 +219,7 @@ class PersonalSSHTests(unittest.TestCase):
             json={'visibility': 'personal', 'requestId': 'withdraw-team-server'})
         self.assertEqual(response.status_code, 200, response.text)
         with self.assertRaises(HTTPException): lease.validate()
+        with self.assertRaises(HTTPException): execution_lease.validate()
         self.assertEqual(self.client.get(self.root, headers=bob).json(), [])
 
     def test_parser_supported_rsa_ecdsa_ed25519_keys_roundtrip_in_encrypted_vault(self):
@@ -268,7 +277,7 @@ class PersonalSSHTests(unittest.TestCase):
     def test_cross_owner_read_key_binding_verify_enable_and_revoke_are_denied(self):
         server, credential, values = self.registered(); bob = {'x-fixture-owner': 'bob'}
         self.assertEqual(self.client.get(self.root, headers=bob).json(), [])
-        for action in ('verify', 'bind', 'revoke'):
+        for action in ('verify', 'bind', 'bind-execution', 'revoke'):
             response = self.client.post(f"{self.root}/{server['reference']}/{action}", headers=bob, json={'requestId': uuid4().hex})
             self.assertEqual(response.status_code, 404)
         self.assertEqual(self.client.get(f"{self.root}/{server['reference']}", headers=bob).status_code, 404)
@@ -293,6 +302,37 @@ class PersonalSSHTests(unittest.TestCase):
         self.connections.revoke('alice', binding['ref'], 'original-connection-revoke')
         wrong = self.client.get(f'{self.root}/requests/original-connection-revoke?action=bind', headers=self.headers)
         self.assertEqual(wrong.status_code, 409)
+
+    def test_execution_requires_explicit_binding_and_recovers_original_scope(self):
+        server, _, _ = self.enabled()
+        self.assertTrue(server['enabled']); self.assertFalse(server['executionEnabled'])
+        with self.assertRaises(HTTPException):
+            self.service.server('alice', server['reference'], required_capability='ssh:execute')
+        probes = self.service.probe.call_count
+        response, request = self.command(server, 'bind-execution')
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['executionEnabled'])
+        self.assertEqual(self.command(server, 'bind-execution', request)[0].json(), response.json())
+        recovered = self.client.get(f'{self.root}/requests/{request}?action=bind-execution', headers=self.headers)
+        self.assertEqual(recovered.status_code, 200)
+        self.assertEqual(self.client.get(f'{self.root}/requests/{request}?action=bind', headers=self.headers).status_code, 409)
+        self.assertEqual(self.command(server, 'bind', request)[0].status_code, 409)
+        self.assertEqual(self.service.probe.call_count, probes)
+        profile = self.service.server('alice', server['reference'], required_capability='ssh:execute')
+        lease = self.service.lease(profile, required_capability='ssh:execute'); lease.validate()
+        binding = self.connections.request_result('alice', request)['connection']
+        self.connections.revoke('alice', binding['ref'], 'revoke-execution')
+        with self.assertRaises(HTTPException): lease.validate()
+        self.assertTrue(self.service.inspect('alice', server['reference'])['enabled'])
+        self.assertFalse(self.service.inspect('alice', server['reference'])['executionEnabled'])
+
+    def test_prepare_receipt_and_probe_cannot_authorize_execution(self):
+        server, _, _ = self.enabled()
+        _, request = self.command(server, 'bind')
+        self.assertEqual(self.client.get(f'{self.root}/requests/{request}?action=bind-execution', headers=self.headers).status_code, 409)
+        profile = self.service.server('alice', server['reference'])
+        with self.assertRaises(HTTPException):
+            self.service.lease(profile, require_binding=False, required_capability='ssh:execute')
 
     def test_authoritative_dependency_failure_is_actionable_and_can_recover_without_reprobe(self):
         server, _, _ = self.registered()

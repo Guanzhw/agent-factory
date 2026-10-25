@@ -19,7 +19,7 @@ const input: SSHIdentityInput = { name: '合成本人服务器', address: '127.0
 const identity = { address: input.address, port: input.port, username: input.username, hostKey: publicKey, hostFingerprint: 'SHA256:synthetic-host-fingerprint', origin: destination };
 const credential = { credentialRef: 'credential-fixture', credentialRevision: 'r1', providerId: SSH_CREDENTIAL_PROVIDER, destination, status: 'active' };
 const server: PersonalSSHServer = { ...input, reference: 'remote-' + 'a'.repeat(32), hostFingerprint: identity.hostFingerprint,
-  defaultDirectory: input.allowedRoot + '/work', status: 'configured', enabled: false, diagnostic: null, lastCheckRequestId: null,
+  defaultDirectory: input.allowedRoot + '/work', status: 'configured', enabled: false, executionEnabled: false, diagnostic: null, lastCheckRequestId: null,
   credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision };
 const secret = 'SYNTHETIC_PRIVATE_KEY_PLACEHOLDER_NOT_A_VALID_USER_KEY';
 const storage = 'factory-personal-ssh:alice';
@@ -258,4 +258,23 @@ it('restores pending registration metadata for a 128-character SSH account', asy
   localStorage.setItem(storage, JSON.stringify({ owner: 'alice', action: 'configure', requestId: 'pending-long-account', input: { ...input, username: 'm'.repeat(128) },
     credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision }));
   await mount(); expect(button('核对原操作')).toBeDefined();
+});
+
+
+it('requires an explicit execution click and recovers its original receipt after refresh', async () => {
+  vi.mocked(personalSSHApi.list).mockResolvedValue([{ ...server, status: 'verified', enabled: true }]);
+  vi.mocked(personalSSHApi.command).mockRejectedValue(new RemoteRequestError(false));
+  await mount();
+  expect(host.textContent).toContain('尚未允许训练执行');
+  expect(personalSSHApi.command).not.toHaveBeenCalled();
+  await act(async () => button('允许执行已配置训练').click());
+  const pending = JSON.parse(localStorage.getItem(storage)!);
+  expect(pending.action).toBe('bind-execution');
+  expect(personalSSHApi.command).toHaveBeenCalledExactlyOnceWith('alice', server.reference, 'bind-execution', pending.requestId);
+  vi.spyOn(personalSSHApi, 'recover').mockResolvedValue({ requestId: pending.requestId, action: 'bind-execution', server: { ...server, status: 'verified', enabled: true, executionEnabled: true } });
+  await remount();
+  await act(async () => button('核对原操作').click());
+  expect(personalSSHApi.recover).toHaveBeenCalledWith('alice', pending.requestId, 'bind-execution');
+  expect(personalSSHApi.command).toHaveBeenCalledTimes(1);
+  expect(localStorage.getItem(storage)).toBeNull();
 });

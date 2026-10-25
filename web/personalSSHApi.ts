@@ -4,8 +4,8 @@ import { RemoteRequestError, definitivelyRejected } from './personalRemoteApi.js
 export interface SSHIdentityInput { name: string; address: string; port: number; username: string; hostKey: string; allowedRoot: string; }
 export interface SSHIdentity { address: string; port: number; username: string; hostKey: string; hostFingerprint: string; origin: string; }
 export interface PersonalSSHServer extends SSHIdentityInput { reference: string; hostFingerprint: string; defaultDirectory: string;
-  status: string; enabled: boolean; diagnostic: string | null; lastCheckRequestId: string | null; credentialRef?: string; credentialRevision?: string; ownerId?: string; visibility?: 'personal' | 'team'; isOwner?: boolean; }
-export type SSHAction = 'configure' | 'verify' | 'bind' | 'revoke' | 'sharing';
+  status: string; enabled: boolean; executionEnabled: boolean; diagnostic: string | null; lastCheckRequestId: string | null; credentialRef?: string; credentialRevision?: string; ownerId?: string; visibility?: 'personal' | 'team'; isOwner?: boolean; }
+export type SSHAction = 'configure' | 'verify' | 'bind' | 'bind-execution' | 'revoke' | 'sharing';
 export const sshMessages: Record<string, string> = {
   SSH_INPUT_INVALID: '请核对服务器名称、地址、端口、账户、主机公钥和私有目录。',
   SSH_IDENTITY_INVALID: '服务器身份或目录格式不适用。请核对服务器地址、SSH 账户、完整主机公钥和绝对路径目录。',

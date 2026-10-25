@@ -145,7 +145,7 @@ class SSHServerProvider:
     policy_revision = 'owner-ssh-fixed-host-v1'
     kind = 'environment'
     namespace = 'owner-ssh'
-    capabilities = frozenset({'ssh:prepare'})
+    capabilities = frozenset({'ssh:prepare', 'ssh:execute'})
     verification_error_codes = CODES
     record_verification_request_id = True
 
@@ -214,7 +214,7 @@ class PersonalSSHServers:
         if body['providerId'] != PROVIDER_ID: raise HTTPException(404, 'SSH_SERVER_NOT_FOUND')
         return row, body
 
-    def server(self, owner, reference):
+    def server(self, owner, reference, *, required_capability='ssh:prepare'):
         self.auth.require_member(owner)
         with self.connections._read() as conn:
             _, body = self._configuration(conn, owner, reference)
@@ -223,7 +223,7 @@ class PersonalSSHServers:
                 self.connections.references.c.registration_ref == reference,
                 self.connections.references.c.state == 'ACTIVE')).mappings().all()
             for row in rows:
-                if row['body']['taskId'] is not None or 'ssh:prepare' not in row['body']['capabilities']: continue
+                if row['body']['taskId'] is not None or required_capability not in row['body']['capabilities']: continue
                 try: self.connections._current(conn, owner, dict(row), task_id=None)
                 except HTTPException: continue
                 return replace(self.profile(body['ownerId'], reference, body['revision'], body['configuration']), actor=owner)
@@ -236,12 +236,15 @@ class PersonalSSHServers:
             public = self.connections.personal._projection(conn, owner, reference)
         try: self.server(owner, reference); enabled = True
         except HTTPException: enabled = False
+        try: self.server(owner, reference, required_capability='ssh:execute'); execution_enabled = True
+        except HTTPException: execution_enabled = False
         config = body['configuration']; proof = row['verification'] or {}
         result = {'reference': reference, 'ownerId': body['ownerId'], 'visibility': public['visibility'],
             'isOwner': body['ownerId'] == owner, 'name': config['name'], 'address': config['address'], 'port': config['port'],
             'username': config['username'], 'hostFingerprint': config['hostFingerprint'], 'allowedRoot': config['allowedRoot'],
             'hostKey': config['hostKey'],
             'defaultDirectory': config['allowedRoot'], 'status': public['status'], 'enabled': enabled,
+            'executionEnabled': execution_enabled,
             'diagnostic': proof.get('errorCode'), 'lastCheckRequestId': proof.get('requestId')}
         if result['isOwner']:
             result.update(credentialRef=config['credentialRef'], credentialRevision=config['credentialRevision'])
@@ -261,7 +264,9 @@ class PersonalSSHServers:
         return [{'reference': r['reference'], 'name': r['name'], 'defaultDirectory': r['defaultDirectory']}
             for r in self.list(owner) if r['enabled']]
 
-    def lease(self, server, configuration=None, *, require_binding=True):
+    def lease(self, server, configuration=None, *, require_binding=True, required_capability='ssh:prepare'):
+        if not require_binding and required_capability != 'ssh:prepare':
+            raise HTTPException(409, 'SSH_SERVER_NOT_ENABLED')
         if configuration is None:
             with self.connections._read() as conn:
                 _, body = self._configuration(conn, server.owner, server.reference)
@@ -270,7 +275,7 @@ class PersonalSSHServers:
             if require_binding:
                 # server() rechecks owner authority, active scoped binding,
                 # the exact live vault revision.
-                if self.server(server.actor or server.owner, server.reference).pin() != server.pin():
+                if self.server(server.actor or server.owner, server.reference, required_capability=required_capability).pin() != server.pin():
                     raise RemoteConnectionError('SSH_CONFIGURATION_CHANGED')
             elif not self.provider.authorized(server.owner, configuration):
                 raise RemoteConnectionError('SSH_CREDENTIAL_UNAVAILABLE')
@@ -410,9 +415,11 @@ def personal_ssh_router(auth, service):
     @router.get('/requests/{request_id}')
     def recover(request_id: str, action: str, request: Request):
         actor = owner(request)
-        if action == 'bind':
+        if action in {'bind', 'bind-execution'}:
             receipt = service.connections.request_result(actor, request_id)
-            if receipt['action'] != 'bind': raise HTTPException(409, 'SSH_REQUEST_MISMATCH')
+            expected = {'ssh:prepare'} if action == 'bind' else {'ssh:prepare', 'ssh:execute'}
+            if receipt['action'] != 'bind' or set(receipt['connection']['capabilities']) != expected:
+                raise HTTPException(409, 'SSH_REQUEST_MISMATCH')
             reference = receipt['connection']['registrationRef']
         elif action in {'configure', 'verify', 'revoke', 'sharing'}:
             receipt = service.connections.personal.request_result(actor, request_id)
@@ -428,6 +435,7 @@ def personal_ssh_router(auth, service):
         actor = owner(request, 'read' if action == 'revoke' else 'run')
         service.inspect(actor, reference)
         if action == 'bind': service.connections.bind(actor, reference, request_id, capabilities=['ssh:prepare'])
+        elif action == 'bind-execution': service.connections.bind(actor, reference, request_id, capabilities=['ssh:prepare', 'ssh:execute'])
         elif action == 'verify': service.connections.personal.verify(actor, reference, request_id)
         elif action == 'revoke': service.connections.personal.revoke(actor, reference, request_id)
         else: raise HTTPException(422, 'SSH_ACTION_INVALID')
