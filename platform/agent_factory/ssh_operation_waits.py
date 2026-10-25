@@ -42,7 +42,9 @@ class SSHOperationWaits:
         return operations
 
     async def external_result(self, commands, task, requirement, requirements, decision):
-        require(self._selected(task) and decision['approved'] is True)
+        if not self._selected(task) or (requirement.get('tool_execution') or {}).get('tool_name') != WAIT_TOOL:
+            return None
+        require(decision['approved'] is True)
         operations = self._operations(task, requirement)
         require(all(op['closed'] and op['observation']['allStopped'] for op in operations))
         resolved = RunRequirement.from_dict(requirement)

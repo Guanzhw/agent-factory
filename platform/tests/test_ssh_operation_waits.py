@@ -14,6 +14,9 @@ from fastapi import HTTPException
 import httpx
 
 from agent_factory.byok_model import OwnerChatModel
+from agent_factory.application_runtime import ApplicationRuntimeRegistry
+from agent_factory.control_commands import ControlCommands
+from agent_factory.factory_api import requirement_version
 from agent_factory.native_external_wait import factory_wait_operations
 from agent_factory.personal_remote_provider import SecretLease
 from agent_factory.ssh_operation_waits import SSHOperationWaits
@@ -115,6 +118,38 @@ class SSHOperationWaitTests(unittest.IsolatedAsyncioTestCase):
             'requirementId': self.requirement['id'], 'decisionRecorded': True, 'canDispatch': False}], 'nextCursor': None}
         await self.service.observe_waits(None, self.task)
         self.assertEqual(self.commands.submit.await_count, 1)
+
+    async def test_other_confirmation_uses_original_approval_and_decline_path(self):
+        registry = ApplicationRuntimeRegistry(self.store)
+        registry.register('core-ssh-process', self.service, bindings=(
+            ('tool', LAUNCH_ADAPTER_ID, REVISION), ('tool', WAIT_ADAPTER_ID, REVISION)))
+        self.store.application_runtime = registry
+        self.store.effects = Mock(return_value=[])
+        self.store.require_plan_execution = Mock()
+        self.task['request_id'] = 'original-request'
+        requirement = {'id': 'ordinary-confirmation', 'tool_execution': {
+            'tool_name': 'ordinary_action', 'tool_call_id': 'ordinary-call',
+            'requires_confirmation': True, 'confirmed': None}}
+        api = SimpleNamespace(store=self.store, auth=Mock(), bridge=self.commands.bridge, remote=None,
+            detail=AsyncMock(return_value={'job': {'status': 'waiting_approval'},
+                'snapshot': {'requirements': [requirement]}}))
+        commands = ControlCommands(api)
+        self.assertIsNotNone(registry.control(self.task, 'external_result', tool_name='ordinary_action'))
+        for approved in (True, False):
+            with self.subTest(approved=approved):
+                result = await commands._prepare(self.task, None, 'approve', {
+                    'requirementId': requirement['id'], 'version': requirement_version(requirement), 'approved': approved})
+                resolved = result['requirements'][0]
+                self.assertIs(resolved['confirmation'], approved)
+                self.assertIs(resolved['tool_execution']['confirmed'], approved)
+                self.assertNotIn('result', resolved['tool_execution'])
+        self.custody.read.assert_not_called()
+
+    async def test_research_root_external_result_is_not_claimed(self):
+        self.plan['nativeComponent'] = {'kind': 'workflow'}
+        self.assertIsNone(await self.service.external_result(self.commands, self.task, self.requirement,
+            [self.requirement], {'approved': True}))
+        self.custody.read.assert_not_called()
 
     async def test_unresolved_original_operation_is_inspected_without_continuation(self):
         self.operation['closed'] = False

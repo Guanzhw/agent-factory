@@ -37,3 +37,18 @@ lost-continuation-ACK proof, process integration, controlled SSH, and target D01
 acceptance. No SSH daemon, PostgreSQL suite, real provider/GPU, or deployment was
 started for this slice. Temporary SQLite databases and HTTP clients were closed
 by test cleanup. Independent review is still required.
+
+## Independent review: do not claim unrelated confirmations
+
+Review found that registry fallback can select this task's SSH owner for an
+ordinary confirmation tool. The hook now returns `None` for another tool or a
+non-SSH task; strict approval/custody checks apply only to its selected wait.
+Two regressions use the actual registry and ControlCommands approval preparation
+for ordinary approve/decline, and verify the Research workflow is not claimed.
+The first expanded run was 8 passed/1 fixture error (0.455s): the isolated store
+omitted registry's existing `effects` read. Supplying the fixture's empty effects
+list fixed that fixture; no product fallback was added.
+
+Final expanded run: **9 passed, 0 skipped, 0.508 seconds, exit 0**.
+First log `/tmp/af-ssh-waits-review-fix.log`; final log
+`/tmp/af-ssh-waits-review-final.log`. No PG/SSH run occurred.
