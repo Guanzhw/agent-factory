@@ -13,3 +13,12 @@
 - [Original first-run output](evidence/research-native-first-failure.txt) is retained. The helper transport/model are synthetic; this is not actual sshd, GPU, external host or live-model acceptance.
 
 The existing wait port supplies `output.text`; the model fixture parses that actual child-visible output and the root compares the original child result. Neither a constant outcome nor direct artifact/database injection substitutes for that chain. Full Research SSH acceptance remains **NOT PASSED** until the corrected fixture runs.
+
+## Second run — fixture access error, retained
+
+- Tested checkout: `0af89edbb6974e667b11c2676484fde6ef14c704`; same command and original deadlines.
+- Exit 1; 1 test in 14.290 seconds, 1 error, no skips.
+- Actual setup/publish/project/root/child reached helper start. Root run `05843b96-a554-44c8-93a6-0f21cdd77731`, child run `54d9df62-415c-4f0b-b7f9-cf38fba58c15`.
+- Fixture then accessed nonexistent `ResearchRounds.runs`; the real read-only port is `ResearchRounds.legacy.runs`. Corrected the two fixture reads (original child identity and original SSH output). No product changes or acceptance relaxation.
+- [Second failure output](evidence/research-native-second-failure.txt) retained. Cleanup released the helper barrier and stopped worker/scheduler, then registered isolated resource cleanup ran. PG slot released; no automatic rerun.
+- Complete terminal/evidence/share/withdrawal assertions remain **NOT PASSED**.

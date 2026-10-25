@@ -153,7 +153,7 @@ class ResearchSSHNativePostgresTests(unittest.TestCase):
         rounds = base.state['research_rounds']
         with base.store.engine.connect() as conn:
             attempt = dict(conn.execute(select(rounds.legacy.attempts)).mappings().one())
-        child = rounds.runs.delegated_child('alice', attempt['operation_id'])
+        child = rounds.legacy.runs.delegated_child('alice', attempt['operation_id'])
         self.assertIsNotNone(child)
         base.until(lambda: (base.store.native_db.get_job(child['runId']) or {}).get('status') == 'paused', 'original SSH child native wait')
         base.release.touch()
@@ -170,7 +170,7 @@ class ResearchSSHNativePostgresTests(unittest.TestCase):
         self.assertEqual({row['taskId'] for row in terminal['runtime']}, {root_id, child['taskId']})
         self.assertTrue(all(row['status'] == 'completed' for row in terminal['runtime']))
         self.assertEqual(base.started.read_text().splitlines(), ['started'])
-        original = rounds.runs.ssh_results('alice', child['taskId'], child['runId'])
+        original = rounds.legacy.runs.ssh_results('alice', child['taskId'], child['runId'])
         self.assertEqual(original['receipt']['executionStatus'], 'COMPLETED')
         self.assertEqual(original['receipt']['exitCode'], 0)
         self.assertTrue(original['output']['utf8Valid'])
