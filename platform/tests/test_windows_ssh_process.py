@@ -199,8 +199,21 @@ class WindowsSSHProcessTests(unittest.TestCase):
                 return original_close(process)
             finally:
                 record('close.after')
+        original_kernel = owned._kernel
+        def measured_kernel():
+            native = original_kernel()
+            create = native.CreateProcessW
+            def measured_create(*args):
+                record('CreateProcessW.before')
+                result = create(*args)
+                record('CreateProcessW.after')
+                return result
+            native.CreateProcessW = measured_create
+            return native
         before = handle_count()
-        with patch.object(owned, '_error', measured_error), patch.object(WindowsSSHProcess, 'close', measured_close):
+        with (patch.object(owned, '_error', measured_error),
+              patch.object(owned, '_kernel', measured_kernel),
+              patch.object(WindowsSSHProcess, 'close', measured_close)):
             for index in range(3):
                 record(f'spawn.{index}.before')
                 with self.assertRaises(OSError):
@@ -229,7 +242,48 @@ print(json.dumps({'winErrorOnly': counts}))
 """
         control = subprocess.run([sys.executable, '-I', '-S', '-c', control_program],
                                  capture_output=True, text=True, timeout=10, check=True)
-        self.assertEqual(after, before, json.dumps({'stages': stages, 'control': json.loads(control.stdout)}))
+        native_program = control_program[:control_program.index('counts = [count()]')] + """
+import os, sys
+class Startup(ctypes.Structure):
+    _fields_ = [('cb', w.DWORD), ('lpReserved', w.LPWSTR), ('lpDesktop', w.LPWSTR),
+        ('lpTitle', w.LPWSTR), ('dwX', w.DWORD), ('dwY', w.DWORD),
+        ('dwXSize', w.DWORD), ('dwYSize', w.DWORD), ('dwXCountChars', w.DWORD),
+        ('dwYCountChars', w.DWORD), ('dwFillAttribute', w.DWORD), ('dwFlags', w.DWORD),
+        ('wShowWindow', w.WORD), ('cbReserved2', w.WORD), ('lpReserved2', ctypes.POINTER(ctypes.c_byte)),
+        ('hStdInput', w.HANDLE), ('hStdOutput', w.HANDLE), ('hStdError', w.HANDLE)]
+class Process(ctypes.Structure):
+    _fields_ = [('hProcess', w.HANDLE), ('hThread', w.HANDLE), ('pid', w.DWORD), ('tid', w.DWORD)]
+kernel.CreateProcessW.argtypes = [w.LPCWSTR, w.LPWSTR, w.LPVOID, w.LPVOID, w.BOOL, w.DWORD,
+                                w.LPVOID, w.LPCWSTR, ctypes.POINTER(Startup), ctypes.POINTER(Process)]
+kernel.CreateProcessW.restype = w.BOOL
+kernel.TerminateProcess.argtypes = [w.HANDLE, w.UINT]
+kernel.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
+kernel.CloseHandle.argtypes = [w.HANDLE]
+missing = os.path.join(os.path.dirname(sys.executable), 'missing-ssh-fixture.exe')
+assert not os.path.exists(missing)
+counts, errors = [count()], []
+for _ in range(3):
+    startup, process = Startup(), Process()
+    startup.cb = ctypes.sizeof(startup)
+    command = ctypes.create_unicode_buffer('"' + missing + '"')
+    created = kernel.CreateProcessW(missing, command, None, None, False, 0x08000004,
+                                   None, None, ctypes.byref(startup), ctypes.byref(process))
+    error = ctypes.get_last_error()
+    if created:
+        kernel.TerminateProcess(process.hProcess, 1)
+        kernel.WaitForSingleObject(process.hProcess, 5000)
+        kernel.CloseHandle(process.hThread)
+        kernel.CloseHandle(process.hProcess)
+        raise AssertionError('missing executable unexpectedly started')
+    assert error == 2, error
+    errors.append(error)
+    counts.append(count())
+print(json.dumps({'nativeMissingExecutable': counts, 'errors': errors}))
+"""
+        native_control = subprocess.run([sys.executable, '-I', '-S', '-c', native_program],
+                                        capture_output=True, text=True, timeout=10, check=True)
+        self.assertEqual(after, before, json.dumps({'stages': stages, 'control': json.loads(control.stdout),
+                                                   'nativeControl': json.loads(native_control.stdout)}))
 
     def test_unicode_long_child_cwd_reads_relative_identity_without_parent_chdir(self):
         original_cwd = os.getcwd()
