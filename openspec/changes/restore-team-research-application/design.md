@@ -60,7 +60,7 @@ POST `/projects/{id}/start` 只接收requestId/expectedVersion。短事务按cor
 
 只安装一个应用拥有的固定`research-round` Workflow revision，发布应用中的`research`模式精确引用其nativeComponent pin，`experiment`模式使用既有factory-executor。两模式复用用户明确选择的模型/连接，child材料与工具是root已确认材料的子集；本切片不让模型替换owner、mode、provider、request、预算或资源引用。root的模型Step仍tool-free，实验工具仅供受治理child使用。当前最小方案使用同一选定模型，不预设多专家模型路由。
 
-显式research deployment在core构造前创建具体ResearchWorkflow对象及NativeWorkflowRegistration/AdapterRegistration；install时将确定的ResearchRuns、记录服务、OperationCustody.start及WorkflowControl绑定到这个对象。只是当前消费者的静态装配，不新增插件工厂/服务容器。注册前不能执行，重复绑定拒绝。core默认入口无研究registration、seed或引用。
+显式research deployment在core构造前创建具体ResearchWorkflow对象及NativeWorkflowRegistration/AdapterRegistration；install时将确定的ResearchRuns、记录服务、OperationCustody.start及WorkflowControl绑定到这个对象。具体签名为`ResearchWorkflow()`提供registration/tool_registrations；`research.public.install(state, *, workflow=None)`在core创建后构造ResearchRounds并一次性workflow.bind(rounds)。deployment仅追加Settings现有注册列表并用ApplicationAssembly的install闭包接线，无新增Assembly字段、第二lifespan或worker。只是当前消费者的静态装配，不新增插件工厂/服务容器。注册前不能执行，重复绑定拒绝。core默认入口无研究registration、seed或引用。
 
 ApplicationRuntimeRegistry只按这个精确nativeComponent pin附加research owner并声明finalizes=True，保留其他binding/effect owner。第一治理Step仍要求匹配项目原intent或P3原delivery；用户直接发布使用此pin的应用不因此获得项目执行授权，缺绑定时在任何child/tool副作用前拒绝。该pin下未绑定的失败root可以按原技术失败完成，不把缺研究intent变成永久finalizing。
 
@@ -76,7 +76,7 @@ P5首切片允许任意已发布应用；这些已有task/plan/record继续只�
 | 4a | 受治理Function `research_stop` | 持久本轮停止决定及证据等级，留给原完成事务收尾 |
 | 4b | 受治理Function `research_launch` | 同事务创建/引用实验节点、具体运行引用及精选进行中记录；提交后以原RunContext调用唯一custody.start、固定step/effectSlot/adapter pin，inputs仅goal与固定experiment模式 |
 | 5b | Agent + 既有factory_wait_operations | 等待原operation；由既有WorkflowControl恢复原requirement。未确认停止/结果时不进入下一实验 |
-| 6b | tool-free Agent `research_evaluate` | 接收真实child结果、指标/产物引用和原标准后决定continue/stop，并说明证据适用条件；进程completed不等于科学met |
+| 6b | 受治理Function `research_results` → tool-free Agent `research_evaluate` | Function从原custody读取已闭合的真实child结果及原约定，不信任wait模型的复述；evaluate接收这些指标/产物引用和原标准后决定continue/stop，并说明证据适用条件；进程completed不等于科学met |
 | 7b | 受治理Function `research_record_decision` | 校验结果引用属于本轮原operation，保存决定，不直接启动后继、不分配下一root预算 |
 
 决定只记录可见理由，不记录隐藏思维链。模型的met/not_met属于带来源的agent判断；可核对指标是事实，独立验证等级不能由模型自评升级。不引入评价DSL或假定一段自由文本标准可被框架自动证明。无效结构化输出、缺来源或技术失败留下明确失败事实，不强制固定次数重试；UNKNOWN只观察原操作。工具实际结果超出既有RuntimeObservation的inert/大小边界时必须通过原artifact引用读取，不截断后假称完整证据。
