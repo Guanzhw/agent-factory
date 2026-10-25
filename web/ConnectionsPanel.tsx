@@ -104,8 +104,8 @@ export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, on
     });
   }
   return <section className="connections-page"><div className="page-heading"><div><h1>我的凭据与连接</h1><p>管理自己的凭据、远程服务与资源绑定。</p></div><div className="button-row">{onBack && <button className="secondary" disabled={!!busy} onClick={onBack}>返回 {applicationLabel}</button>}<button className="secondary" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>刷新资源</button></div></div>
-    <PersonalSSHServers key={user.id} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)}/>
-    <PersonalCredentials key={user.id} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onModels={onModels}/>
+    <PersonalSSHServers key={`ssh:${user.id}`} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)}/>
+    <PersonalCredentials key={`credentials:${user.id}`} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onModels={onModels}/>
     <PersonalToolConnections ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)}/>
     {remoteServices?.(refresh, () => setRefresh(n => n + 1))}
     {error && <div role="alert" className="error-message">资源列表暂不可用。请刷新资源；原绑定保留，未自动重试绑定。<span>{error}</span></div>}

@@ -87,7 +87,7 @@ export default function App({ workspace: WorkspaceComponent = Workspace }: { wor
   return <div className="login-page"><div className="login-brand"><span className="brand-symbol" aria-hidden="true">F</span><span>Agent Factory</span></div><section className="login-panel"><p className="quiet">Agent Factory 工作台</p><h1>从任务目标，<br/>到可核对的结果。</h1><p>选择应用，描述任务目标后开始。进度与结果都在任务记录中。</p>{loginMode === 'demo' ? <div className="demo-notice"><strong>{authConfig?.developmentOnly ? '开发模拟登录（仅本地）' : '本地演示入口'}</strong><span>确定性运行与合成结果用于验证流程，不代表真实任务已完成。真实模型调用需另行启用。</span></div> : <div className="demo-notice"><strong>{loginMode === 'live' ? '真实运行环境' : '环境状态待确认'}</strong><span>{loginMode === 'live' ? authConfig?.enabled ? '使用组织的统一身份认证登录，账号权限由服务端核对。' : '请使用服务端配置的身份认证入口。演示身份登录已关闭。' : '环境模式尚未确认，演示登录不可用。'}</span></div>}<ErrorMessage message={error} retry={() => setGeneration(n => n + 1)}/>{authConfig?.enabled && <div className="login-actions"><button className="primary" disabled={busy || loading} onClick={() => void ssoLogin()}>{busy ? '正在前往登录…' : authConfig.developmentOnly ? '选择开发测试身份' : '使用企业账号登录'}</button></div>}{authConfig?.enabled === false && loginMode === 'demo' && <div className="login-actions">{([['alice', '成员 Alice'], ['bob', '成员 Bob'], ['manager', '管理员']] as const).map(([id, label]) => <button key={id} className={id === 'alice' ? 'primary' : 'secondary'} disabled={busy || loading} onClick={() => void login(id)}>{label}</button>)}</div>}{loading ? <p role="status" className="quiet">正在检查会话…</p> : (!authConfig || !loginMode) && <button className="secondary" onClick={() => setGeneration(n => n + 1)}>重新检查环境</button>}<p className="login-footnote">账号权限与任务范围由服务端检查。</p></section></div>;
 }
 
-export function Workspace({ user, logout, sessionBusy, sessionError, navigation = defaultNavigation, children, onCompose }: WorkspaceSessionProps & { navigation?: WorkspaceNavigation; children?: (context: WorkspaceContext) => ReactNode; onCompose?: WorkspaceContext['onCompose'] }) {
+export function Workspace({ user, logout, sessionBusy, sessionError, navigation = defaultNavigation, children, onCompose, applicationView }: WorkspaceSessionProps & { navigation?: WorkspaceNavigation; children?: (context: WorkspaceContext) => ReactNode; applicationView?: (context: WorkspaceContext) => ReactNode | undefined; onCompose?: WorkspaceContext['onCompose'] }) {
   const [navigationOpen, setNavigationOpen] = useState(false);
   const [route, setRoute] = useState(() => readWorkspaceRoute(new URL(window.location.href), user.role === 'manager', navigation));
   const routeRef = useRef(route);
@@ -99,7 +99,7 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
   };
   const tab = route.tab;
   const selected = route.task;
-  const setTab = (tab: WorkspaceTab) => navigate({ tab });
+  const setTab = (tab: WorkspaceTab) => navigate({ tab, modelReturn: undefined });
   const setSelected = (task: string) => { navigate({ tab: 'tasks', task }); setActionError(''); };
   useEffect(() => {
     const restore = () => {
@@ -214,6 +214,8 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
   const retry = () => setRefresh(n => n + 1);
   const context: WorkspaceContext = { user, route, navigate, status, materials, targets, jobs, jobsLoaded, jobsError: readErrors.jobs, historyError, historyLoading, nextCursor, loadEarlier: () => void loadEarlier(), detail, detailError, busy, syncedAt, act, notice: setNotice, retry, onTask: setSelected, drafts: childDrafts.current, onCompose };
   const tabs = navigation.tabs;
+  const appView = applicationView?.(context);
+  if (appView !== undefined) return appView;
   return <FeeVisibility enabled={status?.feeManagementEnabled === true}><div className="factory-shell">
     <aside className="sidebar"><div className="brand"><span className="brand-symbol" aria-hidden="true">F</span><div><strong>Agent Factory</strong><small>应用与任务</small></div></div>
     <nav aria-label="工作区"><span className="nav-group-label">工作区</span><button aria-current={tab === 'catalog' || navigation.applicationTabs?.includes(tab) ? 'page' : undefined} onClick={() => setTab('catalog')}>应用</button><button aria-current={['resources', 'models', 'connections'].includes(tab) ? 'page' : undefined} onClick={() => setTab('resources')}>资源</button><button aria-current={tab === 'tasks' ? 'page' : undefined} onClick={() => setTab('tasks')}>任务</button>
