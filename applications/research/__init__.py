@@ -1,0 +1,1 @@
+"""Optional team research application."""

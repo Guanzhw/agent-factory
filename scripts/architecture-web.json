@@ -8,9 +8,18 @@
     "web",
     "shared"
   ],
-  "apps": {},
+  "apps": {
+    "research": {
+      "public": [
+        "web/apps/research/ResearchWorkspace.tsx"
+      ],
+      "path": "web/apps/research"
+    }
+  },
   "composition_roots": [
     "web/composition.tsx",
-    "web/main.tsx"
+    "web/main.tsx",
+    "web/research-composition.tsx",
+    "web/research-main.tsx"
   ]
 }

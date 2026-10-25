@@ -6,8 +6,8 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SOURCES = ('platform', 'deployment', 'platform/tests')
-TEST_DIRECTORIES = (ROOT / 'platform/tests',)
+SOURCES = ('platform', 'deployment', 'applications', 'platform/tests')
+TEST_DIRECTORIES = (ROOT / 'platform/tests', ROOT / 'applications/tests')
 
 
 class CollectionError(ValueError):

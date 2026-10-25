@@ -24,7 +24,7 @@ export default function ComposedApp() { return <App workspace={Workspace}/>; }
 export function Workspace(props: WorkspaceSessionProps) {
   return <WorkspaceShell {...props}>{context => <Pages context={context}/>}</WorkspaceShell>;
 }
-function Pages({ context: original }: { context: WorkspaceContext }) {
+export function Pages({ context: original, applications = installedApplications }: { context: WorkspaceContext; applications?: readonly InstalledApplication[] }) {
   const [seed, setSeed] = useState<ComposerSeed>();
   const [schedule, setSchedule] = useState<{ planId: string; planFingerprint: string; goal: string }>();
   const context: WorkspaceContext = { ...original, onCompose: (next, notice) => { setSeed(next); original.navigate({ tab: 'developer' }); original.notice(notice); } };
@@ -32,7 +32,7 @@ function Pages({ context: original }: { context: WorkspaceContext }) {
   const tab = route.tab;
   return <>
     {tab === 'accounts' && user.role === 'manager' && <AccountManagement/>}
-    {tab === 'catalog' && <ApplicationCatalog applications={installedApplications} onSelect={navigate}/>}
+    {tab === 'catalog' && <ApplicationCatalog applications={applications} onSelect={navigate}/>}
     {tab === 'resources' && <ResourceCenter onModels={() => navigate({ tab: 'models', modelReturn: 'resources' })} onConnections={() => navigate({ tab: 'connections' })} onBack={() => navigate({ tab: 'catalog' })}/>}
     {tab === 'models' && <ModelSettings key={`ModelSettings:${user.id}`} ownerId={user.id} onBack={() => navigate({ tab: route.modelReturn ?? 'catalog' })} onCredentials={() => navigate({ tab: 'connections' })}/>}
     {tab === 'developer' && <section><div className="page-heading"><div><h1>开发者装配</h1><p>高级材料与应用契约验证。</p></div></div><ApplicationComposer key={seed?.key ?? 'ordinary'} seed={seed} onSchedule={plan => { setSchedule({ planId: plan.id, planFingerprint: plan.fingerprint, goal: plan.normalizedGoal }); navigate({ tab: 'schedules' }); }} user={user} busy={busy} act={act} materials={materials} targets={targets} onCreated={id => { onTask(id); notice('创建请求已确认。请在任务记录中查看进度与结果。'); }}/></section>}

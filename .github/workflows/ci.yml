@@ -61,6 +61,7 @@ jobs:
       - name: Real Chromium personal-tool configured and lost-binding-ack smoke
         if: runner.os == 'Linux'
         run: uv run --no-sync python platform/tests/browser/personal_tools_smoke.py --desktop-only --scenario configured --scenario bind-loss --output "${{ runner.temp }}/personal-tool-browser"
+      - run: npm run build:research
   python:
     needs: scope
     if: needs.scope.outputs.mode != 'docs'
@@ -77,7 +78,7 @@ jobs:
         with:
           version: '0.12.1'
       - run: uv sync --frozen
-      - run: uv run ruff check platform deployment scripts
+      - run: uv run ruff check platform deployment applications scripts
       - run: uv run pyright
       - run: uv run python scripts/check_architecture.py --config scripts/architecture-python.json
       - name: Fast selected Python regressions

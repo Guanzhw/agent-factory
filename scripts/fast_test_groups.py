@@ -6,6 +6,7 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
+    'research_projects': ('test_research_projects',),
     'shared_mcp_authority_regressions': (
         'test_application_closure_authority.BoundedApplicationClosureTests',
         'test_personal_mcp_callbacks',
@@ -81,6 +82,7 @@ FAST_PYTHON_TESTS = {
 }
 
 FAST_POSTGRES_TESTS = {
+    'research_projects': ('test_research_projects_postgres',),
     'fresh_bounded_material_authority': (
         'test_material_governance_bulk_postgres.MaterialGovernanceBulkPostgresTests',
     ),
