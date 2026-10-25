@@ -1,10 +1,15 @@
 """Pinned SSH identities shared by enrollment and trusted runtime adapters."""
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
+import sys
+import time
+
+from .ssh_exchange import close_process
 from typing import Callable
 
 from .store import digest
@@ -71,8 +76,15 @@ class SSHServer:
             ('reference', 'owner', 'address', 'port', 'username', 'host_key', 'allowed_root')})
 
 
-def pinned_ssh(server, lease, local, command, forward=None):
+@contextmanager
+def pinned_ssh(server, lease, local, command, forward=None, *, deadline):
     """Use exactly the member's endpoint, key and host identity for one process."""
+    if time.monotonic() >= deadline:
+        raise TimeoutError('SSH_EXCHANGE_TIMEOUT')
+    if sys.platform == 'win32':
+        with lease.open(server, command, forward=forward, deadline=deadline) as process:
+            yield process
+        return
     identity = local / 'identity.pub'; identity.write_text(lease.public_key + '\n'); identity.chmod(0o600)
     known = local / 'known_hosts'; known.write_text('factory-pinned ' + server.host_key + '\n'); known.chmod(0o600)
     args = ['ssh', '-F', 'none', '-a', '-T', '-o', 'HostKeyAlias=factory-pinned',
@@ -84,5 +96,9 @@ def pinned_ssh(server, lease, local, command, forward=None):
         '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2']
     if forward: args += ['-R', forward]
     args += ['-l', server.username, '-p', str(server.port), server.address, command]
-    return subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
         env={'PATH': '/usr/local/bin:/usr/bin:/bin'}, bufsize=-1)
+    try:
+        yield process
+    finally:
+        close_process(process)

@@ -5,6 +5,7 @@ prerequisites are checked separately when preparing an application.
 """
 import asyncio
 import base64
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path, PurePosixPath
@@ -37,7 +38,7 @@ CODES = frozenset({'SSH_CONTROLLER_PLATFORM_UNSUPPORTED', 'SSH_LINUX_ARCH_REQUIR
 class _SSHProbeTransport(Protocol):
     root: Path
 
-    def _ssh(self, server, lease, local, command, forward=None) -> subprocess.Popen: ...
+    def _ssh(self, server, lease, local, command, forward=None, *, deadline) -> AbstractContextManager: ...
 
 
 @dataclass(frozen=True)
@@ -54,6 +55,12 @@ class SSHAgents:
     def __init__(self, vault, *, max_agents, seconds):
         if type(max_agents) is not int or not 1 <= max_agents <= 64: raise ValueError('SSH agent capacity invalid')
         self.vault, self.max_agents, self.seconds = vault, max_agents, seconds
+        self.windows = None
+        if sys.platform == 'win32':
+            from .windows_ssh_credentials import WindowsSSHCredentials
+            self.windows = WindowsSSHCredentials(vault, max_agents=max_agents, seconds=seconds)
+            self.root = self.windows.root
+            return
         self.folder = TemporaryDirectory(prefix='af-ssh-agents-')
         self.root = Path(self.folder.name)
         self.live = {}; self.lock = threading.RLock()
@@ -76,8 +83,8 @@ class SSHAgents:
         return SSHAgentLease(item['lease'].socket, item['lease'].public_key, check)
 
     def acquire(self, server, destination, guard):
-        if sys.platform == 'win32':
-            raise RemoteConnectionError('SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+        if self.windows is not None:
+            return self.windows.acquire(server, destination, guard)
         scope = dict(owner=server.owner, reference=server.credential_ref,
             revision=server.credential_revision, provider_id=PROVIDER_ID, destination=destination)
         key = tuple(scope.values())
@@ -137,6 +144,9 @@ class SSHAgents:
             raw = b''; private = None; secret = None
 
     def close(self):
+        if self.windows is not None:
+            self.windows.close()
+            return
         for key in list(self.live): self._close(key)
         self.folder.cleanup()
 
@@ -298,6 +308,8 @@ class PersonalSSHServers:
 
     def probe(self, server, lease, action):
         deadline = time.monotonic() + 30
+        if sys.platform == 'win32':
+            deadline = min(deadline, lease.expires_at)
         lease.validate()
         nonce = secrets.token_hex(12)
         if action == 'inspect':
@@ -320,9 +332,9 @@ class PersonalSSHServers:
             try:
                 lease.validate()
                 if time.monotonic() >= deadline: raise TimeoutError('SSH_CHECK_UNCONFIRMED')
-                process = transport(server, lease, Path(folder), command)
-                output = pipe_exchange(process, payload, deadline=deadline, max_output=8192,
-                                       before_write=lease.validate)
+                with transport(server, lease, Path(folder), command, deadline=deadline) as process:
+                    output = pipe_exchange(process, payload, deadline=deadline, max_output=8192,
+                                           before_write=lease.validate)
                 if b'\n' not in output: raise ValueError()
                 result = json.loads(output)
                 if result.get('nonce') != nonce or type(result.get('ok')) is not bool: raise ValueError()
