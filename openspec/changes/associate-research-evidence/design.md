@@ -95,3 +95,9 @@ P6仍支持的selected-app首root入口也使用`ResearchRecords.start`，不能
 依赖独立审查的`bind-content-source-authority`核心变更：将实际完整来源集合传入`ContentPublication.sourceContentIds`，复用统一read/list/artifact/旧回执当前权限。应用仍只向普通content写safe IDs/状态壳，富正文在研究表；`read_publication`先核原publication及完整来源。P8明确精选附件使用同一个source-bound publication的artifact口，不代理owner整job下载。来源在finalization前已不可读时仍持久化原终态，但sharing/source continuation标为不可用，不发布新正文或后继。原快照准入语义不变，未撤销原已授权运行。
 
 普通私问reply保留模型实际选中的全部publication IDs（最多8，绝非最终citations）；每个source-bound publication已由core强制检查完整原source集合，无需把同一内部依赖重复展开塞进reply的20输入ID限制。association/round仍保存完整平面依赖并集，不削减权限语义或扩大core接口。
+
+### 独立实现审查后的最小接缝修正
+
+1. 项目create（含原request回执）与change在入口复用原core admission锁，再取research namespace；不得等到_protect内才倒序取admission。新增PG双向barrier须证明其不会与原round准备/来源guard形成环。
+2. for_round必须直接从当前可读团队研究记录最多50条窗口检索，复用相同research_terms筛选和8条/16KiB输入边界。即使从未产生association，只要原记录相关也进入模型context；无关/个人/撤回记录不进入。关联分析是附加导航而非唯一入口。冻结实际显示原content IDs与关联IDs，完整原来源并集独立保留，模型不能裁剪依赖。
+3. 新core sourceContentIds已让统一read/list/artifact/replay强制原来源权限，取消未发布的research_derived_publications影子正文与safe壳回填。精选正文只存core source-bound ContentPublication一次；撤回后该正文/精确附件由core隐藏，研究自身运行投影仅保留safe IDs/status。此项取代前述无core支持时的临时双存储设计，不增迁移/第二ACL；P8直接复用core content.read/artifact。round实际输入表与完整依赖仍保留。

@@ -81,3 +81,14 @@
 #### Scenario: Paired real research evaluation
 - **WHEN** 执行事前冻结的有经验/无经验对照及不相关/过时负对照
 - **THEN** 核对真实来源、适用性决定和实际动作差异；隐藏oracle不给被测模型，无差异按原标准如实失败，不调通过线或强迫科学指标提升
+
+### Requirement: Direct original evidence and one authorized publication
+研究context SHALL 在没有association时仍检索当前可读、相关的原团队研究记录；使用现有词项筛选及50候选/8显示/16KiB边界，不另建检索框架。完整依赖并集不受显示边界截断。精选派生正文 SHALL 只存一次source-bound核心publication，由core所有读取/附件/回执路径核原来源；研究运行投影仍只在来源可读时显示富字段。此项替代未发布的影子正文回填方案。
+
+#### Scenario: Original evidence without a prior association
+- **WHEN** 团队有一条相关原记录、另一条无关记录，未有任何association
+- **THEN** 研究模型实际接收相关原证据，并将其原ID关联到决定和真实child goal；无关记录不进入，撤回先于新attempt准入时零新派发
+
+#### Scenario: Project writes preserve admission-first order
+- **WHEN** project create回执或change与原round准备/来源读取并发
+- **THEN** 两者均先admission后research namespace，双向barrier验证无锁环，不在_protect内部补锁
