@@ -16,6 +16,7 @@ from agent_factory.process_enforcement import ProcessLimits, ProcessSpec
 from agent_factory.resources import PersistentResourceService
 from agent_factory.ssh_process_contract import PROTOCOL, MAX_REQUEST_BYTES, encoded
 from agent_factory.ssh_process_provider import EFFECT, SSHProcessProvider, SSHProcessTransport
+from agent_factory.ssh_exchange import SSHExchangeCleanupError
 
 
 class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
@@ -90,6 +91,41 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
             await self.provider.allocate_bound(self.lease, before_effect=denied)
         self.assertEqual(self.calls, [])
 
+    def test_direct_transport_async_guard_rejects_before_any_spawn(self):
+        transport = SSHProcessTransport(self.provider.server,
+            lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
+        async def guard():
+            self.fail('async authority must never execute')
+        with patch('agent_factory.ssh_process_provider.pinned_ssh') as spawn, \
+             patch('agent_factory.ssh_process_provider.pipe_exchange') as exchange:
+            with self.assertRaisesRegex(TypeError, 'SSH_PROCESS_SYNC_AUTHORITY_REQUIRED'):
+                transport(self.provider._request(self.lease, 'submit'), before_effect=guard)
+            spawn.assert_not_called()
+            exchange.assert_not_called()
+
+    async def test_cancelled_worker_cleanup_error_is_not_hidden_as_cancelled(self):
+        entered, finished = threading.Event(), threading.Event()
+        calls = []
+        failure = SSHExchangeCleanupError('controlled cleanup failure')
+        def exchange(value, *, before_effect=None, cancelled=None):
+            calls.append(value['action'])
+            entered.set()
+            try:
+                if not cancelled.wait(3):
+                    raise AssertionError('Cancellation did not reach the original worker')
+                raise failure
+            finally:
+                finished.set()
+        self.provider.exchange = exchange
+        task = asyncio.create_task(self.provider.allocate_bound(self.lease, before_effect=lambda: None))
+        self.assertTrue(await asyncio.to_thread(entered.wait, 3))
+        task.cancel()
+        with self.assertRaises(SSHExchangeCleanupError) as caught:
+            await task
+        self.assertIs(caught.exception, failure)
+        self.assertTrue(finished.is_set())
+        self.assertEqual(calls, ['submit'])
+
     async def test_changed_remote_identity_or_binding_is_rejected(self):
         first = await self.provider.inspect('lease-1', 'alice')
         self.lease.update(PersistentResourceService.process_snapshot(self.lease, first))
@@ -124,6 +160,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                     stdout=os.fdopen(output_read, 'rb', buffering=0),
                     poll=lambda: 0, wait=lambda **_: 0, kill=lambda: None)
                 entered, release, finished = threading.Event(), threading.Event(), threading.Event()
+                exchanges = []
                 count = 0
                 def gated_guard():
                     nonlocal count
@@ -137,6 +174,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                 transport = SSHProcessTransport(self.provider.server,
                     lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
                 def exchange(value, **kwargs):
+                    exchanges.append(threading.get_ident())
                     try:
                         return transport(value, **kwargs)
                     finally:
@@ -150,10 +188,15 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                         task.cancel()
                         await asyncio.sleep(0)
                         self.assertFalse(task.done())
+                        task.cancel()
+                        await asyncio.sleep(0)
+                        self.assertFalse(task.done(), 'Second cancellation abandoned the original worker')
+                        self.assertFalse(finished.is_set())
                         release.set()
                         with self.assertRaises(asyncio.CancelledError):
                             await task
                         self.assertTrue(finished.is_set())
+                        self.assertEqual(len(exchanges), 1)
                         self.assertTrue(await asyncio.to_thread(finished.wait, 3))
                     raw = os.read(read_fd, MAX_REQUEST_BYTES)
                     self.assertEqual(len(raw), 0 if pause_on == 1 else 4096)

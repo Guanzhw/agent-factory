@@ -31,6 +31,7 @@ from agent_factory.connections import ConnectionService
 from agent_factory.credential_vault import CredentialVaultError, EncryptedCredentialVault, credential_vault_router
 from agent_factory.personal_remote_provider import RemoteConnectionError, origin
 from agent_factory.ssh_identity import SSHServer
+from agent_factory.ssh_exchange import SSHExchangeCleanupError
 from agent_factory.personal_ssh import PersonalSSHServers, SSHAgents, SSHEnrollmentConfig, personal_ssh_router
 from agent_factory.ssh_credentials import PROVIDER_ID, SSHCredentialPolicy, endpoint, ssh_destination
 from test_personal_remote_connections import Auth
@@ -167,6 +168,20 @@ class PersonalSSHTests(unittest.TestCase):
             self.assertEqual((Path(folder) / 'known_hosts').read_text().strip(), 'factory-pinned ' + server.host_key)
             self.assertEqual((Path(folder) / 'identity.pub').read_text().strip(), lease.public_key)
             self.assertFalse(any('PRIVATE KEY' in path.read_text() for path in Path(folder).iterdir()))
+
+    def test_probe_cleanup_error_propagates_without_becoming_unconfirmed(self):
+        server = self.service.profile('alice', 'fixture', 'v1', {**self.input,
+            'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
+        lease = SimpleNamespace(validate=lambda: None)
+        failure = SSHExchangeCleanupError('controlled reap failure')
+        with patch('agent_factory.personal_ssh.pinned_ssh') as spawn, \
+             patch('agent_factory.personal_ssh.pipe_exchange', side_effect=failure) as exchange:
+            with self.assertRaises(SSHExchangeCleanupError) as caught:
+                PersonalSSHServers.probe(self.service, server, lease, 'inspect')
+        self.assertIs(caught.exception, failure)
+        spawn.assert_called_once()
+        exchange.assert_called_once()
+        self.assertIs(exchange.call_args.args[0], spawn.return_value)
 
     @unittest.skipUnless(os.name == 'posix', 'generic remote shell fixture requires POSIX pipes')
     def test_generic_ssh_check_runs_without_research_package_python_or_docker(self):
