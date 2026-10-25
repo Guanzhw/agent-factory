@@ -68,6 +68,30 @@ class SSHSequenceModel(InventoryModel):
             'function': {'name': name, 'arguments': json.dumps(args)}}])
 
 
+def training_profile(remote, started, release):
+    executable = str(Path(sys.executable).resolve())
+    program = ("from pathlib import Path; import json, sys, time; "
+               "assert sys.argv[1] == '--experiment-json'; values=json.loads(sys.argv[2]); "
+               f"p=Path({str(started)!r}); p.open('a').write(json.dumps(values)+'\\n'); "
+               f"release=Path({str(release)!r}); "
+               "exec('while not release.exists():\\n time.sleep(.05)'); "
+               "print(json.dumps({'received': values, 'argv': sys.argv[1:]}), flush=True)")
+    return SSHTrainingProfile(
+        ResearchProcessSpec(executable, hashlib.sha256(Path(executable).read_bytes()).hexdigest(),
+            ('-I', '-S', '-c', program), str(remote),
+            tuple((key, '1') for key in ('HF_HUB_OFFLINE', 'HF_DATASETS_OFFLINE',
+                'TRANSFORMERS_OFFLINE', 'PYTHONNOUSERSITE')),
+            (remote.stat().st_dev, remote.stat().st_ino)),
+        ResearchProcessLimits(cpu_seconds=2, address_space_mb=128, file_size_bytes=65536,
+            wall_seconds=60, disk_bytes=1048576, output_bytes=65536),
+        executable, ComputePool('native-fixture', 2, 512, 8, max_leases=1, max_owner_leases=1),
+        input_schema={'type': 'object', 'properties': {
+            'width': {'type': 'integer', 'minimum': 1, 'maximum': 8},
+            'label': {'type': 'string', 'maxLength': 100}},
+            'required': ['width', 'label'], 'additionalProperties': False},
+        input_argument='--experiment-json')
+
+
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL') and sys.platform == 'linux',
                      'Requires isolated PostgreSQL and Linux process custody')
 class SSHNativePostgresTests(unittest.TestCase):
@@ -83,27 +107,7 @@ class SSHNativePostgresTests(unittest.TestCase):
         self.started = self.folder / 'starts'
         self.model_inputs = {'width': 1, 'label': 'first'}
         self.model_results = []
-        executable = str(Path(sys.executable).resolve())
-        program = ("from pathlib import Path; import json, sys, time; "
-                   "assert sys.argv[1] == '--experiment-json'; values=json.loads(sys.argv[2]); "
-                   f"p=Path({str(self.started)!r}); p.open('a').write(json.dumps(values)+'\\n'); "
-                   f"release=Path({str(self.release)!r}); "
-                   "exec('while not release.exists():\\n time.sleep(.05)'); "
-                   "print(json.dumps({'received': values, 'argv': sys.argv[1:]}), flush=True)")
-        self.profile = SSHTrainingProfile(
-            ResearchProcessSpec(executable, hashlib.sha256(Path(executable).read_bytes()).hexdigest(),
-                ('-I', '-S', '-c', program), str(self.remote),
-                tuple((key, '1') for key in ('HF_HUB_OFFLINE', 'HF_DATASETS_OFFLINE',
-                    'TRANSFORMERS_OFFLINE', 'PYTHONNOUSERSITE')),
-                (self.remote.stat().st_dev, self.remote.stat().st_ino)),
-            ResearchProcessLimits(cpu_seconds=2, address_space_mb=128, file_size_bytes=65536,
-                wall_seconds=60, disk_bytes=1048576, output_bytes=65536),
-            executable, ComputePool('native-fixture', 2, 512, 8, max_leases=1, max_owner_leases=1),
-            input_schema={'type': 'object', 'properties': {
-                'width': {'type': 'integer', 'minimum': 1, 'maximum': 8},
-                'label': {'type': 'string', 'maxLength': 100}},
-                'required': ['width', 'label'], 'additionalProperties': False},
-            input_argument='--experiment-json')
+        self.profile = training_profile(self.remote, self.started, self.release)
         self.settings = Settings(db_url=self.database.url, workspace=self.folder / 'factory', max_workers=1,
             ssh_training_profiles={'native-fixture': self.profile},
             runtime_adapters=[AdapterRegistration('model', 'ssh-native-model', '1',
@@ -304,6 +308,58 @@ class SSHNativePostgresTests(unittest.TestCase):
                                             task=task_id), rows)
             self.assertEqual([json.loads(line) for line in self.started.read_text().splitlines()], [self.model_inputs])
             self.assertEqual(self.model_results, [])
+
+    def test_accepted_continuation_with_lost_ack_recovers_without_second_send(self):
+        started = self.request('POST', '/application-interface/v1/starts',
+            {'application': 'ssh-native', 'mode': 'train', 'goal': 'Recover the accepted original continuation',
+             'requestId': 'accepted-ack-lost', 'connectionRefs': {'compute': self.connection}}, expected=202)
+        task_id = started['job']['id']
+        run_id = self.store.task(task_id, 'alice')['run_id']
+        self.until(lambda: self.started.exists(), 'original helper start')
+        self.until(lambda: self.store.native_db.get_job(run_id)['status'] == 'paused', 'original native wait')
+        operations = self.store.sql('SELECT id FROM af_external_operations WHERE task_id=:task', task=task_id)
+        self.assertEqual(len(operations), 1)
+        bridge_type = type(self.state['factory_api'].commands.bridge)
+        original = bridge_type.continue_run
+        sent, accepted = [], []
+
+        async def lost_after_acceptance(bridge, original_run, original_task, owner, requirements, **kwargs):
+            proof = dict(kwargs['command_proof'])
+            sent.append((original_run, original_task, owner, proof))
+            await original(bridge, original_run, original_task, owner, requirements, **kwargs)
+            accepted.append(proof)
+            raise ConnectionError('Synthetic reply lost after actual native continuation returned')
+
+        with patch.object(bridge_type, 'continue_run', new=lost_after_acceptance):
+            self.release.touch()
+            self.until(lambda: accepted, 'actual native acceptance before injected reply loss')
+            self.assertEqual(len(sent), 1)
+            command_id = accepted[0]['commandId']
+            self.assertEqual(sent[0][:3], (run_id, task_id, 'alice'))
+            assert self.client is not None and self.client.portal is not None
+            receipt = self.client.portal.call(self.state['factory_api'].commands.recover, 'alice', task_id, command_id)
+            self.assertTrue(receipt['decisionRecorded'], receipt)
+            self.assertFalse(receipt['canDispatch'])
+            self.assertIn(receipt['state'], {'DECISION_RECORDED', 'EXECUTION_CONTINUING'})
+            self.assertEqual(receipt['fingerprint'], accepted[0]['fingerprint'])
+            self.stop()
+            self.start()
+            self.until(lambda: self.store.task(task_id, 'alice')['terminal'], 'same original task completed')
+            assert self.client is not None and self.client.portal is not None
+            for _ in range(2):
+                self.client.portal.call(self.state['lifecycle_observer'].observe_root, task_id)
+                recovered = self.client.portal.call(self.state['factory_api'].commands.recover, 'alice', task_id, command_id)
+                self.assertTrue(recovered['decisionRecorded'])
+                self.assertFalse(recovered['canDispatch'])
+                for key in ('commandId', 'fingerprint', 'binding', 'requirementId', 'version'):
+                    self.assertEqual(recovered[key], receipt[key])
+            self.assertEqual(len(sent), 1)
+            self.assertEqual(self.store.task(task_id, 'alice')['run_id'], run_id)
+            self.assertEqual(self.store.sql('SELECT id FROM af_external_operations WHERE task_id=:task', task=task_id), operations)
+            self.assertEqual([json.loads(line) for line in self.started.read_text().splitlines()], [self.model_inputs])
+            self.assertEqual(len(self.model_results), 1)
+            self.assertEqual(self.model_results[0]['operationId'], operations[0]['id'])
+            self.assertEqual(self.model_results[0]['actual']['received'], self.model_inputs)
 
     def test_distinct_inputs_reach_real_helper_and_restart_retains_original(self):
         first_inputs = dict(self.model_inputs)
