@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 """Actual native queue/API tests; a fresh disposable PostgreSQL DB is required.
 
 Set FACTORY_TEST_DATABASE_URL; never point this at a production database.
@@ -151,7 +152,7 @@ class FactoryPostgresTests(unittest.TestCase):
         auth = self.app.app.state.factory["auth"]
         try:
             auth.directory.set_disabled("alice", True)
-            denied = self.client.post("/api/factory/instances", json={"planId": ready["id"], "requestId": str(uuid4())})
+            denied = disabled_member_request(self, self.app.app.state.factory, self.client, 'POST', '/api/factory/instances', json={"planId": ready["id"], "requestId": str(uuid4())})
             self.assertEqual(denied.status_code, 403, denied.text)
         finally:
             auth.directory.set_disabled("alice", False)

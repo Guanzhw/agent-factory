@@ -169,7 +169,7 @@ class LiveHTTPPostgresTests(unittest.TestCase):
                 body = handler.rfile.read(int(handler.headers['Content-Length']))
                 with httpx.Client(trust_env=False, timeout=15) as forward:
                     response = forward.post(actual_base + handler.path, content=body,
-                        headers={'Content-Type':'application/json', 'Cookie':handler.headers.get('Cookie', '')})
+                        headers={'Content-Type':'application/json', 'Authorization':handler.headers.get('Authorization', '')})
                     response.raise_for_status()
                     committed.append(response.json()['id'])
                 handler.close_connection = True  # Commit happened; send no ACK.

@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 """Opt-in native SQL authorization + owner remote HTTP lifecycle.
 
 Runs only against the existing disposable-loopback PostgreSQL CI service.
@@ -72,8 +73,8 @@ class PersonalRemotePostgresTests(unittest.TestCase):
         with self.assertRaises(HTTPException) as denied:
             restarted.resolve("alice", bound["ref"], "environment")
         self.assertEqual(denied.exception.status_code, 403)
-        self.assertEqual(self.client.post(f"{self.root}/{reference}/verify", json={"requestId": uuid4().hex}).status_code, 403)
-        self.assertEqual(self.client.post(f"{self.root}/{reference}/revoke", json={"requestId": uuid4().hex}).status_code, 403)
+        disabled_member_request(self, self.app.app.state.factory, self.client, 'POST', f'{self.root}/{reference}/verify', json={'requestId': uuid4().hex})
+        disabled_member_request(self, self.app.app.state.factory, self.client, 'POST', f'{self.root}/{reference}/revoke', json={'requestId': uuid4().hex})
         self.auth.directory.set_disabled('alice', False)
         revoked = self.client.post(f"{self.root}/{reference}/revoke", json={"requestId": uuid4().hex})
         self.assertEqual(revoked.status_code, 200)

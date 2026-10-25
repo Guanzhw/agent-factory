@@ -128,3 +128,272 @@ A separately authorized **single** schema diagnostic run added only test-local o
 Command: `FACTORY_TEST_DATABASE_URL=<existing disposable loopback fixture> PYTHONPATH=platform:applications:deployment:platform/tests:applications/tests timeout 120 .venv/bin/python -m unittest test_personal_mcp_capacity_postgres.PersonalMCPCapacityPostgresTests.test_schema_failure_releases_capacity_and_keeps_original_receipt_after_restart`. Result: **one passed, zero skipped, 16.872s, exit 0**, log `/tmp/af-no-demo-mcp-schema-diagnostic-once.log`; [instrumented phase evidence](evidence/mcp-schema-instrumented-single-run.json).
 
 This run's two initializes took 0.348s / 0.333s and list-tools took 0.902s / 0.958s; HTTP response latency after fixture receipt was approximately 1–7ms. Both tool calls completed and capacity released. This rules out a consistently broken handshake or persistently unresponsive server in that run only. It does **not** identify the earlier transport exception or close its failure. The earlier seconds-long authorization/credential callbacks remain a concrete hypothesis for a later controlled investigation; no timeout, GC setting, retry or success assertion was relaxed, and there was no repeat-until-green loop.
+
+### Read-only callback attribution
+
+Comparing the original failure with the instrumented single pass locates the slowdown **inside running callbacks**, without establishing its cause:
+
+| Seconds, median / maximum | Failure | Single pass |
+|---|---:|---:|
+| Authorization thread execution | 0.241 / 4.886 | 0.086 / 0.168 |
+| Credential thread execution | 3.404 / 5.593 | 0.202 / 0.325 |
+| Authorization executor queue | 0.000515 / 0.411083 | 0.000313 / 0.004622 |
+| Credential executor queue | 0.000253 / 0.003820 | 0.000123 / 0.002386 |
+| Authorization return-to-await | 0.000553 / 0.035117 | 0.000207 / 0.003599 |
+| Credential return-to-await | 0.001013 / 0.001828 | 0.000199 / 0.001287 |
+
+The failed trace contains 22 authorization / 7 credential callbacks, versus 49 / 16 across two successful invocations. Thread spans are wall time, not CPU time; overlapping spans must not be added. Callback execution overlaps almost the entire SDK window in both runs (failure 15.349 of 15.417s; success 2.016 of 2.054s and 2.020 of 2.050s), partly because the authorization monitor intentionally runs throughout. That overlap alone is not causation.
+
+Executor enqueue/return delays cannot account for most of the slowdown. Heartbeat-to-loop delay reached 0.913s in the failure versus 0.017s in the single pass, indicating some scheduling delay without locating SQL/pool/CPU contention. Gen1/2 collection **within** the failed SDK window totals only 0.0219s; the long generation-2 collection preceded submission. There is no evidence that this invocation directly spent its deadline in GC, that the native queue stopped progressing, or that an old fixture retained a specific pool/lock/thread.
+
+Per-engine acquisition/query timing, callback thread CPU and safe thread-stack locations were not recorded. SQL pool/lock delays, repeated current-authority reads and host scheduling therefore remain competing hypotheses. The next observation should first use already-running CI diagnostics; any additional authorized experiment should attribute time to concrete callback functions/SQL acquisition rather than repeat an unchanged schema test. No additional runtime experiment accompanied this comparison.
+
+## Published CI checkpoint — 2026-10-25, head ba08307
+
+PR [#136](https://github.com/Guanzhw/agent-factory/pull/136) exact head
+`ba083074df8e1f049174f39b654315bd1ef5e8df` has successful
+[fast CI 40223992140](https://github.com/Guanzhw/agent-factory/actions/runs/40223992140).
+This does not replace the failed full run at the earlier head.
+
+[Full CI 40223312294](https://github.com/Guanzhw/agent-factory/actions/runs/40223312294)
+at `d6c8f620322eb4fe246c300000da93b53a2d4163` ended **FAIL**.
+Platform PostgreSQL discovery ran 2068 cases in 1347.913s:
+**2018 passed, 36 failures, 9 errors, 5 skips**. The raw summary is retained in
+`/tmp/no-demo-full-ci-failures.log`. Research discovery completion is not
+established by this log; no research full result is inferred. The 45 failing
+platform cases remain under fixture diagnosis/correction by assistant_messages
+and assistant_endpoints. They are not recorded as fixed or passed.
+
+The old Linux frontend failure is separately identified: the synthetic
+`personal_tools_smoke.py` API returned `auth/config.enabled=False`. The product
+correctly showed the unconfigured-identity screen, so the resource button timed
+out at the unchanged 10-second limit. The same failure appears in the
+[first fast frontend job](https://github.com/Guanzhw/agent-factory/actions/runs/40223285963/job/121259321047).
+The npm check (487 tests) and audits had passed before this browser failure.
+
+`ba08307` changes only that test fixture to an explicitly configured browser
+session, provides synthetic CSRF and checks the mutation header. It removes the
+fixture's demo status label. All original configure/bind lost-acknowledgement,
+owner-change, descriptor-withdrawal and credential-rejection assertions remain.
+Actual Chromium then passed **8/8 scenarios**, including narrow viewports, exit 0:
+`python platform/tests/browser/personal_tools_smoke.py --dist /tmp/af-no-demo-core-browser-dist --browser /usr/bin/chromium --output /tmp/af-no-demo-personal-tools-first`.
+Results: `/tmp/af-no-demo-personal-tools-first/results.json`; log:
+`/tmp/af-no-demo-personal-tools-first.log`. Independent incremental review PASS.
+This is browser interaction with a wholly synthetic API, not real OIDC or
+CLI/MCP integration. The earlier real local-OIDC runs remain separate evidence.
+No product timeout, authentication boundary or business assertion was relaxed.
+
+The historical MCP transport failure remains unresolved; neither a fast green
+run nor this browser fixture correction establishes its cause. No real external
+IdP, paid model or GPU acceptance is added by this checkpoint.
+
+## Full PostgreSQL CI follow-up (2026-10-25)
+
+Run `40223312294`, PG job `121259401464`, did **not** pass: 2068 tests,
+36 failures, 9 errors, 5 skips in 1347.913 seconds. Original failure trace is
+preserved at `/tmp/no-demo-full-ci-failures.log`; it is not superseded by any
+later targeted result.
+
+The 32 failing IDs outside the separate OIDC/origin-authority review have these
+fixture migration causes:
+
+- Capacity/pressure fixtures create twenty directory accounts but omitted their
+  explicit external issuer subject mapping. The fixture now supplies those
+  exact subjects; product mapping remains closed.
+- Member-tool/reusable-tool fixtures send their first public configuration call
+  before their former publication helper initialized members. Startup now
+  explicitly initializes the disposable accounts, including reused fixtures.
+- Disabled-member assertions previously expected the native `403` at the
+  public OIDC boundary. The same request now must return exact public
+  `401/OIDC_ACCESS_TOKEN_INVALID`, then is exercised against the test-only native
+  app with a synthetic internal token and must still return `403`. This does
+  not alter production authorization or expose the internal listener.
+- The lost-ACK proxy forwarded the retired cookie instead of the client's
+  bearer header; its request never committed. Forwarding the actual header
+  restores the original commit-before-disconnect oracle.
+- Storage's borrowed subprocess fixture omitted its new `headers` helper.
+- Delegation's catalog mutation still used removed `seed=True`; it now uses
+  ordinary owner draft/publication and retains the immutable child-plan check.
+- The historical unbound plan is rejected first by `BINDING_MANIFEST_REQUIRED`;
+  the separate application check still explicitly rejects its missing pin.
+  The removed legacy adoption method is not reintroduced.
+- Receiver identity tests now separate a rejected internal signing token at
+  the public boundary from a valid external token belonging to the wrong
+  owner (`404`). The shared test issuer no longer implies separate app keys.
+
+`test_oidc_identity_postgres.py` (4 failures) and `test_remote_authority.py`
+(7 errors, 2 failures) are handled separately; this work does not claim those
+paths fixed. Owned targeted IDs are recorded in
+`/tmp/no-demo-owned-failed-ids.txt` (32 exact original failures). Ruff and diff
+whitespace checks pass; targeted PG execution is pending its exclusive slot.
+No production changes, weakened limits, assertion deletion, or new skips.
+
+### Owned 32-case follow-up and next diagnostics
+
+Fixture head `9e0b729` ran the 32 exact original failing IDs once, serially,
+under a 900-second process cap: **28 passed, 3 failed, 1 errored, 0 skipped**,
+435.902 seconds, exit 1. Log:
+`/tmp/no-demo-full-failures-targeted-first.log`.
+
+- Two newly reached disabled-member checks remained in capacity case 02 and
+  resource-maintenance cleanup; `28d5daa` gives these the same public-OIDC and
+  internal-native assertions. Their post-fix execution is not yet claimed.
+- Storage now starts successfully, but its real cancellation HTTP request
+  exceeds the unchanged 15-second client deadline. This is a new observed
+  runtime failure, not evidence of an authentication failure. Normal fixture
+  teardown removed its temporary server log; no server stack was captured.
+- The MCP account-reuse matrix reached Bob after controller restart. Its first
+  tool effect is DONE, its second UNKNOWN; the original native queue is still
+  running at 20.071 seconds. There are nine actual business calls. The observer
+  reports no error. The global diagnostic ring discarded 108 callbacks, so its
+  empty per-run list cannot establish that no callbacks ran. Safe original
+  metadata is preserved in `/tmp/no-demo-full-targeted-mcp-original.json`.
+
+No additional unchanged rerun is justified by these results. Proposed bounded
+single-case diagnostics (not yet executed):
+
+1. Storage cancellation: retain the subprocess server log before fixture
+   cleanup; record entry/exit metadata for ControlCommands submit/dispatch,
+   delegation cascade/inspect, owned-runtime cancellation, native cancel and
+   final job detail. A test-only watchdog before the existing deadline captures
+   all-thread stacks (no locals) and schedules a native-loop asyncio task-stack
+   snapshot. Log pool-connect entry/exit and checkout/checkin plus SQL duration,
+   without SQL text/parameters, on the Store/native/root-lock pools. An absent
+   loop snapshot with a thread stuck acquiring a lock is evidence distinct
+   from an awaited native cancellation. Do not extend any deadline.
+2. MCP original account-reuse matrix: increase only the bounded diagnostic
+   metadata capacity enough for its five original runs; retain queued/thread
+   entry/thread exit/await-exit and SQL timing for the failing run. At its
+   original wait's pre-deadline checkpoint collect the same safe thread/task
+   and pool-acquisition evidence, plus initialize/list-tools/tool-call phase
+   boundaries. This distinguishes pool acquisition, SQL execution, synchronous
+   authorization/credential work, event-loop starvation and SDK/service waits.
+
+Static cancellation chain: FactoryAPI compatibility cancel awaits
+ControlCommands submission, then job detail. Dispatch persists its boundary,
+then awaits delegation cascade; cascade records cancellation under the original
+root lock, invokes owned-runtime/workflow cleanup, native cancel, and group
+inspection. Source alone does not identify which stage consumed this timeout.
+The MCP callback chain still rechecks current authorization around credentials;
+no authority cache, callback removal, GC change or retry is proposed.
+
+### MCP diagnostic instrumentation prepared (not yet run)
+
+`test_reusable_tool_operations_postgres.py` retains at most 4096 callback
+metadata entries instead of 256, avoiding the observed fifth-run omission.
+Test-only `FACTORY_MCP_DIAGNOSTICS=1` additionally records a rolling, bounded
+8192-event window (with a discard count): actual pool-connect entry/exit,
+checkout/checkin on Store/native engines, callback SQL execution durations,
+SDK initialize/list-tools/call-tool boundaries and exception class. Callback
+thread CPU counters distinguish CPU work from wall-clock waits. No SQL text,
+parameters, HTTP body/headers, credential values or frame locals are recorded.
+
+During each original 20-second native wait, a test-owned timer at 15 seconds
+captures all Python thread stacks and schedules task-stack snapshots on the
+native and MCP server loops. The timer is canceled/joined when that wait ends;
+no test deadline, timeout, assertion, GC setting, production callback or retry
+policy changes. Pool and session wrappers invoke the original operation once.
+This instrumentation is observation overhead, not a performance benchmark;
+a successful instrumented run cannot close the prior timeout's root cause.
+
+### First instrumented MCP matrix: failure retained
+
+At `175eb41` (only documentation newer than `8362eb7`), the single original
+MCP matrix with detailed diagnostics **failed**, 1 test in 67.979 seconds,
+exit 1. `/tmp/no-demo-mcp-matrix-diagnostic-once.log` and extracted safe
+`/tmp/no-demo-mcp-matrix-diagnostic-failure.json` preserve the original task
+`d0597505-b9ff-47ac-89a1-bbec99aef4fd` / run
+`4c4263fb-79eb-44f1-9887-f6fa33f27b25`. It again reached the fifth, Bob-after-restart
+run: first effect DONE, second UNKNOWN, native RUNNING, nine business calls.
+
+45 callback rows were retained without callback drops. Completed authorization
+callbacks had median 0.1832s wall / maximum 1.4947s; credentials median 0.4092s /
+maximum 1.0163s. Executor queue delay was at most 9.7ms among completed callbacks.
+**Two incomplete callbacks must not be omitted**: one credential callback had
+26 SQL statements / 8.407s accumulated SQL wall time, one authorization callback
+21 statements / 6.764s. The retained window contains 1437 matched pool acquisitions,
+median 0.00091s, p95 0.00957s, maximum 4.902s. All event streams have a 4.147s gap;
+a pending SQL operation finishes after 4.875s. Second-call initialize begins
+without a subsequent recorded server request. These are correlations, not proof
+of pool exhaustion, database locking or GC as the cause.
+
+No thread/task snapshot reached the failure evidence. The Python snapshot path
+used `traceback.extract_stack`, which may read source through linecache; no
+snapshot entry timing was logged, so its absence cannot prove event-loop
+starvation. Instrumentation is corrected before proposing another experiment:
+manual `f_code/f_lineno/f_back` metadata only; snapshots are separate files;
+a C faulthandler watchdog at the same 15-second checkpoint; passive `gc.callbacks`
+start/stop timing. No force-collection, GC disabling, deadline or product change.
+A local smoke produced actual JSON thread/task snapshots and a C stack file,
+and observed passive GC callbacks (`/tmp/af-mcp-instrumentation-smoke`). Ruff
+passes. Another PG matrix run still requires a separately scheduled slot.
+
+The two deterministic capacity fixture corrections were then independently
+verified: **2 passed, 0 skipped, 18.710s, exit 0**,
+`/tmp/no-demo-capacity-disabled-final.log`. This does not close the MCP failure
+or establish that the earlier storage cancellation timeout is harmless.
+
+### Second instrumented MCP matrix: bounded pass, cause remains unknown
+
+Exact source head `a0112b05714983b789f2e154d55a701b5dbb086b` ran the same single
+matrix once with `FACTORY_MCP_DIAGNOSTICS=1`, the original 20-second native waits
+and an outer 240-second cap: **1 passed, 0 skipped, 59.808s, exit 0**. Log:
+`/tmp/no-demo-mcp-matrix-diagnostic-second.log`; final-run safe metadata:
+`/tmp/no-demo-mcp-second-final-run.json`; watchdog directory:
+`/tmp/no-demo-mcp-stacks-second`. All fixture cleanup completed before releasing
+the exclusive PG slot. No third run was started.
+
+The change from the first instrumented run is diagnostic only: source-free
+frame traversal, separately persisted snapshots, an independent 15-second C
+watchdog and passive GC timestamps. The five original runs had callback spans
+9.683 / 8.438 / 9.337 / 10.011 / 7.966 seconds. All completed before the watchdog
+checkpoint; five empty watchdog files and no Python snapshot files are therefore
+expected. There was no 15-second snapshot I/O in this passing run.
+
+The fifth run `00589c5a-2806-4e26-926e-9d84e403fd76` retained 74 callbacks and
+zero callback drops. Credential wall time median/max was 0.328/0.436 seconds;
+authorization 0.133/0.209 seconds. The last 3.38-second rolling event window
+contains 1346 matched pool acquisitions: median 0.00075 seconds, p95 0.00413,
+maximum 0.03457. Its largest inter-event gap is 0.02857 seconds, contrasting
+with 4.147 seconds in the prior failed window. The GC ring contains only the
+last 3.34 seconds (256 events, generations 0 and 1); no retained matched pair
+exceeds 20ms. This bounded window **cannot** prove absence of earlier GC, or
+identify GC as the prior failure's cause.
+
+Evidence narrows the observed difference to slow wall time within synchronous
+callbacks/SQL/pool acquisition in the failing run, rather than long executor
+queue admission. It does not distinguish database waits from CPU/GIL stalls
+or determine their origin. The first failed instrumented run has no reliable
+thread/task snapshot; this passing run did not reach the snapshot threshold.
+Do not infer stable MCP behavior from this pass or remove any prior failure.
+
+At this checkpoint the deterministic migration corrections have targeted
+passing coverage: the separate identity/origin-authority group, 28 successful
+cases from the original 32-case follow-up, and the two corrected capacity
+cases. Storage's original cancellation timeout and MCP's original plus first
+instrumented timeouts remain recorded; each later single instrumented pass is
+bounded evidence, not root-cause closure. A necessary full CI run on the final
+changed fixture head may verify integration, but even a green full run would
+not establish that these historical timing causes have been resolved.
+
+### Lifecycle unit-double follow-up
+
+Fast CI `40228647346` on `624bf82` reported 370 cases with four errors in
+`test_native_fixture_lifecycle`: its intentionally opaque `auth=object()` could
+not satisfy the new test-fixture member initialization. These errors occurred
+before the lifecycle assertions, not in production authentication. The unit
+fixture now explicitly mocks `initialize_members` with autospec; its original
+lifespan-enter/exit, failed-start, engine ownership, callback count and exactly-once
+disposal assertions are unchanged. No production/helper AttributeError catch
+was added. Entire module: **5 passed, 0 skipped, 0.005s, exit 0**,
+`/tmp/no-demo-native-fixture-lifecycle-fixed.log`; Ruff passed. Complete fast
+Python validation is pending its serial slot. The already running full CI
+`40228654327` was not canceled or restarted and retains the old source result.
+
+Lifecycle follow-up complete fast validation at code head `fe3f85a`:
+`env -u FACTORY_TEST_DATABASE_URL python scripts/check_fast.py --suite python`
+completed **370/370 passed, 0 skipped, 0 failures/errors, 79.542s, exit 0**;
+all required groups passed and `accepted=true`.
+Log: `/tmp/no-demo-fast-python-lifecycle-fixed.log`. This was one bounded,
+exclusive local run; the old complete CI run was left untouched. No live model,
+real external runtime or production identity acceptance is inferred.

@@ -7,3 +7,12 @@
 - [ ] 3.1 静态/wheel/旧参数反例、真实 PG/测试 OIDC 浏览器、完整适用套件；保留首次失败。
 - [ ] 3.2 作者外精确 base/head 完整 diff 与简洁性审查，整改复审；精确 CI 后合并并核 main。
 - [ ] 3.3 报告影响、真实配置路径、旧数据只读盘点边界与本机更新步骤；不自动清空数据。
+
+### Published checkpoint (ba08307)
+
+Implementation/removal and incremental reviews are recorded in verification.md
+and review.md. Keep 3.1/3.2 open: exact fast CI 40223992140 passed, but full CI
+40223312294 at d6c8f62 failed with 36 failures/9 errors in platform PG.
+The browser fixture failure was corrected and independently reviewed (8/8 real
+Chromium scenarios); remaining PG fixture corrections and final full validation
+are in progress. No merge or resulting-main success is claimed here.

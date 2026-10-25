@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 """Factory cursor protocol tests: owned portable SQL + opt-in native PostgreSQL.
 
 SQLite/native-auth cases prove cursor validation, scope and byte bounds only.
@@ -361,7 +362,7 @@ class EventReplayPostgresTests(unittest.TestCase):
         self.assertEqual(self.client.get(f'/api/factory/jobs/{task}/events').status_code, 404)
         self.login("alice")
         self.auth.directory.set_disabled("alice", True)
-        self.assertEqual(self.client.get(f'/api/factory/jobs/{task}/events').status_code, 403)
+        disabled_member_request(self, self.state, self.client, 'GET', f'/api/factory/jobs/{task}/events')
 
     def test_postgres_large_history_other_job_gaps_and_late_events(self):
         first_job, other_job = self.job(), self.job("bob")

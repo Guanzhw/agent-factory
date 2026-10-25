@@ -35,3 +35,20 @@ def internal_headers(key, owner):
     token = jwt.encode({'sub': owner, 'aud': 'agent-factory', 'iat': now, 'exp': now + 3600},
         key, algorithm='HS256')
     return {'Authorization': 'Bearer ' + token}
+
+
+def disabled_member_request(test, state, client, method, path, *, owner='alice', **kwargs):
+    """Assert external rejection, then exercise the native current-member guard."""
+    from fastapi.testclient import TestClient
+    headers = kwargs.pop('headers', {}) | member_headers(state['auth'], owner)
+    external = client.request(method, path, headers=headers, **kwargs)
+    test.assertEqual(external.status_code, 401, external.text)
+    test.assertEqual(external.json(), {'detail': 'OIDC_ACCESS_TOKEN_INVALID'})
+    native = TestClient(state['http_app'], base_url='http://internal-test')
+    try:
+        response = native.request(method, path,
+            headers=internal_headers(state['auth'].settings.jwt_key, owner), **kwargs)
+        test.assertEqual(response.status_code, 403, response.text)
+        return response
+    finally:
+        native.close()

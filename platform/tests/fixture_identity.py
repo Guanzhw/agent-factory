@@ -13,11 +13,11 @@ AUDIENCE = 'factory-test-public-api'
 _KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
 
-def identity_config():
+def identity_config(owners=()):
     key = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(_KEY.public_key()))
     key.update(kid='disposable-test-key', alg='RS256', use='sig')
     return OIDCIdentityConfig(issuer=ISSUER, audience=AUDIENCE, jwks={'keys': [key]},
-        subject_owners={(ISSUER, owner): owner for owner in ('alice', 'bob', 'manager', 'manager2', 'fixture-editor', 'owned-user', 'fixture-owner')})
+        subject_owners={(ISSUER, owner): owner for owner in ('alice', 'bob', 'manager', 'manager2', 'fixture-editor', 'owned-user', 'fixture-owner', *owners)})
 
 
 def access_token(owner):

@@ -1,3 +1,4 @@
+from fixture_auth import disabled_member_request
 # pyright: reportMissingImports=false
 """Real native claims and PG contention; diagnostics never replay an occurrence."""
 from fixture_identity import access_token
@@ -241,9 +242,9 @@ class ScheduleDiagnosticsPostgresTests(unittest.TestCase):
         self.get('/' + schedule['id'])
         self.auth.directory.set_disabled('manager', True)
         try:
-            self.get('/' + schedule['id'] + '/diagnostics', status=403)
-            self.get('/diagnostic-schedules', status=403)
-            self.get('/' + schedule['id'], status=403)
+            disabled_member_request(self, self.state, self.client, 'GET', '/api/factory/schedule-management' + ('/' + schedule['id'] + '/diagnostics'), owner='manager')
+            disabled_member_request(self, self.state, self.client, 'GET', '/api/factory/schedule-management' + ('/diagnostic-schedules'), owner='manager')
+            disabled_member_request(self, self.state, self.client, 'GET', '/api/factory/schedule-management' + ('/' + schedule['id']), owner='manager')
         finally:
             self.auth.directory.set_disabled('manager', False)
 

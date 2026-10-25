@@ -34,3 +34,13 @@ First PG fast run at `2bb08fc`: 61 tests, zero skips, 12 failures and 22 errors,
 ## Remaining validation
 
 PG corrections/full validation, final Web/CI and exact final-head independent review are not yet complete. First daily370 had369pass/1old fixture hash failure; details and replacements are in [testing migration evidence](verification-testing.md). No production IdP, paid model or GPU call is performed. Existing real and old demo data remain untouched. Separate audit found P5/D01 remote research execution is not wired, not merely awaiting real resources; it is tracked as a separate change, not hidden by this authentication work.
+
+## Published-head update
+
+At `ba08307`, [fast CI 40223992140](https://github.com/Guanzhw/agent-factory/actions/runs/40223992140)
+succeeded. The older d6c8f62 full run ended FAIL (platform PG: 2068 cases,
+2018 passed/36 failures/9 errors/5 skipped). The synthetic browser fixture
+correction passed all 8 Chromium scenarios and independent review; PG fixture
+corrections remain in progress. See [exact counts, first failure and review boundaries](verification-testing.md#published-ci-checkpoint--2026-10-25-head-ba08307).
+This update supersedes pending fast-CI statements above, not the unresolved full
+validation or historical MCP diagnosis.

@@ -1,6 +1,9 @@
 """Actual process death after rename on a generated, reconstructible directory."""
 import json
 import os
+from pathlib import Path
+import shutil
+import tempfile
 import time
 import unittest
 from uuid import uuid4
@@ -27,7 +30,19 @@ def owned_directory(test, task):
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL") and os.name == "posix", "Requires isolated PostgreSQL and Linux")
 class StorageProcessTests(unittest.TestCase):
     setUp = fixture.CommandProcessTests.setUp
-    tearDown = fixture.CommandProcessTests.tearDown
+    worker_module = 'controlled_storage_diagnostic_worker'
+
+    def tearDown(self):
+        evidence = Path(tempfile.mkdtemp(prefix='af-storage-cancel-diagnostic-'))
+        try:
+            for path in (self.root / 'server.log', self.workspace / 'storage-cancel-diagnostic.jsonl',
+                         self.workspace / 'storage-cancel-stacks.txt'):
+                if path.exists():
+                    shutil.copyfile(path, evidence / path.name)
+            print('STORAGE_CANCEL_DIAGNOSTIC ' + str(evidence), flush=True)
+        finally:
+            fixture.CommandProcessTests.tearDown(self)
+    headers = fixture.CommandProcessTests.headers
     start = fixture.CommandProcessTests.start
     api = fixture.CommandProcessTests.api
     waiting = fixture.CommandProcessTests.waiting

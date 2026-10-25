@@ -23,6 +23,7 @@ from playwright.sync_api import expect, sync_playwright
 
 ROOT = Path(__file__).resolve().parents[3]
 STORAGE = 'factory-personal-tool-command:alice'
+CSRF = 'synthetic-personal-tools-browser-csrf'
 DESCRIPTOR = {
     'adapterId': 'fixture-cli-v1', 'revision': 'descriptor-v1', 'toolName': 'fixture_lookup',
     'description': 'Synthetic installed tool; no command is executed.',
@@ -63,10 +64,11 @@ class SyntheticAPI:
     def values(self):
         own = self.owner == 'alice'
         return {
-            '/auth/config': {'enabled': False, 'loginPath': '/api/factory/auth/login',
+            '/auth/config': {'enabled': True, 'loginPath': '/api/factory/auth/login',
                              'logoutPath': '/api/factory/auth/logout'},
+            '/auth/session': {'authenticated': True, 'csrfToken': CSRF},
             '/session': {'id': self.owner, 'name': 'Synthetic ' + self.owner.title(), 'role': 'user'},
-            '/status': {'mode': 'demo', 'activeWorkers': 0, 'queuedJobs': 0, 'maxWorkers': 1},
+            '/status': {'mode': 'production', 'activeWorkers': 0, 'queuedJobs': 0, 'maxWorkers': 1},
             '/materials': [], '/jobs': {'items': [], 'nextCursor': None}, '/execution-targets': [], '/applications': [],
             '/commands': {'items': [], 'nextCursor': None},
             '/personal-agent/capabilities': {
@@ -141,6 +143,9 @@ class SyntheticAPI:
                 route.fulfill(status=200, json=self.values()[path])
             else:
                 self.reject(route, 'Unconfigured API read: ' + path)
+            return
+        if request.headers.get('x-factory-csrf') != CSRF:
+            self.reject(route, 'Missing configured browser-session CSRF header')
             return
         body = request.post_data_json
         row['body'] = body

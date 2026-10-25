@@ -2002,3 +2002,18 @@ There has been no deployment, paid model/GPU call or new credential grant. The
 historical MCP long-tail investigation and lack of whole-suite speedup evidence
 remain disclosed. Final main SHA/CI are reported from the actual merged result,
 not inferred from the earlier combined full run.
+
+## No-demo published checkpoint — ba08307
+
+PR136 exact fast [40223992140](https://github.com/Guanzhw/agent-factory/actions/runs/40223992140)
+passed. Earlier full [40223312294](https://github.com/Guanzhw/agent-factory/actions/runs/40223312294)
+at d6c8f62 failed: platform PG 2068 total, 2018 passed, 36 failures, 9 errors,
+5 skips; research discovery completion is unconfirmed. assistant_messages and
+assistant_endpoints own the remaining fixture corrections; root retains final
+integration/CI. acceptance_doc_review corrected the synthetic personal-tools
+browser session contract at ba08307, actual Chromium 8/8 passed and independent
+review PASS. c874→3247127 fixture and 3247127→d6c8f62 diagnostic incremental
+reviews also passed; this does not turn the failed full run green. See
+[review boundaries](../openspec/changes/remove-product-demo-modes/review.md).
+Historical MCP cause and real external IdP remain unverified. No SSH acceptance
+status is advanced by these no-demo checks.
