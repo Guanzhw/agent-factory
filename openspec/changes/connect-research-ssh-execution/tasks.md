@@ -5,13 +5,13 @@
 - [ ] 1.2 冻结直接进程 helper 版本/命令、选定资源 config 与原 receipt 字段；文档说明用户目标 scheduler 未定、自动安装不支持，portable schema/错误反例通过后才写接线。
 
 ## 2. Reuse native child waiting
-- [ ] 2.1 实现精确原 operation 的 Agent 外部结果 handler 与现 observer 接线；以普通 factory-executor 真实 PG child pause→硬重启→原 run 继续验证，foreign ID、重复命令、UNKNOWN 不能新 dispatch。
+- [ ] 2.1 以精确SSH launch/wait adapter+revision注册唯一owner hook，分离父Research等待；实现原 operation Agent结果与现observer接线，用真实PG child pause→硬重启→原run续跑、continue已发送ACK丢失、foreign ID/重复命令反例证明无新dispatch。
 - [ ] 2.2 复用现 process start/custody/read 责任供 SSH adapter 使用，不延长同步等待；测试父取消与预算耗尽后零新操作、原未知 holds 保留，并记录各状态真实含义。
 
 ## 3. Add the selected SSH process backend
-- [ ] 3.1 基于 existing resource/credential/SSH contracts 实现单一直接进程 adapter；portable 测 hostkey/资源变更拒绝、唯一操作映射、字段与路径边界，并文档化无自动安装/无 GPU 分配承诺。
+- [ ] 3.1 Factory保留ResourceService准入/lease，远端仅BoundedProcessAdapter原journal；实现直接进程adapter，portable测hostkey/变更拒绝/唯一映射，明确实际隔离能力；GPU fixture核GpuBinding与释放证据，环境变量单独不能释放。
 - [ ] 3.2 串行真实 loopback sshd + 透明 TCP 转发运行有限 CLI，验证最终 hostkey、submit 应答丢失、断线、控制器重启、原任务唯一、取消正向停止及不确定保留；仅隔离 fixture，无真实账号。
-- [ ] 3.3 原结果与精选文件经现 artifact custody 取回；实际文件测试证明越根/symlink/跨任务拒绝、证据不完整不清理、来源撤权后共享失效，owner 私有输出不默认外泄。
+- [ ] 3.3 实现独立SSH原结果只读port，保持tool_results唯一CLI证明不变；实际文件测试证明owner/run/operation错配拒绝、越根/symlink拒绝、归档失败不清理、来源撤回后共享失效，私有输出不默认外泄。
 
 ## 4. Connect the research consumer
 - [ ] 4.1 setup/确认约定显式选择计算资源与训练材料，沿原 root→child 与预算绑定；实际研究集成测试证明 child 原等待、真实 CLI 输出到 root 评价、负结果保留、目标修订不重置资源/预算。

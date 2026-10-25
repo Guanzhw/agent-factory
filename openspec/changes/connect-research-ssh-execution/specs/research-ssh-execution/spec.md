@@ -25,6 +25,10 @@
 - **WHEN** 提交可能已送达但应答丢失，或查询无法证实原运行身份
 - **THEN** 保持 UNKNOWN 与资源 holds，仅按原身份查询/取消，不重新提交、不把超时或 SSH 会话结束当作停止
 
+#### Scenario: Continuation acknowledgement lost
+- **WHEN** 原 child 的继续命令已发送但回执丢失，随后服务重启
+- **THEN** 找回原 requirement/version 的持久命令与原 native queue 接受证据，不创建替代命令或 run；父研究等待与 child 的 SSH 等待分别由精确绑定负责
+
 #### Scenario: Budget, cancellation and foreign continuation
 - **WHEN** 原预算耗尽、父任务已取消、资源权限撤回，或试图用其他任务的操作结果继续
 - **THEN** 禁止新执行与越权续跑，保留原可授权观察/取消路径；取消只有正向停止证据才释放 holds
@@ -35,6 +39,14 @@
 #### Scenario: Results and cleanup
 - **WHEN** 原训练退出并获得完整停止证据
 - **THEN** 收集原退出状态、限定日志/指标与精选文件，按原身份和完整来源依赖归档；保留负结果，归档失败不删除源证据、不伪造完整成果
+
+#### Scenario: SSH receipt provenance
+- **WHEN** 研究应用请求读取某个 SSH 实验的结果
+- **THEN** 仅以当前owner与原child/run/operation/lease精确匹配的SSH证据读取口返回结果；不得伪装唯一CLI回执、放宽原CLI来源检查或接受模型编写的receipt
+
+#### Scenario: GPU allocation and release evidence
+- **WHEN** 训练声明使用GPU或请求释放其资源占用
+- **THEN** 核对实际设备绑定及原进程停止/设备释放观察；仅有环境变量、平台额度声明或SSH会话退出不能证明GPU分配、强制隔离或释放，缺证据保持对应hold或阻塞验收
 
 #### Scenario: Read-only peer question
 - **WHEN** 团队经验询问或恶意来源要求启动训练

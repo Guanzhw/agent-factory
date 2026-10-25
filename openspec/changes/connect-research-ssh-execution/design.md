@@ -12,6 +12,8 @@
 | `process_runtime.py:268` | 当前同步工具最多观察约 7 秒，未知即报错并保留容量。直接包此工具不能证明长训练的原生暂停/恢复。 |
 | `rounds.py:274`、`delegated_operations.py:53` | 固定 root 通过 custody 创建唯一原实验 child；root 已有 native wait 与原操作观察。保留该协议。 |
 | `native_bridge.py:206`、`control_commands.py:130` | 普通 Agent 已能以原 tool_call_id continue；受信 external_execution_handlers 可提供结果并复用持久命令。缺 SSH operation 对应的精确等待 handler 与自动观察接线。 |
+| `application_runtime.py:36,231,237` | observe_waits 仅遍历原 plan 匹配的 owner；control 进一步按工具的精确 adapter/revision 选 owner，不能只注册一个无人选中的 callback。 |
+| `application_runs.py:20`、`research/evidence.py:67` | tool_results 仅支持唯一 MemberToolOperation CLI binding 和原 personal-tool DONE receipts。SSH 多工具等待链不满足该契约，必须新增窄读口，不能伪装 CLI 回执。 |
 | `workflow_operations.py:131,155` | custody 接受原 RunContext，不要求调用者一定为 Workflow；已有原 task/run/plan/effect-slot 校验。 |
 | `delegation.py:375`、`store.py:301` | child placement 尚不支持；HTTP remote + 本地 scope allocation 明确拒绝。此次不删除这些保护或迁移整个研究 Agent。 |
 
@@ -34,8 +36,9 @@
 - 增加一个受信 SSH process operation adapter，实现已有 `start(context, operation_id, inputs)` / `lookup(context, operation_id)` / `inspect(context, handle)` / `cancel(context, handle)`。它委托 ResourceService 原 lease 与持久 process custody；不建立第二运行状态表/调度器。需增加的 SSH 连接快照与远端原 process receipt 放现 lease/provider body。
 - child 治理 launch 工具从不可变 material config 取得显式资源引用和训练规格，模型仅提供声明允许的参数。以原 native tool call 身份确定 effect-slot，经 OperationCustody 持久化后才发 SSH。重复调用或未知回执只读原意图，不给新 UUID 重新提交。
 - 抽出既有进程“开始/原结果读取”最窄接口供 adapter 使用，保留原 `ProcessRuntimeService.run` 的现有行为；不放宽其 7 秒界限来维持长连接。远端运行不与 SSH 会话生命周期绑定。
-- 给普通 Agent 的 `factory_wait_operations` 注册受信结果 handler：必须核对原 requirement、owner/task/run、原 operation ID 集合与闭合证据，只返回这些 operation 的结果。模型不得用他人的 ID/伪结果继续原 run。
-- 在既有 lifecycle/RuntimeRegistry.observe_waits 遍历中观察这一精确工具消费者，闭合后提交由原 requirement 派生的唯一 ControlCommands 命令，继续原 NativeBridge；无新轮询器。这里 approved 字段是既有工具结果提交协议，不新增逐轮人工审批或代替用户权限。必须验证原授权、预算、取消和命令回执；UNKNOWN 不提交结果，不自动重发 continue。
+- SSH child 精确工具 registrations 为 launch adapter 与专用 wait adapter（例 `ssh-process-launch-v1@1`、`ssh-process-wait-v1@1`），wait factory 使用现 `factory_wait_operations`。通过 RuntimeRegistry.register 的 exact `bindings=(('tool', adapterId, revision), ...)` 同时绑定到唯一 `core-ssh-process` owner；配置指纹仍由不可变 bindings/custody 校验。其 hooks 提供 observe_waits 和 external_result。Research root 的 `research-wait-operations-v1` binding 和 research nativeComponent owner 保持不变，SSH hook 不接管父 root 的 delegated-child等待或研究finalizer。不用全局未限定 handler 抢占所有同名 wait。
+- 普通 Agent 的 external_result hook 必须核对原 requirement、owner/task/run、原 operation ID 集合与闭合证据，只返回这些 operation 的结果。调用方沿既有 registry.control 的精确 wait binding 选择 owner，模型不得用他人的 ID/伪结果继续原 run。
+- 现 lifecycle/RuntimeRegistry.observe_waits 只对匹配 SSH binding 的 child 自动收尾。命令 ID 由原 child/run/requirement/tool_call_id及原 requirement version 派生；先查询原 ControlCommands receipt，已有 PREPARED/DISPATCHING/已确认回执走原命令处理/只读恢复，不能重新读新 version 改ID重新提交。无记录才检查当前精确 requirement 并创建一次命令。继续原 NativeBridge，无新轮询器。approved 字段是既有工具结果提交协议，不新增逐轮人工审批或代替用户权限。UNKNOWN 不提交结果；continue 可能已发送但 ACK 丢失后必须核对原 queue/native metadata command proof，不重发、不新建 run。
 
 这些是待实现接缝，不是基线现成能力。先做实际普通 child pause→控制器重启→同 run 恢复的否证测试，再扩研究消费者；若现 ControlCommands 的精确身份/恢复边界不满足，报告具体缺口并独立审查最小修改，不能偷偷回退第二控制器。
 
@@ -47,13 +50,19 @@
 
 远端必须有明确可用的匹配版本进程 helper/interpreter。只读检查其版本、原始身份存储与必要隔离能力；本变更不自动安装 runtime。通过 SSH 发有限 JSON 命令，参数不拼接成任意 shell；远端 helper 复用 BoundedProcessAdapter 的原 custody 与停止证明，不提供独立调度服务。helper 安装路径、启动契约在实施前冻结，由受控夹具验证；不能声称当前已有生产 SDK。
 
+ResourceService lease、准入、总额度与 PostgreSQL 记账始终留在 Factory；不把依赖本地 Store、root lock、资源池 SQL 的 ProcessResourceProvider 搬到远端。SSH adapter 在 Factory 侧实现现 provider 契约，将原身份请求交给远端有限 helper；远端仅运行 BoundedProcessAdapter 的本地 journal、原进程身份核对与停止动作，不保存第二份全局资源池/任务队列，也不主动启动恢复循环。
+
 远端 custody 绑定原 owner/task/run/operation/lease、选定 endpoint/hostkey/root、进程启动身份。断线不是停止，SSH退出码不等于训练退出码。提交已发送但应答丢失时，原 journal 的存在/缺失必须以同身份查询；无可证实“从未开始”记录则 UNKNOWN，不重新 launch。连接改变/凭据撤回后不新提交；只允许现机制授权的原身份观察/取消，不能新建旁路凭据，无法观察则继续 UNKNOWN/hold。
 
 ### 4. Research placement, budget and evidence
 
 研究 setup/已确认约定显式选择 SSH 计算资源及可用训练材料。该 placement 指计算位置，不是 root/child native queue 的迁移。对应材料精确绑定 SSH adapter/连接及可用参数 schema，旧未确认目标不能默默选默认远端。配置变更走现 goal revision/确认，不重置项目 scope。每轮与 child 复用原预算；ResourceService 单独约束实际 CPU/内存/磁盘/时限/GPU 资源声明，SSH检查不扩大预算。
 
+资源声明和平台准入上限不等于远端 kernel enforcement。preflight 必须返回实际可证明的隔离能力，不能把本机限制或环境变量当远端强制边界。GPU 运行需现 GpuBinding 绑定实际分配设备/namespace，并由可信目标适配器提供与原 lease/process 关联的占用及释放观察，经 validate_gpu_evidence 核对；CUDA_VISIBLE_DEVICES 仅进程选择，不是分配/独占/释放证明。现 GpuBinding 自身也明确 quotaEnforced/deviceIsolationEnforced=false；不得据此声称隔离外部进程。无实际 GPU 证明时可完成 CPU机制验证，但 GPU释放/D01仍 BLOCKED。
+
 实际 stdout/stderr、退出码、选定指标和明确文件清单从原运行目录取回，经现 artifact_write 与研究精选证据契约归档；完整原结果保持 owner 私有，团队仅按现 sourceContentIds/精选字段与附件授权读取。拒绝越根路径、symlink 替换、跨运行文件和尺寸越界；先确认完整归档，再允许独立的显式清理，不把 reclaim 等同删除用户代码/数据。科学负结果保留；进程成功不自动代表目标达成。
+
+明确新增窄公开应用读口（拟 `ApplicationRuns.ssh_results(owner, child_task_id, run_id, operation_id)`）：当前成员/owner检查，原task/run/plan绑定，原operation精确SSH adapter pin及其lease/remote job身份，原launch/wait材料bindings和停止证据全部核对后，返回带 `kind='ssh-process'` 的原receipt、选定材料引用、exit/status、已归档artifact引用及provenance。它只读，不启动/续跑/刷新授权。研究证据消费者按明确SSH类型分支调用，不把它送入 MemberToolOperation CLI解析；原tool_results唯一CLI检查、personal-tool DONE格式与本地路径完全保留。缺失原绑定/停止或尚未取回的文件明确未完成，不用模型输出冒充真实receipt。精选字段/文件仍由原研究evidence配置确认，不自动将整个SSH输出分享。
 
 ### 5. Validation and delivery
 
