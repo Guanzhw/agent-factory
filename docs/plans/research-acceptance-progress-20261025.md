@@ -107,3 +107,37 @@ QA 最终五个 case 有分次通过记录，但没有同一轮完整 5/5 绿色
 ### P0–P9 阶段更新
 
 P0 的新独立 core smoke 通过；P1–P3 的既有身份、消息、事件机制证据保留，但 QA 队列重复 attempt 尚待修复验证。P4 的项目基线不等于新增关联消费者锁序安全。P5 仍只有合成自主多轮与真实本机执行机制证据，未达到 C01/D01。P6 的限定内容共享边界不变，不能自动扩大为 raw artifact 共享。P7 新增 mobile QA 浏览器与关联 portable 进展，desktop 证据缺口、恶意 QA 重试、关联锁序和独立 review 尚未闭合。P8 已有 recipe/CLI 实现和目标证据，但 `210810f` 未整体验收，复现与继续研究门槛仍开放。**P9 未完成：首 full 明确失败，相关修复尚未形成新的完整适用验收；任何 fast 成功均不解除 C/D 的真实依赖与产品行为门槛。**
+
+## 追加检查点 — 2026-10-25 16:35 UTC
+
+以下记录最新机制验证与评审结果，保留前述首失败和旧时点判定；没有为文档更新重跑测试。短版本标识按协调检查点原样记录。
+
+- core 重试围栏 `5fe414c` 独立 review **PASS**；**29 portable＋4 PG** 通过，PG 30.143s。强制 queue attempt 2 先于 observer：恶意响应仍仅 **1 HTTP**、原任务 failed、保留原保护记录；普通可重试错误仍 **2 HTTP 后成功**，并覆盖 rollback/reopen。首次 cleanup 错误保留。这关闭了已定位的恶意 QA 重试机制缺口，不把先前失败改写为成功。
+- P7 关联最终 `030016a` 完整独立 review **PASS**；**51 portable＋4 PG** 通过，PG 30.389s，覆盖锁 barrier、无 association 的原团队记录进入实际 child、正常/恶意路径；最后提示修订另有 **3 portable** 通过。模型输入的 **11 个来源依赖全部保留**，界面只展示 1 个 assessment 不等于仅绑定一个来源。
+- P8 当前 root `737`＋peer 增量 `bb8`：**4 PG、92.059s** 通过实际 CLI 复现、继续研究、rollback 与来源撤回，独立 review **PASS**。首次命令缺少 deployment import root 的失败保留。该证据是受控 CLI 机制，不是实际科研/GPU 交付价值验收。
+- 当前组合 **27 portable** 通过；架构检查覆盖 **480**、零违规；全生产源码 Pyright **0 errors**。这些检查不替代完整 discovery。
+- 正式 P7/P8 UI `2f1fb74` 完整独立 review **PASS**，**490 Web** 测试通过；真实浏览器仍在 fixture 调试，不能记 B02 PASS。该 UI 尚未创建 PR、未合并。
+- main `cd50b9c` 的 [CI40211020781](https://github.com/Guanzhw/agent-factory/actions/runs/40211020781) **SUCCESS**。后端组合 `931f7c3` 的 [full40211745245](https://github.com/Guanzhw/agent-factory/actions/runs/40211745245) **运行中，非已通过**。
+- [#129 QA `b105`](https://github.com/Guanzhw/agent-factory/pull/129)、[#130 QA UI `e811`](https://github.com/Guanzhw/agent-factory/pull/130)、[#131 关联 `f997`](https://github.com/Guanzhw/agent-factory/pull/131)、[#132 交付 `e9ed`](https://github.com/Guanzhw/agent-factory/pull/132) 均为 Draft，精确提交 CI 待终态；#121/#125 仍未合并。独立分支评审与目标验证不等于这些 PR head 已分别完整验收。
+
+### 对验收 case 与阶段的影响
+
+| 范围 | 最新判定 |
+| --- | --- |
+| A03／A04／A05；P1–P3、P7 QA | 原保护记录在队列重试前阻止再次调用，正常重试不被误禁，已有确定性/PG 证据及独立 review；A05 机制缺口已修，最终组合 full 仍待。BYOK token/费用未计量的边界不变。 |
+| A02／A08；P6–P7 关联 | 锁序修复、完整来源依赖与实际 child 消费已有目标证据，不能再称关联未实现；尚须当前组合与完整浏览器旅程验收。精选共享不自动扩大为全部 raw artifact 共享。 |
+| A07；P4–P5 | 新关联消费者锁 barrier 已验证；不能据此声称运行中目标修改的完整用户旅程通过。自主轮次现有合成机制证据不替代 C01。 |
+| B02；P7/P8 UI | 正式 UI 已实现、独立 review 和 490 Web 通过；真实浏览器未完成，整项仍缺验收，旧 mobile 子场景也不能替代新完整旅程。 |
+| C04；P8 | 交付、他人实际 CLI 复现/继续及来源撤回已有机制证据，不再是仅有 recipe portable；真实研究成果、数据与容差下的独立复现价值仍未验，不记 C04 完整 PASS。 |
+| A01／B01；P0 | 独立底座既有证据保留；main CI 成功不能代替当前组合的应用移除/完整登录边界。 |
+| A06；P5–P6 | 自动记录已有实现与局部证据；本检查点未新增完整成功/负结果/技术失败/取消/UNKNOWN 分支验收，不上调整项。 |
+| C01–C03／D01–D03；P5、P7–P9 | 无新增真实模型配对价值、实际 GPU、真实部署或目标机容量结果。仍按原 BLOCKED／NOTRUN 边界，不能由 CLI、合成模型或 Web 测试外推。 |
+| P9 | 新后端 full 正在 `931f7c3` 运行；前轮 FAIL、首次 fixture/cleanup 错误与目标修复均保留。当前没有完整最终交付 PASS。 |
+
+### 正式真实验收前仍需冻结的最少输入
+
+1. 参考研究任务、可见输入与隐藏 oracle、正式模型/参数、调用预算，以及有/无团队经验和无关/过时经验的配对判据；这些须在运行前固定，不能按结果调整通过线。
+2. 可共享的实际数据、成果复现/继续方式及随机或 GPU 结果容差；受测 agent 不得看到隐藏裁判答案。
+3. 实际身份服务与部署环境、个人远端 GPU/SSH 目标及明确访问授权；目标机配置、代表性约 20 人负载、运行时长、SLO 和资源阈值。
+
+上述真实依赖之外，当前 full 终态、正式 UI 浏览器 fixture 修复与完整旅程、最终集成逐 case 证据仍是可继续执行的工程工作，不应归为等待用户选择而停下。
