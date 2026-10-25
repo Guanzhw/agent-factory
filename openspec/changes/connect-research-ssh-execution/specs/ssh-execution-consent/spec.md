@@ -51,3 +51,9 @@ The service SHALL reject native Windows SSH agent acquisition with `SSH_CONTROLL
 - **WHEN** an authenticated member reads SSH capabilities on native Windows
 - **THEN** enabled continues to describe configuration-management availability and controllerDiagnostic reports the unsupported code; list and revoke remain usable, and the existing UI error presentation explains the limitation
 - **AND** absence of this known diagnostic on other platforms does not certify Darwin or any untested controller
+
+#### Scenario: Unsupported Windows controller diagnostic retains resource management
+- **GIVEN** the existing test-only OIDC/resource browser fixture runs on Linux and only the actual SSH capability response diagnostic is replaced with SSH_CONTROLLER_PLATFORM_UNSUPPORTED
+- **WHEN** the member opens existing SSH resources
+- **THEN** the UI explicitly states native Windows checking/execution is unsupported, preserves the existing resource view and allows explicit revocation through the actual API, with no training task or helper launch
+- **AND** evidence labels this synthetic capability projection, not native Windows runtime acceptance; the normal Linux browser scenario remains unchanged
