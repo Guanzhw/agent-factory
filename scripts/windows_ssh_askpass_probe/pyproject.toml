@@ -1,0 +1,16 @@
+[build-system]
+requires = ["hatchling==1.29.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "af-windows-ssh-askpass-probe"
+version = "0.0.1"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+af-windows-ssh-askpass-probe = "af_askpass_probe:main"
+af-windows-ssh-askpass-helper = "af_askpass_probe:helper_main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["af_askpass_probe"]
