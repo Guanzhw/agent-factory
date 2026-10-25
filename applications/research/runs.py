@@ -87,7 +87,7 @@ class ResearchRuns:
         fingerprint = digest({'action': 'start', 'project': project_id, **body.model_dump(exclude={'requestId'})})
         with projects.db.store.transaction() as admission:
             self.scopes.admission_lock(admission)
-            with projects.db.write() as conn, self.records.content.db.write():
+            with projects.db.write() as conn, self.records.content.db.write(), self.records.event_write():
                 project = projects._owned(conn, owner, project_id)
                 old = projects.db.old(conn, projects.commands, owner, body.requestId, fingerprint)
                 if old is not None:
