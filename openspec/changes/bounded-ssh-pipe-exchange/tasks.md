@@ -14,3 +14,12 @@ Module and consumer independent reviews passed after the async-guard/cleanup cor
 ### Later exact-head Windows result
 
 Task 3.2's bounded-pipe platform verification is now complete: dc1fead Windows portable job121308976958 passed 49/49, zero skips, 2.905s, selecting three portable classes and excluding the actual Linux helper (separate Linux 16/16 passed). Earlier 50-case errors and old d3 selector WinError10038 remain recorded. The same run's ASKPASS job failed; credentials and whole Windows SSH acceptance remain open outside this bounded-pipe task. Old d3 full PG is still running, not a final PASS.
+
+### Final integrated result
+
+Exact860e460 full40241711220 now passed all seven jobs, including Windows
+1317 passed/871 skipped and PG2183 passed/5 skipped; the bounded-pipe tasks above
+are complete within their stated scope. The old 50-case failure and later49-case
+pass remain separate historical results. Documentation-only follow-up requires
+review/new exact fast; PR137 is not yet merged. This does not close DraftPR138
+production Windows credentials, GPU implementation or actual target acceptance.

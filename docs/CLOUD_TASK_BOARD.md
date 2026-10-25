@@ -1,21 +1,15 @@
-# Active: no-demo and SSH controller support checkpoint — 2026-10-25
+# Active: final Linux SSH publication and separate Windows implementation — 2026-10-25
 
-Implementation writers are idle/frozen. Root owns remaining exact-head CI and merge decisions; PR136 and PR137 are Draft/unmerged.
-
-| Owner / scope | Current evidence | Open boundary |
+| Owner / scope | Current evidence | Remaining gate |
 |---|---|---|
-| root; assistant_endpoints; assistant_messages — no-demo integration/fixtures | PR136 head `1597`: [fast40232215707](https://github.com/Guanzhw/agent-factory/actions/runs/40232215707) SUCCESS (370 Python, 61 PG with zero skips, 487 Web). Independent [full40233357540](https://github.com/Guanzhw/agent-factory/actions/runs/40233357540) RUNNING. | No final full PASS yet. Old 624 full failed; correction details below. |
-| root; research_app_spec; assistant_endpoints — SSH provider/runtime/waits | Linux controller → Linux helper CPU mechanism implemented. Native 3/3; Research 1/1 (25.758s); real loopback 1/1 (8.608s); actual accepted-continuation ACK loss plus SIGKILL 2/2 (33.152s). | Windows controller and GPU allocation/binding UNIMPLEMENTED. Physical SSH network fault and target model/GPU acceptance remain open. |
-| research_frontend; acceptance_doc_review — browser/evidence/docs | `2d3bebb` actual Linux Chromium verifies Windows-capability diagnostic projection, actual revoke and zero tasks/helper calls; `66e116d` records evidence. Prior core/research OIDC browsers retain their own scope. | This is not actual Windows execution. Old standalone HTML prototype is retired. |
-| foundation_review; pr104_independent_review — independent review | Cumulative exact `1597 → 66e116d` PASS. Helper guard `e4cf12b`: Windows/Linux static checks zero errors and 12 helper tests passed. | Current 66 fast pending; final full remains a separate gate. |
+| root — PR136 | Merged `e7987e75`; [main40236766611](https://github.com/Guanzhw/agent-factory/actions/runs/40236766611) SUCCESS. | Real organization identity remains separate. |
+| root — PR137 | Exact `860e46090dc98f6b2160da4cbc3b7d9de17aa775` [full40241711220](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220): all seven jobs SUCCESS. PG2183 passed/5 skipped (1581.818s); Windows1317 passed/871 skipped (233.556s); zero failures/errors; six required groups SSH6/BYOK109/boundaries16/native10/self-service19/invariants5 all zero skips; Web490 both platforms, Chromium2 and standalone core passed. | Documentation-only follow-up review/exact fast, then merge/main checks. Not yet merged. |
+| independent reviewers | Code-review records retained; `07c75a0` adds review documentation. Later changes remain documentation-only relative to tested860e460. | No unchanged full rerun required; documentation review and exact fast still required. |
+| PR138 Windows implementation | Separate Draft; bounded pipes have actual Windows evidence. | Production Windows credential integration unfinished; this is an implementation gap, not merely missing target access. |
 
-The user's actual controller is Windows **ACETAMIDO**, with Linux remote execution a possibility. Current SSH controller relies on POSIX ssh-agent, UID/socket and pipe-selector behavior, so Windows execution is not merely unverified: it is unsupported/unimplemented. `eaf292d` rejects it before vault read or Popen; capability/UI diagnostics preserve listing and revocation. GPU bindings are also rejected, not implemented by setting environment variables.
+[PG artifact12617398651](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220/artifacts/12617398651) and [SSH verification](../openspec/changes/connect-research-ssh-execution/verification.md) record the result. Linux CPU helper/native mechanisms are implemented; GPU allocation/binding remains UNIMPLEMENTED and rejected. Native accepted-continuation ACK loss does not establish SSH-wire submit ACK loss. Actual Windows→Linux target, physical network-fault and real model/GPU/hardware acceptance remain open.
 
-Old PR136 624 [full40228654327](https://github.com/Guanzhw/agent-factory/actions/runs/40228654327) ended FAIL: combined 2068 cases, 2057 passed, 2 failures, 4 errors, 5 skips, 2091.848s. Four lifecycle fixture errors were fixed; the two targeted corrections passed in 9.959s and 25.333s. These do not close historical MCP/storage root causes or substitute for the running full.
-
-Old PR137 a165 full [40232239164](https://github.com/Guanzhw/agent-factory/actions/runs/40232239164) failed Windows Pyright with 14 errors, since fixed. Its PG job was cancelled/superseded to prioritize PR136; partial artifact `12613093447` has no final test count and is not PASS. Old a165 fast passed 399 Python, 62 PG with zero skips, and 489 Web; it is not current 66 exact-head evidence.
-
-No deployment, paid model/GPU call or new credential access is claimed. Heavy checks remain serial. Earlier checkpoints below preserve their original scope and failures.
+Prior failed/cancelled CI runs and MCP/storage timing uncertainty remain disclosed below. No overall speedup, deployment or paid execution claim is added. Root owns publication; this checkpoint does not mark PR137 merged.
 
 ---
 

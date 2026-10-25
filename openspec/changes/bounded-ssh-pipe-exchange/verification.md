@@ -53,3 +53,37 @@ ASKPASS/credential behavior remains a separate open gate.
 At 1448bb9 the first post-integration actual Linux loopback/onboarding group ran four cases in 8.668s: three onboarding cases passed, the wrong-pin portion of the helper case errored because the new low-level CalledProcessError escaped instead of the existing ValueError protocol rejection. This was an error-contract regression, not evidence that the bad host pin was accepted. The original failure log remains `/tmp/af-ssh-bounded-real-loopback.log`; the existing rejection/no-journal assertions are retained for the correction.
 
 The targeted corrected helper loopback passed 1/1, zero skips, 9.512s (`/tmp/af-ssh-bounded-real-loopback-corrected.log`): actual installed core wheel through loopback sshd and transparent mapped TCP port, pinned host rejection before a journal, original process identity/output/cancellation assertions unchanged. Combined with the three unchanged onboarding passes, this supports Linux transport compatibility only, not Windows credentials or real GPU execution.
+
+## Final code validation — 860e460
+
+Exact `860e46090dc98f6b2160da4cbc3b7d9de17aa775`
+[full40241711220](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220)
+completed **all seven jobs SUCCESS**.
+
+| Check | Actual result |
+|---|---|
+| Combined PostgreSQL discovery | 2188 total, 2183 passed, 5 skipped, zero failures/errors; 1581.818s. |
+| Required groups | SSH 6, BYOK 109, boundaries 16, native 10, self-service 19, invariants 5: all passed, zero skipped in all six groups. |
+| Windows discovery | 2188 total, 1317 passed, 871 skipped, zero failures/errors; 233.556s. |
+| Web / browser | 490 Web tests on each platform; two CI Chromium scenarios passed. |
+| Standalone core | Actual installed-core check passed. |
+
+[PG artifact12617398651](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220/artifacts/12617398651)
+retains the full result. Earlier failures and partial/cancelled runs remain their
+original results; this is a different exact code head, not retrospective repair
+of their evidence.
+
+`07c75a0` added review documentation only; this final follow-up also changes only
+documentation relative to 860e460. Production, tests, workflows and lockfiles are
+byte-identical, so the exact-code full is reusable without another full run.
+The new documentation head still requires independent review and exact fast CI.
+PR137 is not yet merged. PR136 is merged as `e7987e75`, with
+[main40236766611](https://github.com/Guanzhw/agent-factory/actions/runs/40236766611)
+successful.
+
+This accepts the implemented Linux CPU mechanism and bounded-pipe contracts,
+not GPU execution. GPU allocation/binding remains unimplemented and rejected.
+Production Windows credential integration remains unfinished in Draft PR138.
+Native continuation accepted-before-ACK-loss evidence is not SSH-wire submit
+ACK-loss evidence; actual target/network fault and real model/GPU acceptance
+remain open. Missing target inputs do not erase those implementation gaps.

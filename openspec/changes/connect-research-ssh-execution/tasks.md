@@ -21,7 +21,7 @@
 
 ## 5. Review and target acceptance
 
-- [ ] 5.0 CI keeps one original native SSH wait/restart case and portable input/wait contracts in daily selections. Manual full discovery requires all native SSH cases and the Research setup-to-delivery integration to execute without skips. The separate real loopback SSH check reports its actual host prerequisites and evidence; a missing sshd is not GPU or network acceptance.
+- [x] 5.0 CI keeps one original native SSH wait/restart case and portable input/wait contracts in daily selections. Manual full discovery requires all native SSH cases and the Research setup-to-delivery integration to execute without skips. The separate real loopback SSH check reports its actual host prerequisites and evidence; a missing sshd is not GPU or network acceptance.
 - [ ] 5.1 对精确 base/head 完整 diff 做作者外精简审查，必要整改复审；串行组合适用 PG/独立 core/前端检查，保留首失败与清理记录。
 - [ ] 5.2 获取目标最小非秘密信息并冻结执行方式、环境、预算与允许故障实验；在已明确的目标执行方式下补实际适配/验收规范（若需 scheduler），否则 D01 保持 BLOCKED，不擅选 Slurm。
 - [ ] 5.3 正式目标真实训练/停止/恢复/证据验收按冻结参数完成或明确受阻；交付实际来源与限制，不能由受控测试推定 GPU、外部模型或部署通过。
@@ -69,3 +69,14 @@ Details: [native fault evidence](verification-native-inputs.md), [Research integ
 
 
 The first Windows targeted run at stacked `88118b2` exposed three fixture replacements missing the explicit POSIX constructor option and one direct Linux helper journal fixture incorrectly collected as portable. Original run 40239375015 retained: 50 cases, 46 passed, four errors, zero skips. The twelve real Windows pipe cases and caller cancellation checks passed. Correct fixture semantics and explicit Linux helper selection are required; no product guard or helper OS restriction will be relaxed. Full 40239428444 at d3 remains its original run, not a final-head pass.
+
+## Final-code full checkpoint — 860e460
+
+Full40241711220 passed all seven jobs at exact 860e460: PG 2183 passed/5 skipped,
+Windows 1317 passed/871 skipped, all six required groups zero skips, Web490 per
+platform, Chromium2 and standalone core passed. Exact details are in verification.md.
+
+- Final applicable full-discovery obligation in 5.0 is satisfied for this code, including six required SSH cases. Code review/full validation portions of 5.1 are satisfied; documentation review, new exact fast and merge/main checks remain.
+- Mixed tasks retain their open parts: Linux CPU execution and original native recovery have evidence, but GPU binding/allocation is unimplemented; actual SSH-wire loss/network faults and target model/GPU acceptance are not proven by native continuation tests.
+- PR138 Windows credential product work is separate and unfinished. No target access is treated as a substitute for implementation.
+- Only documentation differs after tested 860e460 (including 07c75a0); no full rerun is needed for this follow-up. PR137 remains unmerged until review/fast checks.
