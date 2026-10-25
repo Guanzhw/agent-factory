@@ -40,6 +40,8 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
             'baseURL': 'https://opencode.ai/inference/go/v1'}
         self.revoked = False
         self.answer = response_output()
+        self.checksum_tools = [{'type': 'function', 'function': {
+            'name': 'checksum_fixture', 'parameters': {'type': 'object'}}}]
 
     def wire(self, request):
         self.calls.append(request)
@@ -112,7 +114,8 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
 
     def test_agno_continuation_survives_reconstruction_but_not_credential_revision_change(self):
         self.answer = response_output(tool=True)
-        first = asyncio.run(self.model().ainvoke([Message(role='user', content='synthetic task')]))
+        first = asyncio.run(self.model().ainvoke([Message(role='user', content='synthetic task')],
+            tools=self.checksum_tools))
         assistant = Message(role='assistant', content=first.content, tool_calls=first.tool_calls,
             provider_data=first.provider_data)
         messages = [Message(role='user', content='synthetic task'), assistant,
@@ -291,7 +294,8 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
                 'function': {'name': 'checksum_fixture', 'arguments': '{}'}}]}, 'finish_reason': 'tool_calls'}]}
         original = dict(self.config)
         model = self.model()
-        first = asyncio.run(model.ainvoke([Message(role='user', content='synthetic task')]))
+        first = asyncio.run(model.ainvoke([Message(role='user', content='synthetic task')],
+            tools=self.checksum_tools))
         messages = [Message(role='user', content='synthetic task'), Message(role='assistant', content=first.content,
             tool_calls=first.tool_calls, provider_data=first.provider_data),
             Message(role='tool', tool_call_id='call_synthetic', content='synthetic result')]
@@ -329,7 +333,8 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
     def test_legacy_agno_responses_private_record_can_still_be_read(self):
         self.answer = response_output(tool=True)
         model = self.model()
-        first = asyncio.run(model.ainvoke([Message(role='user', content='synthetic task')]))
+        first = asyncio.run(model.ainvoke([Message(role='user', content='synthetic task')],
+            tools=self.checksum_tools))
         private = first.provider_data['owner_model_continuation']
         legacy = {'owner_responses': {field: private[field] for field in ('scope', 'session', 'continuation')}}
         self.answer = response_output()
@@ -348,7 +353,8 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
                     'finish_reason': 'tool_calls', 'message': {'role': 'assistant', 'content': None,
                         'reasoning_content': 'synthetic-private-reasoning', 'tool_calls': [{'id': 'call_synthetic',
                             'type': 'function', 'function': {'name': 'checksum_fixture', 'arguments': '{}'}}]}}]}
-                first = asyncio.run(self.model().ainvoke([Message(role='user', content='synthetic original task')]))
+                first = asyncio.run(self.model().ainvoke([Message(role='user', content='synthetic original task')],
+                    tools=self.checksum_tools))
                 marker = deepcopy(first.provider_data)
                 if legacy:
                     private = marker['owner_model_continuation']
@@ -381,7 +387,8 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
                     'finish_reason': 'tool_calls', 'message': {'role': 'assistant', 'content': None,
                         'reasoning_content': 'synthetic-private-reasoning', 'tool_calls': [{'id': 'call_synthetic',
                             'type': 'function', 'function': {'name': 'checksum_fixture', 'arguments': '{}'}}]}}]}
-                first = asyncio.run(self.model().ainvoke([Message(role='user', content='synthetic original task')]))
+                first = asyncio.run(self.model().ainvoke([Message(role='user', content='synthetic original task')],
+                    tools=self.checksum_tools))
                 marker = deepcopy(first.provider_data)
                 if legacy:
                     private = marker['owner_model_continuation']
