@@ -73,7 +73,8 @@ class DelegatingModel(Model):
         # state is unchanged, and every provider retry/tool-loop call rechecks.
         self._guard_provider_calls(model, current, local_current=local_current,
             ledger=ledger_for_plan(store, plan), plan=plan, context=context,
-            on_recovered=lambda: self._model_recovered(context))
+            on_recovered=lambda: self._model_recovered(context),
+            on_protocol_rejected=lambda: store.reject_model_protocol(context))
         response.model = model.id
         response.model_provider = model.provider
         store.event(response.run_id, "model_binding_selected", "Exact trusted model adapter selected for this native response",
@@ -89,7 +90,7 @@ class DelegatingModel(Model):
         return self._complete_selection(prepared)
 
     @staticmethod
-    def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None, local_current=None, on_recovered=None):
+    def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None, local_current=None, on_recovered=None, on_protocol_rejected=None):
         invoke, ainvoke, invoke_stream, ainvoke_stream = model.invoke, model.ainvoke, model.invoke_stream, model.ainvoke_stream
 
         def reserve(args, kwargs, *, streaming=False):
@@ -101,6 +102,11 @@ class DelegatingModel(Model):
             if ledger is not None:
                 ledger.finish_attempt(identity, ledger.evidence_for(plan, value))
 
+        def reject_protocol(error):
+            if (on_protocol_rejected is not None and isinstance(error, ModelProviderError)
+                    and str(error) == 'PERSONAL_MODEL_TOOL_NOT_DECLARED'):
+                on_protocol_rejected()
+
         def recovered():
             if on_recovered is not None:
                 on_recovered()
@@ -110,7 +116,10 @@ class DelegatingModel(Model):
             try:
                 response = invoke(*args, **kwargs)
             except BaseException as error:
-                finish(identity, error)
+                try:
+                    finish(identity, error)
+                finally:
+                    reject_protocol(error)
                 raise
             # A later permission/cancellation check cannot erase incurred usage.
             finish(identity, response)
@@ -126,7 +135,10 @@ class DelegatingModel(Model):
             try:
                 response = await ainvoke(*args, **kwargs)
             except BaseException as error:
-                finish(identity, error)
+                try:
+                    finish(identity, error)
+                finally:
+                    await asyncio.to_thread(reject_protocol, error)
                 raise
             finish(identity, response)
             await asyncio.to_thread(current)
@@ -150,10 +162,13 @@ class DelegatingModel(Model):
                 current()
                 recovered()
             except BaseException as error:
-                if ledger is not None:
-                    authoritative = ledger.evidence_for(plan, error)
-                    if authoritative is not None:
-                        evidence = authoritative
+                try:
+                    if ledger is not None:
+                        authoritative = ledger.evidence_for(plan, error)
+                        if authoritative is not None:
+                            evidence = authoritative
+                finally:
+                    reject_protocol(error)
                 raise
             finally:
                 # No final authoritative usage => UNKNOWN with the whole hold,
@@ -188,10 +203,13 @@ class DelegatingModel(Model):
                     local_current()
                 recovered()
             except BaseException as error:
-                if ledger is not None:
-                    authoritative = ledger.evidence_for(plan, error)
-                    if authoritative is not None:
-                        evidence = authoritative
+                try:
+                    if ledger is not None:
+                        authoritative = ledger.evidence_for(plan, error)
+                        if authoritative is not None:
+                            evidence = authoritative
+                finally:
+                    await asyncio.to_thread(reject_protocol, error)
                 raise
             finally:
                 try:
