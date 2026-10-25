@@ -69,3 +69,41 @@ QA 最终五个 case 有分次通过记录，但没有同一轮完整 5/5 绿色
 多份 verification 仅列临时日志路径或阶段源码描述，缺完整逐 case 最终 head/run manifest；未能从记录确定的精确版本归属仍为 **unknown**，不得补猜。临时路径不是可下载附件。
 
 `link-bounded-research-rounds/verification.md` 是已移除旧 Research 的历史 ORX 证据，不计入新应用 P5、C01 或 D01。历史 MCP 长尾根因、无整套提速证据的限制仍存在，局部通过不能关闭它们。
+
+## 追加检查点 — 2026-10-25 16:08 UTC
+
+本节保留并更新上面的历史审计判定；信息来自本轮协调检查点及已完成的目标验证，没有重跑测试。短 SHA 按收到的记录保留，不补猜完整版本。
+
+### 精确运行终态与待验证修复
+
+- `551f1bf` 的 [full40206239436](https://github.com/Guanzhw/agent-factory/actions/runs/40206239436) 最终 **FAIL**：PG 2029 项、2 failures、7 errors、5 skips，1904.628s；Windows 2029 项、7 errors、822 skips，203.273s。独立 core smoke **PASS**；不能用它覆盖整套失败。
+- 7 errors 的夹具修复 [#126](https://github.com/Guanzhw/agent-factory/pull/126) 已合入 `bc776`，[main fast40208942470](https://github.com/Guanzhw/agent-factory/actions/runs/40208942470) **SUCCESS**。该 fast 不是修复后完整 discovery 的结果。
+- remote 取消断言已定位为未控制后台观察顺序：修复 `a2421fb`＋`65ec5dd` 保留观察前精确 PREPARED，观察后要求精确 CANCELLED_NO_DISPATCH、同一身份及零 ticket；与 dispatch-CAS 先胜反例合计 **2 PG passed／0 skipped，9.884s**，尚待独立 review。首 full 失败保留，生产代码未改。
+- 恶意 QA 已确认同一 task/run 的 queue attempt **1→2**，因此发出 **2 次 HTTP**；原 wire=1 目标失败不是可以忽略的偶发结果。修复与复验未闭合，**A05 不可计 PASS**。
+- 以下精确短 head 的 fast 均 **SUCCESS**，PR 仍为 **Draft**：[#121 `ef411`](https://github.com/Guanzhw/agent-factory/pull/121)／[40209307647](https://github.com/Guanzhw/agent-factory/actions/runs/40209307647)；[#125 `ece86`](https://github.com/Guanzhw/agent-factory/pull/125)／[40209314890](https://github.com/Guanzhw/agent-factory/actions/runs/40209314890)；[#127 `5b9`](https://github.com/Guanzhw/agent-factory/pull/127)／[40209353352](https://github.com/Guanzhw/agent-factory/actions/runs/40209353352)；[#128 `18921`](https://github.com/Guanzhw/agent-factory/pull/128)／[40209360880](https://github.com/Guanzhw/agent-factory/actions/runs/40209360880)。不将这些 fast 外推为组合 full 或产品验收通过。
+
+### 17 case 差距更新
+
+| Case | 本检查点更新／保留的门槛 |
+| --- | --- |
+| A01 | `551f1bf` 独立 core smoke 通过；应用移除、遗留任务及最终新组合边界仍不能由该单项外推。 |
+| A02 | 原权限/私有 artifact 机制证据保留；显式精选原始 artifact 的完整产品路径和最终版本验收仍缺。 |
+| A03 | remote 取消两阶段与 CAS 反例目标通过、待 review；同一 QA task/run 被队列再次尝试的已确认事实须保留，恢复与重试控制尚未闭合。 |
+| A04 | 通用事件/预算既有证据不变；队列重复 attempt 的额度与停止边界需随 QA 修复验证，不能声明研究成环终态已验。 |
+| A05 | **未通过最终门槛**：恶意 QA 两次 HTTP 已复现并确认，不能沿用旧单次目标通过记录关闭问题。 |
+| A06 | 自动开始/终态记录局部证据不变；完整成功、科学负结果、技术失败、取消、UNKNOWN 分支仍缺最终整合验收。 |
+| A07 | 运行中目标修订与在途操作边界仍缺完整旅程；P7 关联代码新发现 projects 锁序问题，修复前不得视为集成稳定。 |
+| A08 | 从“未实现”更新为关联代码 `f84850` 已有 portable 证据、待 review；已发现 **P1 严重度的 projects 锁序问题**。相关性、接收范围、无关/过时负对照的完整行为验收仍未成立。 |
+| B01 | 本轮独立 core smoke 通过；没有新增真实外部身份服务或完整 core-only 浏览器验收，原 BLOCKED 边界不变。 |
+| B02 | P7 UI `3e7` 的实际 mobile QA 浏览器通过；desktop group JSON 证据不完整，不能记整组通过。完整双用户研究、关联、运行中改目标与复现旅程仍未闭合。 |
+| C01 | 无新增真实模型自主研究证据；合成多轮不替代 C01，仍 BLOCKED／NOTRUN。 |
+| C02 | 关联 portable 与 QA mobile 不构成团队经验配对实验；仍 NOTRUN，真实任务/模型/预算待冻结。 |
+| C03 | 无真实模型 QA／关联价值评审；恶意 QA 重试问题也尚未解决，不能外推 PASS。 |
+| C04 | P8 不再仅是未实现：`210810f` recipe 修复有 **30 portable＋5 targets** 通过；旧版本实际 CLI **2 PG＋故障 1 PG** 机制通过。新 head 未整体验收，第二成员不看原聊天复现/继续与真实成果判据仍未完成。 |
+| D01 | 没有新增实际个人 GPU／SSH／断线恢复证据，仍 BLOCKED。 |
+| D02 | P8 旧 CLI/故障机制证据不等于新 head 实际部署、归档与关闭重启联合验收；仍 NOTRUN／BLOCKED。 |
+| D03 | 没有新增目标机容量证据；主机、负载、SLO 等未冻结，仍 BLOCKED。 |
+
+### P0–P9 阶段更新
+
+P0 的新独立 core smoke 通过；P1–P3 的既有身份、消息、事件机制证据保留，但 QA 队列重复 attempt 尚待修复验证。P4 的项目基线不等于新增关联消费者锁序安全。P5 仍只有合成自主多轮与真实本机执行机制证据，未达到 C01/D01。P6 的限定内容共享边界不变，不能自动扩大为 raw artifact 共享。P7 新增 mobile QA 浏览器与关联 portable 进展，desktop 证据缺口、恶意 QA 重试、关联锁序和独立 review 尚未闭合。P8 已有 recipe/CLI 实现和目标证据，但 `210810f` 未整体验收，复现与继续研究门槛仍开放。**P9 未完成：首 full 明确失败，相关修复尚未形成新的完整适用验收；任何 fast 成功均不解除 C/D 的真实依赖与产品行为门槛。**
