@@ -21,3 +21,9 @@
 - coordinator串行执行 `test_private_message_budget_postgres` + `test_owned_native_finalization_postgres`：19/19通过、0跳过，46.023秒，退出0。日志 `/tmp/private-message-budget-final-pg.log`。此前首次失败及修正记录不覆盖、不删除。
 - 受影响生产6文件Pyright：0 errors/0 warnings，退出0，日志 `/tmp/private-message-budget-final-pyright.log`。
 - 这是当前工作树的本地组合证据；提交后的独立完整diff review与精确head集成CI仍待执行，不宣称已通过。
+
+## Lifecycle fixture regression from full integration
+
+Full run 40206239436 at 551f1bf reported Windows discovery 2029 cases, 7 errors, 822 skips. All errors came from test_lifecycle_terminal_race: a bare Mock synthesized local_budget_scopes, causing the new budget-only completion fallback to enter finalization on a non-budget fixture. Missing terminal was a symptom, not a production task contract failure. Old full revision 69d798b had no such fallback.
+
+The narrow fix explicitly sets fixture store.local_budget_scopes=None, matching real Store initialization. Production and original completion/cancellation assertions are unchanged. Initial local reproduction: 10 cases/7 errors. Corrected target plus test_application_runtime: 28/28, zero skips, exit0 (0.039s); Ruff and diff checks pass. Logs: /tmp/lifecycle-terminal-fixture-before.log and /tmp/lifecycle-terminal-fixture-after.log. Independent review of 551f1bf→3056037 passed; final retarget review/CI remains separate. The spec preceded implementation at 1ff7d4e; this final documentation keeps the regression under the existing budget change instead of retaining another tiny change directory.
