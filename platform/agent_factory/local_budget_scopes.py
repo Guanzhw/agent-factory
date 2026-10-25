@@ -11,6 +11,7 @@ import copy
 import math
 import json
 import time
+from contextlib import nullcontext
 
 from fastapi import HTTPException
 from sqlalchemy import BigInteger, Column, JSON, MetaData, String, Table, select, text
@@ -274,6 +275,16 @@ class LocalBudgetScopes:
             self.lock(conn); self._scope(conn, owner, scope_id)
             conn.execute(self.scopes.update().where(self.scopes.c.id == scope_id).values(state='CANCELLED'))
         return self.inspect(owner, scope_id)
+
+    def completion_context(self, task):
+        with self.store.transaction() as conn:
+            allocation = conn.execute(select(self.allocations.c.id).where(
+                self.allocations.c.owner_id == task['owner_id'],
+                self.allocations.c.task_id == task['id'])).scalar_one_or_none()
+        if allocation is None:
+            return None
+        # The observer settles the allocation; no application outbox is owned here.
+        return lambda conn, root: nullcontext(lambda completion: None)
 
     def settle_task(self, owner, task_id):
         with self.store.transaction() as conn:

@@ -30,6 +30,7 @@ class AssistantEventsTests(ApplicationCompositionFixture):
             content={'result': 'negative'}, visibility='team'), 'publish-content')
         self.messages = AssistantMessages(self.store, self.auth, self.endpoints, Mock())
         self.scopes = Mock()
+        self.store.local_budget_scopes = self.scopes
         self.scopes.settle.return_value = {'state': 'HELD'}
         self.deadline = time.time() + 300
         self.scopes._scope.return_value = {'state': 'ACTIVE', 'body': {'deadline': self.deadline}}

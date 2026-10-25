@@ -1,0 +1,40 @@
+[
+  {
+    "viewport": {
+      "width": 1487,
+      "height": 1058
+    },
+    "browser": "Chromium",
+    "identity": "offline artifact, no interception",
+    "network_requests": [
+      "file:///workspace/agent-factory-design-reference/research-workbench-demo.html",
+      "file:///workspace/agent-factory-design-reference/research-workbench-demo.html?tab=research&project=inference&researchTab=evidence",
+      "file:///workspace/agent-factory-design-reference/research-workbench-demo.html?tab=research&project=demo-03665803-d7e3-43f2-a39a-71471bbab44b",
+      "file:///workspace/agent-factory-design-reference/research-workbench-demo.html?tab=research&project=inference",
+      "file:///workspace/agent-factory-design-reference/research-workbench-demo.html?tab=research&project=demo-03665803-d7e3-43f2-a39a-71471bbab44b"
+    ],
+    "core_and_research_write_calls": [],
+    "page_errors": [],
+    "console_errors": [],
+    "result": "passed"
+  },
+  {
+    "viewport": {
+      "width": 390,
+      "height": 844
+    },
+    "browser": "Chromium",
+    "identity": "offline artifact, no interception",
+    "network_requests": [
+      "file:///workspace/agent-factory-design-reference/research-workbench-demo.html",
+      "file:///workspace/agent-factory-design-reference/research-workbench-demo.html?tab=research&project=inference&researchTab=evidence",
+      "file:///workspace/agent-factory-design-reference/research-workbench-demo.html?tab=research&project=demo-57779fb4-89ed-42dc-b2cd-b4dbded7366b",
+      "file:///workspace/agent-factory-design-reference/research-workbench-demo.html?tab=research&project=inference",
+      "file:///workspace/agent-factory-design-reference/research-workbench-demo.html?tab=research&project=demo-57779fb4-89ed-42dc-b2cd-b4dbded7366b"
+    ],
+    "core_and_research_write_calls": [],
+    "page_errors": [],
+    "console_errors": [],
+    "result": "passed"
+  }
+]
