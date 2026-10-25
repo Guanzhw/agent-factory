@@ -12,7 +12,7 @@ from agent_factory.resources import ComputePool
 
 class SSHNativeToolTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        profile = SSHTrainingProfile(ProcessSpec('/bin/train', 'a' * 64, ()), ProcessLimits(),
+        profile = SSHTrainingProfile(ProcessSpec('/bin/train', 'a' * 64, (), path_style='posix'), ProcessLimits(),
                                      '/python', ComputePool('fixture', 1, 128, 1))
         self.runtime = SimpleNamespace(profiles={'fixed': profile}, launch=AsyncMock(return_value={
             'id': 'original-operation', 'closed': False, 'observation': None}))

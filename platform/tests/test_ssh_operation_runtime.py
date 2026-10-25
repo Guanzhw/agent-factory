@@ -63,7 +63,7 @@ class SSHPersonalTargetTests(unittest.TestCase):
         from agent_factory.resources import ComputePool
         from agent_factory.ssh_operation_runtime import SSHTrainingProfile
         from agent_factory.ssh_process_contract import LAUNCH_ADAPTER_ID, LAUNCH_TOOL
-        self.profile = SSHTrainingProfile(ProcessSpec('/bin/train', 'a' * 64, ()), ProcessLimits(),
+        self.profile = SSHTrainingProfile(ProcessSpec('/bin/train', 'a' * 64, (), path_style='posix'), ProcessLimits(),
             '/runtime/python', ComputePool('configured', 2, 2048, 1024))
         self.pin = {'ref': 'original-connection', 'version': 1, 'revision': '1',
                     'fingerprint': 'b' * 64}
@@ -331,7 +331,7 @@ class SSHLaunchPreflightTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(local_limit=local_limit, limits=limits, accepted=accepted):
                 process_spec = self.profile.spec
                 if isinstance(limits, ResearchProcessLimits):
-                    process_spec = ResearchProcessSpec('/bin/train', 'a' * 64, (),
+                    process_spec = ResearchProcessSpec('/bin/train', 'a' * 64, (), path_style='posix',
                         working_directory='/private/work', working_directory_identity=(1, 2),
                         environment=tuple((name, '1') for name in (
                             'HF_HUB_OFFLINE', 'HF_DATASETS_OFFLINE', 'TRANSFORMERS_OFFLINE', 'PYTHONNOUSERSITE')))
