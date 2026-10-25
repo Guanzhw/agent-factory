@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 
 from agent_factory.application_content import ApplicationContent, ContentPublication
 from agent_factory.assistant_endpoints import AssistantEndpoints, EndpointConfiguration
-from agent_factory.assistant_events import AssistantEvents, ContentEvent, EventSubscription
+from agent_factory.assistant_events import AssistantEvents, ContentEvent, EventSubscription, error_code
 from agent_factory.assistant_messages import AssistantMessages
 from agent_factory.resource_sharing import ResourceSharing
 from agent_factory.store import Store
@@ -43,6 +43,24 @@ class AssistantEventsTests(ApplicationCompositionFixture):
     def emit(self, key='event-emit', **kwargs):
         with self.store.transaction() as conn:
             return self.service.emit(conn, 'alice', self.event, key, **kwargs)
+
+    def test_author_reads_rejection_before_task_without_receiver_private_fields_or_execution(self):
+        event = self.emit()
+        self.assertEqual(self.service.event('alice', event['id'])['deliveries'], [])
+        with self.service.db.write() as conn:
+            conn.execute(self.service.deliveries.insert().values(id='rejected-delivery',
+                event_id=event['id'], endpoint_id=self.endpoint['id'], state='rejected',
+                error='LOCAL_BUDGET_EXHAUSTED', attempted_at=time.time()))
+        self.assertEqual(self.service.event('alice', event['id']), {
+            'id': event['id'], 'scanned': False, 'errorCode': None,
+            'deliveries': [{'id': 'rejected-delivery', 'endpointId': self.endpoint['id'],
+                'state': 'rejected', 'errorCode': 'LOCAL_BUDGET_EXHAUSTED'}]})
+        for owner, identifier in [('bob', event['id']), ('alice', 'missing-event')]:
+            with self.subTest(owner=owner, identifier=identifier), self.assertRaises(HTTPException) as caught:
+                self.service.event(owner, identifier)
+            self.assertEqual(caught.exception.status_code, 404)
+        self.scopes.allocate.assert_not_called()
+        self.messages.runs.start.assert_not_called()
 
     def test_emit_requires_domain_transaction_and_rolls_back_intent_receipt(self):
         with self.store.engine.connect() as conn:
@@ -201,3 +219,75 @@ class AssistantEventsTests(ApplicationCompositionFixture):
             with self.assertRaises(HTTPException) as caught:
                 self.service.validate_admission(conn, 'bob', delivery['id'], 'unused', {}, delivery['allocation_id'])
             self.assertEqual(caught.exception.detail, 'ASSISTANT_EVENT_DELIVERY_MISMATCH')
+
+    def test_original_task_delivery_reads_bound_references_without_creating_work(self):
+        from sqlalchemy import Column, MetaData, String, Table
+        metadata = MetaData()
+        tasks = Table('af_tasks', metadata, Column('id', String, primary_key=True),
+            Column('owner_id', String), Column('request_id', String), Column('run_id', String))
+        metadata.create_all(self.store.engine)
+        self.store.sql = MethodType(Store.sql, self.store)
+        self.store.task = MethodType(Store.task, self.store)
+        self.service.configure('bob', self.config, 'subscribe-peer')
+        event = self.emit()
+        delivery = self.service.prepare(event['id'], self.endpoint['id'])
+        with self.store.engine.begin() as conn:
+            conn.execute(tasks.insert().values(id='original-task', owner_id='bob', request_id='original-request'))
+        self.scopes.request_delivery.return_value = delivery['id']
+        self.scopes.request_allocation.return_value = delivery['allocation_id']
+        self.scopes._allocation.return_value = {'task_id': 'original-task', 'scope_id': 'bob-scope'}
+        self.scopes.reset_mock()
+        self.messages.recover = AsyncMock()
+        expected = {'contentId': self.publication['id'], 'eventId': event['id'],
+            'deliveryId': delivery['id'], 'rootId': event['id'], 'depth': 0,
+            'scopeId': 'bob-scope', 'allocationId': delivery['allocation_id']}
+        self.assertEqual(self.service.delivery_for_task('bob', 'original-task'), expected)
+        with self.assertRaises(HTTPException) as denied:
+            self.service.delivery_for_task('alice', 'original-task')
+        self.assertEqual(denied.exception.status_code, 404)
+        self.scopes._allocation.return_value = {'task_id': 'different-task', 'scope_id': 'bob-scope'}
+        with self.assertRaises(HTTPException) as invalid:
+            self.service.delivery_for_task('bob', 'original-task')
+        self.assertEqual(invalid.exception.detail, 'ASSISTANT_EVENT_TASK_BINDING_MISMATCH')
+        self.scopes.request_delivery.return_value = None
+        self.assertIsNone(self.service.delivery_for_task('bob', 'original-task'))
+        self.scopes.allocate.assert_not_called()
+        self.scopes.bind_request.assert_not_called()
+        self.messages.recover.assert_not_called()
+
+    def test_depth_above_twenty_remains_bounded_by_receiver_configuration(self):
+        config = EventSubscription.model_validate({**self.config.model_dump(), 'maxDepth': 40})
+        self.service.configure('bob', config, 'deep-subscription')
+        event = self.emit()
+        with self.service.db.write() as conn:
+            conn.execute(self.service.events.update().where(self.service.events.c.id == event['id']).values(depth=30))
+        delivery = self.service.prepare(event['id'], self.endpoint['id'])
+        self.assertEqual(delivery['state'], 'pending')
+        second = self.emit('too-deep-event')
+        with self.service.db.write() as conn:
+            conn.execute(self.service.events.update().where(self.service.events.c.id == second['id']).values(depth=41))
+        with self.assertRaises(HTTPException) as denied:
+            self.service.prepare(second['id'], self.endpoint['id'])
+        self.assertEqual(denied.exception.detail, 'ASSISTANT_EVENT_PROPAGATION_LIMIT')
+        self.scopes.allocate.assert_called_once()
+        self.assertEqual(self.scopes.allocate.call_args.args[-1]['rounds'], 1)
+
+    def test_safe_error_codes_and_arbitrary_messages_are_distinguished(self):
+        for detail in ('LOCAL_BUDGET_EXHAUSTED', {'code': 'RESOURCE_NOT_FOUND', 'message': 'private detail'}):
+            expected = detail if isinstance(detail, str) else detail['code']
+            self.assertEqual(error_code(HTTPException(409, detail)), expected)
+        for detail in ('provider password=private', 'CODE: private detail', 'A' * 121,
+                       'SYNTHETIC_PRIVATE_TOKEN_ABCDEF', {'code': 'SYNTHETIC_PRIVATE_TOKEN_ABCDEF'},
+                       {'code': 'unsafe code'}, {'message': 'secret'}, {'code': 123}):
+            self.assertEqual(error_code(HTTPException(409, detail)), 'HTTPException')
+        self.assertEqual(error_code(RuntimeError('private detail')), 'RuntimeError')
+        self.service.configure('bob', self.config, 'subscribe-peer')
+        event = self.emit()
+        with patch.object(self.service, 'prepare', side_effect=HTTPException(409, {'code': 'RESOURCE_NOT_FOUND', 'message': 'private'})):
+            asyncio.run(self.service.deliver_batch())
+        with self.service.db.read() as conn:
+            saved = self.service._row(conn, self.service.events, event['id'])
+            delivery = conn.execute(select(self.service.deliveries)).mappings().one()
+        self.assertEqual(saved['error'], 'RESOURCE_NOT_FOUND')
+        self.assertEqual(delivery['error'], 'RESOURCE_NOT_FOUND')
+        self.assertNotIn('private', str(saved) + str(delivery))

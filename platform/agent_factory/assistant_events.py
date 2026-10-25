@@ -14,6 +14,26 @@ from .local_budget_scopes import _caps
 from .store import digest
 
 
+DELIVERY_ERROR_CODES = frozenset({
+    'LOCAL_BUDGET_EXHAUSTED', 'LOCAL_BUDGET_CLOSED_OR_EXPIRED',
+    'LOCAL_BUDGET_SCOPE_NOT_FOUND',
+    'LOCAL_BUDGET_BINDING_CONFLICT', 'LOCAL_BUDGET_REQUEST_CONFLICT',
+    'ASSISTANT_ENDPOINT_DISABLED', 'APPLICATION_CONTENT_NOT_FOUND', 'RESOURCE_NOT_FOUND',
+    'ASSISTANT_EVENT_EXPIRED', 'ASSISTANT_EVENT_PROPAGATION_LIMIT',
+    'ASSISTANT_EVENT_SUBSCRIPTION_MISMATCH', 'ASSISTANT_EVENT_DELIVERY_MISMATCH',
+    'ASSISTANT_EVENT_ADMISSION_MISMATCH', 'ASSISTANT_EVENT_ALLOCATION_MISMATCH',
+    'ASSISTANT_DELIVERY_STOPPING',
+})
+
+
+def error_code(error):
+    if isinstance(error, HTTPException):
+        candidate = error.detail.get('code') if isinstance(error.detail, dict) else error.detail
+        if isinstance(candidate, str) and candidate in DELIVERY_ERROR_CODES:
+            return candidate
+    return type(error).__name__
+
+
 class EventSubscription(BaseModel):
     model_config = ConfigDict(extra='forbid')
     endpointId: ObjectId
@@ -22,7 +42,7 @@ class EventSubscription(BaseModel):
     scopeId: str = Field(min_length=1, max_length=200)
     caps: dict
     deadline: float = Field(allow_inf_nan=False)
-    maxDepth: int = Field(ge=0, le=20)
+    maxDepth: int = Field(ge=0)
     maxCandidates: int = Field(ge=1, le=20)
 
 
@@ -226,6 +246,19 @@ class AssistantEvents:
             return [dict(row) for row in conn.execute(select(self.subscriptions).where(
                 self.subscriptions.c.owner_id == owner).order_by(self.subscriptions.c.id)).mappings()]
 
+    def event(self, owner, identifier):
+        self.auth.require_member(owner)
+        with self.db.read() as conn:
+            row = self._row(conn, self.events, identifier)
+            if row['owner_id'] != owner:
+                raise HTTPException(404, 'ASSISTANT_EVENT_RECORD_NOT_FOUND')
+            deliveries = conn.execute(select(self.deliveries.c.id, self.deliveries.c.endpoint_id,
+                self.deliveries.c.state, self.deliveries.c.error).where(
+                    self.deliveries.c.event_id == identifier).order_by(self.deliveries.c.id)).mappings()
+            return {'id': row['id'], 'scanned': row['scanned'], 'errorCode': row['error'],
+                'deliveries': [{'id': item['id'], 'endpointId': item['endpoint_id'],
+                    'state': item['state'], 'errorCode': item['error']} for item in deliveries]}
+
     def delivery(self, owner, identifier):
         self.auth.require_member(owner)
         with self.db.read() as conn:
@@ -234,6 +267,28 @@ class AssistantEvents:
             if owner not in {row['owner_id'], event['owner_id']}:
                 raise HTTPException(404, 'ASSISTANT_EVENT_RECORD_NOT_FOUND')
             return row
+
+    def delivery_for_task(self, owner, task_id):
+        self.auth.require_member(owner)
+        with self.db.read() as conn:
+            task = self.store.task(task_id, owner)
+            delivery_id = self.scopes.request_delivery(conn, owner, task['request_id'])
+            if delivery_id is None:
+                return None
+            try:
+                delivery = self._row(conn, self.deliveries, delivery_id)
+                allocation = self.scopes._allocation(conn, owner, delivery['allocation_id'])
+                if (delivery['owner_id'] != owner or allocation['task_id'] != task['id']
+                        or self.scopes.request_allocation(conn, owner, task['request_id']) != delivery['allocation_id']):
+                    raise HTTPException(409, 'ASSISTANT_EVENT_TASK_BINDING_MISMATCH')
+                event = self._row(conn, self.events, delivery['event_id'])
+            except HTTPException as error:
+                if error.status_code == 404:
+                    raise HTTPException(409, 'ASSISTANT_EVENT_TASK_BINDING_MISMATCH') from error
+                raise
+            return {'contentId': event['body']['contentId'], 'eventId': event['id'],
+                'deliveryId': delivery['id'], 'rootId': event['root_id'], 'depth': event['depth'],
+                'scopeId': allocation['scope_id'], 'allocationId': delivery['allocation_id']}
 
     def _finish_attempt(self, delivery, error, settled=False):
         with self.store.transaction() as conn:
@@ -253,7 +308,7 @@ class AssistantEvents:
                     state = 'rejected'
             with self.db.write():
                 conn.execute(self.deliveries.update().where(self.deliveries.c.id == delivery['id']).values(
-                    state=state, error=type(error).__name__ if error else None, attempted_at=time.time()))
+                    state=state, error=error_code(error) if error else None, attempted_at=time.time()))
 
     async def deliver_batch(self, limit=20, *, stopping=None):
         if not 1 <= limit <= 100:
@@ -272,7 +327,7 @@ class AssistantEvents:
                 try:
                     await asyncio.to_thread(self.prepare, event['id'], endpoint_id)
                 except Exception as error:
-                    error_kind = type(error).__name__
+                    error_kind = error_code(error)
                     if not isinstance(error, HTTPException) or error.status_code >= 500:
                         retry = True
                         continue
