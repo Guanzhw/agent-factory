@@ -1,4 +1,5 @@
 """Actual native authorization contracts; no provider/network calls or fake ACL store."""
+from fixture_auth import initialize_members
 from contextvars import Context
 import secrets
 from pathlib import Path
@@ -24,7 +25,7 @@ import jwt
 from starlette.websockets import WebSocketDisconnect
 
 from core_native_fixture import FixtureModel as DemoModel
-from agent_factory.auth import AUDIENCE, AuthService, CookieBridge, DEMO_COOKIE, MemberTokenBoundary
+from agent_factory.auth import AUDIENCE, AuthService, MemberTokenBoundary, UnconfiguredIdentityBoundary
 from agent_factory.accounts import account_router
 from agent_factory.native_bridge import INTERNAL_NATIVE, NativeBridge
 
@@ -32,11 +33,11 @@ from agent_factory.native_bridge import INTERNAL_NATIVE, NativeBridge
 class NativeAuthContractTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         self.directory = TemporaryDirectory()
-        self.settings = SimpleNamespace(demo=True, jwt_key=secrets.token_urlsafe(48))
+        self.settings = SimpleNamespace(jwt_key=secrets.token_urlsafe(48))
         self.db = SqliteDb(db_file=str(Path(self.directory.name) / "native-auth.sqlite"))
         self.addCleanup(self.db.db_engine.dispose)
         self.auth = AuthService(self.settings, self.db)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         self.native = AgentOS(id="agent-factory", db=self.db, agents=[Agent(id="factory-executor", db=self.db, model=DemoModel())],
                               workflows=[Workflow(id="added-after-members", db=self.db,
                                                   steps=[Agent(id="workflow-step", model=DemoModel())])],
@@ -59,7 +60,7 @@ class NativeAuthContractTests(unittest.IsolatedAsyncioTestCase):
         def internal_context(request: Request):
             return {"id": self.auth.user(request)["id"], "internal": INTERNAL_NATIVE.get()}
 
-        self.app = CookieBridge(self.native, self.settings)
+        self.app = self.native
         self.client = httpx.AsyncClient(transport=httpx.ASGITransport(app=self.app), base_url="http://test.local")
 
     async def asyncTearDown(self):
@@ -68,24 +69,20 @@ class NativeAuthContractTests(unittest.IsolatedAsyncioTestCase):
         self.directory.cleanup()
 
     def bearer(self, persona):
-        return {"Authorization": "Bearer " + self.auth.issue_demo_token(persona)}
+        return {"Authorization": "Bearer " + self.auth._issue_native_token(persona)}
 
-    async def test_native_verification_and_cookie_bridge(self):
+    async def test_native_internal_verification_does_not_promote_legacy_cookies(self):
         self.assertEqual((await self.client.get("/api/test/me")).status_code, 401)
         verified = await self.client.get("/api/test/me", headers=self.bearer("alice"))
         self.assertEqual(verified.json(), {"id": "alice", "name": "Alice", "role": "user"})
-        token = self.auth.issue_demo_token("bob")
-        cookie = {"Cookie": f"{DEMO_COOKIE}={token}"}
-        self.assertEqual((await self.client.get("/api/test/me", headers=cookie)).json()["id"], "bob")
-        # Explicit bearer must take precedence over a cookie.
-        self.assertEqual((await self.client.get("/api/test/me", headers={**cookie, **self.bearer("alice")})).json()["id"], "alice")
-        self.assertEqual((await self.client.get("/api/test/me", headers={"Cookie": f"{DEMO_COOKIE}=forged"})).status_code, 401)
+        cookie = {"Cookie": "factory_demo_session=" + self.auth._issue_native_token("bob")}
+        self.assertEqual((await self.client.get("/api/test/me", headers=cookie)).status_code, 401)
 
     async def test_active_members_need_no_legacy_resource_grants(self):
         token = self.bearer("alice")
         self.assertEqual((await self.client.post("/api/test/protected", headers=token)).status_code, 200)
         self.auth.account_roles.unassign("alice", "factory-user")
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         self.assertEqual(self.auth.account_roles.roles_of("alice"), [])
         self.auth.require_member("alice")
         self.assertEqual((await self.client.post("/api/test/protected", headers=token)).status_code, 200)
@@ -93,14 +90,14 @@ class NativeAuthContractTests(unittest.IsolatedAsyncioTestCase):
     async def test_user_disablement_is_current_and_preserved(self):
         token = self.bearer("bob")
         self.auth.directory.set_disabled("bob", True)
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         with self.assertRaises(HTTPException) as denied:
             self.auth.require_member("bob")
         self.assertEqual(denied.exception.status_code, 403)
         self.assertEqual((await self.client.get("/api/test/me", headers=token)).status_code, 403)
 
     async def test_members_create_components_but_token_claims_cannot_manage_accounts(self):
-        valid = jwt.decode(self.auth.issue_demo_token("alice"), self.settings.jwt_key, algorithms=["HS256"], audience=AUDIENCE)
+        valid = jwt.decode(self.auth._issue_native_token("alice"), self.settings.jwt_key, algorithms=["HS256"], audience=AUDIENCE)
         valid["scopes"] = ["agent_os:admin"]
         valid["roles"] = ["manager"]
         token = jwt.encode(valid, self.settings.jwt_key, algorithm="HS256")
@@ -140,7 +137,7 @@ class NativeAuthContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(renamed.json()["disabled"])
         self.assertEqual((await self.client.get("/api/test/me", headers=enabled_token)).status_code, 403)
         self.auth.account_roles.unassign("manager", "factory-manager")
-        self.auth.initialize_demo()
+        initialize_members(self.auth)
         self.assertEqual((await self.client.get("/api/factory/accounts", headers=admin)).status_code, 403)
         self.auth.require_member("manager")
 
@@ -264,25 +261,35 @@ class NativeAuthContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(demoted.exception.status_code, 403)
         again.require_member("legacy-custom")
 
-    async def test_production_has_no_demo_setup_or_cookie_identity(self):
-        production = SimpleNamespace(demo=False, jwt_key=self.settings.jwt_key)
-        auth = AuthService(production, self.db)
-        auth.initialize_demo()
-        with self.assertRaises(HTTPException) as disabled:
-            auth.issue_demo_token("manager")
-        self.assertEqual(disabled.exception.status_code, 404)
-        transport = httpx.ASGITransport(app=CookieBridge(self.native, production))
-        async with httpx.AsyncClient(transport=transport, base_url="http://test.local") as client:
-            cookie = {"Cookie": f"{DEMO_COOKIE}={self.auth.issue_demo_token('manager')}"}
-            self.assertEqual((await client.get("/api/test/me", headers=cookie)).status_code, 401)
+    async def test_unconfigured_public_boundary_rejects_valid_internal_tokens_and_old_cookies(self):
+        public = UnconfiguredIdentityBoundary(self.native)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=public), base_url="https://test.local") as client:
+            for headers in (self.bearer("alice"), {"Cookie": "factory_demo_session=" + self.auth._issue_native_token("manager")}):
+                self.assertEqual((await client.get("/api/test/me", headers=headers)).status_code, 401)
+                self.assertEqual((await client.post("/api/test/protected", headers=headers)).status_code, 401)
+            self.assertEqual((await client.get("/health")).status_code, 200)
+        sent = []
+        async def send(message):
+            sent.append(message)
+        await public({"type": "websocket", "headers": [(b"authorization", self.bearer("alice")["Authorization"].encode())]}, None, send)
+        self.assertEqual(sent, [{"type": "websocket.close", "code": 1008}])
+        bridge = NativeBridge(self.settings, self.db, self.auth)
+        bridge.attach(self.native)
+        self.assertEqual(await bridge._request("GET", "/api/test/context", "alice"), {"id": "alice", "internal": True})
         with self.assertRaises(ValueError):
-            AuthService(SimpleNamespace(demo=False, jwt_key=""), self.db)
+            AuthService(SimpleNamespace(jwt_key=""), self.db)
 
-    async def test_cookie_mutations_reject_explicit_cross_origin(self):
-        cookie = {"Cookie": f"{DEMO_COOKIE}={self.auth.issue_demo_token('alice')}", "Origin": "http://other.local"}
-        self.assertEqual((await self.client.post("/api/test/protected", headers=cookie)).status_code, 403)
-        cookie["Origin"] = "http://test.local"
-        self.assertEqual((await self.client.post("/api/test/protected", headers=cookie)).status_code, 200)
+    async def test_configured_external_oidc_accepts_only_external_identity(self):
+        from test_oidc_identity import RSAFixture
+        from agent_factory.oidc_identity import OIDCIdentityBridge, OIDCAccessTokenVerifier
+        fixture = RSAFixture()
+        fixture.setUpClass()
+        public = OIDCIdentityBridge(self.native, self.auth, OIDCAccessTokenVerifier(fixture.config()))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=public), base_url="https://test.local") as client:
+            response = await client.get("/api/test/me", headers={"Authorization": "Bearer " + fixture.token()})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["id"], "alice")
+            self.assertEqual((await client.get("/api/test/me", headers=self.bearer("alice"))).status_code, 401)
 
     async def test_bridge_rejects_cross_user_plan_before_native_submission(self):
         bridge = NativeBridge(self.settings, self.db, self.auth)
@@ -320,9 +327,9 @@ class NativeAuthContractTests(unittest.IsolatedAsyncioTestCase):
             await bridge.cancel_run("cancel-run", "cancel-session", "bob")
         self.assertEqual(cross_user.exception.status_code, 404)
 
-    async def test_demo_token_matches_cookie_lifetime(self):
-        claims = jwt.decode(self.auth.issue_demo_token("alice"), self.settings.jwt_key, algorithms=["HS256"], audience=AUDIENCE)
-        self.assertEqual(claims["exp"] - claims["iat"], 3600)
+    async def test_internal_bridge_token_has_short_default_lifetime(self):
+        claims = jwt.decode(self.auth._issue_native_token("alice"), self.settings.jwt_key, algorithms=["HS256"], audience=AUDIENCE)
+        self.assertEqual(claims["exp"] - claims["iat"], 300)
 
     async def test_effect_boundary_reads_disablement_after_earlier_request_check(self):
         context = AuthorizationContext(principal_id="alice", resource_type="agents",

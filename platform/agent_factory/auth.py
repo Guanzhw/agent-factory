@@ -101,6 +101,22 @@ class MemberTokenBoundary:
             await self.app(scope, receive, send)
 
 
+class UnconfiguredIdentityBoundary:
+    """Keep internal member tokens off the public app when no IdP is configured."""
+
+    def __init__(self, app: Any):
+        self.app = app
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        if scope["type"] == "http" and any(name.lower() == b"authorization" for name, _ in scope.get("headers", [])):
+            await JSONResponse({"detail": "AUTHENTICATION_NOT_CONFIGURED"}, status_code=401)(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 class AuthService:
     """The native user directory owns membership and the account disabled flag."""
 

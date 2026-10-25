@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from .auth import AuthService, EXECUTOR_ID, MemberTokenBoundary
+from .auth import AuthService, EXECUTOR_ID, MemberTokenBoundary, UnconfiguredIdentityBoundary
 from .config import Settings
 from .connections import ConnectionService, connection_router
 from .execution_bindings import default_bindings
@@ -373,7 +373,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
         browser_auth = BrowserSessionService(store, auth, settings.browser_oidc)
         native.state.factory["browser_auth"] = browser_auth
         return BrowserAuthBridge(native, browser_auth, bearer_app=external)
-    return external if external is not None else native
+    return external if external is not None else UnconfiguredIdentityBoundary(native)
 
 
 def main():
