@@ -35,3 +35,6 @@ The first Stage A run failed before OpenSSH at encrypted serialization because c
 
 ## Unnamed job API correction
 Pinned pywin32's CreateJobObject wrapper rejects a None name even though Win32 supports NULL for an unnamed job. Preserve the original unnamed, non-inheritable job using a narrow typed CreateJobObjectW(NULL,NULL) call and wrap its returned handle in pywin32's owned HANDLE. Do not introduce a named job, use undocumented empty-name equivalence, remove job containment, or alter timeouts. Safe failure diagnostics may add only fixed probe-module/function names and numeric line locations, never source text, frame values or raw exception strings.
+
+## Installed loader contract correction
+Stage A targets the measured system OpenSSH 9.5 key loader's exact `Enter passphrase: ` prompt. Do not accept arbitrary prompts or reuse this keygen literal for the later ssh.exe authentication phase. Pinned pywin32 exposes CancelIo rather than CancelIoEx; the probe issues and cancels each overlapped operation on the same thread with one pending operation per handle, so use the former and keep the existing bounded completion wait. This changes neither the authorization checks nor the timeout/acceptance criteria.
