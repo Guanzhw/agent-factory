@@ -304,8 +304,11 @@ def main():
         if isinstance(error, AssertionError) and re.fullmatch('[A-Z_]+', str(error)):
             report['assertion'] = str(error)
     finally:
-        if root.exists():
-            shutil.rmtree(root)
+        try:
+            if root.exists():
+                shutil.rmtree(root)
+        except Exception as error:
+            report.update(status='FAIL', cleanupErrorType=type(error).__name__)
         report['ownedFixtureRemoved'] = not root.exists()
         args.output.write_text(json.dumps(report, indent=2), encoding='utf-8')
     return 0 if report['status'] == 'PASS' else 1

@@ -16,6 +16,8 @@ def main():
     args = parser.parse_args()
     output = args.output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open('x', encoding='utf-8') as stream:
+        json.dump({'status': 'NOTRUN', 'wrapperStage': 'installation'}, stream)
     if sys.platform != 'win32':
         output.write_text(json.dumps({'status': 'BLOCKED', 'reason': 'WINDOWS_REQUIRED'}))
         return 1
