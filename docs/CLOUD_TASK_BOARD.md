@@ -1901,3 +1901,16 @@ Final no-dispatch acceptance: independent reviewer caught core cancel's delibera
 2026-10-24 additional #101 review: root owns internal original cleanup/core bridge/API; shutdown_design owns cleanup-only driver/provider+pure negatives; shutdown_tests owns distinct OS interruption fixture; backend owns four PG budget boundaries and three retirement PG cases; remote performs independent read-only review. Seven budget/process cases passed60.213s (three actual exit73→newprocess exit0), retirementPG3 passed12.118s with explicit controlled stop seam. Earlier0518fast356Python/75PG zero-skip succeeded. New revocation fix pending actual ORX cleanup/finalCI; no full rerun, no merge/deploy/paid calls. Historical MCP instability remains separate/open.
 
 Final additional acceptance: real pinnedORXcompleted-before-settlement disable+cleanup-only reconstruction1pass60.765s (notlivekill); originalremote test23 joinedbothobservers and retainedfullsnapshots+newwrite-spy1pass18.805s, shared#97commit975488b integrated4301b99. FinaldailyPython381pass0skip,core17.611s,architecture764/0,OpenSpecstrict,Ruff/Pyright0. Originald1full terminalFAIL3316pass1fail68skip; all7requiredpassed. Exact finalsourceCI pending; no historicalMCPclosure claim.
+
+## 2026-10-25 新研究实施（当前有效）
+
+基线 main a2e021c97ba2257d86c1ec484296bbeda0b6c05a；PR104 仍 Draft/open，head ddc82b2642e8784099e5590040ef7d4223df18b1。工作区 /workspace/agent-factory-research-next，分支 impl/research-foundation-local-20261025，继承验收文档91cb2a83。旧 worktree 不覆盖。用户已确认开始实施；真实模型/GPU/容量参数未冻结，C/D NOTRUN/BLOCKED，不能由 mock 代替。
+
+| 单元 | Owner / 文件范围 | 依赖与验收 | 状态 |
+| --- | --- | --- | --- |
+| PR104 独立精简审查 | pr104_independent_review 只读完整base/head diff | 原full/fast证据及代码等价核对 | 进行中，审查后才合并 |
+| P1 助手端点 | assistant_endpoints，仅assistant_endpoints.py与专属tests | A02/A03，持久身份不取代native task | 实施中 |
+| P2 消息/准入 | root，消息服务/API/schema/生命周期集成 | P1、原ApplicationRuns/nativequeue，无第二执行链 | 设计与实现 |
+| P0/P1 验证集成 | root，main/store/task board，串行PG | 静态、专属tests、独立core；作者之外review待分派 | 准备 |
+
+发布/合并已获后续明确授权，但必须保留每单元独立审查、精确head检查；正式部署目标尚缺，不公开部署。无付费模型、新凭据grant或真实外部GPU调用。重型PG串行，保留首失败。

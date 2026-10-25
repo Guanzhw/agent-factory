@@ -27,8 +27,9 @@ A new empty database exposes the shared login, empty application catalog, task a
 resource workspace. Test-only native fixtures explicitly install synthetic
 applications; they are not startup defaults. Demo identity and production-mode
 local synthetic authentication require separate browser evidence, and neither
-proves external identity-provider compatibility. Current core-only acceptance is
-pending exact-revision checks; historical Research evidence remains historical.
+proves external identity-provider compatibility. Core-only acceptance is recorded in
+[the exact-revision verification](openspec/changes/remove-research-verify-core/verification.md);
+historical Research evidence remains historical.
 
 Application retirement does not remove old database records, credentials, vault
 keys, artifacts or backups. Old application tasks require their original code to
