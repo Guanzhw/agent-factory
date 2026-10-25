@@ -1,5 +1,7 @@
 """Endpoint persistence/authority with native member storage; no model execution."""
 from copy import deepcopy
+import time
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from fastapi import FastAPI, HTTPException
@@ -7,7 +9,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 
 from agent_factory.assistant_endpoints import (
-    AssistantEndpoints, EndpointConfiguration, assistant_endpoints_router,
+    AutomaticBudget, AssistantEndpoints, EndpointConfiguration, assistant_endpoints_router,
 )
 from test_applications_composition import ApplicationCompositionFixture, app_definition, pin
 
@@ -22,6 +24,26 @@ class AssistantEndpointsTests(ApplicationCompositionFixture):
 
     def configure(self, owner='alice', key='endpoint-create-1'):
         return self.service.configure(owner, self.configuration, key)
+
+    def test_budget_configuration_keeps_owner_scope_private_and_rejects_invalid_commitments(self):
+        caps = dict(rounds=1, toolCalls=3, tokenLimit=None, amountMicros=None, currency=None)
+        deadline = time.time() + 100
+        def scope(conn, owner, identifier):
+            if (owner, identifier) != ('alice', 'alice-scope'):
+                raise HTTPException(404, 'LOCAL_BUDGET_SCOPE_NOT_FOUND')
+            return {'state': 'ACTIVE', 'body': {'deadline': deadline, 'caps': caps}}
+        self.store.local_budget_scopes = SimpleNamespace(_scope=scope)
+        configuration = self.configuration.model_copy(update={'automaticBudget': AutomaticBudget(
+            scopeId='alice-scope', caps=caps, deadline=deadline)})
+        endpoint = self.service.configure('alice', configuration, 'budget-endpoint')
+        self.assertEqual(endpoint['automaticBudget']['scopeId'], 'alice-scope')
+        self.assertNotIn('automaticBudget', self.service.get('bob', endpoint['id']))
+        for index, change in enumerate(({'scopeId': 'bobs-scope'}, {'deadline': deadline + 1},
+                                       {'deadline': time.time() - 1}, {'caps': {**caps, 'rounds': 2}},
+                                       {'caps': {**caps, 'toolCalls': 4}})):
+            invalid = configuration.model_copy(update={'automaticBudget': configuration.automaticBudget.model_copy(update=change)})
+            with self.subTest(change=change), self.assertRaises(HTTPException):
+                self.service.configure('alice', invalid, 'invalid-budget-' + str(index))
 
     def test_restart_repeated_configuration_retains_identity_and_conflicts_do_not_rewrite(self):
         original = self.configure()

@@ -69,6 +69,7 @@ class Store:
         self.usage_ledger: Any = None
         self.local_budget_scopes: Any = None
         self.assistant_events: Any = None
+        self.assistant_messages: Any = None
         self.process_runtime: Any = None
         self.workflow: Any = None
         self.workflow_control: Any = None
@@ -336,6 +337,8 @@ class Store:
                 return dict(old), False
             if delivery_id is not None:
                 self.assistant_events.validate_admission(conn, owner, delivery_id, request_id, plan, allocation_id)
+            if self.assistant_messages is not None:
+                self.assistant_messages.validate_admission(conn, owner, request_id, plan, allocation_id)
             count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal")).scalar()
             user_count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal AND owner_id=:owner"), {"owner": owner}).scalar()
             if count >= self.settings.max_total_tasks or user_count >= self.settings.max_user_tasks:
@@ -441,13 +444,16 @@ class Store:
 
     def completion_context(self, task):
         registry = getattr(self, 'application_runtime', None)
-        if registry is None:
-            return None
         if self.delegation is not None:
             links = self.sql('SELECT root_id FROM af_delegation_links WHERE child_id=:id', id=task['id'])
             if links:
                 task = self.task(links[0]['root_id'], task['owner_id'])
-        return registry.finalization_context(task)
+        completion = registry.finalization_context(task) if registry is not None else None
+        if completion is not None:
+            return completion
+        if self.local_budget_scopes is not None:
+            return self.local_budget_scopes.completion_context(task)
+        return None
 
     def admission_failed(self, task_id, message):
         task = self.task(task_id)

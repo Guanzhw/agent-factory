@@ -335,3 +335,89 @@ class OwnedNativeFinalizationPostgresTests(unittest.TestCase):
         self.assertEqual(self.store.sql('SELECT child_id FROM af_delegation_links'), [])
         self.assertEqual([item['id'] for item in self.store.tasks('alice')], [task['id']])
         self.assertEqual(self.fixture.records, ['unknown'])
+
+    def without_application_owner(self):
+        self.store.application_runtime = ApplicationRuntimeRegistry(self.store)
+        self.observer = self.new_observer()
+
+    def assert_budget_completed_without_outbox(self, task, children=()):
+        for original in (task, *children):
+            self.assertTrue(self.store.task(original['id'])['terminal'])
+            self.assertEqual(self.store.sql('SELECT state FROM af_disk_holds WHERE task_id=:id',
+                                           id=original['id'])[0]['state'], 'RELEASED')
+            self.assertEqual(self.store.application_runtime.owners(original), ())
+        self.assertTrue(self.store.sql('SELECT reclaimed FROM af_delegation_roots WHERE root_id=:id',
+                                       id=task['id'])[0]['reclaimed'])
+        state = self.scopes.inspect('alice', 'scope')
+        self.assertEqual(len(state['allocations']), 1)
+        self.assertEqual(state['allocations'][0]['state'], 'SETTLED')
+        self.assertEqual(state['allocations'][0]['taskId'], task['id'])
+        self.assertEqual(self.store.sql('SELECT * FROM fixture_completions'), [])
+        self.assertEqual(self.store.sql('SELECT * FROM fixture_outbox'), [])
+        self.assertEqual(self.consumer.calls, 0)
+
+    def test_budget_only_unknown_usage_holds_whole_group_then_original_settles_after_scope_cancel(self):
+        self.without_application_owner()
+        task, context, _ = self.root()
+        child = self.child(task)
+        self.assertEqual(self.store.application_runtime.owners(task), ())
+        self.assertEqual(self.store.application_runtime.owners(child), ())
+        self.fixture.options['scenario'] = 'unknown'
+        retained = self.fixture.selected(context)
+        self.fixture.invoke(retained)
+        held = self.scopes.inspect('alice', 'scope')['usage']
+        facts = self.observe(task)
+        self.assertTrue(facts[task['id']]['groupStopped'])
+        self.assertFalse(facts[task['id']]['finalizationCommitted'])
+        self.assert_pending(task)
+        self.assertFalse(self.store.task(child['id'])['terminal'])
+        self.assertEqual(self.store.sql('SELECT state FROM af_disk_holds WHERE task_id=:id',
+                                       id=child['id'])[0]['state'], 'HELD')
+        self.assertEqual(self.scopes.inspect('alice', 'scope')['usage'], held)
+        with self.assertRaises(HTTPException) as stopped_model:
+            self.fixture.invoke(retained)
+        self.assertIn('NATIVE_EXECUTION_STOPPED', stopped_model.exception.detail)
+        with self.assertRaises(HTTPException) as stopped_tool:
+            build_tools(self.fixture.settings, self.store)['checksum']('no fresh effect', context)
+        self.assertIn('NATIVE_EXECUTION_STOPPED', stopped_tool.exception.detail)
+        history = {row['id']: row for row in self.store.task_history('alice')['items']}
+        self.assertEqual((history[task['id']]['status'], history[task['id']]['executionStatus']),
+                         ('finalizing', 'completed'))
+        self.scopes.cancel('alice', 'scope')
+        self.without_application_owner()
+        self.observe(task)
+        self.assert_pending(task)
+        self.assertEqual(self.store.task(task['id'])['body']['stoppedStatus'], 'completed')
+        attempt = self.fixture.projection(task)['attempts'][0]
+        self.base.ledger.finish_attempt(attempt['id'], UsageEvidence(3, 2, 'original-budget-only-observation'))
+        with patch.object(self.scopes, 'settle_task', wraps=self.scopes.settle_task) as settle:
+            self.assertTrue(self.observe(task)[task['id']]['finalizationCommitted'])
+            self.assert_budget_completed_without_outbox(task, [child])
+            settled = self.scopes.inspect('alice', 'scope')
+            self.observe(task)
+            self.assertEqual(settle.call_count, 1)
+        self.assertEqual(self.scopes.inspect('alice', 'scope'), settled)
+        self.assertEqual(settled['usage']['settled_tokens'], 5)
+        self.assertEqual(settled['usage']['held_tokens'], 0)
+        self.assertEqual(self.fixture.records, ['unknown'])
+        self.assertEqual({row['id'] for row in self.store.tasks('alice')}, {task['id'], child['id']})
+
+    def test_budget_only_reserve_scan_cannot_release_before_atomic_settlement(self):
+        self.without_application_owner()
+        task, _, _ = self.root()
+        self.store.reserve_task(self.fixture.plan(), 'budget-only-capacity-scan')
+        self.assert_pending(task)
+        self.observe(task)
+        self.assert_budget_completed_without_outbox(task)
+        self.assertEqual(self.fixture.records, [])
+
+    def test_budget_only_admission_failure_uses_original_completion_without_dispatch(self):
+        self.without_application_owner()
+        task, _, _ = self.root(accepted=False)
+        self.store.admission_failed(task['id'], 'Synthetic budget-only admission rejection')
+        self.assertEqual(self.store.task(task['id'])['admission'], 'rejected')
+        self.assert_pending(task)
+        self.assertTrue(self.observe(task)[task['id']]['groupStopped'])
+        self.assert_budget_completed_without_outbox(task)
+        self.assertEqual(self.store.task(task['id'])['body']['stoppedStatus'], 'failed')
+        self.assertEqual(self.fixture.records, [])

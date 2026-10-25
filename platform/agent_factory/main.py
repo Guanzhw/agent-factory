@@ -249,6 +249,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     from .application_runs import ApplicationRuns
     from .assistant_messages import AssistantMessages, assistant_messages_router
     assistant_messages = AssistantMessages(store, auth, assistant_endpoints, ApplicationRuns(factory_api))
+    store.assistant_messages = assistant_messages
     base.include_router(assistant_messages_router(auth, assistant_messages))
     from .assistant_events import AssistantEvents
     from .assistant_delivery import assistant_delivery_lifespan
