@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "scenario": "windows-diagnostic-only",
+  "actualHost": "Linux Chromium",
+  "capabilityProjection": [
+    "SSH_CONTROLLER_PLATFORM_UNSUPPORTED",
+    "SSH_CONTROLLER_PLATFORM_UNSUPPORTED"
+  ],
+  "nativeWindowsRuntimeTested": false,
+  "resourceStatusAfterActualRevoke": "revoked",
+  "tasks": 0,
+  "helperLaunches": 0,
+  "pageErrors": [],
+  "consoleErrors": [],
+  "expectedConsole": [
+    {
+      "text": "Failed to load resource: the server responded with a status of 401 (Unauthorized)",
+      "path": "/api/factory/session"
+    }
+  ],
+  "businessMutationAPIsMocked": false,
+  "identity": "synthetic local HTTPS OIDC"
+}
