@@ -58,6 +58,10 @@ class ApplicationRuns:
 
     def request(self, owner, request_id):
         self.factory.auth.require_member(owner)
+        return self._request_receipt(owner, request_id)
+
+    def _request_receipt(self, owner, request_id):
+        """Original receipt for public authorization or an authorized private message."""
         key = factory_request_id(request_id)
         store = self.factory.store
         rows = store.sql('SELECT plan_id FROM af_plan_requests WHERE owner_id=:owner AND request_id=:key',
