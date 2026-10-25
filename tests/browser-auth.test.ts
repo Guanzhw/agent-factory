@@ -89,14 +89,12 @@ describe('browser SSO boundary', () => {
       expect(fetch).toHaveBeenCalledTimes(2);
     } finally { unsubscribe(); }
   });
-  it('preserves demo requests without CSRF requests or headers', async () => {
+  it('does not dispatch login when browser identity is unconfigured', async () => {
     configureBrowserAuth(config(false));
-    const fetch = vi.fn().mockResolvedValue(json({ id: 'alice' })); vi.stubGlobal('fetch', fetch);
-    await api.login('alice');
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch.mock.calls[0][0]).toBe('/api/factory/demo/login');
-    expect(fetch.mock.calls[0][1].headers).toEqual({ 'Content-Type': 'application/json' });
+    const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
     await expect(startBrowserLogin()).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+    expect(() => configureBrowserAuth({ ...config(), developmentOnly: true })).toThrow();
   });
   it('consumes callback failure without displaying its value or retaining it in history', () => {
     const replace = vi.fn();
