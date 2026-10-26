@@ -12,7 +12,7 @@ Personal data and credentials remain owner-scoped.
    `temporary_policy="member-self-service"` and
    `material_review_mode="member-self-service"`. Their default revisions are
    `department-member-v1` and `material-department-v1`. Retired execution/publication
-   modes are rejected, including in demo profiles. Plan-review TTL configuration
+   modes are rejected. Product demo profiles are retired. Plan-review TTL configuration
    is removed. Services consume the supplied runtime configuration; historical
    policy tables do not gate startup.
 2. Materials and applications use `service.publish(...)` directly as their author.

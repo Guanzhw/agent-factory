@@ -1,5 +1,11 @@
 # Task-first frontend contract
 
+**Historical frontend milestone (2026-10-08):** the seeded Auto-Research entry
+and experimental runner below are retired. The original UI/acceptance record is
+retained, not current navigation or startup guidance. General UI principles
+remain applicable; see the [README](../README.md) and
+[application development](APPLICATION_DEVELOPMENT.md).
+
 ## Primary journey
 
 1. **应用与任务** is the default signed-in entry. Select an approved application, describe the task, and prepare a proposal. The catalog may contain synthetic demonstration apps: their results are not research evidence.

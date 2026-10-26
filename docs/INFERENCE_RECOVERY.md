@@ -3,11 +3,16 @@
 The public AT10 requirement is that a temporary inference outage must not
 implicitly terminate an independently approved, lawful deterministic experiment.
 The accepted standalone checkpoint is `4e1f29900080ad6004fd33f55580b9fe5ea75c37`.
-The current extension implements original-owner Linux ORX revision-2 recovery
+The historical ORX extension implemented original-owner Linux ORX revision-2 recovery
 across delegated and receiver-owned work. Its actual acceptance is tracked in
 [CLOUD_TASK_BOARD.md](CLOUD_TASK_BOARD.md); implementation and unit coverage do
 not establish every distributed fault combination. Providers, Windows and
 mutable research workloads remain outside this evidence.
+
+The ORX application-specific implementation and reproduction commands below are
+historical checkpoint evidence, not current core setup. General original-operation
+recovery, UNKNOWN and cancellation requirements remain applicable; see
+[member execution](MEMBER_EXECUTION.md).
 
 ## Native lifecycle decision
 
@@ -106,7 +111,7 @@ evidence before returning that same result. It does not run preflight/CLI, creat
 or wake a namespace, or extend a deadline. Logs come from the original bounded
 regular file; symlinks and nonregular files are rejected.
 
-## Verification and reproduction
+## Historical ORX verification and reproduction
 
 Use the existing isolated PostgreSQL fixture and approved Linux toolchain from
 [Linux ORX](LINUX_ORX.md). No paid provider, external request or real credential is

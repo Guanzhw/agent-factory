@@ -11,3 +11,7 @@
 `audit_quality` 独立完整 diff / 简洁性 **PASS**：`860acd0a3604bc19e4e7f85095f785834a3f23dd` → `f2b4d39de97df4b87a3b0d27c5c52936eddc4512`（tree `60ca13b6dc3b320e5108693123fb776ecec98365`），23 文件、+265/-89，无待整改项。
 
 独立确认两个类原样迁移、剩余产品 AST 等价、UI 仅两处指定替换；实际 wheel 的 127 个产品模块与源码一致，无 fixture/tests，真实 Go Model 保留。复查九份指南及未改的 synthesis 历史正文；实读 52 项 Python、497 项前端及 audit 回执，另执行 loopback 1/1 PASS、0 skip、0.569s。无身份/权限/数据/CI 变化或新增框架；strict/diff 检查通过。本结论不替代发布后精确 head 或 main CI。
+
+## Follow-up plan review
+
+`audit_quality` 非作者方案 **PASS**：`f3f931b06f11b7ea910a9efe3d5b8a8ba89442ff` → `51f124d7a0fd81d0ab3bb694b6c709258a5a4303`，仅 design/tasks 两文件。统一 12 份指南、5 处当前纠错和 7 处历史限定范围最小；保留内置个人适配器、Go 协议、core 原操作恢复/UNKNOWN/取消及历史事实，strict/diff 检查独立通过。正文仍须在精确候选上完整复审。

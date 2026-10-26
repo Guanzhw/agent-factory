@@ -15,3 +15,9 @@
 首次环境检查发现主 checkout 的 Node 依赖与锁文件不一致（vite/vitest 旧版、happy-dom 缺失），因此在本分支执行锁定 `npm ci`、`uv sync --frozen`；未改 lock。所有上述行为检查首次通过，无失败重跑。便携 Python 选择为 `test_opencode_go`、`test_go_development_profile`、`test_go_http` 及 `CorePackageDistributionTests.test_wheel_contains_only_core_sources_and_no_application_dependency`、`test_all_installed_core_modules_import_with_application_packages_absent`。
 
 本机日志和独立 wheel 在 `/workspace/demo-remnants-evidence/`，不入 Git。没有运行无关全套 PG、实际外部 Go/模型、GPU、生产 IdP 或部署验收；合成 transport 结果不提升这些未验边界。完整 diff 简洁性复审已通过；任务 3.1 保留发布前状态，发布后 fast 及 main CI 的最终验收以 PR 的精确 head 回执为准。
+
+## Current-documentation follow-up
+
+上文为 PR #148 发布前记录；协调者已核验合并及 [main CI 40295987780](https://github.com/Guanzhw/agent-factory/actions/runs/40295987780)，任务 3.1 已关闭。本次基线 `f3f931b06f11b7ea910a9efe3d5b8a8ba89442ff`、统一方案 `51f124d7a0fd81d0ab3bb694b6c709258a5a4303` 已获非作者方案 PASS。
+
+12 份指南逐条对照默认/显式装配、个人适配器注册、配置/plan policy 与现存测试入口；7 份历史文档的原验收正文保持，12 个新增相对链接目标存在。OpenSpec strict、完整 diff/空白及仅 Markdown 范围检查首次通过；产品、测试、CI 无变更，不重复运行产品测试或服务。任务 4.1 等待精确候选独立完整复审与发布后 CI；OpenSpec 路径按现有规则走 fast，由协调者核验最终回执。

@@ -1,5 +1,10 @@
 # Desktop workspace entry points
 
+**Historical navigation milestone:** the former OpenResearch entry/preparation
+routes and product demo startup are retired. The original acceptance record
+below is retained, not current navigation or startup guidance; see the
+[README](../README.md).
+
 The primary navigation groups the existing platform views into Applications,
 Resources and Tasks. Applications opens the catalog and OpenResearch's existing
 project/session workflow. Resources explains where to configure a personal

@@ -1,11 +1,12 @@
 # OpenCode Go development adapter — prior isolated stage
 
-**Superseded scope:** the next stage now supplies an explicit Factory development
-registration and controlled HTTP/PostgreSQL product-path tests. See
-[development product profile](GO_DEVELOPMENT_PROFILE.md) for current setup and
-gates. The historical isolated-stage claims below are retained as provenance;
-“unregistered” and missing request-guard statements no longer describe the fixture
-profile. Live subscription execution remains blocked.
+**Historical isolated-adapter record:** the later
+[development product profile](GO_DEVELOPMENT_PROFILE.md) supplied explicit
+registration and controlled HTTP/PostgreSQL tests, but that profile is also
+retired as a product entrypoint. The original isolated-stage claims, contract
+evidence and live gates below are retained as provenance. The Go model protocol
+remains available; see [application development](APPLICATION_DEVELOPMENT.md) for
+current explicit model and application configuration.
 
 `agent_factory.opencode_go.GoDevelopmentModel` is an unregistered development
 adapter for ordinary coding-agent integration tests. Importing or constructing it

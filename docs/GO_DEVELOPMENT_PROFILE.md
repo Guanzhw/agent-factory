@@ -1,5 +1,11 @@
 # Go development product profile
 
+**Historical profile record:** product demo/development-profile startup and the
+bundled loopback transport are retired; the setup and acceptance below describe
+their earlier stages, not current deployment guidance. The Go model protocol
+remains available. Use [application development](APPLICATION_DEVELOPMENT.md) and
+the [demo-removal guide](REMOVE_DEMO_UPGRADE.md) for current explicit configuration.
+
 Current stage: [ongoing project integration](GO_PROJECT_INTEGRATION.md). Both exact
 `deepseek-flash` and `gpt-6-luna` have successful live instrumented smoke results.
 The cumulative project policy supersedes artificial lifetime call gates while

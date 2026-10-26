@@ -31,7 +31,7 @@
 补充基线 `f3f931b06f11b7ea910a9efe3d5b8a8ba89442ff`；统一只读复扫 150 份相关 Markdown 后冻结以下 12 文件。先审本清单，再一次修正文档，对照源码/链接、完整 diff 及适用 CI，不新增产品、测试、框架或验收记录包。
 
 - 当前纠错：`docs/INTEGRATIONS.md:7,9,19–25`，纠正默认 demo/provider 注册，旧 Auto-Research/ORX fixture 和已移除测试入口明确为历史。
-- 当前纠错：`docs/ACCEPTANCE.md:30`，仅 current matrix 对齐 member-self-service、历史 review 只读、默认无应用/模型及测试合成材料。
+- 当前纠错：`docs/ACCEPTANCE.md:30,40`，仅 current matrix 对齐 member-self-service、历史 review 只读、默认无应用/模型及测试合成材料。
 - 当前纠错：`docs/department-minimal-integration.md:15`，去掉现行合同中的 demo profiles 例外，明确产品 demo profiles 已退役。
 - 当前纠错：`docs/plans/research-platform-acceptance-contract.md:41` 的 B01，分开隔离合成 OIDC 与实际身份验证，不使用退役 demo 登录；保留双用户、退出及真实 IdP BLOCKED 标准。
 - 当前纠错：`docs/MEMBER_EXECUTION.md:15`，以显式成员发布/提交替代已移除 Research 脚本入口，保留原任务/run/requirement 连续性及取消限制。
