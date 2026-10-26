@@ -16,12 +16,14 @@
 2. 将 `research-browser/evidence.json` 的 `results` 改为 `reports` 相对路径列表，保持 `ok` 和两份子报告、截图不变；`scripts/accept_research_evidence_ui.py` 以后也写相同索引。该文件是人工验收产物，不是产品接口；不为旧格式再留重复字段。
 3. 仅当 `FACTORY_STORAGE_DIAGNOSTIC=1` 时由 storage fixture 选择 `controlled_storage_diagnostic_worker` 并保存诊断；未设置时使用 `controlled_command_worker` 与原清理。worker 的 149 行保留作按需入口，不复制到新框架。记录一条可运行诊断命令；不延长原 15 秒 HTTP 截止时间。
 4. 删除 `create_fixture_app` 中被下一层覆盖的 `publish_fixture_materials` 调用；`member_headers(owner)` 保留现有外部测试 issuer 签发逻辑并更新全部调用点。成员初始化仍归原 `initialize_members`，不变更认证/授权断言。
+5. 审计 Q2 增量只改 `accept_research_assistant_ui.py` 的 `main` 报告写入：子报告内容仍逐字保存，aggregate 为 `ok` 加 `reports` 相对路径列表。desktop/mobile/both 分别列出实际执行的报告；不保留重复 `results`、不抽新框架、不改 `run` 或失败截图/日志。既有历史报告不变。
 
 ## Risks / Trade-offs
 
 - 历史轨迹离线不在当前 checkout → 固定到 `a02438e17316f4b748b2ed6624fe920bc449050f`，核验被删内容与该 Git 对象一致、关键失败事实仍在文字记录。
 - 默认与诊断路径可能分叉 → 两种模式各运行原 storage 测试一次，核对同一测试 ID/断言、默认无诊断文件、开启后有诊断文件且清理结束；不反复重跑以覆盖失败。
 - 辅助函数签名影响少量调用者 → 搜索全部调用点，运行既有 fixture lifecycle、department publication 和相关 Python 静态检查；浏览器生成器改动只影响报告结构，做保存产物结构/链接核对，不冒充新浏览器运行证据。
+- Q2 验证直接执行当前脚本的 `main` AST，合成浏览器与 `run` 返回值，覆盖 desktop/mobile/both：先在旧 head 保存重复正文反例，再要求每个索引可读且子报告完整；验证异常仍关闭 browser。不为三行报告逻辑重跑真实 PG/浏览器，也不将该窄验证称为端到端验收。
 
 ## Migration Plan
 
