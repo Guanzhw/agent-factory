@@ -1,0 +1,41 @@
+/workspace/agent-factory-fix-delegated-content/platform/agent_factory/remote_authority.py:37: UserWarning: Field name "schema" in "AuthorityCheck" shadows an attribute in parent "BaseModel"
+  class AuthorityCheck(BaseModel):
+test_original_workflow_wait_restart_and_actual_child_result (test_delegated_workflow_native_postgres.DelegatedNativeWorkflowTests.test_original_workflow_wait_restart_and_actual_child_result) ... ok
+INFO    Adding AgentOS auth middleware (JWT algorithm: HS256)
+INFO    The user directory is configured without managed roles. It works as a roster; roles are not available and provisioned users get none. Define roles on Authorization(...) to enable roles and the /authz API.
+INFO    Scheduler poller started (worker=worker-e47ac5e9, interval=15s)
+INFO    Database ready: PostgresDb id=factory-native-postgres
+WARNING Queued-run streams are replica-local; configure queue.redis for cross-replica streaming.
+INFO    Job queue worker started: worker=worker-93891a4e poll=0.2s
+test_actual_child_result_and_original_lookup_after_lost_ack (test_delegated_operations_postgres.DelegatedOperationsPostgresTests.test_actual_child_result_and_original_lookup_after_lost_ack) ... INFO    Agent queued: factory-executor run=85ad7101-604c-4b93-a183-5e9f287a0968
+INFO    Agent queued: factory-executor run=4126ed9f-8a44-4086-b6c1-bfc5089deda7
+INFO    Run 85ad7101-604c-4b93-a183-5e9f287a0968 not yet registered, storing cancellation intent
+ok
+test_cancel_create_root_lock_interleavings (test_delegated_operations_postgres.DelegatedOperationsPostgresTests.test_cancel_create_root_lock_interleavings) ... INFO    Agent queued: factory-executor run=67a83fca-6d19-46d3-9f9a-5b8f1c0449de
+INFO    Run 67a83fca-6d19-46d3-9f9a-5b8f1c0449de not yet registered, storing cancellation intent
+INFO    Agent queued: factory-executor run=99406e35-6c34-4659-b243-e221620477f6
+INFO    Run 99406e35-6c34-4659-b243-e221620477f6 not yet registered, storing cancellation intent
+ok
+test_missing_link_lookup_does_not_create_and_cancel_stays_unknown (test_delegated_operations_postgres.DelegatedOperationsPostgresTests.test_missing_link_lookup_does_not_create_and_cancel_stays_unknown) ... INFO    Agent queued: factory-executor run=aee61d1f-59c9-4049-a763-f0cf98bb987a
+INFO    Run aee61d1f-59c9-4049-a763-f0cf98bb987a not yet registered, storing cancellation intent
+ok
+test_revoked_member_can_cancel_original_child_but_cannot_create (test_delegated_operations_postgres.DelegatedOperationsPostgresTests.test_revoked_member_can_cancel_original_child_but_cannot_create) ... INFO    Agent queued: factory-executor run=ec580d6c-5167-46c6-ba55-1aa6208dd74d
+INFO    Agent queued: factory-executor run=0ae7451a-d3e8-4405-8479-71362c78110d
+INFO    Run 0ae7451a-d3e8-4405-8479-71362c78110d not yet registered, storing cancellation intent
+INFO    Run ec580d6c-5167-46c6-ba55-1aa6208dd74d not yet registered, storing cancellation intent
+ok
+test_subtree_observation_waits_for_inflight_descendant_link (test_delegated_operations_postgres.DelegatedOperationsPostgresTests.test_subtree_observation_waits_for_inflight_descendant_link) ... INFO    Agent queued: factory-executor run=9e5b86c6-0cc1-458e-9947-dfd9288ba250
+INFO    Agent queued: factory-executor run=19b64043-441b-42a6-8df9-a8b9c180fe9e
+INFO    Agent queued: factory-executor run=b68ae3f0-9fc8-448e-8ec3-235d1c2eee36
+ERROR   Validation failed: 403: Current delegation mandate is revoked | Check trigger: CheckTrigger.INPUT_NOT_ALLOWED
+INFO    Run 19b64043-441b-42a6-8df9-a8b9c180fe9e not yet registered, storing cancellation intent
+INFO    Run b68ae3f0-9fc8-448e-8ec3-235d1c2eee36 not yet registered, storing cancellation intent
+INFO    Run 9e5b86c6-0cc1-458e-9947-dfd9288ba250 not yet registered, storing cancellation intent
+ok
+INFO    Job queue worker stopped
+INFO    Scheduler poller stopped
+
+----------------------------------------------------------------------
+Ran 6 tests in 18.317s
+
+OK

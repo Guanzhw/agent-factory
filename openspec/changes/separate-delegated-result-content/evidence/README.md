@@ -27,4 +27,12 @@ Ruff PASS；Pyright 0 errors/0 warnings/0 informations（提示该 tree 无 `.ve
 
 ## PostgreSQL
 
-已获 coordinator 的临时 PostgreSQL 独占时隙；计划执行 `test_delegated_workflow_native_postgres` 与 `test_delegated_operations_postgres`。执行回执尚待补齐，不计为 PASS。
+coordinator 授予临时 PostgreSQL 独占时隙后，在源码精确 head `803c00a0e7158830b6fedaa2b8496222cdac30e6` 运行：
+
+```sh
+FACTORY_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:55432/postgres PYTHONPATH=platform:deployment:platform/tests:applications:applications/tests /workspace/agent-factory-cleanup/.venv/bin/python -m unittest test_delegated_workflow_native_postgres test_delegated_operations_postgres -v
+```
+
+`postgres.txt`：6 tests，0 skipped，18.317s，PASS。`postgres.json` 保存精确源码 head、PG17.11 版本、证据边界与 cleanup 查询。真实 child 工具产生的正文含换行/URL/中文和普通业务 token 字段，UTF-8 超过 32 KiB、低于原 64 KiB 预算；原 paused workflow 硬重启后，持久化 custody 与 parent 最终 native content 中的原 wait 结果完整等值，原 child/operation/run 身份及单次 continuation 保持。实际 `closed=true`、effects DONE、原 scope allocation SETTLED；lost ack、撤销后原取消、UNKNOWN 不重派、创建/取消交错、未决 descendant 原边界通过。
+
+实际执行 PostgreSQL/native queue/tool/workflow/custody/预算结算；模型为 deterministic fixture，lost ack/取消失败/并发屏障为注入 seam。没有真实模型、付费资源、GPU 或 SSH 作业。结束后 `pg_database` 中 `af_test_%` 数量为零，相关 Python fixture 子进程为零，共享容器及依赖未改，时隙已归还 coordinator。日志中的 403 撤销错误为已有边界测试的预期路径，测试本身通过。
