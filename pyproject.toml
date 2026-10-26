@@ -18,6 +18,7 @@ dependencies = [
   "mcp==2.3.0",
   "pyjwt[crypto]==2.15.1",
   "cryptography==50.0.2",
+  "argon2-cffi==25.1.0",
   "bcrypt==5.0.0; sys_platform == 'win32'",
   "pywin32==312; sys_platform == 'win32'",
   "python-multipart==0.0.32",
@@ -26,6 +27,7 @@ dependencies = [
 ]
 
 [project.scripts]
+agent-factory-local-user = "agent_factory.local_login:main"
 agent-factory-ssh-askpass = "agent_factory.windows_ssh_askpass:main"
 agent-factory = "agent_factory_server.main:main"
 agent-factory-research = "agent_factory_server.research:main"

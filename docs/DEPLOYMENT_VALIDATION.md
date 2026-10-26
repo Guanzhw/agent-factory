@@ -29,11 +29,12 @@ adapter. It does not create child groups, write limits, move tasks, exercise
 ## Current deployment choices
 
 Linux is the selected target platform. Exact host capacity and production runtime
-remain unspecified. The existing unified-login service is not currently supplied;
-product login requires an explicitly configured external identity provider and
-rejects authentication when that configuration is absent. Synthetic OIDC peers
-exist only in isolated tests; they do not establish production IdP/TLS/identity
-acceptance or unblock those checks.
+remain unspecified. The existing unified-login service is not currently supplied.
+[Explicit local password login](../README.md#start-with-configured-authentication)
+supports function checks without an IdP; it does not satisfy this manifest's
+external identity declarations or establish production IdP/TLS acceptance.
+Synthetic OIDC peers remain isolated tests. Neither local path unblocks the
+external checks, and the declaration schema is unchanged.
 
 Config-only CLI reading also supports platforms without POSIX `O_NOFOLLOW`:
 regular-file and symlink checks plus pre/post-open file identity checks protect

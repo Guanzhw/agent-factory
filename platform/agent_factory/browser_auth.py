@@ -1,4 +1,4 @@
-"""Pinned OIDC browser flow and revocable opaque sessions; native SQL owns rights.
+"""Explicit local/OIDC login and revocable opaque sessions; native SQL owns rights.
 
 No IdP tokens/authorization codes are persisted or returned to JavaScript. Flow
 verifiers are encrypted with a domain-separated key from the existing native key.
@@ -28,7 +28,8 @@ from .store import canonical
 FLOW_COOKIE = "__Host-factory_flow"
 SESSION_COOKIE = "__Host-factory_session"
 PREFIX = "/api/factory/auth"
-CONFIG = {"enabled": True, "loginPath": PREFIX + "/login", "logoutPath": PREFIX + "/logout"}
+CONFIG = {"enabled": True, "loginPath": PREFIX + "/login", "logoutPath": PREFIX + "/logout",
+          "oidcEnabled": False, "localLoginEnabled": False}
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 FLOW_SECONDS = 300
 SESSION_SECONDS = 900
@@ -61,13 +62,23 @@ def _workspace_return(value):
 
 
 class BrowserSessionService:
-    def __init__(self, store, auth, config: BrowserOIDCConfig, exchanger=None, *, clock=time.time):
+    def __init__(self, store, auth, config: BrowserOIDCConfig | None = None, exchanger=None, *,
+                 local_login_origin=None, clock=time.time):
         self.store, self.auth, self.config, self.clock = store, auth, config, clock
-        self.exchanger = exchanger or BrowserCodeExchanger(config)
+        self.exchanger = (exchanger or BrowserCodeExchanger(config)) if config is not None else None
+        self.app_origin = local_login_origin or (config.app_origin if config is not None else None)
+        if self.app_origin is None:
+            raise ValueError('Browser sessions require an explicitly configured login origin')
+        self.local_passwords = None
+        if local_login_origin is not None:
+            from .local_login import LocalPasswords
+            self.local_passwords = LocalPasswords(store.engine, auth.directory)
         key = hmac.digest(auth._key.encode(), b"factory-browser-flow-v1", "sha256")
         self._cipher = Fernet(base64.urlsafe_b64encode(key))
         self._csrf_key = hmac.digest(auth._key.encode(), b"factory-browser-csrf-v1", "sha256")
-        self.fingerprint = config.fingerprint
+        oidc_fingerprint = config.fingerprint if config is not None else ''
+        self.fingerprint = (hashlib.sha256(canonical({'localOrigin': local_login_origin,
+            'oidc': oidc_fingerprint}).encode()).hexdigest() if local_login_origin is not None else oidc_fingerprint)
 
     @contextmanager
     def _transaction(self):
@@ -126,6 +137,8 @@ class BrowserSessionService:
                 self._save(conn, row[0], "flow", body)
 
     def start(self, flow_cookie=None, session_cookie=None, return_to="/"):
+        _check(self.config is not None, 405)
+        assert self.config is not None
         return_to = _workspace_return(return_to)
         state, binding, verifier, nonce = (secrets.token_urlsafe(32) for _ in range(4))
         identity = _hash(state)
@@ -166,6 +179,8 @@ class BrowserSessionService:
         return context
 
     async def finish(self, code, state, binding):
+        _check(self.exchanger is not None, 405)
+        assert self.exchanger is not None
         _check(type(code) is str and 1 <= len(code) <= 2048 and code.isascii()
                and all(33 <= ord(c) <= 126 for c in code))
         context = await asyncio.to_thread(self._claim, state, binding)
@@ -196,6 +211,31 @@ class BrowserSessionService:
             row.update(status="COMPLETE", issued=_hash(token), expires=expires)
             self._save(conn, _hash(state), "flow", row)
         return token, row.get("returnTo", "/")
+
+    def local_login(self, owner, password, session_cookie=None, flow_cookie=None):
+        _check(self.local_passwords is not None, 405)
+        assert self.local_passwords is not None
+        owner = self.local_passwords.verify(owner, password)
+        try:
+            self.auth.require_member(owner)
+        except HTTPException as error:
+            if error.status_code == 503:
+                raise
+            raise HTTPException(401, 'LOCAL_LOGIN_REJECTED') from None
+        token = secrets.token_urlsafe(32)
+        with self._transaction() as conn:
+            self._gc(conn)
+            self._cancel_flows(conn, flow_cookie)
+            if _valid(session_cookie):
+                prior = self._get(conn, _hash(session_cookie), 'session')
+                if prior:
+                    prior['revoked'] = True
+                    self._save(conn, _hash(session_cookie), 'session', prior)
+            self._capacity(conn, 'session', 2000)
+            self.auth.require_member(owner)
+            self._save(conn, _hash(token), 'session', {'owner': owner, 'expires': self.clock() + SESSION_SECONDS,
+                'config': self.fingerprint, 'revoked': False}, insert=True)
+        return token
 
     def session(self, token):
         _check(_valid(token))
@@ -241,7 +281,7 @@ class BrowserAuthBridge:
 
     def _origin(self, scope):
         origins = [v.decode("latin-1") for k, v in scope.get("headers", []) if k.lower() == b"origin"]
-        _check(scope.get("scheme") == "https" and origins == [self.service.config.app_origin], 403)
+        _check(scope.get("scheme") == "https" and origins == [self.service.app_origin], 403)
 
     def _csrf(self, scope, token):
         self._origin(scope)
@@ -257,18 +297,29 @@ class BrowserAuthBridge:
     async def _endpoint(self, request, cookies):
         path, method = request.url.path, request.method
         if path == PREFIX + "/config" and method == "GET":
-            return JSONResponse(CONFIG)
+            return JSONResponse({**CONFIG, 'oidcEnabled': self.service.config is not None,
+                                 'localLoginEnabled': self.service.local_passwords is not None})
         _check(request.scope.get("scheme") == "https", 403)
-        if path == PREFIX + "/login" and method == "POST":
+        if path in {PREFIX + '/login', PREFIX + '/local-login'} and method == 'POST':
             self._origin(request.scope)
+            local = path == PREFIX + '/local-login'
+            _check(self.service.local_passwords is not None if local else self.service.config is not None, 405)
             body = bytearray()
             async for chunk in request.stream():
-                _check(len(body) + len(chunk) <= 1024, 413)
+                _check(len(body) + len(chunk) <= (4096 if local else 1024), 413)
                 body.extend(chunk)
             try:
                 payload = json.loads(body or b"{}")
             except (ValueError, UnicodeError):
                 raise HTTPException(400, "BROWSER_AUTH_REJECTED") from None
+            if local:
+                _check(type(payload) is dict and set(payload) == {'username', 'password'}, 400)
+                token = await asyncio.to_thread(self.service.local_login, payload['username'], payload['password'],
+                    cookies.get(SESSION_COOKIE), cookies.get(FLOW_COOKIE))
+                response = JSONResponse({'authenticated': True})
+                response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_SECONDS, secure=True, httponly=True, samesite='strict', path='/')
+                response.delete_cookie(FLOW_COOKIE, secure=True, httponly=True, samesite='lax', path='/')
+                return response
             _check(type(payload) is dict and set(payload) <= {"returnTo"}, 400)
             url, binding = await asyncio.to_thread(self.service.start, cookies.get(FLOW_COOKIE),
                 cookies.get(SESSION_COOKIE), payload.get("returnTo", "/"))
@@ -277,6 +328,8 @@ class BrowserAuthBridge:
             return response
         if path == PREFIX + "/callback" and method == "GET":
             try:
+                _check(self.service.config is not None, 405)
+                assert self.service.config is not None
                 raw = request.scope.get("query_string", b"")
                 _check(len(raw) <= 8192)
                 items = parse_qsl(raw.decode("ascii"), keep_blank_values=True, strict_parsing=True)

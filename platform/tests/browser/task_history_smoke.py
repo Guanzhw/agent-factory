@@ -59,7 +59,7 @@ class SyntheticAPI:
         record = {'method': request.method, 'path': path, 'query': query}
         self.requests.append(record)
         values = {
-            '/auth/config': {'enabled': False, 'loginPath': '/api/factory/auth/login',
+            '/auth/config': {'enabled': False, 'oidcEnabled': False, 'localLoginEnabled': False, 'loginPath': '/api/factory/auth/login',
                              'logoutPath': '/api/factory/auth/logout'},
             '/session': {'id': 'alice', 'name': 'Synthetic Alice', 'role': 'user'},
             '/status': {'mode': 'demo', 'activeWorkers': self.active_workers, 'queuedJobs': 0,

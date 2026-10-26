@@ -6,6 +6,7 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
+    'local_login': ('test_local_login',),
     'ssh_original_contracts': (
         'test_ssh_operation_runtime', 'test_ssh_operation_waits', 'test_ssh_tool_factory',
     ),
@@ -86,6 +87,7 @@ FAST_PYTHON_TESTS = {
 }
 
 FAST_POSTGRES_TESTS = {
+    'local_login': ('test_local_login_postgres.LocalLoginPostgresTests',),
     'ssh_original_native_wait': (
         'test_ssh_native_postgres.SSHNativePostgresTests.test_original_native_wait_resumes_once_after_controller_restart',
     ),

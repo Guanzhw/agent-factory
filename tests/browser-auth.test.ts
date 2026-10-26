@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, factoryRequest } from '../web/api.js';
-import { authEpoch, assertAuthEpoch, authorizationDestination, browserAuthConfig, browserCsrf, clearBrowserSession, configureBrowserAuth, consumeSigninFailure, startBrowserLogin, subscribeSessionExpiry } from '../web/browserAuth.js';
+import { authEpoch, assertAuthEpoch, authorizationDestination, browserAuthConfig, browserCsrf, clearBrowserSession, configureBrowserAuth, consumeSigninFailure, startBrowserLogin, startLocalLogin, subscribeSessionExpiry } from '../web/browserAuth.js';
 
-const config = (enabled = true) => ({ enabled, loginPath: '/api/factory/auth/login', logoutPath: '/api/factory/auth/logout' });
+const config = (enabled = true) => ({ enabled, oidcEnabled: enabled, localLoginEnabled: false, loginPath: '/api/factory/auth/login', logoutPath: '/api/factory/auth/logout' });
 const token = 'a'.repeat(43);
 const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status });
 beforeEach(() => { clearBrowserSession(); configureBrowserAuth(config()); vi.stubGlobal('window', { location: new URL('https://factory.example/?tab=research&project=p1#evidence') }); });
@@ -13,7 +13,7 @@ describe('browser SSO boundary', () => {
     const fetch = vi.fn().mockResolvedValue(json(config())); vi.stubGlobal('fetch', fetch);
     await expect(browserAuthConfig()).resolves.toEqual(config());
     expect(fetch).toHaveBeenCalledWith('/api/factory/auth/config', expect.objectContaining({ credentials: 'same-origin', cache: 'no-store', redirect: 'error' }));
-    for (const bad of [null, {}, { ...config(), enabled: 'true' }, { ...config(), loginPath: 'https://foreign.test' }]) expect(() => configureBrowserAuth(bad)).toThrow();
+    for (const bad of [null, {}, { ...config(), enabled: 'true' }, { ...config(), oidcEnabled: undefined }, { ...config(), localLoginEnabled: 'true' }, { ...config(), loginPath: 'https://foreign.test' }]) expect(() => configureBrowserAuth(bad)).toThrow();
   });
   it('starts a fresh login without a token request or leaking provider error contents', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(json({ authorizationUrl: 'https://identity.example/authorize?state=public-fixture' }))
@@ -104,6 +104,29 @@ describe('browser SSO boundary', () => {
     const before = authEpoch(); clearBrowserSession();
     expect(() => assertAuthEpoch(before)).toThrow();
   });
+});
+
+it('uses password authentication without a prior session and refreshes CSRF after switching accounts', async () => {
+  configureBrowserAuth({ ...config(), oidcEnabled: false, localLoginEnabled: true });
+  const fetch = vi.fn().mockResolvedValueOnce(json({ authenticated: true, csrfToken: token }))
+    .mockResolvedValueOnce(json({ authenticated: true }))
+    .mockResolvedValueOnce(json({ authenticated: true, csrfToken: 'b'.repeat(43) }));
+  vi.stubGlobal('fetch', fetch);
+  await browserCsrf();
+  await expect(startBrowserLogin()).rejects.toThrow();
+  await expect(startLocalLogin('member', ' exact password ')).resolves.toBeUndefined();
+  expect(fetch.mock.calls[1]).toEqual(['/api/factory/auth/local-login', expect.objectContaining({ method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'member', password: ' exact password ' }) })]);
+  await expect(browserCsrf()).resolves.toBe('b'.repeat(43));
+  expect(fetch).toHaveBeenCalledTimes(3);
+});
+it('rejects unavailable local login and malformed success without falling back to OIDC', async () => {
+  const fetch = vi.fn().mockResolvedValue(json({ authenticated: false })); vi.stubGlobal('fetch', fetch);
+  await expect(startLocalLogin('member', 'synthetic-password')).rejects.toThrow();
+  expect(fetch).not.toHaveBeenCalled();
+  configureBrowserAuth({ ...config(), localLoginEnabled: true });
+  await expect(startLocalLogin('member', 'synthetic-password')).rejects.toThrow();
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fetch.mock.calls[0][0]).toBe('/api/factory/auth/local-login');
 });
 
 it('binds a stale-tab mutation to its expected owner even when CSRF is acquired for a replacement cookie', async () => {

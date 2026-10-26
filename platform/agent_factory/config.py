@@ -18,6 +18,7 @@ class Settings:
     # Operator-pinned public verification keys and existing-owner mapping only.
     oidc_identity: "OIDCIdentityConfig | None" = None
     browser_oidc: "BrowserOIDCConfig | None" = None
+    local_login_origin: str | None = None
     max_workers: int = 2
     max_queued: int = 20
     max_user_tasks: int = 2
@@ -113,6 +114,12 @@ class Settings:
             from .browser_oidc import BrowserOIDCConfig
             if type(self.browser_oidc) is not BrowserOIDCConfig:
                 raise ValueError("Browser OIDC requires an explicit production configuration")
+        if self.local_login_origin is not None:
+            from .browser_oidc import _origin
+            if _origin(self.local_login_origin)[1] != self.local_login_origin:
+                raise ValueError('Local login requires an exact HTTPS origin without a path')
+            if self.browser_oidc is not None and self.browser_oidc.app_origin != self.local_login_origin:
+                raise ValueError('Local and OIDC login must use the same browser origin')
         if self.oidc_identity is not None:
             from .oidc_identity import OIDCIdentityConfig
             if type(self.oidc_identity) is not OIDCIdentityConfig:
@@ -152,6 +159,7 @@ class Settings:
             raise ValueError("Production requires an operator-configured JWT key (at least 32 bytes)")
         policy = os.getenv("FACTORY_TEMPORARY_POLICY", "member-self-service")
         return cls(db_url=url, jwt_key=key,
+                   local_login_origin=os.getenv('FACTORY_LOCAL_LOGIN_ORIGIN') or None,
                    workspace=Path(os.getenv("FACTORY_WORKSPACE", ".local")).resolve(),
                    temporary_policy=policy, policy_revision=os.getenv("FACTORY_POLICY_REVISION", "department-member-v1"),
                    material_review_mode=os.getenv("FACTORY_MATERIAL_REVIEW_MODE", "member-self-service"),

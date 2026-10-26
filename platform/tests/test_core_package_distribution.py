@@ -181,6 +181,22 @@ class CorePackageDistributionTests(unittest.TestCase):
             self.assertFalse((self.site / name).exists())
             self.assertFalse((self.dependencies / name).exists())
 
+    def test_installed_local_user_entrypoint_and_hash_dependency(self):
+        script = '''
+import importlib.metadata, site, sys
+sys.path.insert(0, sys.argv[1])
+site.addsitedir(sys.argv[2])
+distribution = importlib.metadata.distribution('department-agent-factory-core')
+assert 'argon2-cffi==25.1.0' in distribution.requires
+entry = next(value for value in distribution.entry_points if value.name == 'agent-factory-local-user')
+assert entry.group == 'console_scripts'
+entry.load()(['--help'])
+'''
+        result = subprocess.run([sys.executable, '-I', '-S', '-B', '-c', script,
+            str(self.site), str(self.dependencies)], cwd=self.root, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn('username', result.stdout)
+
     @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires isolated PostgreSQL/native queue acceptance')
     def test_installed_core_lifespan_never_creates_research_tables_or_seeds(self):
         from pg_fixture import IsolatedPostgres  # pyright: ignore[reportMissingImports]

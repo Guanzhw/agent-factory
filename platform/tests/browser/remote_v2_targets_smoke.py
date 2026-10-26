@@ -84,7 +84,7 @@ class SyntheticAPI:
         path = url.path.removeprefix('/api/factory')
         self.requests.append({'method': request.method, 'path': path})
         values = {
-            '/auth/config': {'enabled': False, 'loginPath': '/api/factory/auth/login',
+            '/auth/config': {'enabled': False, 'oidcEnabled': False, 'localLoginEnabled': False, 'loginPath': '/api/factory/auth/login',
                              'logoutPath': '/api/factory/auth/logout'},
             '/session': OWNER,
             '/status': {'mode': 'demo', 'activeWorkers': 0, 'queuedJobs': 0, 'maxWorkers': 2,
