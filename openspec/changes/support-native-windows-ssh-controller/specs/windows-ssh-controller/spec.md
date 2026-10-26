@@ -1,4 +1,17 @@
 ## ADDED Requirements
+
+### Requirement: Importable independent core on every supported host
+独立 core 的全部非入口 Python 模块 MUST 在支持的非 Windows 主机上可导入，且不加载应用包或要求 Windows 专属依赖；Windows SSH 运行仍使用原 Windows API 与既有平台选择。
+
+#### Scenario: Linux source and standalone wheel module discovery
+- **WHEN** Linux 的现有 source walker 或独立构建 core wheel 的 walker 导入全部 core 非入口模块，包括 Windows SSH 模块
+- **THEN** 导入成功且无应用包导入，不尝试加载 pywin32，不通过排除模块或修改原断言取得通过
+- **AND** Windows 专属依赖仍仅安装在 Windows，非 Windows 导入不提供 Windows SSH 运行能力
+
+#### Scenario: Actual Windows SSH runtime
+- **WHEN** Windows 加载 support 模块并由原 carrier 使用其 primitives
+- **THEN** 加载真实 pywin32；缺失依赖仍失败，不静默替代或降级
+- **AND** 原 host pin、owner 凭据隔离、一次释放、进程范围与取消断言保持不变
 ### Requirement: Native Windows existing SSH execution
 The factory SHALL use system OpenSSH from a native Windows controller with the existing scoped vault and original remote Linux execution lifecycle, without WSL or a new controller.
 

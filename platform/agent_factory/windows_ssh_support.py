@@ -5,16 +5,17 @@ from ctypes import wintypes as wt
 import os
 import time
 import sys
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-import pywintypes
-import win32api
-import win32con
-import win32event
-import win32file
-import win32pipe
-import win32process
-import win32security
+if sys.platform == 'win32' or TYPE_CHECKING:
+    import pywintypes
+    import win32api
+    import win32con
+    import win32event
+    import win32file
+    import win32pipe
+    import win32process
+    import win32security
 
 
 class Reject(Exception):

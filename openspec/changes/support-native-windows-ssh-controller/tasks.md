@@ -30,3 +30,6 @@
 - [x] 4.3 共用固定 SSH argv，修复 POSIX 空格/引号路径，验证原 agent/identity/host pin 与父 cwd。
 - [x] 4.4 候选 Stage B 改按需；核对默认产品 oracle、历史 Stage A 独有范围与手动入口均保留。
 - [ ] 4.5 完成适用检查、非作者完整基线→head与增量简洁性复审；主代理确认后记录实际 Windows CI，未运行项保持未验证。
+
+## 5. Full acceptance import correction
+- [ ] 5.1 非作者审查此精简平台导入修正；保留 full40272188443 两项原失败并先复现相同断言，再限定 Windows API 导入、运行两项原回归与相关 portable/static 检查，完成完整 `62614177`→head 及增量复审；新 Windows 专项和组合 full 由主代理核验，旧失败不改写为 PASS。
