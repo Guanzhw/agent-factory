@@ -1,4 +1,5 @@
 """Fixed installed ASKPASS entry point; stdout belongs exclusively to OpenSSH."""
+import math
 import os
 import sys
 import time
@@ -14,11 +15,13 @@ def main():
             return 1
         if os.environ.get('SSH_ASKPASS_PROMPT') in ('confirm', 'none'):
             return 1
+        deadline = float(os.environ['FACTORY_SSH_DEADLINE'])
+        if not math.isfinite(deadline) or time.monotonic() >= deadline:
+            return 1
         controller = w.process(int(os.environ['FACTORY_SSH_CONTROLLER']))
         pipe = w.client_pipe(os.environ['FACTORY_SSH_PIPE'])
         if w.pipe_pid(pipe, False) != int(os.environ['FACTORY_SSH_CONTROLLER']) or not w.alive(controller):
             return 1
-        deadline = time.monotonic() + 6
         w.transfer(pipe, deadline, payload=b'READY')
         password = bytearray(w.transfer(pipe, deadline, size=64))
         if len(password) != 64:

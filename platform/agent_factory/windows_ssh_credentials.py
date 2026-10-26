@@ -24,6 +24,7 @@ from cryptography.hazmat.primitives import serialization
 from .personal_remote_provider import RemoteConnectionError
 from .ssh_credentials import PROVIDER_ID
 from .ssh_exchange import SSHExchangeCleanupError
+from .ssh_command import pinned_arguments
 
 
 def _unavailable():
@@ -150,39 +151,28 @@ class WindowsSSHCredentials:
             w.write_private(helper, installed_helper.read_bytes())
             pipe_name = r'\\.\pipe\af-ssh-' + uuid.uuid4().hex
             pipe = w.server_pipe(pipe_name)
-            args = [str(ssh), '-F', 'none', '-a', '-T', '-o', 'HostKeyAlias=factory-pinned',
-                    '-o', 'StrictHostKeyChecking=yes', '-o', 'UserKnownHostsFile=known_hosts',
-                    '-o', 'GlobalKnownHostsFile=none', '-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none',
-                    '-o', 'AddKeysToAgent=no', '-i', 'identity', '-o', 'BatchMode=no',
-                    '-o', 'PreferredAuthentications=publickey', '-o', 'NumberOfPasswordPrompts=1',
-                    '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
-                    '-o', 'ProxyCommand=none', '-o', 'ProxyJump=none', '-o', 'ControlMaster=no',
-                    '-o', 'ControlPath=none', '-o', 'PermitLocalCommand=no', '-o', 'ExitOnForwardFailure=yes',
-                    '-o', 'StreamLocalBindUnlink=no', '-o', 'ConnectTimeout=10',
-                    '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2']
-            if forward:
-                args += ['-R', forward]
-            args += ['-l', server.username, '-p', str(server.port), server.address, command]
+            args = pinned_arguments(ssh, server, command,
+                ['-o', 'IdentityAgent=none', '-o', 'AddKeysToAgent=no', '-i', 'identity', '-o', 'BatchMode=no',
+                 '-o', 'PreferredAuthentications=publickey', '-o', 'NumberOfPasswordPrompts=1'], forward=forward)
             env = {name: os.environ[name] for name in ('SystemRoot', 'WINDIR', 'ProgramData', 'TEMP', 'TMP') if name in os.environ}
             env.update({'PATH': str(ssh.parent), 'SSH_ASKPASS': './askpass.exe', 'SSH_ASKPASS_REQUIRE': 'force',
-                        'FACTORY_SSH_KEY': str(identity), 'FACTORY_SSH_PIPE': pipe_name,
+                        'FACTORY_SSH_DEADLINE': str(deadline), 'FACTORY_SSH_PIPE': pipe_name,
                         'FACTORY_SSH_CONTROLLER': str(os.getpid())})
             spawned = WindowsSSHProcess(args, env, cwd=str(folder))
             process = spawned
-            broker_deadline = min(deadline, time.monotonic() + 6)
 
             def broker():
                 try:
-                    w.connect(pipe, broker_deadline, carrier.cancelled)
+                    w.connect(pipe, deadline, carrier.cancelled)
                     w.check_client(pipe, spawned.process_handle, spawned.pid, helper,
                                    w.image(w.win32api.GetCurrentProcess()), sys.executable)
-                    if w.transfer(pipe, broker_deadline, size=16, cancelled=carrier.cancelled) != b'READY':
+                    if w.transfer(pipe, deadline, size=16, cancelled=carrier.cancelled) != b'READY':
                         raise _unavailable()
                     lease.validate()
                     if carrier.cancelled.is_set() or time.monotonic() >= deadline:
                         raise _unavailable()
-                    w.transfer(pipe, broker_deadline, payload=bytes(password), cancelled=carrier.cancelled)
-                    if w.transfer(pipe, broker_deadline, size=16, cancelled=carrier.cancelled) != b'RECEIVED':
+                    w.transfer(pipe, deadline, payload=bytes(password), cancelled=carrier.cancelled)
+                    if w.transfer(pipe, deadline, size=16, cancelled=carrier.cancelled) != b'RECEIVED':
                         raise _unavailable()
                 except Exception:
                     errors.append(_unavailable())
@@ -209,6 +199,7 @@ class WindowsSSHCredentials:
             carrier.cancelled.set()
             key = None
             cleanup_error = None
+            cleanup_uncertain = True
             try:
                 if process is not None:
                     try:
@@ -221,22 +212,25 @@ class WindowsSSHCredentials:
                         cleanup_error = SSHExchangeCleanupError('SSH_BROKER_CLEANUP_INCOMPLETE')
                 elif pipe is not None:
                     pipe.Close()
-                if folder.exists():
-                    shutil.rmtree(folder)
                 if any(isinstance(error, SSHExchangeCleanupError) for error in errors):
                     cleanup_error = SSHExchangeCleanupError('SSH_CARRIER_CLEANUP_INCOMPLETE')
+                cleanup_uncertain = cleanup_error is not None
+                if folder.exists():
+                    shutil.rmtree(folder)
             except Exception as exc:
                 cleanup_error = exc
             finally:
                 password[:] = b'\0' * len(password)
                 with self.lock:
-                    if carrier.failed and cleanup_error is None:
-                        cleanup_error = SSHExchangeCleanupError('SSH_CARRIER_CLEANUP_INCOMPLETE')
+                    if carrier.failed:
+                        cleanup_uncertain = True
+                        cleanup_error = cleanup_error or SSHExchangeCleanupError('SSH_CARRIER_CLEANUP_INCOMPLETE')
                     if cleanup_error is None:
                         self.active.discard(carrier)
                     else:
                         carrier.failed = True
-                        self.closed = True
+                        if cleanup_uncertain:
+                            self.closed = True
                     carrier.done.set()
             if cleanup_error is not None:
                 raise SSHExchangeCleanupError('SSH_CARRIER_CLEANUP_INCOMPLETE') from cleanup_error

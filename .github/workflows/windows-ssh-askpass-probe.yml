@@ -1,8 +1,8 @@
 name: Windows SSH contracts
 on:
+  workflow_dispatch:
   pull_request:
     paths:
-      - scripts/windows_ssh_askpass_probe/**
       - scripts/accept_windows_ssh_core.py
       - platform/agent_factory/*ssh*.py
       - platform/tests/*ssh*.py
@@ -14,6 +14,7 @@ permissions:
   contents: read
 jobs:
   authentication-candidate:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -63,6 +64,7 @@ jobs:
           code = """
           import sys, unittest
           modules = ['test_ssh_exchange', 'test_windows_ssh_process', 'test_ssh_process_paths',
+                     'test_windows_ssh_credentials', 'test_ssh_command',
                      'test_ssh_operation_runtime.SSHOperationProjectionTests',
                      'test_ssh_operation_runtime.SSHPersonalTargetTests',
                      'test_ssh_operation_runtime.SSHLaunchPreflightTests',

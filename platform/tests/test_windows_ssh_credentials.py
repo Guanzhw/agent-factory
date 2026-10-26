@@ -1,6 +1,8 @@
 """Portable scope/authority tests; OS calls are explicit fakes, not Windows evidence."""
 from contextlib import ExitStack
 from dataclasses import replace
+import io
+import os
 from pathlib import Path
 import tempfile
 import shutil
@@ -158,6 +160,101 @@ class WindowsCredentialScopeTests(unittest.TestCase):
         self.assertTrue(process.closed)
         self.assertFalse(self.manager.active)
 
+    def test_slow_final_guard_and_connection_use_original_deadline(self):
+        from agent_factory import windows_ssh_credentials as credentials
+        for phase in ('guard', 'connect'):
+            with self.subTest(phase=phase):
+                clock = SimpleNamespace(now=0.0)
+                self.guard.reset_mock()
+                self.reads = self.releases = 0
+                finished = threading.Event()
+                def guard():
+                    if phase == 'guard' and self.guard.call_count == 3:
+                        clock.now = 7.0
+                self.guard.side_effect = guard
+                def connect(pipe, deadline, cancelled):
+                    if phase == 'connect':
+                        clock.now = 7.0
+                    if clock.now >= deadline:
+                        finished.set()
+                        raise TimeoutError('PIPE_DEADLINE')
+                self.support.connect = connect
+                transfer = self.support.transfer
+                def observed(*args, **kwargs):
+                    result = transfer(*args, **kwargs)
+                    if result == b'RECEIVED':
+                        finished.set()
+                    return result
+                self.support.transfer = observed
+                try:
+                    with patch.object(credentials, 'time', SimpleNamespace(monotonic=lambda: clock.now)):
+                        lease = replace(self.lease, expires_at=30.0)
+                        with lease.open(self.server, 'fixed-command', deadline=30.0) as process:
+                            self.assertTrue(finished.wait(1))
+                            self.assertEqual(self.releases, 1)
+                            self.assertEqual(process.env['FACTORY_SSH_DEADLINE'], '30.0')
+                        self.assertFalse(process.killed)
+                        self.assertTrue(process.closed)
+                finally:
+                    self.support.transfer = transfer
+
+    def test_original_deadline_expiring_during_connect_denies_release(self):
+        from agent_factory import windows_ssh_credentials as credentials
+        clock = SimpleNamespace(now=0.0)
+        failed = threading.Event()
+        def connect(pipe, deadline, cancelled):
+            clock.now = 31.0
+        self.support.connect = connect
+        self.guard.side_effect = lambda: failed.set() if clock.now == 31 else None
+        with patch.object(credentials, 'time', SimpleNamespace(monotonic=lambda: clock.now)):
+            with self.assertRaisesRegex(Exception, 'SSH_CREDENTIAL_UNAVAILABLE'):
+                with replace(self.lease, expires_at=30.0).open(self.server, 'fixed-command', deadline=30.0):
+                    self.assertTrue(failed.wait(1))
+        self.assertEqual(self.releases, 0)
+        self.assertTrue(self.processes[-1].closed)
+
+    def test_ciphertext_removal_failure_retains_slot_without_closing_other_owner(self):
+        self.cleanup_failed_expected = True
+        self.manager.max_agents = 2
+        def wait_for_broker():
+            for thread in threading.enumerate():
+                if thread.name == 'factory-ssh-askpass':
+                    thread.join(1)
+                    self.assertFalse(thread.is_alive())
+        def fail_removal():
+            with patch('agent_factory.windows_ssh_credentials.shutil.rmtree', side_effect=PermissionError('fixture')):
+                with self.assertRaisesRegex(SSHExchangeCleanupError, 'SSH_CARRIER_CLEANUP_INCOMPLETE'):
+                    with self.open():
+                        wait_for_broker()
+            self.assertTrue(self.processes[-1].closed)
+            self.assertFalse(self.manager.closed)
+        fail_removal()
+        self.assertEqual(len(self.manager.active), 1)
+        other = SimpleNamespace(**(vars(self.server) | {'owner': 'bob', 'credential_ref': 'bob-key'}))
+        lease = self.manager.acquire(other, 'ssh://fixture.invalid', self.guard)
+        with lease.open(other, 'fixed-command', deadline=time.monotonic() + 5):
+            self.assertEqual(len(self.manager.active), 2)
+            wait_for_broker()
+        self.assertEqual(len(self.manager.active), 1)
+        fail_removal()
+        self.assertEqual(len(self.manager.active), 2)
+        self.manager._key.reset_mock()
+        with self.assertRaisesRegex(Exception, 'SSH_AGENT_CAPACITY'):
+            with lease.open(other, 'fixed-command', deadline=time.monotonic() + 5):
+                pass
+        self.manager._key.assert_not_called()
+        with self.assertRaises(SSHExchangeCleanupError):
+            self.manager.close()
+
+    def test_pipe_cleanup_failure_still_closes_all_admission(self):
+        self.cleanup_failed_expected = True
+        self.support.server_pipe = lambda _: SimpleNamespace(Close=Mock(side_effect=OSError('fixture')))
+        with self.assertRaises(SSHExchangeCleanupError):
+            with self.open():
+                pass
+        self.assertTrue(self.manager.closed)
+        self.assertEqual(len(self.manager.active), 1)
+
     def test_close_racing_with_initialization_prevents_resume(self):
         entered, proceed = threading.Event(), threading.Event()
         failures = []
@@ -238,3 +335,47 @@ class WindowsCredentialScopeTests(unittest.TestCase):
             self.manager.acquire(self.server, 'ssh://fixture.invalid', self.guard)
         self.manager._key.assert_not_called()
         self.vault.resolve.assert_not_called()
+
+
+class WindowsAskpassDeadlineTests(unittest.TestCase):
+    def helper(self, deadline):
+        from agent_factory import windows_ssh_askpass as askpass
+        clock = SimpleNamespace(now=0.0)
+        handle = SimpleNamespace(Close=Mock())
+        support = ModuleType('agent_factory.windows_ssh_support')
+        support.process = Mock(return_value=handle)
+        support.client_pipe = Mock(return_value=handle)
+        support.pipe_pid = lambda *args: 1
+        support.alive = lambda _: True
+        def transfer(pipe, limit, payload=None, **kwargs):
+            if clock.now >= limit:
+                raise TimeoutError('PIPE_DEADLINE')
+            if payload == b'READY':
+                clock.now = 7.0
+            return b'x' * 64 if payload is None else payload
+        support.transfer = Mock(side_effect=transfer)
+        output = io.BytesIO()
+        with patch.dict('sys.modules', {'agent_factory.windows_ssh_support': support}), \
+                patch.object(agent_factory, 'windows_ssh_support', support, create=True), \
+                patch.object(askpass, 'time', SimpleNamespace(monotonic=lambda: clock.now)), \
+                patch.object(askpass.sys, 'argv', ['askpass', "Enter passphrase for key 'identity': "]), \
+                patch.object(askpass.sys, 'stdout', SimpleNamespace(buffer=output)), \
+                patch.dict(os.environ, {'FACTORY_SSH_CONTROLLER': '1', 'FACTORY_SSH_PIPE': 'fixture',
+                                        'FACTORY_SSH_DEADLINE': deadline}, clear=True):
+            result = askpass.main()
+        return result, output.getvalue(), support
+
+    def test_helper_keeps_caller_deadline_across_slow_release_guard(self):
+        result, output, support = self.helper('30.0')
+        self.assertEqual(result, 0)
+        self.assertEqual(output, b'x' * 64 + b'\n')
+        self.assertEqual([call.args[1] for call in support.transfer.call_args_list], [30.0] * 3)
+
+    def test_invalid_or_expired_deadline_never_connects_to_password_pipe(self):
+        for deadline in ('nan', 'inf', '-inf', '-1', '0', 'invalid'):
+            with self.subTest(deadline=deadline):
+                result, output, support = self.helper(deadline)
+                self.assertEqual(result, 1)
+                self.assertEqual(output, b'')
+                support.client_pipe.assert_not_called()
+                support.transfer.assert_not_called()
