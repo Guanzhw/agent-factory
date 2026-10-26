@@ -32,6 +32,19 @@
 - Python architecture：518 modules，0 violations，0 coverage gaps。
 - OpenSpec strict validation 与 diff whitespace 检查通过。
 
+精确实现 `94ee7cd1587fd3d63926f0495832b6e25921540f` 的串行本机验收：5 tests、
+0 skips、0 failures/errors，17.765s，PASS。使用已存在的 loopback SSH 工具与
+PostgreSQL 17.11；测试前后确认新增临时数据库、存活测试进程和 fixture 目录均为零。
+
+| 检查 | 实际范围 |
+| --- | --- |
+| `PersonalSSHLiveTests` 三项 | 真实 RSA/ECDSA/Ed25519 enrollment、共享调用保留 owner 凭据及撤回、错误 host pin 在远端操作前失败。 |
+| `SSHProcessLoopbackTests` 一项 | 从当前源码建立独立 core wheel，经过非22端口 TCP 映射运行真实 Linux helper，检查原身份、output、cancel；CPU-only。 |
+| `SSHNativeProcessTests.test_hard_kill_paused_controller_preserves_original_helper_and_run` | 真实 PostgreSQL/native worker 与 controller 硬停，恢复原 helper/run；此用例 SSH transport 是本机 subprocess 替身，不称作真实 SSH 跨机恢复。 |
+
+非作者已审查完整 `94c59e5`→`94ee7cd` 与方案→实现增量，代码/简洁性及上述本机
+回执 PASS；实际 Windows 运行结论单独等待，不能由此代替。
+
 便携 Windows fixture 使用 fake OS/key/process，不是 Windows 运行证据；`ssh -G`
 只验证真实配置解析。路径回归在实际存在的 public identity 与 known_hosts 的受控
 cwd 内解析，并另外核对 Popen 的原 socket 环境和父 cwd；不称其证明了认证。
@@ -45,7 +58,7 @@ Stage B normal/wrong-pin 已有产品检查，AGAIN/N 专有协议没有移入�
 当前产品新增覆盖。原安装路径、wrong-pin 零释放、原取消、expiry/revoke、原进程及
 helper 停止 oracle 没有删减。
 
-真实 Linux loopback/native、整改后真实 Windows installed-wheel 与最终 fast/full
-待各自精确回执。Windows→真实 Linux 的 submit/recovery/cancel 继续 BLOCKED：没有
+整改后真实 Windows installed-wheel 与最终 fast/full 待各自精确回执。
+Windows→真实 Linux 的 submit/recovery/cancel 继续 BLOCKED：没有
 授权外部 endpoint，Windows ForceCommand 不是 Linux helper。真实 GPU、模型、IdP
-或部署未纳入本次验证。非作者完整差异/增量简洁性审查及主代理最终确认仍待完成。
+或部署未纳入本次验证。主代理最终确认及本次回执文档增量审查仍待完成。
