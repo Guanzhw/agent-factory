@@ -13,13 +13,13 @@ from threading import Event
 import time
 import unittest
 from unittest.mock import patch
-from uuid import uuid4
 from zipfile import ZipFile
 
 from sqlalchemy import select
 
 from agent_factory.personal_tools import OperationAccountRequest
 from agent_factory.application_content import ContentPublication
+from research.projects import ProjectCommand
 import test_research_workflow_postgres as native
 
 PROGRAM = '''import json, pathlib, sys
@@ -224,14 +224,11 @@ class ResearchDeliveryPostgresTests(unittest.TestCase):
     def test_manifest_source_withdrawal_is_serial_with_authorized_snapshots(self):
         service = self.state['research_delivery']
         content = self.state['application_content']
-        source = content.publish('alice', ContentPublication(source={
-            'application': 'research', 'record': 'barrier-source', 'revision': '1'},
-            content={'observation': 'shared original'}, visibility='team'), 'barrier-source')
-        identifier = str(uuid4())
-        with self.state['store'].transaction() as conn:
-            conn.execute(service.deliveries.insert().values(id=identifier, owner_id='alice',
-                project_id='domain-barrier-fixture', created_at='fixture',
-                body={'sourceIds': [source['id']], 'records': [{'summary': 'derived original'}]}))
+        receipt = self.base.start('no experiment is permitted for this agreed task')
+        self.base.completed(receipt['execution']['taskId'])
+        manifest = service.create('alice', receipt['projectId'], ProjectCommand(requestId='barrier-manifest', expectedVersion=1))
+        identifier = manifest['id']
+        source = content.read('alice', manifest['recordIds'][0])
         held, release, attempted = Event(), Event(), Event()
         original_read = content.read
         def paused_read(*args):
@@ -250,7 +247,7 @@ class ResearchDeliveryPostgresTests(unittest.TestCase):
                 self.assertTrue(attempted.wait(5))
                 self.assertFalse(revoked.done())
                 release.set()
-                self.assertEqual(snapshot.result(5)['records'][0]['summary'], 'derived original')
+                self.assertEqual(snapshot.result(5)['records'][0], source['content'])
                 revoked.result(5)
             finally:
                 release.set()

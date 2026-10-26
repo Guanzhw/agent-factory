@@ -32,6 +32,18 @@ it('hides the whole old manifest when an input is withdrawn', async () => {
   await act(async () => button('核对成果与当前来源').click());
   expect(read).toHaveBeenCalledTimes(2); expect(host.textContent).toContain('旧成果正文与下载已隐藏'); expect(host.textContent).not.toContain('not_met'); expect(button('下载当前授权成果包')).toBeUndefined();
 });
+it('shows the exact original ending and preserves unobserved cleanup', async () => {
+  const reason = '未达标；剩余问题：需要独立复现。\n完整原文';
+  vi.spyOn(evidenceApi, 'delivery').mockResolvedValue({ ...delivery, ending: { ownerId: 'alice', sourceIds: ['record-b'], outcome: 'not_met', reason, goalVersion: 2, endedAt: '2026-10-25T00:00:00Z', resourceCleanup: 'not_observed' } });
+  await act(async () => root.render(createElement(DeliveryDetail, { ownerId: 'bob', id: 'd1' })));
+  expect(host.textContent).toContain(reason); expect(host.textContent).toContain('结束依据与剩余问题（原文）');
+  expect(host.textContent).toContain('未确认资源停止'); expect(host.textContent).toContain('项目所有者：alice');
+});
+it('identifies an original Agent analysis without inventing an actor or verification', async () => {
+  vi.spyOn(evidenceApi, 'delivery').mockResolvedValue({ ...delivery, ending: { ownerId: 'alice', sourceIds: [], outcome: 'not_met', reason: '原分析结论', goalVersion: 2, endedAt: '2026-10-25T00:00:00Z', resourceCleanup: 'stopped', verificationStatus: 'agent_analysis' } });
+  await act(async () => root.render(createElement(DeliveryDetail, { ownerId: 'bob', id: 'd1' })));
+  expect(host.textContent).toContain('Agent 分析'); expect(host.textContent).toContain('尚未独立验证');
+});
 it('does not restore late association or source data after owner and selection change', async () => {
   const association = { id: 'a1', ownerId: 'alice', createdAt: '2026-10-25T00:00:00Z', sourceIds: ['source1'], inputContentIds: ['source1'], analysis: { answer: 'old analysis', citations: ['source1'], evidenceLevel: 'agent_analysis' as const, relation: 'related' } };
   vi.spyOn(evidenceApi, 'association').mockResolvedValueOnce(association).mockResolvedValueOnce(association).mockRejectedValue(new ApiError('不可读', 404));
