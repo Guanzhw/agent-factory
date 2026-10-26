@@ -28,3 +28,9 @@ PYTHONPATH=platform:deployment:platform/tests uv run python -m unittest test_nat
 ```
 
 命令需先设置授权的一次性 loopback `FACTORY_TEST_DATABASE_URL`。本次全部行为检查首次通过，零跳过；历史失败没有重分类。最终候选独立完整 diff 复审及发布后精确 head CI 仍由协调者核验。没有新浏览器、真实模型/GPU、生产 IdP 或部署验收结论。
+
+## Audit Q2 follow-up — 2026-10-26
+
+方案 `4ac2bb06d20aa0cb5aeb16b99a3f1c261bf6e3eb` 经 `audit_quality` 非作者 PASS 后，执行实际 `accept_research_assistant_ui.main` AST 与合成 browser/run ports。旧实现的 desktop/mobile/both 均因 aggregate 重复正文失败（exit 1）；仅改三处报告写入后，三个索引均可读取完整子报告，另一个故意失败场景继续抛出异常、不写成功汇总，四次 browser close 均执行（exit 0）。`run`、历史报告、截图和产品代码不变；未重新运行 PG 或真实浏览器。窄复现与两份输出保留在工作区 `audit-remediation/q2-probe.py`、`q2-first-failure.log`、`q2-passed.json`，不将原始输出入库。
+
+Ruff、完整增量 whitespace 和项目配置 Pyright 均通过。额外显式检查此配置外浏览器脚本出现 7 个诊断（缺 browser/test imports 及既有类型问题）；以 `fdb78b5` 原脚本对照后诊断逐字相同，仅文件名不同，不将该额外检查说成通过，也不顺带修改原验收逻辑。最终 Q2 实现和文档增量仍需非作者完整复审；PR139 保持 Draft，历史审计结论不被此次窄修正覆盖。

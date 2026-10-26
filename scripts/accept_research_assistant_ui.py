@@ -198,12 +198,12 @@ def main():
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(executable_path='/usr/bin/chromium', headless=True)
         try:
-            results = []
+            reports = []
             for mode in (('desktop', 'mobile') if args.viewport == 'both' else (args.viewport,)):
                 result = run(browser, args, mode)
                 (args.output / mode / 'evidence.json').write_text(json.dumps(result, indent=2))
-                results.append(result)
-            (args.output / 'evidence.json').write_text(json.dumps({'ok': True, 'results': results}, indent=2))
+                reports.append(f'{mode}/evidence.json')
+            (args.output / 'evidence.json').write_text(json.dumps({'ok': True, 'reports': reports}, indent=2))
         finally: browser.close()
 
 

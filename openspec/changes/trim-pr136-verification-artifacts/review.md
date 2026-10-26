@@ -32,3 +32,14 @@ Reviewer: `cleanup_review`（非实施作者）；`evidence_check` 独立只读�
 实读本候选相关日志：默认 storage 1/1（7.578s）、diagnostic storage 1/1（6.707s），零跳过；前者无诊断文件/留存目录，后者保留原诊断；两者均确认原 child 退出、工作目录和隔离数据库删除，HTTP read timeout 仍为 15。fixture lifecycle/identity/publication 共 34/34（22.269s）通过。未另跑重型 PG；完整 diff whitespace 检查通过。
 
 这是源码/已记录目标检查结论，不替代发布后精确 head CI。后续 verification/task 文档增量仍需复审；该独立 PR 保持 Draft 直到适用检查终态成功。
+
+# Independent Q2 specification review — 2026-10-26
+
+Reviewer: `audit_quality`，非本次方案/实施作者。精确方案范围：`fdb78b5793b74b34334305a1f5b1c9ee4340d469` → `4ac2bb06d20aa0cb5aeb16b99a3f1c261bf6e3eb`，3 文件 +11 行。
+
+**Q2 方案 PASS，允许按此窄范围实施；不是实现或端到端运行 PASS。**
+
+- 实读当前 `accept_research_assistant_ui.main` 与完整方案 diff：同一 result 被写入子报告和 aggregate，复用已有 `reports` 相对路径即可去重；未发现依赖该新生成 aggregate `results` 的代码消费者。
+- 只改报告写入，保持 `run`、三种 viewport、子报告/失败截图/日志及历史产物；不引入报告框架、兼容重复字段或额外规范。
+- 用 actual main AST 与合成依赖验证三种索引、子报告完整和异常关闭，是与此次变化相称的验证；保留旧 head 反例，不将其声称为真实 PG/浏览器验收。
+- 后续需审精确实现完整 diff 与实际检查回执；旧 PR139 PASS、历史验收和本次方案 PASS 均不替代该复审。无需为此重跑旧 storage/PG 验收。
