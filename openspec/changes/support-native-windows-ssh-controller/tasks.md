@@ -25,8 +25,8 @@
 - [ ] 3.8 完成最终精确 head 的 fast/full、作者外文档增量复审及合并后 main 检查；现有 full 仅由 workflow_dispatch 触发。
 
 ## 4. 2026-10-26 independent audit corrections
-- [ ] 4.1 非作者审查精确 spec commit，保留历史结果及 POSIX 旧缺陷归属。
-- [ ] 4.2 先记录失败回归，再修正共同 deadline、仅密文残留的失败范围与有界 slot；保留真正不确定清理的全局关闭。
-- [ ] 4.3 共用固定 SSH argv，修复 POSIX 空格/引号路径，验证原 agent/identity/host pin 与父 cwd。
-- [ ] 4.4 候选 Stage B 改按需；核对默认产品 oracle、历史 Stage A 独有范围与手动入口均保留。
+- [x] 4.1 非作者审查精确 spec commit，保留历史结果及 POSIX 旧缺陷归属。
+- [x] 4.2 先记录失败回归，再修正共同 deadline、仅密文残留的失败范围与有界 slot；保留真正不确定清理的全局关闭。
+- [x] 4.3 共用固定 SSH argv，修复 POSIX 空格/引号路径，验证原 agent/identity/host pin 与父 cwd。
+- [x] 4.4 候选 Stage B 改按需；核对默认产品 oracle、历史 Stage A 独有范围与手动入口均保留。
 - [ ] 4.5 完成适用检查、非作者完整基线→head与增量简洁性复审；主代理确认后记录实际 Windows CI，未运行项保持未验证。
