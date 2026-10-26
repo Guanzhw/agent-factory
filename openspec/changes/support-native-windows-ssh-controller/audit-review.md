@@ -36,3 +36,28 @@ Reviewer: `audit_quality`，非方案/实施作者。审查记录独立维护，
 必要边界仍保留：当前owner/vault/连接授权、host key、原进程/helper持有者、一次秘密释放、失去回执的原任务UNKNOWN与零替代dispatch。没有将SSH本地进程结束等同远端任务停止。实际Windows整改后执行、Windows→授权真实Linux原submit/recovery/cancel、GPU/model/IdP、最终fast/full与部署均未由本轮Linux证据关闭。
 
 后续作者仅补本次Linux回执与原样独立review时，应核对精确文档增量和源码无变化；不反复写入“审查审查”的新记录。
+
+## Full 导入修正方案审查 — 2026-10-26
+
+精确范围：`6e15459484ce3ef4a63b22426b43a8891a310512` → `1dfc4b091bd2d189ca76c090d1b04b11e839bc74`，4 个既有 artifact、+27 行；产品与测试未改。非作者 `audit_quality` 已读完整方案 diff、support 模块、实际 carrier 平台选择和两个原导入断言；独立 OpenSpec strict 与 diff-check PASS。
+
+**方案 PASS，可先在精确 spec head 复现原两项失败，再实施；不代表实现或新 full 验收通过。** 原 full `40272188443` 完成 2261 项，2 failures、0 errors、15 skips、`accepted=false`；六组 required 全通过不能抵消普通失败，原始失败继续保留。
+
+- 仅以 `sys.platform == 'win32'` 包住原 8 个 Windows API 导入，符合既有 `personal_ssh` 的 carrier 平台选择。support 顶层无须调用这些 API；非 Windows 导入成功不承诺执行 Windows primitives。无需 loader、代理对象、异常吞噬或逐函数兜底；Windows 缺失依赖仍直接失败。
+- 保留原 source/独立 wheel 全模块 walker、模块集合、全部断言和依赖 marker；不通过排除模块、Linux 安装 pywin32 或放宽断言取得通过。host key、owner/原身份、秘密释放、holder/Job、期限、取消及清理函数逻辑不变。
+- 实现后复审完整 `62614177` → 新 head 和本修正增量，读取相同两项首失败/修后及相关 portable/static 回执；新 head Windows 专项与新组合 full 由根核验。旧 full 不重跑追绿，真实远端/GPU/model/IdP 边界不由导入测试关闭。
+
+## Full 导入修正完整实现复审 — 2026-10-26
+
+非作者 `audit_quality` 审查完整 `62614177c23c4d2cd0caf6b7c91418e74fde8ad4` → `27841560acff3b505bc28feefb8b6d25623e01b0`（54 files、+4219/-75），以及修正基线 `6e15459484ce3ef4a63b22426b43a8891a310512` → 同 head（6 files、+54/-10）。产品 checkpoint 为 `9600f9ca0d3c0098e6ba6e3e68995ec90e72177e`；其后仅 `verification-audit.md +16`。另由非作者 `ssh_fixture_crosscheck` 只读补核全部测试、CI、历史 probe 与文档，本结论整合双方当前 diff 审查，不沿用旧 PASS 替代。
+
+**完整源码/简洁性与本机目标验收 PASS，未发现需继续修改源码的阻断；新 head 的真实 Windows 专项与新组合 full 仍待，不能据此解除合并/部署暂停。**
+
+- 本修正唯一产品路径为 `windows_ssh_support.py`：原八项 Windows API 导入加平台条件与标准 `TYPE_CHECKING`。所有 class/function AST 相对 `6e154594` 完全相同；`TYPE_CHECKING` 运行值为 false，只提供静态可见性，无 ignore、替代对象、异常吞噬、loader 或逐函数 guard。Windows 仍加载原 API，缺依赖仍失败；非 Windows 可导入不表示支持执行 Windows primitives。
+- 两个原 source/独立 wheel walker、模块集合与断言完全未改，未排除任何 Windows 模块。检查者以显式当前源码路径独立运行同两项：**2 PASS / 4.280s / 0 skip**；wheel 由原测试现场构建，未使用 PostgreSQL，结束后临时 distribution 根为空。原输出保留在外部 `ssh-core-import-correction/independent-targeted.log`。
+- 已读作者原始证据：spec `1dfc4b0` 两 FAIL / 4.407s；首次 `199dec7` 两 PASS / 4.222s、57 portable PASS，随后 Pyright 61 errors / 6 warnings；最终 `9600f9c` 原两项与同 57 portable 共 59 PASS / 8.511s / 0 skip，Pyright 0 errors / 14 Windows 模块源码 warnings。首次静态失败未隐藏；当前 source 的显式配置、Linux 无 pywintypes/无 Windows API 加载记录与修正一致。Ruff、架构 518/0/0 回执通过；最终 OpenSpec strict 与完整 diff-check 另经本审查者通过。
+- 完整产品 diff 保留当前 owner/vault/lease 与原任务身份、严格 host pin、禁止外部 SSH config/proxy/agent forwarding、原 UNKNOWN 与取消语义。Windows 仍为加密临时私钥、一次 passphrase、原 helper/client/parent 身份和 Job/holder 清理；共享 deadline 不刷新预算，密文目录删除失败仍报错并保留有限 slot，进程/broker/pipe 不确定仍关闭 admission。固定 argv 的共用与 POSIX child cwd/SSH_AUTH_SOCK 路径修正职责明确，未增加恢复框架或额外授权规则。
+- 完整测试 diff 的 contextmanager/deadline 适配保留原取消等待、单次发送、进程数量及错误传播。独立 exchange 原回收断言未动，实际 Windows 回归在 scope close 前检查回收；未发现改 oracle、放宽期限或增加 skip。主 CI、全量 discovery 与 required selectors 不变；本次增量没有改任何 tests/CI/依赖。全 PR lock 仅增加原 Windows 加密所需 bcrypt 5.0.0 和对应项目依赖，其他锁定包未升级。
+- Q1 candidate 仍仅手动，默认保留不空且零 skip 的 portable contracts 与真正 checkout 外安装 core wheel 的两个产品消费者验收。原 wrong-pin 零释放、取消不替换、expiry/revoke 零新进程、held handles 与清理 oracle 保留；历史 Stage A/Stage B 不是产品新 head 证据。旧文档中的 `445a2ce` 均只能按其精确历史 SHA 解读，当前导入修正及未验范围以 `verification-audit.md` 新节为准，不复制历史报告。
+
+`full40272188443` 的完整失败日志与 `accepted=false` 保留；required 六组通过不抵消两项普通失败。本次没有运行新的真实 Windows、组合 full、浏览器或外部资源；旧 Windows success 与本机绿色结果不得替代新 head 验收。Windows→授权真实 Linux 原 submit/recovery/cancel、GPU/model/生产 IdP 与部署边界继续未验。主代理核对最终文档增量与后续真实 CI 后管理任务状态，本审查未勾 checkbox、发布、合并或重跑旧 full。
