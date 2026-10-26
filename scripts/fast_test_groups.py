@@ -6,7 +6,10 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
-    'local_login': ('test_local_login',),
+    'local_login': (
+        'test_local_login',
+        'test_credential_vault.CredentialVaultTests.test_browser_bridge_rejects_missing_csrf_before_body_or_vault',
+    ),
     'ssh_original_contracts': (
         'test_ssh_operation_runtime', 'test_ssh_operation_waits', 'test_ssh_tool_factory',
     ),
