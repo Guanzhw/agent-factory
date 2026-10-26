@@ -1,6 +1,6 @@
 # Verification
 
-基线 `860acd0a3604bc19e4e7f85095f785834a3f23dd`；先审方案 `73464901411b244634a83856feb0d35fe44967ef` 已由 `audit_quality` 独立 PASS。以下是本实现源码的本机目标验收，发布后精确 head CI 另由协调者核验。
+基线 `860acd0a3604bc19e4e7f85095f785834a3f23dd`；先审方案 `73464901411b244634a83856feb0d35fe44967ef`、被测实现 `f2b4d39de97df4b87a3b0d27c5c52936eddc4512` 均已由 `audit_quality` 独立 PASS。后续仅更新审查/任务文档；发布后精确 head CI 另由协调者核验。
 
 | 检查 | 首次结果 | 边界 |
 | --- | --- | --- |
@@ -14,4 +14,4 @@
 
 首次环境检查发现主 checkout 的 Node 依赖与锁文件不一致（vite/vitest 旧版、happy-dom 缺失），因此在本分支执行锁定 `npm ci`、`uv sync --frozen`；未改 lock。所有上述行为检查首次通过，无失败重跑。便携 Python 选择为 `test_opencode_go`、`test_go_development_profile`、`test_go_http` 及 `CorePackageDistributionTests.test_wheel_contains_only_core_sources_and_no_application_dependency`、`test_all_installed_core_modules_import_with_application_packages_absent`。
 
-本机日志和独立 wheel 在 `/workspace/demo-remnants-evidence/`，不入 Git。没有运行无关全套 PG、实际外部 Go/模型、GPU、生产 IdP 或部署验收；合成 transport 结果不提升这些未验边界。最终完整 diff 简洁性复审、发布后 fast 及 main CI 仍待协调者确认。
+本机日志和独立 wheel 在 `/workspace/demo-remnants-evidence/`，不入 Git。没有运行无关全套 PG、实际外部 Go/模型、GPU、生产 IdP 或部署验收；合成 transport 结果不提升这些未验边界。完整 diff 简洁性复审已通过；任务 3.1 保留发布前状态，发布后 fast 及 main CI 的最终验收以 PR 的精确 head 回执为准。
