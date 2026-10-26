@@ -1,5 +1,10 @@
 # Controlled baseline/candidate workflow
 
+**Historical fixture workflow:** the named application, comparison workspace
+and reproduction steps below are no longer installed product entrypoints. The
+original results and failure evidence are retained; this does not retire the
+general comparison contract. See [application development](APPLICATION_DEVELOPMENT.md).
+
 The existing material/application governance, composition proposal, immutable
 plan review, instance admission and native Agno task execute a single paired
 comparison. The selected application is `controlled-comparison-fixture-v1`.

@@ -12,7 +12,7 @@ The supported `temporary_policy` and `material_review_mode` value is `member-sel
 
 Existing plan, review, decision, task, effect and artifact records retain their original identities and contents. Old approval configuration tables remain historical data; startup and execution use the current runtime configuration. Members read their own review history through `GET /api/factory/plan-reviews` and `GET /api/factory/plan-reviews/{id}`. Retired review creation and decision routes return HTTP 410. Historical decisions never authorize a new task. A historical plan without an execution manifest remains readable; regenerate it to execute with explicit bindings.
 
-Research bootstrap, baseline and candidate scripts publish as the task owner and submit the resulting plan directly. A native tool can still request the invoking member's consent for its own operation. For example, the synthetic experiment tool pauses on its native requirement. Continuation keeps the original task/run/requirement identity and cannot resume a cancelled task.
+Members publish explicit application/material definitions and submit the resulting plans directly. A native tool can still request the invoking member's consent for its own operation; synthetic confirmation examples belong to tests. Continuation keeps the original task/run/requirement identity and cannot resume a cancelled task.
 
 ## Runtime boundaries
 

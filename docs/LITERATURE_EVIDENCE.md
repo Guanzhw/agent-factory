@@ -1,5 +1,10 @@
 # Public literature evidence, contract revision 2
 
+**Historical literature-fixture acceptance:** the named model/profile, helpers
+and reproduction commands below belong to the retired Research literature fixture,
+not current core setup. Controlled results and the live retrieval failure remain
+unchanged. See [application development](APPLICATION_DEVELOPMENT.md).
+
 This opt-in workflow produces a bibliography and short located excerpts, a
 readable Markdown report and an owner-scoped downloadable ZIP. It uses the
 ordinary material/application publication, exact-plan approval, native Agno queue,
