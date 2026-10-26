@@ -144,23 +144,21 @@ class AssistantMessages:
         if not request_id.startswith(prefix):
             return
         message = self._row(conn, request_id[len(prefix):])
-        endpoint = self.endpoints.owned(message['recipient_id'], message['endpoint_id'])
-        if not endpoint.get('automaticBudget'):
-            return
         if message['recipient_id'] != owner:
             raise HTTPException(409, 'ASSISTANT_MESSAGE_ADMISSION_MISMATCH')
         self.auth.require_member(message['sender_id'])
         endpoint = self.endpoints.resolve(message['endpoint_id'])
-        self.endpoints.require_budget(conn, owner, endpoint['automaticBudget'])
-        allocation = self._budget_allocation(conn, message, endpoint, allocation_id)
-        if allocation['id'] != allocation_id:
-            raise HTTPException(409, 'ASSISTANT_MESSAGE_ALLOCATION_MISMATCH')
         expected = self._start_body(message, endpoint).model_dump(exclude={'interfaceVersion', 'requestId'})
         prepared = conn.execute(text('SELECT plan_id,fingerprint FROM af_plan_requests '
             'WHERE owner_id=:owner AND request_id=:request'), {'owner': owner, 'request': request_id}).mappings().first()
         if (prepared is None or prepared['plan_id'] != plan['id'] or plan['ownerId'] != owner
                 or prepared['fingerprint'] != digest(expected)):
             raise HTTPException(409, 'ASSISTANT_MESSAGE_ADMISSION_MISMATCH')
+        if endpoint.get('automaticBudget'):
+            self.endpoints.require_budget(conn, owner, endpoint['automaticBudget'])
+            allocation = self._budget_allocation(conn, message, endpoint, allocation_id)
+            if allocation['id'] != allocation_id:
+                raise HTTPException(409, 'ASSISTANT_MESSAGE_ALLOCATION_MISMATCH')
 
     def message_for_task(self, owner, task_id):
         self.auth.require_member(owner)
