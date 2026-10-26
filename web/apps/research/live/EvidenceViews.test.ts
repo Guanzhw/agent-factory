@@ -39,6 +39,11 @@ it('shows the exact original ending and preserves unobserved cleanup', async () 
   expect(host.textContent).toContain(reason); expect(host.textContent).toContain('结束依据与剩余问题（原文）');
   expect(host.textContent).toContain('未确认资源停止'); expect(host.textContent).toContain('项目所有者：alice');
 });
+it('identifies an original Agent analysis without inventing an actor or verification', async () => {
+  vi.spyOn(evidenceApi, 'delivery').mockResolvedValue({ ...delivery, ending: { ownerId: 'alice', sourceIds: [], outcome: 'not_met', reason: '原分析结论', goalVersion: 2, endedAt: '2026-10-25T00:00:00Z', resourceCleanup: 'stopped', verificationStatus: 'agent_analysis' } });
+  await act(async () => root.render(createElement(DeliveryDetail, { ownerId: 'bob', id: 'd1' })));
+  expect(host.textContent).toContain('Agent 分析'); expect(host.textContent).toContain('尚未独立验证');
+});
 it('does not restore late association or source data after owner and selection change', async () => {
   const association = { id: 'a1', ownerId: 'alice', createdAt: '2026-10-25T00:00:00Z', sourceIds: ['source1'], inputContentIds: ['source1'], analysis: { answer: 'old analysis', citations: ['source1'], evidenceLevel: 'agent_analysis' as const, relation: 'related' } };
   vi.spyOn(evidenceApi, 'association').mockResolvedValueOnce(association).mockResolvedValueOnce(association).mockRejectedValue(new ApiError('不可读', 404));
