@@ -26,4 +26,21 @@
 
 本方案先经非作者审查，再实施与目标验证；保留精确 base/head 和首失败事实，交完整 diff 简洁性复审。无数据迁移；按现有 CI 实际规则发布独立 Draft PR，由协调者核验并推进。
 
-补充范围（基线 `f3f931b06f11b7ea910a9efe3d5b8a8ba89442ff`）：复扫发现 `docs/INTEGRATIONS.md:7,19–21` 仍把 Auto-Research fixture 和 demo adapters 描述为当前默认值。仅修正该指南：旧 fixture 说明标历史，对照 `execution_bindings.py:454` 与空默认 `Settings.runtime_adapters` 说明无默认 demo/provider；保留历史结果，不改产品/测试/CI/资源策略。先审本补充方案，再改正文并核对 diff、链接、源码及适用 CI。
+## Follow-up current documentation
+
+补充基线 `f3f931b06f11b7ea910a9efe3d5b8a8ba89442ff`；统一只读复扫 150 份相关 Markdown 后冻结以下 12 文件。先审本清单，再一次修正文档，对照源码/链接、完整 diff 及适用 CI，不新增产品、测试、框架或验收记录包。
+
+- 当前纠错：`docs/INTEGRATIONS.md:7,9,19–25`，纠正默认 demo/provider 注册，旧 Auto-Research/ORX fixture 和已移除测试入口明确为历史。
+- 当前纠错：`docs/ACCEPTANCE.md:30`，仅 current matrix 对齐 member-self-service、历史 review 只读、默认无应用/模型及测试合成材料。
+- 当前纠错：`docs/department-minimal-integration.md:15`，去掉现行合同中的 demo profiles 例外，明确产品 demo profiles 已退役。
+- 当前纠错：`docs/plans/research-platform-acceptance-contract.md:41` 的 B01，分开隔离合成 OIDC 与实际身份验证，不使用退役 demo 登录；保留双用户、退出及真实 IdP BLOCKED 标准。
+- 当前纠错：`docs/MEMBER_EXECUTION.md:15`，以显式成员发布/提交替代已移除 Research 脚本入口，保留原任务/run/requirement 连续性及取消限制。
+- 历史限定：`docs/GO_DEVELOPMENT_PROFILE.md:3–14,23–28,52–59`，全文开头明确旧 product profile/loopback 启动入口退役，链接当前显式配置；不宣布 Go 模型协议退役。
+- 历史限定：`docs/OPENCODE_GO.md:3–8`，导语不再把旧 development-profile 当当前 setup；保留原孤立适配器/契约证据。
+- 历史限定：`docs/DESKTOP_WORKSPACE.md:3–28`，标明旧 OpenResearch 导航/准备入口及 demo 验收不构成当前操作指南。
+- 历史限定：`docs/task-first-ux.md:3–10,39–41`，标明旧 seeded Auto-Research/实验 runner 入口退役，不宣布一般 UI 原则退役。
+- 历史限定：`docs/CONTROLLED_COMPARISON_WORKFLOW.md:3–16,81–85`，限定旧应用/workspace/复现入口，保留结果与失败证据及通用 comparison 合同。
+- 历史限定：`docs/LITERATURE_EVIDENCE.md:3–7,74–107`，限定旧模型/profile/helper/复现命令，保留受控与真实失败证据。
+- 历史限定：`docs/INFERENCE_RECOVERY.md:5–9,109–131`，仅旧 ORX 应用扩展/复现块标历史；通用 core 原操作恢复、UNKNOWN 与取消契约保持有效。
+
+空 `Settings.runtime_adapters` / `default_bindings` 不表示整个启动 registry 为空：保留 core 内置个人模型/工具适配器的事实，只否定默认 demo、应用/模型绑定及自动凭据配置。七份历史限定文件不重写原验收正文；其余历史里程碑、产品/测试/CI/资源策略不动。实际默认启动另有独立验证，不在本次纯文档变更重跑服务或创建账号。
