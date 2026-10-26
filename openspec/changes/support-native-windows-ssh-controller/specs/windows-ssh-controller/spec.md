@@ -45,3 +45,37 @@ The production fixed helper SHALL be available from the standalone core installa
 - **THEN** resolve the fixed known_hosts filename only from the original owned SSH child cwd with the original exact pinned host key
 - **AND** strict host checking and exclusion of global trust files remain enabled
 - **AND** a wrong host pin is rejected before any password release
+
+### Requirement: Shared deadline and bounded cleanup failure scope
+Windows SSH SHALL 在原 caller deadline 与 lease expiry 的最小绝对期限内执行认证，不在最终授权查询之前另起更短 broker 总期限；清理错误 SHALL 保留真实失败与有界容量记账。
+
+#### Scenario: Successful slow authority check or helper connection
+- **WHEN** 最终 guard 或 helper 连接等待超过六秒但仍早于原绝对期限
+- **THEN** 不因废弃的六秒预算拒绝原调用
+- **AND** 原期限到达或撤权仍在密码释放前拒绝，关闭原进程范围且不重试
+
+#### Scenario: Only encrypted invocation files remain
+- **WHEN** 原进程范围、broker 和 pipe 已确认关闭，仅 invocation 目录删除失败
+- **THEN** 抛清理失败、清除内存密码，保留 failed slot 并计入原容量上限
+- **AND** 其他 owner 可使用剩余 slot，全部容量被占用后仍拒绝
+- **AND** 显式 manager close 不伪报清理成功或重试旧工作
+
+#### Scenario: Secret holder cleanup remains uncertain
+- **WHEN** 原 process/broker/pipe/kill 清理无法确认
+- **THEN** 保留原 failed slot 并关闭新 admission，不弱化现有失败证明
+
+### Requirement: One pinned command policy across controllers
+两平台 SHALL 共用固定 SSH 信任与 endpoint 参数构造，同时保留平台凭据和进程生命周期。
+
+#### Scenario: POSIX private paths contain spaces or quotes
+- **WHEN** 私有 agent socket 和调用临时目录包含空格或引号
+- **THEN** 原 child 仅使用配置的 agent、public identity 与严格 pinned known_hosts
+- **AND** 不因 OpenSSH `-o` 二次解析失败，不读取外部 agent/config，不改变父 cwd
+
+### Requirement: Product checks own the default Windows lane
+默认 Windows PR 检查 SHALL 运行真实产品管道/进程与独立安装验收；独立候选认证探针 SHALL 仅按需运行并保留原证据。
+
+#### Scenario: Candidate probe becomes manual
+- **WHEN** 将重复 Stage B job 改为手动触发
+- **THEN** 产品两消费者、错误 pin 零释放、原取消、expiry/revoke、Unicode/空格安装及进程/helper 停止断言仍默认执行
+- **AND** 不把探针专有 AGAIN/N 或历史 Stage A 证据称作当前产品新增覆盖

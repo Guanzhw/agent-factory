@@ -35,8 +35,20 @@ The low-level module owns only a concrete `WindowsSSHProcess(args, env, *, cwd=N
 
 The credential layer owns the lease, per-invocation slot/pending record, cipher files and one-use broker. It constructs the low-level process, starts the bounded broker, checks its close/authorization boundary, resumes, and yields it under an explicit scope. The coordinator-owned pinned_ssh and two consumers integrate this scope and pass the same absolute deadline. Root and standalone core packaging install the fixed helper with Windows-only dependencies. Windows verification installs only the built core wheel into a new venv, outside the repository with PYTHONPATH cleared; the actual helper must belong to that new environment, and real authentication must not borrow the probe entry point.
 
-## Unconfirmed cleanup is not released capacity
+## Unconfirmed cleanup is not released capacity — historical rule
+以下为整改前规则；2026-10-26 审计整改仅收窄“已停止 scope 的密文目录删除失败”导致全局关闭的部分，具体新规则见下一节。保留本段说明旧实现与历史证据。
 If a carrier's cleanup cannot be confirmed, clear its in-memory password but retain its failed accounting record and close the manager to new acquisition/spawn. The cleanup-completion event only means the attempt returned; an explicit failed record prevents `close()` from reporting success. Reuse SSHExchangeCleanupError with a fixed safe code so enrollment does not translate a cleanup failure into an ordinary unavailable result. A later manager close attempts cancellation/cleanup of all remaining original non-failed carriers even if one kill fails, then reports failure; it does not retry failed cleanup or start a recovery loop. A closed or cleanup-failed manager rejects acquire before vault resolution. Database work and waits remain outside the accounting lock.
+
+## 2026-10-26 audit corrections
+
+基线 `94c59e5954f5acacb039a73fa3332381fd542fe2`。实施前须经非作者方案审查；本节不改写上文历史失败或既有版本验收。
+
+1. **同一绝对期限。** broker connect 与 READY/释放/RECEIVED 使用现有 `min(caller deadline, lease expiry)`，删除在最终 guard 前额外起算的六秒预算，不刷新或延长总期限。固定 helper 通过非秘密子进程环境字段 `FACTORY_SSH_DEADLINE` 接收同一绝对期限，拒绝非有限值或已过期值，删除其独立六秒窗口；guard、错误 pin、一次释放与取消检查不变。便携时钟回归模拟合法最终 guard 和连接等待超过六秒但仍早于原 deadline，另验证原 deadline/expiry 到达时零释放并关闭原 scope。
+2. **清理失败范围。** 进程 close、broker join、pipe close 或原 kill 的状态不确定，继续保留 failed carrier 并关闭新 admission。仅在这些清理均已确认结束后，目录删除失败才作为密文残留：仍抛原 `SSHExchangeCleanupError`、清除内存密码、保留 failed slot 计入 `max_agents`，但不关闭整个 manager。其他 owner 仅可用剩余 slot；容量耗尽仍拒绝。manager 的显式 close 仍报告 retained failure，不尝试重派、重扫或自动恢复；失败记录不伪装为已释放。优先用当前 carrier 标记与局部清理阶段区分，不建新管理层。回归包含 file-only failure 后第二 owner 可进入、保留失败占满上限后拒绝，以及 process/broker failure 继续全局关闭。
+3. **共同 argv 与 POSIX 路径。** 用一个小的固定参数 helper 共用 host pin、禁代理/隐式身份/agent forwarding/控制连接/local command、期限与 endpoint 组装；平台保留自己的 credential 参数与进程范围。两平台都从各自受控 child cwd 读取固定 `known_hosts` 和 identity 文件；POSIX 以只给原 child 的 `SSH_AUTH_SOCK` 环境变量和显式 `IdentityAgent=SSH_AUTH_SOCK` 传入原 lease socket，避免在 `-o` 内重新解释绝对路径的空格/引号。不继承用户 SSH 配置或外部 agent，也不修改父进程 cwd。原 `GlobalKnownHostsFile` 使用显式 none，严格 pin 保持。POSIX 缺陷来自 `67ffb007`、早于104，137新消费者继承；回归使用实际 `ssh -G` 和现有 transport seams 验证空格路径与所选 identity/agent，不访问真实 host。移除无消费者的 `FACTORY_SSH_KEY` 元数据。
+4. **候选探针按需。** 默认 PR lane 保留真实 portable process/pipe 与 installed-core；`authentication-candidate` 仅 `workflow_dispatch` 按需执行，保存其产物与 probe 包。移出的 Stage B normal/wrong-pin 已有真实产品等价检查；AGAIN/N 是探针专有协议，不是产品缺失功能，不迁入生产。Stage A hard-controller-kill、foreign-client 等历史检查原本不在默认 Stage B 中，保留手动入口及明确的覆盖边界；本轮不为删除重复 job 扩充另一套安全矩阵。产品原有一次释放、错误 pin 零释放、取消、过期/撤权、Unicode/空格安装和进程/helper 停止断言全部保留。
+
+完成后由非作者检查完整基线→head及增量简洁性；主代理核对回执后勾选任务。便携 seam、真实 Windows installed wheel、Linux loopback 和 Windows→真实 Linux 原任务恢复分别记录；无授权真实 Linux endpoint 时最后一项保持 BLOCKED，不能以旧绿色 CI 替代整改后验收。
 
 
 ## First installed-core failure: bounded observation only
