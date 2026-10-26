@@ -17,4 +17,6 @@
 
 [首次 full CI](https://github.com/Guanzhw/agent-factory/actions/runs/40346922824) 的 Windows lane 执行 2272 tests、1 failure、884 skips：`test_credential_vault.CredentialVaultTests.test_browser_bridge_rejects_missing_csrf_before_body_or_vault` 的旧 service stub 缺少顶层 `app_origin`，返回 503 而非原断言 403。本地在 `0487f788349a503c990ddc2a46bad99a44ced5f7` 原样复现 1/1 failure 后，仅同步夹具并用无 Origin / 同源缺 CSRF 两情形保留 403、不泄露密码、vault 不被调用断言；精确 selector 加入既有 fast 组。修后 vault/browser_auth/browser_oidc/local_login 51/51 通过、0 skip；fast 收集通过（2272 discovered、406 Python selected、未执行），ruff/diff 检查通过。未改产品或 CI 门槛，未取消或重跑原 run；新候选独立复审与最终精确发布 head CI 仍待完成。
 
+[第二次 full CI](https://github.com/Guanzhw/agent-factory/actions/runs/40351648714) 的 PG lane 执行 2272 tests / 2238.040s，0 failures、1 error、15 skips：既有 `test_late_changed_credential_cannot_clear_unknown_or_retry` 在 entered 的 2 秒等待超时；该测试及 MCP 产品与 PR 基线相同。原 selector 外部诊断单次通过，未复现；受控 DELETE 前置检查阻塞探针证明原 0.1 秒总期限可在 resolver 进入前终止，旧测试只报等待超时。这不确定历史 CI 根因。按先审方案仅改测试等待/失败信息：同探针新版仍 1 error，明确传播 `MCP_AUTHORIZATION_REJECTED`，保持 UNKNOWN / stopped=false、无 DELETE、回调未进入；waiter/server 均回收，未将其记为通过。正常三种 late 用例各执行一次，3/3 通过、0 skip；fast collect-only、ruff/diff 检查通过。原期限、late 全部断言和产品保持；下一精确候选复审/CI 仍待完成，此改动只改善诊断。
+
 原始日志仅存本次云端 `/workspace/local-login-evidence/`，不入 Git。无真实外部 IdP、模型、研究执行、GPU、用户本机验收或部署；不得把隔离本地登录通过提升为这些边界已验。
