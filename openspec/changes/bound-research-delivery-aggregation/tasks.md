@@ -7,7 +7,7 @@
 - [ ] 2.2 复用整包 helper 覆盖 create/read/download，真实超限 413 且创建无回执；正文载体不重复导出。
 - [ ] 2.3 验证旧格式、完整负结果、20 精选证据、withdrawal/missing/hash、ZIP 边界和失败重试。
 - [ ] 2.4 从原创建 snapshot 保存完整 ending/owner，保持负结论、原版本/时间/cleanup，更新交付详情与类型；测试无 ending/旧格式/重复请求与 UI 原文。
-- [ ] 2.5 ending 继承项目全部原 peer dependencies（含未发布轮）；验证撤回后 create/read/download/list 全阻断、依赖-only 不导出、当前 owner 撤权不旁路。
+- [ ] 2.5 ending 继承项目全部原 peer dependencies（含未发布轮）；验证本人 team→personal 及他人撤回后 create/read/download/list 全阻断、依赖-only 不导出、当前 owner 撤权不旁路；普通 selected personal 记录仍允许其 owner。
 
 ## 3. 验证与交付
 - [ ] 3.1 定向 portable/static 与 coordinator 串行 PG 原选中证据/撤回测试；注明未验证 live 模型/GPU/生产 IdP。

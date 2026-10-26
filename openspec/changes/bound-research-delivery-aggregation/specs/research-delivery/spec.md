@@ -28,7 +28,7 @@
 ### Requirement: Original project ending snapshot
 新交付 SHALL 保存创建快照的完整原 ending 及 project ownerId，read/UI/download 均保留其原文、outcome、goalVersion、endedAt、resourceCleanup 及已有 verificationStatus；不得伪造 actor、科学成功或资源已清理。
 
-ending SHALL 继承创建时项目全部原 peer dependencies 的当前授权，即使依赖来自未发布轮次；该原并集 SHALL 完整持久于 sourceIds，交付 owner 仍须为有效成员，依赖-only 正文不得导出。
+ending SHALL 继承创建时项目全部原 peer dependencies 的当前 team 授权，即使依赖来自未发布轮次；该子集 SHALL 完整存于 ending.sourceIds 并入顶层 sourceIds，交付 owner 仍须为有效成员，依赖-only 正文不得导出。普通 selected records 保持原权限。
 
 #### Scenario: Manual ending includes negative findings and remaining questions
 - **WHEN** 用户填写未达标/取消结束依据和剩余问题后创建成果
@@ -41,3 +41,7 @@ ending SHALL 继承创建时项目全部原 peer dependencies 的当前授权，
 #### Scenario: Ending depends on an unpublished round source
 - **WHEN** 某轮已绑定 peer source 但未产生 terminal publication，项目 ending 后创建交付
 - **THEN** 该 source 仍在完整 sourceIds 中但不在 records；其撤回使后续 create/read/download/list 不能返回 ending，停用项目 owner 也不能由 peer-only 来源绕过
+
+#### Scenario: Source author withdraws their own team source
+- **WHEN** ending 原依赖的作者将该来源 team 改为 personal，并以本人身份读派生成果
+- **THEN** 与现有 project protection 相同，create/read/download/list 仍阻断 ending，不因 core read 允许作者读取自己的 personal 内容而旁路
