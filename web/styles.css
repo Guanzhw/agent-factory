@@ -109,7 +109,7 @@
 .factory-shell .primary, .factory-shell .secondary { border-radius: 7px; font-size: 14px; white-space: normal; }
 .factory-shell .text-button { font-size: 14px; white-space: normal; }
 .factory-shell .quiet { font-size: 13px; }
-.factory-shell .sidebar { position: sticky; top: 0; height: 100vh; overflow-y: auto; background: #f6f8fc; border-right: 1px solid var(--line); padding: 26px 20px 22px; display: flex; flex-direction: column; }
+.factory-shell .sidebar { --muted: #607087; position: sticky; top: 0; height: 100vh; overflow-y: auto; background: #f6f8fc; border-right: 1px solid var(--line); padding: 26px 20px 22px; display: flex; flex-direction: column; }
 .factory-shell .sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .factory-shell .brand { display: flex; gap: 12px; align-items: center; min-width: 0; }
 .factory-shell .brand strong { font-size: 18px; letter-spacing: -.4px; }
