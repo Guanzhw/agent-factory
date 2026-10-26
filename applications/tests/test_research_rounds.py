@@ -106,8 +106,9 @@ class ResearchRoundsTests(ResearchRoundsFixture):
     def test_original_custody_output_not_wait_text_controls_evidence(self):
         self.start()
         operation_id = str(uuid4())
+        content = {'token': 'measurement', 'report': 'https://example.invalid/result\n' + '测量' * 6000}
         operation = {'id': operation_id, 'taskId': self.task, 'nativeRunId': self.run, 'closed': True,
-                     'observation': {'state': 'COMPLETED', 'output': {'result': 'measured score 0.25'}}}
+                     'observation': {'state': 'COMPLETED', 'output': {'result': content}}}
         self.custody.start.return_value = operation
         self.custody.read.return_value = operation
         chosen = Decision(action='experiment', reason='Need measurement', hypothesis='Try condition',
@@ -119,7 +120,7 @@ class ResearchRoundsTests(ResearchRoundsFixture):
         self.assertEqual(self.count(self.legacy.attempts), 1)
         self.assertEqual(self.custody.start.await_args.args[4], {'goal': 'Measure score', 'mode': 'experiment'})
         result = self.service.results(self.ctx)
-        self.assertEqual(result['operation']['output']['result'], 'measured score 0.25')
+        self.assertEqual(result['operation']['output']['result'], content)
         self.assertEqual(result['evidenceIds'], [operation_id])
         with self.assertRaises(HTTPException):
             self.service.record_decision(self.ctx, {'action': 'continue', 'reason': 'Invented', 'evidenceIds': ['not-original']})
@@ -211,8 +212,9 @@ class ResearchRoundsTests(ResearchRoundsFixture):
 
     def test_successor_binds_original_delivery_without_allocation_and_reads_private_actual_output(self):
         self.start()
+        content = 'private original measurement\nhttps://example.invalid/result\n' + '结论' * 6000
         operation = {'id': str(uuid4()), 'taskId': self.task, 'nativeRunId': self.run, 'closed': True,
-                     'observation': {'state': 'COMPLETED', 'output': {'result': 'private original measurement'}}}
+                     'observation': {'state': 'COMPLETED', 'output': {'result': content}}}
         self.custody.start.return_value = operation
         self.custody.read.return_value = operation
         asyncio.run(self.service.launch(self.ctx, Decision(action='experiment', reason='Measure',
@@ -232,7 +234,7 @@ class ResearchRoundsTests(ResearchRoundsFixture):
         ctx = RunContext(run_id=next_run, session_id=next_task, user_id='alice',
             session_state={'factory_envelope': {'request_id': 'application-start:original-event-message'}})
         context = self.service.context(ctx)
-        self.assertEqual(context['previousObservation']['output']['result'], 'private original measurement')
+        self.assertEqual(context['previousObservation']['output']['result'], content)
         self.assertEqual(self.service.context(ctx), context)
         self.assertEqual(self.count(self.service.rounds), 2)
         self.scopes.allocate.assert_called_once()

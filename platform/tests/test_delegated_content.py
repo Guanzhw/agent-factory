@@ -8,7 +8,11 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 
+from agno.run.requirement import RunRequirement
+from agno.workflow.types import StepRequirement
+
 from agent_factory.delegated_operations import DELEGATED_OPERATION_PIN, DelegatedOperations
+from agent_factory.workflow_control import WorkflowControl
 from agent_factory.workflow_operations import OperationCustody
 from test_workflow_operations import SQLiteStore
 
@@ -128,3 +132,25 @@ class DelegatedContentTests(unittest.IsolatedAsyncioTestCase):
         self.assert_closed(record)
         self.completed('changed native content')
         self.assertEqual(await self.service.lookup('alice', original['id']), deepcopy(record))
+
+    async def test_original_wait_receives_complete_persisted_body(self):
+        original = await self.original()
+        content = {'token': 'ordinary measurement', 'report': 'https://example.invalid\n' + '中' * 15000}
+        self.completed(content)
+        record = await self.service.lookup('alice', original['id'])
+        requirement = StepRequirement(step_id='wait', requires_executor_input=True,
+            executor_requirements=[{'id': 'original-requirement', 'tool_execution': {
+                'tool_call_id': 'original-call', 'tool_name': 'factory_wait_operations',
+                'tool_args': {'operationIds': [original['id']]}, 'external_execution_required': True,
+                'result': None}}]).to_dict()
+        control = WorkflowControl(self.service, SimpleNamespace(store=self.store, auth=self.auth))
+        updated = control._external(self.store.task('task', 'alice'), requirement)
+        wrapper = updated['executor_requirements'][0]
+        self.assertTrue(RunRequirement.from_dict(wrapper).is_resolved())
+        self.assertEqual(wrapper['id'], 'original-requirement')
+        execution = wrapper['tool_execution']
+        self.assertEqual(execution['tool_call_id'], 'original-call')
+        self.assertTrue(execution['external_execution_required'])
+        self.assertEqual(json.loads(execution['result']), {'operations': [record['observation']]})
+        self.assertEqual(json.loads(execution['result'])['operations'][0]['output']['result'], content)
+        self.assertIsNone(requirement['executor_requirements'][0]['tool_execution']['result'])
