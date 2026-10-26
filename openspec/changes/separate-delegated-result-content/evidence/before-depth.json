@@ -1,0 +1,37 @@
+{
+  "database": "SQLite",
+  "syntheticAdmissionAndStop": true,
+  "postgresExecuted": false,
+  "cases": [
+    {
+      "depth": 64,
+      "error": null,
+      "state": "COMPLETED",
+      "failure": null,
+      "closed": true,
+      "held": false,
+      "effectStatus": "DONE",
+      "childDispatches": 1
+    },
+    {
+      "depth": 65,
+      "error": null,
+      "state": "COMPLETED",
+      "failure": null,
+      "closed": true,
+      "held": false,
+      "effectStatus": "DONE",
+      "childDispatches": 1
+    },
+    {
+      "depth": 500,
+      "error": "WORKFLOW_CONTRACT_INVALID",
+      "state": "RUNNING",
+      "failure": null,
+      "closed": false,
+      "held": true,
+      "effectStatus": "UNKNOWN",
+      "childDispatches": 1
+    }
+  ]
+}

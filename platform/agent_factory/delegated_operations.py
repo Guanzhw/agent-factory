@@ -6,11 +6,12 @@ from typing import Any
 from fastapi import HTTPException
 
 from .store import digest
-from .workflow_contracts import WorkflowAcknowledgementUnknown, WorkflowContext, validate_runtime_observation
+from .workflow_contracts import (DELEGATED_OPERATION_ADAPTER, WorkflowAcknowledgementUnknown,
+    WorkflowContext, delegated_result_bytes, validate_runtime_observation)
 from .workflow_operations import require
 
 
-DELEGATED_OPERATION_PIN = {'adapterId': 'native-delegated-operations-v1', 'revision': '1',
+DELEGATED_OPERATION_PIN = {'adapterId': DELEGATED_OPERATION_ADAPTER[0], 'revision': DELEGATED_OPERATION_ADAPTER[1],
     'configFingerprint': digest({})}
 
 
@@ -102,10 +103,22 @@ class DelegatedOperations:
                 elif any(item['nativeStatus'] in {'cancelled', 'canceled'} for item in facts):
                     observed['state'] = 'CANCELLED'
                 else:
-                    observed.update(state='COMPLETED', output={'taskId': child['id'], 'runId': child['run_id'],
-                        'result': group['parent'].get('content'),
-                        'artifacts': [{'taskId': child['id'], 'artifactId': item['id'], 'sha256': item['sha256']}
-                            for item in self.store.artifacts(child['id'])]})
+                    limit = self.store.plan(child['plan_id'], body['ownerId'])['budget']['outputBytes']
+                    content = group['parent'].get('content')
+                    failure = None
+                    try:
+                        if delegated_result_bytes(content) > limit:
+                            failure = 'DELEGATED_RESULT_LIMIT'
+                    except ValueError:
+                        failure = 'DELEGATED_RESULT_INVALID'
+                    if failure:
+                        observed.update(state='FAILED', failure={'schema': 1, 'code': failure,
+                            'messageCode': failure, 'retryable': False})
+                    else:
+                        observed.update(state='COMPLETED', output={'taskId': child['id'], 'runId': child['run_id'],
+                            'result': content,
+                            'artifacts': [{'taskId': child['id'], 'artifactId': item['id'], 'sha256': item['sha256']}
+                                for item in self.store.artifacts(child['id'])]})
             elif not group['unknown']:
                 observed['state'] = 'WAITING' if group['parent']['nativeStatus'] == 'paused' else 'RUNNING'
         return validate_runtime_observation(observed, body['id'], self.pin['adapterId'], self.pin['revision'])

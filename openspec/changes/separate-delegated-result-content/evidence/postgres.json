@@ -1,0 +1,25 @@
+{
+  "sourceHead": "803c00a0e7158830b6fedaa2b8496222cdac30e6",
+  "postgresVersion": "17.11 (Debian 17.11-1.pgdg13+2)",
+  "tests": 6,
+  "failures": 0,
+  "errors": 0,
+  "skips": 0,
+  "elapsedSeconds": 18.317,
+  "fixtureDatabasesRemaining": [],
+  "fixtureProcessesRemaining": [],
+  "real": [
+    "PostgreSQL",
+    "native original workflow pause/hard restart/continuation",
+    "native child tool output",
+    "custody/effects",
+    "original local-budget settlement"
+  ],
+  "synthetic": [
+    "deterministic model",
+    "lost acknowledgement injection",
+    "cancellation/descendant interleaving barriers"
+  ],
+  "liveProviderExecuted": false,
+  "paidResourceExecuted": false
+}

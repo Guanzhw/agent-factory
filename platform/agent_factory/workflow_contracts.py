@@ -14,6 +14,8 @@ ERROR = 'WORKFLOW_CONTRACT_INVALID'
 State = Literal['RUNNING', 'WAITING', 'COMPLETED', 'FAILED', 'UNKNOWN', 'CANCELLED']
 STATES = frozenset({'RUNNING', 'WAITING', 'COMPLETED', 'FAILED', 'UNKNOWN', 'CANCELLED'})
 TERMINAL = frozenset({'COMPLETED', 'FAILED', 'CANCELLED'})
+DELEGATED_OPERATION_ADAPTER = ('native-delegated-operations-v1', '1')
+DELEGATED_RESULT_MAX_BYTES = 1048576
 
 
 class WorkflowAcknowledgementUnknown(Exception):
@@ -103,6 +105,28 @@ def _inert(value, depth=0):
         _require(value is None or type(value) is bool)
 
 
+def delegated_result_bytes(value):
+    """Lossless JSON data, sized separately from the control envelope."""
+    def data(item, depth=0):
+        _require(depth <= 64)
+        if type(item) is dict:
+            for key, child in item.items():
+                _require(type(key) is str)
+                data(child, depth + 1)
+        elif type(item) is list:
+            for child in item:
+                data(child, depth + 1)
+        elif type(item) is float:
+            _require(math.isfinite(item))
+        else:
+            _require(item is None or type(item) in {str, int, bool})
+    try:
+        data(value)
+        return len(json.dumps(value, ensure_ascii=False, separators=(',', ':'), allow_nan=False).encode())
+    except (TypeError, ValueError, RecursionError, OverflowError):
+        raise ValueError('DELEGATED_RESULT_INVALID') from None
+
+
 def validate_failure_json(value):
     """Bounded symbolic codes only, never exception messages or provider payloads."""
     try:
@@ -137,16 +161,23 @@ def validate_runtime_observation(value, operation_id, adapter_id, revision, prev
         state = value['state']
         _require(current is not None or state == 'UNKNOWN')
         _require(value['allStopped'] is (state in TERMINAL))
+        envelope = value
         if state == 'COMPLETED':
             _require(type(value['output']) is dict and value['failure'] is None)
-            _inert(value['output']); _encoded(value['output'], 16384)
+            output = value['output']
+            if (adapter_id, revision) == DELEGATED_OPERATION_ADAPTER:
+                _keys(output, 'taskId runId result artifacts')
+                _require(delegated_result_bytes(output['result']) <= DELEGATED_RESULT_MAX_BYTES)
+                output = {key: item for key, item in output.items() if key != 'result'}
+                envelope = {**value, 'output': output}
+            _inert(output); _encoded(output, 16384)
         else:
             _require(value['output'] is None)
             if state == 'FAILED':
                 validate_failure_json(value['failure'])
             else:
                 _require(value['failure'] is None)
-        _encoded(value, 32768)
+        _encoded(envelope, 32768)
         return deepcopy(value)
     except (TypeError, KeyError, ValueError, RecursionError, OverflowError):
         raise ValueError(ERROR) from None
