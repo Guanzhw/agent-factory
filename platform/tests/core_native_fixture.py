@@ -303,7 +303,6 @@ def create_fixture_app(settings, **kwargs):
     app = create_core_app(settings, **options)
     state = app.app.state.factory
     initialize_members(state['auth'])
-    publish_fixture_materials(state['store'])
     publish_fixture_applications(state['store'], definitions)
     return app
 

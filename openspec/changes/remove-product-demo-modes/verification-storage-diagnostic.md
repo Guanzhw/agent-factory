@@ -1,5 +1,18 @@
 # Storage cancellation: one bounded diagnostic experiment
 
+Diagnostics are opt-in; ordinary test discovery uses `controlled_command_worker`
+and does not copy diagnostic files. To observe this same test with the bounded
+diagnostic worker, set an authorized disposable loopback `FACTORY_TEST_DATABASE_URL`
+and run:
+
+```sh
+FACTORY_STORAGE_DIAGNOSTIC=1 PYTHONPATH=platform:deployment:platform/tests \
+  uv run python -m unittest test_storage_process.StorageProcessTests -v
+```
+
+The original assertions and HTTP deadline are identical in both modes. Historical
+results below remain observations of their original revisions.
+
 The preserved first targeted failure (`/tmp/no-demo-full-failures-targeted-first.log`) is a 15-second HTTP read timeout at the original storage test's cancellation POST, before quarantine or injected process death. Its child log was removed by normal cleanup; no lock-deadlock claim is established.
 
 Hypotheses: (1) synchronous root-lock connection acquisition blocks the event loop while the observer holds the single connection; (2) native cancellation awaits durable run/session writes; (3) repeated group/detail reads delay the response after cancellation has already committed.

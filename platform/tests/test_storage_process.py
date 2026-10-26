@@ -29,17 +29,20 @@ def owned_directory(test, task):
 
 @unittest.skipUnless(os.getenv("FACTORY_TEST_DATABASE_URL") and os.name == "posix", "Requires isolated PostgreSQL and Linux")
 class StorageProcessTests(unittest.TestCase):
-    setUp = fixture.CommandProcessTests.setUp
-    worker_module = 'controlled_storage_diagnostic_worker'
+    def setUp(self):
+        self.diagnostic = os.getenv('FACTORY_STORAGE_DIAGNOSTIC') == '1'
+        self.worker_module = 'controlled_storage_diagnostic_worker' if self.diagnostic else 'controlled_command_worker'
+        fixture.CommandProcessTests.setUp(self)
 
     def tearDown(self):
-        evidence = Path(tempfile.mkdtemp(prefix='af-storage-cancel-diagnostic-'))
         try:
-            for path in (self.root / 'server.log', self.workspace / 'storage-cancel-diagnostic.jsonl',
-                         self.workspace / 'storage-cancel-stacks.txt'):
-                if path.exists():
-                    shutil.copyfile(path, evidence / path.name)
-            print('STORAGE_CANCEL_DIAGNOSTIC ' + str(evidence), flush=True)
+            if self.diagnostic:
+                evidence = Path(tempfile.mkdtemp(prefix='af-storage-cancel-diagnostic-'))
+                for path in (self.root / 'server.log', self.workspace / 'storage-cancel-diagnostic.jsonl',
+                             self.workspace / 'storage-cancel-stacks.txt'):
+                    if path.exists():
+                        shutil.copyfile(path, evidence / path.name)
+                print('STORAGE_CANCEL_DIAGNOSTIC ' + str(evidence), flush=True)
         finally:
             fixture.CommandProcessTests.tearDown(self)
     headers = fixture.CommandProcessTests.headers
