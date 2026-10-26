@@ -221,6 +221,28 @@ class AssistantEventsTests(ApplicationCompositionFixture):
                 self.service.validate_admission(conn, 'bob', delivery['id'], 'unused', {}, delivery['allocation_id'])
             self.assertEqual(caught.exception.detail, 'ASSISTANT_EVENT_DELIVERY_MISMATCH')
 
+    def test_only_exact_active_capacity_rejection_remains_pending(self):
+        from sqlalchemy import Column, MetaData, String, Table
+        metadata = MetaData()
+        Table('af_tasks', metadata, Column('id', String, primary_key=True),
+              Column('owner_id', String), Column('request_id', String))
+        metadata.create_all(self.store.engine)
+        self.service.configure('bob', self.config, 'subscribe-peer')
+        for index, (status, code, expected) in enumerate([
+            (429, 'ACTIVE_TASK_CAPACITY_EXHAUSTED', 'pending'),
+            (429, 'LOCAL_BUDGET_EXHAUSTED', 'rejected'),
+            (409, 'ACTIVE_TASK_CAPACITY_EXHAUSTED', 'rejected'),
+        ]):
+            with self.subTest(status=status, code=code):
+                event = self.emit('capacity-classification-' + str(index))
+                delivery = self.service.prepare(event['id'], self.endpoint['id'])
+                self.service._finish_attempt(delivery, HTTPException(status, code))
+                current = self.service.delivery('bob', delivery['id'])
+                self.assertEqual(current['state'], expected)
+                self.assertEqual(current['error'], code)
+                self.assertEqual(current['message_id'], delivery['message_id'])
+                self.assertEqual(current['allocation_id'], delivery['allocation_id'])
+
     def test_original_task_delivery_reads_bound_references_without_creating_work(self):
         from sqlalchemy import Column, MetaData, String, Table
         metadata = MetaData()

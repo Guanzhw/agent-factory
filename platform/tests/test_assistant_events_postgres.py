@@ -22,6 +22,7 @@ import test_applications_composition as fixtures
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires disposable loopback PostgreSQL')
 class AssistantEventsPostgresTests(unittest.TestCase):
     def setUp(self):
+        self.deliver_batch = AssistantEvents.deliver_batch
         self.loop_patch = patch.object(AssistantEvents, 'deliver_batch', AsyncMock(return_value=(0, 0)))
         self.loop_patch.start()
         self.addCleanup(self.loop_patch.stop)
@@ -50,6 +51,74 @@ class AssistantEventsPostgresTests(unittest.TestCase):
     def emit(self, key):
         with self.fixture.store.transaction() as conn:
             return self.service.emit(conn, 'alice', self.event, key)
+
+    def test_actual_task_capacity_recovers_original_delivery_and_allocation(self):
+        fixture = self.fixture
+        messages = self.service.messages
+        endpoint = self.service.endpoints.resolve(self.endpoint['id'])
+        release = Event()
+        original_invoke = fixtures.DemoModel.ainvoke
+        original_stream = fixtures.DemoModel.ainvoke_stream
+
+        async def wait_for_release():
+            if not await asyncio.to_thread(release.wait, 15):
+                raise TimeoutError('synthetic capacity model was not released')
+
+        async def blocked_invoke(model, *args, **kwargs):
+            await wait_for_release()
+            return await original_invoke(model, *args, **kwargs)
+
+        async def blocked_stream(model, *args, **kwargs):
+            await wait_for_release()
+            async for item in original_stream(model, *args, **kwargs):
+                yield item
+
+        bridge = fixture.state['bridge']
+        with patch.object(fixtures.DemoModel, 'ainvoke', blocked_invoke), \
+                patch.object(fixtures.DemoModel, 'ainvoke_stream', blocked_stream), \
+                patch.object(bridge, 'submit', AsyncMock(wraps=bridge.submit)) as submit:
+            try:
+                blockers = []
+                for index in range(fixture.settings.max_user_tasks):
+                    body = messages._start_body({'id': 'capacity-blocker-' + str(index),
+                        'text': 'Hold the synthetic native task capacity.'}, endpoint)
+                    # Ordinary application requests do not claim message identities.
+                    body = body.model_copy(update={'requestId': 'capacity-blocker-' + str(index)})
+                    result = fixture.client.portal.call(partial(messages.runs.start, 'bob', body))
+                    blockers.append(result['job']['id'])
+                self.assertEqual(submit.await_count, len(blockers))
+                event = self.emit('pg-capacity-event')
+                fixture.client.portal.call(partial(self.deliver_batch, self.service))
+                with fixture.store.engine.connect() as conn:
+                    original = dict(conn.execute(select(self.service.deliveries).where(
+                        self.service.deliveries.c.event_id == event['id'])).mappings().one())
+                    allocation = self.scopes._allocation(conn, 'bob', original['allocation_id'])
+                    request_id = 'application-start:assistant-message:' + original['message_id']
+                    self.assertEqual(self.scopes.request_allocation(conn, 'bob', request_id), allocation['id'])
+                    self.assertIsNone(allocation['task_id'])
+                    self.assertEqual(allocation['state'], 'ALLOCATED')
+                self.assertEqual(original['state'], 'pending')
+                self.assertEqual(original['error'], 'ACTIVE_TASK_CAPACITY_EXHAUSTED')
+                self.assertEqual(submit.await_count, len(blockers))
+                self.assertEqual(self.scopes.settle('bob', allocation['id'])['state'], 'HELD')
+            finally:
+                release.set()
+            fixture.login('bob')
+            for task_id in blockers:
+                self.assertEqual(fixture.wait_job(task_id)['job']['status'], 'completed')
+            fixture.client.portal.call(partial(self.deliver_batch, self.service))
+            recovered = self.service.delivery('bob', original['id'])
+            for key in ('id', 'message_id', 'allocation_id', 'event_id'):
+                self.assertEqual(recovered[key], original[key])
+            with fixture.store.engine.connect() as conn:
+                allocation = self.scopes._allocation(conn, 'bob', original['allocation_id'])
+                self.assertEqual(conn.execute(select(func.count()).select_from(self.scopes.allocations)).scalar(), 1)
+            task = fixture.store.task(allocation['task_id'], 'bob')
+            self.assertEqual(task['request_id'], request_id)
+            self.assertEqual(fixture.wait_job(task['id'])['job']['status'], 'completed')
+            fixture.client.portal.call(partial(self.deliver_batch, self.service))
+            self.assertEqual(self.service.delivery('bob', original['id'])['state'], 'settled')
+            self.assertEqual(submit.await_count, len(blockers) + 1)
 
     def test_concurrent_prepare_allocates_exactly_once_and_second_event_exhausts_scope(self):
         event = self.emit('pg-event-first')

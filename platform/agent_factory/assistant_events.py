@@ -15,6 +15,7 @@ from .store import digest
 
 
 DELIVERY_ERROR_CODES = frozenset({
+    'ACTIVE_TASK_CAPACITY_EXHAUSTED',
     'LOCAL_BUDGET_EXHAUSTED', 'LOCAL_BUDGET_CLOSED_OR_EXPIRED',
     'LOCAL_BUDGET_SCOPE_NOT_FOUND',
     'LOCAL_BUDGET_BINDING_CONFLICT', 'LOCAL_BUDGET_REQUEST_CONFLICT',
@@ -304,7 +305,8 @@ class AssistantEvents:
                 return
             state = 'settled' if settled else 'pending'
             if (isinstance(error, HTTPException) and error.status_code < 500
-                    and error.detail != 'ASSISTANT_DELIVERY_STOPPING'):
+                    and error.detail != 'ASSISTANT_DELIVERY_STOPPING'
+                    and not (error.status_code == 429 and error.detail == 'ACTIVE_TASK_CAPACITY_EXHAUSTED')):
                 message = self.messages._row(conn, delivery['message_id'])
                 task = conn.execute(text('SELECT id FROM af_tasks WHERE owner_id=:owner AND request_id=:request'),
                     {'owner': delivery['owner_id'],
