@@ -26,3 +26,9 @@
 ## Migration Plan
 
 方案先独立审查。实现只加凭据表/库依赖和上述入口；旧账户/会话、OIDC 及数据保留，禁用本地配置即可关闭本地入口。更新必要登录说明及旧 external-only 场景；验收只存简短结果和精确 base/head，密码/hash/完整浏览器存储不入证据。将核心 local-login 契约与 PG selectors 加入既有 fast 分组，不更改 CI 门槛；非作者完整 diff/简洁性复审后由协调者核验发布 CI。
+
+## CI diagnostic follow-up
+
+基线 `c50c2278826a5407c403ab046952b3f98a5385a2`。Full `40351648714` 的既有 MCP late-teardown 用例只记录 entered 等待超时，清理吞掉 pending 结果；相关产品与测试均未被本 PR 改动。受控探针证明原 DELETE 期限可在 resolver 进入前到期并正确保留 UNKNOWN，但历史 CI 是否此路径仍未知。
+
+仅调整该测试：在原 2 秒内同时等待 entered/pending，以 entered 实际状态优先；未进入而 pending 已结束则传播原固定错误，正常返回或未就绪仍失败，超时只给布尔/计数诊断。保留原 0.1 秒 DELETE 总期限、全部 late/UNKNOWN/不重试/无 DELETE 断言和清理；新增 waiter 在原有界 gather 内回收，不预热或接受未进入为通过。先独立审计划；受控探针须从旧版等待超时变为新版明确早结束错误且仍红，正常三种 late 情形各执行一次。此为诊断改进，最终 CI 若通过也不宣称已定位历史根因。
