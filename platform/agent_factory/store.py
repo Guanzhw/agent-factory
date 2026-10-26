@@ -343,7 +343,7 @@ class Store:
             count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal")).scalar()
             user_count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal AND owner_id=:owner"), {"owner": owner}).scalar()
             if count >= self.settings.max_total_tasks or user_count >= self.settings.max_user_tasks:
-                raise HTTPException(429, "Active task budget exhausted; UNKNOWN tasks retain capacity")
+                raise HTTPException(429, "ACTIVE_TASK_CAPACITY_EXHAUSTED")
             task_id = str(uuid4())
             body = {"createdAt": now(), "updatedAt": now(), "lastStatus": "queued", "requestId": request_id}
             row = conn.execute(text("INSERT INTO af_tasks(id,owner_id,plan_id,request_id,fingerprint,body) VALUES(:id,:owner,:plan,:request,:fp,CAST(:body AS JSONB)) RETURNING *"),
