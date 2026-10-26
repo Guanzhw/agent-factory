@@ -50,6 +50,14 @@ If a carrier's cleanup cannot be confirmed, clear its in-memory password but ret
 
 完成后由非作者检查完整基线→head及增量简洁性；主代理核对回执后勾选任务。便携 seam、真实 Windows installed wheel、Linux loopback 和 Windows→真实 Linux 原任务恢复分别记录；无授权真实 Linux endpoint 时最后一项保持 BLOCKED，不能以旧绿色 CI 替代整改后验收。
 
+## Full acceptance: importable core on non-Windows hosts
+
+组合 head `9c392a4d9c15b8b4ec61047e266857b01f45833a` / tree `92e125156e929c3091d18f4d43669d811749f489` 的 full `40272188443` 在 Linux 执行 2261 项，2 failures / 0 errors / 15 skips，`accepted=false`。两项分别为 `CorePackageDistributionTests.test_all_installed_core_modules_import_with_application_packages_absent` 与 `CoreRuntimeBoundaryTests.test_core_imports_without_loading_any_research_package`，均在 `windows_ssh_support.py:10` 的 `import pywintypes` 失败；六个 required 组通过不抵消普通失败。该导入块由 PR138 原实现 `9bf89776` 引入，在整改前 head `94c59e5` 已存在，不归因于本轮 deadline/cleanup 修正。
+
+仅将 support 模块现有 pywin32 导入块置于 `sys.platform == 'win32'` 条件下，不捕获或替代 Windows 依赖加载错误。Linux/macOS 导入该模块不加载 Windows API，也不表示低层 Windows primitives 可在那里运行；实际 credential carrier 仍由 `personal_ssh` 已有平台选择，进程实现保留原 Windows 运行时边界。无需新的 loader、代理对象、兼容层或逐函数兜底。host pin、凭据释放/identity、holder/Job、期限、取消与清理实现均不变。
+
+方案经非作者审查后，先在未改产品的精确 spec head 复现上述两个原测试失败，再以相同测试证明 source 和独立构建 wheel 恢复全模块导入。原 walker、模块集合、断言、依赖 marker 均不变；复用已有 portable SSH 回归及静态检查，不把它们当作真实 Windows 证明。完成后非作者复审完整 `62614177`→新 head 及本修正增量；根协调新 head Windows 专项与新组合 full，保留旧 full 原始失败，不重跑旧 head 冒充修正验收。
+
 
 ## First installed-core failure: bounded observation only
 
