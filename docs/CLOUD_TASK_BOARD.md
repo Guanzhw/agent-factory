@@ -1,15 +1,14 @@
-# Active: final Linux SSH publication and separate Windows implementation — 2026-10-25
+# Active: Windows SSH final verification — 2026-10-26
 
-| Owner / scope | Current evidence | Remaining gate |
-|---|---|---|
-| root — PR136 | Merged `e7987e75`; [main40236766611](https://github.com/Guanzhw/agent-factory/actions/runs/40236766611) SUCCESS. | Real organization identity remains separate. |
-| root — PR137 | Exact `860e46090dc98f6b2160da4cbc3b7d9de17aa775` [full40241711220](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220): all seven jobs SUCCESS. PG2183 passed/5 skipped (1581.818s); Windows1317 passed/871 skipped (233.556s); zero failures/errors; six required groups SSH6/BYOK109/boundaries16/native10/self-service19/invariants5 all zero skips; Web490 both platforms, Chromium2 and standalone core passed. | Documentation-only follow-up review/exact fast, then merge/main checks. Not yet merged. |
-| independent reviewers | Code-review records retained; `07c75a0` adds review documentation. Later changes remain documentation-only relative to tested860e460. | No unchanged full rerun required; documentation review and exact fast still required. |
-| PR138 Windows implementation | Separate Draft; bounded pipes have actual Windows evidence. | Production Windows credential integration unfinished; this is an implementation gap, not merely missing target access. |
+| Scope | Current evidence | Open gate |
+| --- | --- | --- |
+| PR138 integration | Exact `445a2ce89ab2fe38d8269d3f1f6a17bed9a81024`: Windows [40247109502](https://github.com/Guanzhw/agent-factory/actions/runs/40247109502) all three jobs and fast [40247109535](https://github.com/Guanzhw/agent-factory/actions/runs/40247109535) SUCCESS. Installed artifact checked: both consumers, wrong-pin zero release, original cancellation, expiry/revocation and cleanup PASS. | Final full via existing Project checks workflow_dispatch; exact final-head CI and independent complete-diff/simplicity review before merge. |
+| Independent review | Previous foundation_review complete-diff verdict through `41edf268` retained; new cloud reviewer checks `445a2ce` and final documentation delta. | Keep Draft until applicable release gates pass. |
+| PR136 evidence cleanup | Separate branch from main `6261417`; spec first, independent review before implementation. | Deduplicate reports, make storage diagnosis opt-in, preserve failure evidence and functional assertions. |
 
-[PG artifact12617398651](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220/artifacts/12617398651) and [SSH verification](../openspec/changes/connect-research-ssh-execution/verification.md) record the result. Linux CPU helper/native mechanisms are implemented; GPU allocation/binding remains UNIMPLEMENTED and rejected. Native accepted-continuation ACK loss does not establish SSH-wire submit ACK loss. Actual Windows→Linux target, physical network-fault and real model/GPU/hardware acceptance remain open.
+PR136 is merged `e7987e75`, [main40236766611](https://github.com/Guanzhw/agent-factory/actions/runs/40236766611) SUCCESS; its full PG result was 2063 passed/5 skipped. PR137 exact `860e460` [full40241711220](https://github.com/Guanzhw/agent-factory/actions/runs/40241711220) passed all seven jobs: PG2183 passed/5 skipped and Windows1317 passed/871 skipped, zero failures/errors. Final docs df4590c fast40244105392 and independent review passed; PR137 merged as 62614177c23c4d2cd0caf6b7c91418e74fde8ad4, with [post-merge main40244441325](https://github.com/Guanzhw/agent-factory/actions/runs/40244441325) SUCCESS on that exact SHA. Neither that Linux mechanism release nor Windows Stage B establishes final PR138 acceptance.
 
-Prior failed/cancelled CI runs and MCP/storage timing uncertainty remain disclosed below. No overall speedup, deployment or paid execution claim is added. Root owns publication; this checkpoint does not mark PR137 merged.
+See [integration evidence](../openspec/changes/support-native-windows-ssh-controller/verification-integration.md). Actual Windows ACETAMIDO→Linux target execution remains NOT RUN; GPU allocation/binding remains UNIMPLEMENTED. C/D target execution/model/hardware inputs remain missing. Earlier selector, probe and timing failures are preserved; no whole-suite speedup or historical MCP/storage root-cause closure is claimed. Heavy checks remain serial, with no paid call or deployment.
 
 ---
 

@@ -1,6 +1,7 @@
 """Synthetic keys and independent in-memory custody, never a real user/server."""
 import asyncio
 import base64
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime, timezone
 import io
@@ -12,6 +13,7 @@ import shutil
 import subprocess
 from tempfile import TemporaryDirectory
 import threading
+import time
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -63,7 +65,7 @@ class PersonalSSHTests(unittest.TestCase):
         self.service = PersonalSSHServers(self.auth, self.connections, self.vault,
             SSHEnrollmentConfig(max_active_seconds=60))
         self.addCleanup(self.service.close)
-        self.acquire = Mock(side_effect=lambda server, destination, guard: SimpleNamespace(validate=guard, check=guard))
+        self.acquire = Mock(side_effect=lambda server, destination, guard: SimpleNamespace(validate=guard, check=guard, expires_at=time.monotonic() + 60))
         self.service.agents.acquire = self.acquire
         self.service.probe = Mock(return_value={'ok': True})
         host = Ed25519PrivateKey.generate().public_key().public_bytes(
@@ -158,13 +160,16 @@ class PersonalSSHTests(unittest.TestCase):
         server = self.service.profile('alice', 'fixture', 'v1', {**self.input, **identity,
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
         lease = SimpleNamespace(socket='/fixture/agent.sock', public_key=self.input['hostKey'])
-        with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
-            pinned_ssh(server, lease, Path(folder), 'printf fixture')
+        with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.sys.platform', 'linux'), \
+                patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
+            with pinned_ssh(server, lease, Path(folder), 'printf fixture', deadline=time.monotonic() + 30):
+                pass
             command = launch.call_args.args[0]
             self.assertEqual(command[-6:], ['-l', 'root', '-p', '2244', 'worker.internal', 'printf fixture'])
             self.assertIn('StrictHostKeyChecking=yes', command)
             self.assertIn('HostKeyAlias=factory-pinned', command)
-            self.assertIn('IdentityAgent=/fixture/agent.sock', command)
+            self.assertIn('IdentityAgent=SSH_AUTH_SOCK', command)
+            self.assertEqual(launch.call_args.kwargs['env']['SSH_AUTH_SOCK'], lease.socket)
             self.assertEqual((Path(folder) / 'known_hosts').read_text().strip(), 'factory-pinned ' + server.host_key)
             self.assertEqual((Path(folder) / 'identity.pub').read_text().strip(), lease.public_key)
             self.assertFalse(any('PRIVATE KEY' in path.read_text() for path in Path(folder).iterdir()))
@@ -172,7 +177,7 @@ class PersonalSSHTests(unittest.TestCase):
     def test_probe_cleanup_error_propagates_without_becoming_unconfirmed(self):
         server = self.service.profile('alice', 'fixture', 'v1', {**self.input,
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
-        lease = SimpleNamespace(validate=lambda: None)
+        lease = SimpleNamespace(validate=lambda: None, expires_at=time.monotonic() + 60)
         failure = SSHExchangeCleanupError('controlled reap failure')
         with patch('agent_factory.personal_ssh.pinned_ssh') as spawn, \
              patch('agent_factory.personal_ssh.pipe_exchange', side_effect=failure) as exchange:
@@ -181,7 +186,9 @@ class PersonalSSHTests(unittest.TestCase):
         self.assertIs(caught.exception, failure)
         spawn.assert_called_once()
         exchange.assert_called_once()
-        self.assertIs(exchange.call_args.args[0], spawn.return_value)
+        self.assertIs(exchange.call_args.args[0], spawn.return_value.__enter__.return_value)
+        spawn.return_value.__exit__.assert_called_once()
+        self.assertEqual(spawn.call_args.kwargs['deadline'], exchange.call_args.kwargs['deadline'])
 
     @unittest.skipUnless(os.name == 'posix', 'generic remote shell fixture requires POSIX pipes')
     def test_generic_ssh_check_runs_without_research_package_python_or_docker(self):
@@ -189,10 +196,19 @@ class PersonalSSHTests(unittest.TestCase):
         service.package = None; service.probe_source = None
         server = service.profile('alice', 'fixture', 'v1', {**self.input,
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
-        lease = SimpleNamespace(validate=lambda: None)
-        def local_shell(server, lease, folder, command):
+        lease = SimpleNamespace(validate=lambda: None, expires_at=time.monotonic() + 60)
+        @contextmanager
+        def local_shell(server, lease, folder, command, *, deadline):
             self.assertNotIn('python', command); self.assertNotIn('docker', command)
-            return subprocess.Popen(['/bin/sh', '-c', command], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            process = subprocess.Popen(['/bin/sh', '-c', command], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+            try:
+                yield process
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                process.wait(timeout=5)
+                process.stdin.close()
+                process.stdout.close()
         with patch('agent_factory.personal_ssh.pinned_ssh', side_effect=local_shell):
             result = PersonalSSHServers.probe(service, server, lease, 'inspect')
         self.assertEqual(result['code'], 'SSH_CONNECTION_READY')
@@ -265,9 +281,11 @@ class PersonalSSHTests(unittest.TestCase):
         self.assertEqual(ssh_destination(identity['origin']), identity['origin'])
         server = self.service.profile('alice', 'fixture', 'v1', values | identity | {
             'credentialRef': 'fixture-key', 'credentialRevision': 'v1'})
-        with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
-            pinned_ssh(server, SimpleNamespace(public_key=values['hostKey'], socket='/fixture/agent.sock'),
-                Path(folder), 'printf fixture')
+        with TemporaryDirectory() as folder, patch('agent_factory.ssh_identity.sys.platform', 'linux'), \
+                patch('agent_factory.ssh_identity.subprocess.Popen') as launch:
+            with pinned_ssh(server, SimpleNamespace(public_key=values['hostKey'], socket='/fixture/agent.sock'),
+                    Path(folder), 'printf fixture', deadline=time.monotonic() + 30):
+                pass
             self.assertEqual(launch.call_args.args[0][-6:],
                 ['-l', 'member+lab@example', '-p', '2222', '127.0.0.1', 'printf fixture'])
 
@@ -464,42 +482,55 @@ class PersonalSSHTests(unittest.TestCase):
                 self.service.probe.assert_called_once()
         asyncio.run(observe())
 
-    def test_native_windows_agent_acquisition_rejects_before_secret_or_process(self):
+    def test_windows_manager_missing_client_delegates_without_posix_secret_or_process(self):
+        """Synthetic manager routing, not actual Windows client acceptance."""
         agents = object.__new__(SSHAgents)
         agents.vault = Mock()
+        agents.windows = Mock()
+        agents.windows.acquire.side_effect = RemoteConnectionError('SSH_SYSTEM_CLIENT_UNAVAILABLE')
+        agents.windows.diagnostic.return_value = 'SSH_SYSTEM_CLIENT_UNAVAILABLE'
         guard = Mock()
-        with patch('agent_factory.personal_ssh.sys.platform', 'win32'), \
-                patch('agent_factory.personal_ssh.subprocess.Popen') as process, \
+        with patch('agent_factory.personal_ssh.subprocess.Popen') as process, \
                 patch('agent_factory.personal_ssh.base64.b64decode') as decode:
-            with self.assertRaisesRegex(RemoteConnectionError, '^SSH_CONTROLLER_PLATFORM_UNSUPPORTED$'):
+            with self.assertRaisesRegex(RemoteConnectionError, '^SSH_SYSTEM_CLIENT_UNAVAILABLE$'):
                 agents.acquire(None, None, guard)
+            self.assertEqual(agents.controller_diagnostic(), 'SSH_SYSTEM_CLIENT_UNAVAILABLE')
+            agents.close()
+        agents.windows.acquire.assert_called_once_with(None, None, guard)
+        agents.windows.diagnostic.assert_called_once_with()
+        agents.windows.close.assert_called_once_with()
         guard.assert_not_called()
         agents.vault.resolve.assert_not_called()
         decode.assert_not_called()
         process.assert_not_called()
 
-    def test_native_windows_diagnostic_preserves_configuration_management(self):
+    def test_missing_windows_client_diagnostic_preserves_configuration_management(self):
         server, _, _ = self.registered()
         original_acquire = SSHAgents.acquire.__get__(self.service.agents, SSHAgents)
-        with patch('agent_factory.personal_ssh.sys.platform', 'win32'), \
+        manager = Mock()
+        manager.acquire.side_effect = RemoteConnectionError('SSH_SYSTEM_CLIENT_UNAVAILABLE')
+        manager.diagnostic.return_value = 'SSH_SYSTEM_CLIENT_UNAVAILABLE'
+        with patch.object(self.service.agents, 'windows', manager), \
                 patch.object(self.service.agents, 'acquire', original_acquire), \
                 patch.object(self.vault, 'resolve') as resolve, \
                 patch('agent_factory.personal_ssh.subprocess.Popen') as process:
             capabilities = self.client.get(self.root + '/capabilities', headers=self.headers).json()
             self.assertTrue(capabilities['enabled'])
-            self.assertEqual(capabilities['controllerDiagnostic'], 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+            self.assertEqual(capabilities['controllerDiagnostic'], 'SSH_SYSTEM_CLIENT_UNAVAILABLE')
+            manager.diagnostic.assert_called_once_with()
             response, request_id = self.command(server, 'verify')
             self.assertEqual(response.status_code, 409, response.text)
-            self.assertEqual(response.json()['detail']['code'], 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+            self.assertEqual(response.json()['detail']['code'], 'SSH_SYSTEM_CLIENT_UNAVAILABLE')
             rows = self.client.get(self.root, headers=self.headers).json()
             self.assertEqual(rows[0]['reference'], server['reference'])
-            self.assertEqual(rows[0]['diagnostic'], 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+            self.assertEqual(rows[0]['diagnostic'], 'SSH_SYSTEM_CLIENT_UNAVAILABLE')
             self.assertEqual(rows[0]['lastCheckRequestId'], request_id)
             revoked, _ = self.command(server, 'revoke')
             self.assertEqual(revoked.status_code, 200, revoked.text)
             self.assertEqual(revoked.json()['status'], 'revoked')
             resolve.assert_not_called()
             process.assert_not_called()
+            manager.acquire.assert_called_once()
         self.service.probe.assert_not_called()
 
     def test_stale_agent_expiry_callback_cannot_close_replacement_agent(self):

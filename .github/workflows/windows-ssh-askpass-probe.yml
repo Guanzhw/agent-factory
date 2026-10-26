@@ -1,0 +1,110 @@
+name: Windows SSH contracts
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - scripts/accept_windows_ssh_core.py
+      - platform/agent_factory/*ssh*.py
+      - platform/tests/*ssh*.py
+      - pyproject.toml
+      - platform/pyproject.toml
+      - uv.lock
+      - .github/workflows/windows-ssh-askpass-probe.yml
+permissions:
+  contents: read
+jobs:
+  authentication-candidate:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+        with:
+          version: '0.12.1'
+      - run: uv sync --frozen --group ssh-probe
+      - name: Install only the synthetic probe entry points
+        run: uv pip install --python .venv/Scripts/python.exe --no-deps --no-build-isolation ./scripts/windows_ssh_askpass_probe
+      - name: Exercise actual system SSH authentication over isolated loopback
+        timeout-minutes: 1
+        shell: pwsh
+        run: |
+          $report = & ./.venv/Scripts/af-windows-ssh-askpass-probe.exe --stage-b
+          $probeExitCode = $LASTEXITCODE
+          $report | Set-Content -Encoding utf8 "$env:RUNNER_TEMP/windows-ssh-stage-b.json"
+          Get-Content "$env:RUNNER_TEMP/windows-ssh-stage-b.json"
+          exit $probeExitCode
+      - name: Preserve the first candidate result, including rejection
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-ssh-authentication-candidate-${{ github.run_id }}
+          path: ${{ runner.temp }}/windows-ssh-stage-b.json
+          if-no-files-found: error
+
+  portable-pipes:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+        with:
+          version: '0.12.1'
+      - run: uv sync --frozen
+      - name: Exercise actual Windows pipes and portable SSH contracts
+        shell: python
+        run: |
+          import os, subprocess, sys
+          code = """
+          import sys, unittest
+          modules = ['test_ssh_exchange', 'test_windows_ssh_process', 'test_ssh_process_paths',
+                     'test_windows_ssh_credentials', 'test_ssh_command',
+                     'test_ssh_operation_runtime.SSHOperationProjectionTests',
+                     'test_ssh_operation_runtime.SSHPersonalTargetTests',
+                     'test_ssh_operation_runtime.SSHLaunchPreflightTests',
+                     'test_ssh_process_provider', 'test_ssh_tool_factory',
+                     'test_personal_ssh.PersonalSSHTests.test_probe_cleanup_error_propagates_without_becoming_unconfirmed']
+          suite = unittest.defaultTestLoader.loadTestsFromNames(modules)
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          sys.exit(0 if result.wasSuccessful() and result.testsRun and not result.skipped else 1)
+          """
+          os.environ['PYTHONPATH'] = os.pathsep.join(['platform', 'deployment', 'applications',
+                                                     'platform/tests', 'applications/tests'])
+          result = subprocess.run(['.venv/Scripts/python.exe', '-c', code], timeout=120)
+          sys.exit(result.returncode)
+
+  installed-core:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+        with:
+          version: '0.12.1'
+      - name: Build the standalone core wheel
+        working-directory: platform
+        shell: pwsh
+        run: uv build --wheel --out-dir "$env:RUNNER_TEMP/core-wheel"
+      - name: Verify installed product SSH outside the checkout
+        shell: pwsh
+        run: |
+          $wheels = @(Get-ChildItem "$env:RUNNER_TEMP/core-wheel/*.whl")
+          if ($wheels.Count -ne 1) { throw "Expected one standalone core wheel" }
+          python scripts/accept_windows_ssh_core.py --wheel $wheels[0].FullName --output "$env:RUNNER_TEMP/windows-ssh-installed-core.json"
+          exit $LASTEXITCODE
+      - name: Preserve installed-product acceptance including the first failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-ssh-installed-core-${{ github.run_id }}
+          path: ${{ runner.temp }}/windows-ssh-installed-core.json
+          if-no-files-found: error
