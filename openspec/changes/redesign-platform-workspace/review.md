@@ -12,3 +12,11 @@
 独立执行 `OPENSPEC_TELEMETRY=0 node /workspace/design-audit/openspec-cli/node_modules/@fission-ai/openspec/bin/openspec.js validate redesign-platform-workspace --strict`：PASS。规范文件 whitespace 检查：PASS。未运行产品测试、PostgreSQL、浏览器或外部模型；这些属于后续实施验收。
 
 本结论仅批准方案。`tasks.md:5` 的最终登录 main 基线前置保持有效；完整实现 diff、整改复审、真实浏览器以及精确 PR head/main CI 尚待执行。
+
+## 原凭据离页恢复增量审查
+
+**PASS，无必修项。** 审查 `d9fbd7b4725a2ed567073d99155c65fe3e1b2bd5` 上的 design 决策 3 与 spec「远端凭据原请求离页恢复」增量。`PersonalRemotes.tsx:12`、`:14` 的目标与表单开关重挂后为空，`:88`、`:93` 又使原表单依赖可用提供方与有效目标；因此已有 opaque 标识虽然没有丢失，直接恢复入口会消失。新增入口是满足离页/刷新可恢复性所需的局部前端修正，范围适当。
+
+现有 `CredentialForm.tsx:31` 已显式调用 `recoverCredential(requestId, owner)`，`:11` 在恢复时从成功回执接受真实目标；`credential_vault.py:188` 按 owner 与 request ID 读取既有结果，`:392` 为 GET 路由。复用此路径无需保存目标、秘密或新建恢复机制。实施时入口应独立于新配置表单的 `eligible`/提供方加载条件，未知或失败仍保留原标识；不得因显示入口而自动 GET/POST，成功读取后也不自动配置远端。
+
+已独立重跑 OpenSpec strict 与 `git diff --check`：PASS。本增量没有产品修改；既有最终登录 main 前置与后续实现验收仍有效。
