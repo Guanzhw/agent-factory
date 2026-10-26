@@ -2,6 +2,7 @@
 import asyncio
 from contextlib import contextmanager
 from copy import deepcopy
+import json
 import time
 from uuid import uuid4
 
@@ -14,6 +15,7 @@ from agent_factory.application_runs import factory_request_id
 from agent_factory.assistant_endpoints import EndpointConfiguration
 from agent_factory.assistant_events import ContentEvent, EventSubscription
 from agent_factory.delegated_operations import DELEGATED_OPERATION_PIN
+from agent_factory.input_schema import bounded_json
 from agent_factory.store import digest, now
 from agent_factory.workflow_control import WorkflowCommand
 from .projects import Agreement, reject
@@ -118,12 +120,14 @@ class ResearchRounds:
             with self.db.write(), self.content.db.write(), self.events.db.write(), self.endpoints.db.write():
                 yield conn
 
-    def _publish(self, owner, identifier, revision, content, *, round_id=None, artifacts=()):
+    def _publish(self, owner, identifier, revision, content, *, round_id=None, artifacts=(), content_artifact=None):
         if self.peer_sources is not None:
-            result = self.peer_sources.publication(owner, round_id or identifier, identifier, revision, content, artifacts=artifacts)
+            result = self.peer_sources.publication(owner, round_id or identifier, identifier, revision, content,
+                artifacts=artifacts, content_artifact=content_artifact)
         else:
             result = self.content.publish(owner, ContentPublication(source=ContentSource(
-                application='research', record=identifier, revision=revision), content=content, visibility='team', artifacts=list(artifacts)),
+                application='research', record=identifier, revision=revision), content=content,
+                contentArtifact=content_artifact, visibility='team', artifacts=list(artifacts)),
                 'research-record:' + identifier + ':' + revision)['id']
         if self.associations is not None:
             sources = self.associations.sources
@@ -455,13 +459,31 @@ class ResearchRounds:
                                              'allStopped': operation['closed']}
             selection = attempt['selection'] if attempt and attempt['selection'] else {
                 'items': [], 'artifacts': [], 'missingEvidence': ['evidence_not_collected'], 'provenance': None}
-            content_id = self._publish(task['owner_id'], row['id'], 'terminal', {
+            body = {
                 'kind': 'research.round.terminal', 'projectId': row['project_id'], 'goalVersion': row['goal_version'],
                 'roundId': row['id'], 'taskId': task['id'], 'decision': row['decision'],
                 'runtime': group, 'experiment': evidence, 'selectedEvidence': selection,
                 'agreement': agreement.model_dump(include={'objective', 'evaluation', 'stopConditions'}),
-                'evidenceLevel': 'agent_analysis' if row['decision'] else 'runtime_fact'}, artifacts=selection['artifacts'])
-            if row['decision'] and row['decision']['action'] == 'continue':
+                'evidenceLevel': 'agent_analysis' if row['decision'] else 'runtime_fact'}
+            content_artifact = None
+            if len(json.dumps(body).encode()) > 16384:
+                raw = json.dumps(body, ensure_ascii=False, allow_nan=False).encode()
+                bounded_json(body, maximum=len(raw), ensure_ascii=False)
+                maximum = self.db.store.settings.experiment_output_bytes
+                if len(raw) > maximum:
+                    terminal.update(sharing='publication_failed', continuationBlocked='RESEARCH_PUBLICATION_TOO_LARGE',
+                        publicationBytes=len(raw), publicationLimit=maximum)
+                else:
+                    artifact = self.db.store.artifact_write(task['run_id'], 'research-terminal.json', raw,
+                        metadata={'evidenceKind': 'application_output', 'verificationStatus': 'unverified',
+                                  'applicationInterfaceVersion': 1,
+                                  'applicationRef': agreement.execution.applicationRef.model_dump()})
+                    content_artifact = {'taskId': task['id'], 'artifactId': artifact['id'], 'sha256': artifact['sha256']}
+                    body = None
+            if terminal['sharing'] == 'published':
+                content_id = self._publish(task['owner_id'], row['id'], 'terminal', body,
+                    artifacts=selection['artifacts'], content_artifact=content_artifact)
+            if content_id and row['decision'] and row['decision']['action'] == 'continue':
                 reason = ('RESEARCH_PROJECT_ENDED' if project['state'] == 'ended' else
                           'RESEARCH_GOAL_VERSION_CONFLICT' if project['state'] != 'ready' or project['goal_version'] != row['goal_version']
                           else 'RESEARCH_SOURCE_UNAVAILABLE' if self.peer_sources and not self.peer_sources.available(task['owner_id'], self.peer_sources.dependencies(row['id']))

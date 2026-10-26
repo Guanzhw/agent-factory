@@ -1,12 +1,13 @@
 """Curated member publications grant access to exact artifacts, never whole jobs."""
 from copy import deepcopy
 from contextlib import contextmanager
+import json
 from typing import Annotated, Literal
 from urllib.parse import quote
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import Column, JSON, MetaData, String, Table, or_, select, text
 
 from .applications import GovernedStorage
@@ -37,10 +38,17 @@ class ContentArtifact(BaseModel):
 class ContentPublication(BaseModel):
     model_config = ConfigDict(extra='forbid')
     source: ContentSource
-    content: dict
+    content: dict | None = None
+    contentArtifact: ContentArtifact | None = None
     artifacts: list[ContentArtifact] = Field(default_factory=list, max_length=20)
     visibility: Literal['personal', 'team'] = 'personal'
     sourceContentIds: list[ObjectId] = Field(default_factory=list)
+
+    @model_validator(mode='after')
+    def one_body(self):
+        if (self.content is None) == (self.contentArtifact is None):
+            raise ValueError('Exactly one content or contentArtifact is required')
+        return self
 
 
 class PublishContent(ContentPublication):
@@ -96,7 +104,10 @@ class ApplicationContent:
         return self._project(conn, owner, row)
 
     def _project(self, conn, actor, row):
-        return {'id': row['id'], 'ownerId': row['owner_id'], **deepcopy(row['body']),
+        body = deepcopy(row['body'])
+        if body.get('contentArtifact') is not None:
+            body['content'] = self._body_artifact(row['owner_id'], body['contentArtifact'])
+        return {'id': row['id'], 'ownerId': row['owner_id'], **body,
             'createdAt': row['created_at'], 'verificationStatus': 'unverified',
             **self.sharing.projection(conn, actor, row['reference'], row['owner_id'])}
 
@@ -117,14 +128,28 @@ class ApplicationContent:
             ('evidenceKind', 'verificationStatus', 'applicationInterfaceVersion', 'applicationRef') if key in provenance}
         return safe, raw
 
+    def _body_artifact(self, owner, reference):
+        _, raw = self._artifact(owner, reference)
+        try:
+            content = json.loads(raw.decode('utf-8'))
+            if not isinstance(content, dict):
+                raise ValueError('Content must be an object')
+            bounded_json(content, maximum=self.store.settings.experiment_output_bytes, ensure_ascii=False)
+        except (ValueError, RecursionError) as error:
+            raise HTTPException(422, 'APPLICATION_CONTENT_INVALID') from error
+        MaterialGovernance._safe_data(content)
+        return content
+
     def publish(self, owner, body: ContentPublication, request_id):
         self.auth.require_member(owner)
         value = body.model_dump()
+        value.pop('contentArtifact' if body.contentArtifact is None else 'content')
         if not value['sourceContentIds']:
             value.pop('sourceContentIds')
         MaterialGovernance._safe_data(value)
         try:
-            bounded_json(value['content'], maximum=16384)
+            if 'content' in value:
+                bounded_json(value['content'], maximum=16384)
             bounded_json(value.get('sourceContentIds', []), maximum=16384)
         except ValueError as error:
             raise HTTPException(422, 'APPLICATION_CONTENT_INVALID') from error
@@ -148,6 +173,8 @@ class ApplicationContent:
                     raise HTTPException(422, 'APPLICATION_CONTENT_SOURCES_TOO_LARGE') from error
             for reference in value['artifacts']:
                 self._artifact(owner, reference)
+            if 'contentArtifact' in value:
+                self._body_artifact(owner, value['contentArtifact'])
             identifier = str(uuid4())
             reference = 'content:' + identifier
             visibility = value.pop('visibility')
@@ -204,7 +231,10 @@ class ApplicationContent:
         with self._access() as conn:
             row = self._row(conn, identifier)
             self._readable(conn, actor, row)
-            reference = next((item for item in row['body']['artifacts'] if item['artifactId'] == artifact_id), None)
+            references = list(row['body']['artifacts'])
+            if row['body'].get('contentArtifact') is not None:
+                references.append(row['body']['contentArtifact'])
+            reference = next((item for item in references if item['artifactId'] == artifact_id), None)
             if reference is None:
                 raise HTTPException(404, 'APPLICATION_CONTENT_ARTIFACT_NOT_FOUND')
             return self._artifact(row['owner_id'], reference)
