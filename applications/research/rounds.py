@@ -90,18 +90,20 @@ class ResearchRounds:
         if project['state'] != 'ready':
             return {'available': False, 'reason': 'RESEARCH_PROJECT_ENDED' if project['state'] == 'ended'
                     else 'RESEARCH_CONFIRMED_GOAL_REQUIRED'}
+        rows = conn.execute(select(self.rounds).where(self.rounds.c.project_id == project['id'])).mappings().all()
+        if rows and (any(row['terminal'] is None for row in rows)
+                     or max(row['goal_version'] for row in rows) == project['goal_version']):
+            return {'available': False, 'reason': 'RESEARCH_ORIGINAL_ATTEMPT_REQUIRED'}
+        if not rows and conn.execute(select(self.legacy.experiments.c.id).where(
+                self.legacy.experiments.c.project_id == project['id']).limit(1)).first():
+            return {'available': False, 'reason': 'RESEARCH_ORIGINAL_ATTEMPT_REQUIRED'}
         agreement = self._goal(conn, project['id'], project['goal_version'])
         if not self.supports(agreement.model_dump()['execution']):
-            return self.legacy.availability(conn, project)
+            return {'available': False, 'reason': 'RESEARCH_NATIVE_COMPONENT_REQUIRED'}
         assert agreement.execution is not None
         if agreement.execution.deadline <= time.time():
             return {'available': False, 'reason': 'LOCAL_BUDGET_EXPIRED'}
-        rows = conn.execute(select(self.rounds).where(self.rounds.c.project_id == project['id'])).mappings().all()
-        reason = None
-        if rows and (any(row['terminal'] is None for row in rows)
-                     or max(row['goal_version'] for row in rows) == project['goal_version']):
-            reason = 'RESEARCH_ORIGINAL_ATTEMPT_REQUIRED'
-        return {'available': reason is None, 'reason': reason}
+        return {'available': True, 'reason': None}
 
     def require_same_commitment(self, conn, project_id, agreement):
         self.legacy.require_same_commitment(conn, project_id, agreement)
@@ -145,7 +147,7 @@ class ResearchRounds:
         fingerprint = digest({'action': 'round.start', 'project': project_id, **body.model_dump(exclude={'requestId'})})
         with self._write() as conn:
             project = self.projects._owned(conn, owner, project_id)
-            prior = self.db.old(conn, self.projects.commands, owner, body.requestId, fingerprint)
+            prior = self.legacy.original_intent(conn, owner, project_id, body)
             if prior is not None:
                 return prior
             if project['state'] != 'ready' or project['goal_version'] != body.expectedVersion:
@@ -189,22 +191,8 @@ class ResearchRounds:
             return self.db.record(conn, self.projects.commands, owner, body.requestId, fingerprint, 'research.round.start', result)
 
     async def start(self, owner, project_id, body):
-        with self.db.read() as conn:
-            project = self.projects._owned(conn, owner, project_id)
-            agreement = self._goal(conn, project_id, project['goal_version']) if project['goal_version'] else None
-        if agreement is None or not self.supports(agreement.model_dump()['execution']):
-            return await self.legacy.start(owner, project_id, body)
         intent = await asyncio.to_thread(self._prepare, owner, project_id, body)
-        if 'request' not in intent:
-            return intent
-        receipt = await asyncio.to_thread(self.legacy._receipt, owner, intent['request']['requestId'], intent['scopeId'], intent['allocationId'])
-        if receipt is None or receipt['taskId'] is None:
-            project = await asyncio.to_thread(self.projects.read, owner, project_id)
-            if project['state'] == 'ended':
-                reject('RESEARCH_PROJECT_ENDED', '项目已结束')
-            await self.legacy.runs.start(owner, ApplicationStart.model_validate(intent['request']), allocation_id=intent['allocationId'])
-            receipt = await asyncio.to_thread(self.legacy._receipt, owner, intent['request']['requestId'], intent['scopeId'], intent['allocationId'])
-        return {k: v for k, v in intent.items() if k != 'request'} | {'execution': receipt}
+        return await self.legacy.recover_intent(owner, project_id, intent)
 
     def _bound(self, conn, ctx):
         owner, task_id = ctx.user_id, ctx.session_id
