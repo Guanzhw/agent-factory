@@ -37,3 +37,14 @@
 ## 目录兼容方案增量 — PASS
 
 精确范围 `564056ca30e64a9ac5fd867fdee492137482d431` → `4a2001b68bbd4cde1f2dbc950f386b0bd28c2114`，仅 design/spec 两文件 5 行。目录继续完整的当前成员、原来源和 ending team 检查，逐项丢弃正文，不收集 records/累计整包预算；同一旧快照 read/download 仍明确 413，撤回后目录隐藏。已检查该最小方案与原目录责任一致，不引入捕获 413 的授权旁路。方案 PASS，可实施；修后完整代码仍须复审。
+
+## R2/R3 修后完整实现复审 — PASS
+
+- 精确累计范围：`e4afcb6eb230ad079f13ac87dc5e3d581701b390` → `20fe2f027b4fcda8e2b135f336fc61c1aa045682`，13 文件。已按前次完整实现、所有整改和最终文档增量逐项复审；最终仅 3 个产品文件（delivery 服务、交付详情、类型），未修改 native workflow pin、执行/恢复路径或核心内容合同。全范围 diffcheck 通过、树干净。
+- 目录回归已最小修复：`include_records=False` 只改变收集行为，所有来源与 ending team/owner 检查仍先执行；没有吞 413 的旁路。独立原基线源码→当前同 DB/同预算脚本在 `db49d9c0` 返回与旧目录完全相同的 1 项元数据，前后 JSON 均保留。最终 head 与该探针的产品代码等值；并非把配置变更假设当作旧支持状态。
+- 独立在产品修正 head `2f0cb98138b1a9dceb6429b81a8b1c07a5ba3f00` 执行 `PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=platform:platform/tests:deployment:applications:applications/tests /workspace/agent-factory-cleanup/.venv/bin/python -m unittest test_research_delivery_contract -v`：**10 tests / 0 skip / PASS**。覆盖旧目录超限仍可发现、read/download 413、撤回隐藏，以及双长记录、中文正文加 20 精选证据、真实 ZIP 等号/超一字节、原 ending 全文/缺证分类、同 owner 与未发布轮来源、两阶段撤回。该产品代码到最终 head 未变。
+- 持久快照仅引用原不可变 records，读取完整还原；来源-only 正文不进入导出，正文载体不重复计为附件。create/read/download 共用 UTF-8 manifest/精选字节/实际 ZIP 上限，组包在授权事务外，创建提交前复核固定全部来源和版本。旧快照不动态补 ending 或新轮次，真实超限无新成功回执。
+- R3 保留原 reason/outcome/owner/目标版本/时间/cleanup 和已有 Agent 分析属性；UI 原文使用既有 pre-wrap 样式，未把 owner 伪作具体 actor。ending 固定依赖子集单独保留当前 team 语义，普通 selected personal 记录仍可由 owner 读取；终态无 publication 继续明确缺证，不改原科学结论。
+- 已核对真实 PG 两项 CLI/peer 撤回在 `2f0cb98` PASS；第三项手插非法格式 fixture 首败如实保留。`db49d9c0` 仅改该测试为真实 native stop→真实 create，双向锁等待与撤回拒绝不减弱，受影响一项 3.673 秒 PASS。旧生产 create 始终有 recordIds，未为不支持的 fixture 加产品 fallback；不把首次 3 项写成全过。reviewer 未重跑 PG。
+- 作者最终 portable 19 PASS、前端完整 check 53 files / 492 tests PASS、两类 audit 0、Pyright 0 与所有静态/架构证据已核对。新的浏览器 E2E、真实模型/GPU/生产 IdP 未运行；verification.md 如实限定 DOM、SQLite 与真实 PG/native/CLI 的范围。
+- 结论：上述完整 R2/R3 范围 **PASS**，已发现的问题均经方案修订、实现整改和独立复验，无剩余阻断项。任务勾选与最终组合验收归 coordinator；整批 Draft/merge hold 不由本审查解除。其后 reviewer 文档/任务勾选的纯文档增量须单独登记，不能冒充新运行验证。
