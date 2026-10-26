@@ -20,4 +20,4 @@
 
 上文为 PR #148 发布前记录；协调者已核验合并及 [main CI 40295987780](https://github.com/Guanzhw/agent-factory/actions/runs/40295987780)，任务 3.1 已关闭。本次基线 `f3f931b06f11b7ea910a9efe3d5b8a8ba89442ff`、统一方案 `51f124d7a0fd81d0ab3bb694b6c709258a5a4303` 已获非作者方案 PASS。
 
-12 份指南逐条对照默认/显式装配、个人适配器注册、配置/plan policy 与现存测试入口；7 份历史文档的原验收正文保持，12 个新增相对链接目标存在。OpenSpec strict、完整 diff/空白及仅 Markdown 范围检查首次通过；产品、测试、CI 无变更，不重复运行产品测试或服务。任务 4.1 等待精确候选独立完整复审与发布后 CI；OpenSpec 路径按现有规则走 fast，由协调者核验最终回执。
+12 份指南逐条对照默认/显式装配、个人适配器注册、配置/plan policy 与现存测试入口；7 份历史文档的原验收正文保持，新增相对链接目标均存在。OpenSpec strict、完整 diff/空白及仅 Markdown 范围检查首次通过；产品、测试、CI 无变更，不重复运行产品测试或服务。任务 4.1 等待精确候选独立完整复审与发布后 CI；OpenSpec 路径按现有规则走 fast，由协调者核验最终回执。
