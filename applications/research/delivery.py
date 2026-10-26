@@ -37,7 +37,7 @@ class ResearchDelivery:
             raise HTTPException(404, 'RESEARCH_DELIVERY_NOT_FOUND')
         return row
 
-    def _sources(self, actor, row):
+    def _sources(self, actor, row, *, include_records=True):
         self.projects.auth.require_member(actor)
         self.projects.auth.require_member(row['owner_id'])
         sources = row['body']['sourceIds']
@@ -49,11 +49,11 @@ class ResearchDelivery:
             source = self.content.read(actor, identifier)
             if identifier in ending_sources and source['visibility'] != 'team':
                 raise HTTPException(404, 'RESEARCH_SOURCE_UNAVAILABLE')
-            if identifier in row['body']['recordIds']:
+            if include_records and identifier in row['body']['recordIds']:
                 size += len(json.dumps(source['content'], ensure_ascii=False, allow_nan=False).encode())
                 self._check_size(size)
                 selected[identifier] = source
-        return [selected[identifier] for identifier in row['body']['recordIds']]
+        return [selected[identifier] for identifier in row['body']['recordIds']] if include_records else []
 
     def _check_size(self, size):
         if size > self.maximum:
@@ -166,7 +166,7 @@ class ResearchDelivery:
             items = []
             for row in rows[:limit]:
                 try:
-                    self._sources(actor, row)
+                    self._sources(actor, row, include_records=False)
                 except HTTPException as error:
                     if error.status_code not in {403, 404}:
                         raise

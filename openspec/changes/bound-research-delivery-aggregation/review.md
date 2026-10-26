@@ -24,3 +24,16 @@
 新工作树基线 `e4afcb6eb230ad079f13ac87dc5e3d581701b390` 只在 R1 已审产品上补原 reviewer 文档及 coordinator 任务勾选。新 spec `103ec594396010f97f20b1ed15aca49e0f9f376d` 与上述 `951e0e1f` 的 R2/R3 方案目录完全相同；原方案 PASS 适用于该等价内容。
 
 另审 `103ec594396010f97f20b1ed15aca49e0f9f376d` → `244a9d63b984802eeea8c304c8fb2af2c9c7dfd8` 的 3 个文档文件：补充 terminal 已存在但没有 terminal_record 时的 `round_not_published:<id>` 缺证标记，与原 `round_not_terminal` 互斥；已有其他正常记录也不能掩盖这项缺失。旧交付仍保留原快照，不动态回填，不补造正文或改科学结论。该小项方案 PASS，可实施；这次未审工作区中正在进行的其他产品实现，代码仍待完整复审。
+
+## 完整实现首审 — NEEDS_FIX
+
+- 已审累计 `e4afcb6eb230ad079f13ac87dc5e3d581701b390` → `d7d180a704d6b1f28a223126f8db1394c207c843` 全 11 文件，独立运行 `test_research_delivery_contract -v` 为 9 tests / 0 skip / PASS，diffcheck 通过。新聚合、正文与证据分开计数、实际 ZIP 上限、ending 原依赖与 UI 接线均已检查。作者 baseline 7 项首跑 3 failures/3 errors 及 UI 首败已核对。
+- **兼容性需修：目录被新增包预算阻断。** coordinator 提醒 `_sources` 同用于 list，reviewer 独立确证这会拒绝旧合同已经允许保存的交付。直接加载基线 `e4afcb6` 的原 delivery 类，在同一 SQLite、同一 `experiment_output_bytes=1024` 下，含 2016 字节合法 inline 记录的旧 create 成功、旧 list 返回 1 项；新 list 因 `_sources` 的正文累计预算返回 413，使整页元数据不可列出。这不依赖配置升级后变化；旧 create 原本只限制 16 KiB manifest，下载不能打包的旧快照仍能列目录。
+- 最小复现与实际输出保存在 `/workspace/cross-pr-audit/r23-list-boundary-check.py`、同名 `.json`。输出源码 head `564056ca30e64a9ac5fd867fdee492137482d431` 与 `d7d180a` 的 delivery 相同，其间只有 UI 两文件补 Agent 分析标记；fixture 为真实 SQLite 存储、mock scope/native，不是 PG。
+- 期望最小修复：list 仍逐一检查 core 内容、ending 原子集 team 和当前 owner，但不收集正文或按完整交付包预算累计；完整 create/read/download 继续共同预算，不返回半包。添加旧 create 接受但整包不能导出时目录仍可列出，以及撤回仍隐藏的回归。不要 catch 所有 413 后泄露未授权元数据，也无需新缓存/恢复层。
+
+当前实现 **NEEDS_FIX**；补充该目录语义短方案后再修代码并完整复审。PG/npm 验证尚未据此记成最终通过。
+
+## 目录兼容方案增量 — PASS
+
+精确范围 `564056ca30e64a9ac5fd867fdee492137482d431` → `4a2001b68bbd4cde1f2dbc950f386b0bd28c2114`，仅 design/spec 两文件 5 行。目录继续完整的当前成员、原来源和 ending team 检查，逐项丢弃正文，不收集 records/累计整包预算；同一旧快照 read/download 仍明确 413，撤回后目录隐藏。已检查该最小方案与原目录责任一致，不引入捕获 413 的授权旁路。方案 PASS，可实施；修后完整代码仍须复审。

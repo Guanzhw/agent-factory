@@ -113,6 +113,21 @@ class ResearchDeliveryContractTests(unittest.TestCase):
         accepted = self.delivery.create('alice', self.f.project, ProjectCommand(requestId='boundary-delivery', expectedVersion=1))
         self.assertEqual(len(self.delivery.download('alice', accepted['id'])), size)
 
+    def test_legacy_oversized_snapshot_still_lists_authorized_metadata(self):
+        record = self.record({'analysis': 'x' * 2000})
+        self.select_records([record])
+        manifest = self.delivery.create('alice', self.f.project, self.command)
+        with self.f.projects.db.write() as conn:
+            stored = conn.execute(select(self.delivery.deliveries.c.body)).scalar_one()
+            conn.execute(self.delivery.deliveries.update().values(body={**stored, 'records': [record['content']]}))
+        self.delivery.maximum = 1024
+        self.assertEqual(self.delivery.list('bob')['items'], [{key: manifest[key] for key in ('id', 'ownerId', 'createdAt')}])
+        for action in (self.delivery.read, self.delivery.download):
+            with self.assertRaises(HTTPException) as too_large: action('bob', manifest['id'])
+            self.assertEqual(too_large.exception.status_code, 413)
+        self.f.content.set_visibility('alice', record['id'], 'personal', 'withdraw-legacy-large')
+        self.assertEqual(self.delivery.list('bob')['items'], [])
+
     def end(self, *, reason='未达标；剩余问题：需要独立复现。\n保留完整负结果。'):
         return self.f.projects.change('alice', self.f.project, 'end', EndProject(
             requestId='original-ending', expectedVersion=1, outcome='not_met', reason=reason))['ending']
