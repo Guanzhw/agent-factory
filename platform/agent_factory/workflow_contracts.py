@@ -107,14 +107,15 @@ def _inert(value, depth=0):
 
 def delegated_result_bytes(value):
     """Lossless JSON data, sized separately from the control envelope."""
-    def data(item):
+    def data(item, depth=0):
+        _require(depth <= 64)
         if type(item) is dict:
             for key, child in item.items():
                 _require(type(key) is str)
-                data(child)
+                data(child, depth + 1)
         elif type(item) is list:
             for child in item:
-                data(child)
+                data(child, depth + 1)
         elif type(item) is float:
             _require(math.isfinite(item))
         else:

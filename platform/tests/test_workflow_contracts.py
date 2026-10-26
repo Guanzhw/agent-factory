@@ -103,3 +103,18 @@ class WorkflowContractTests(unittest.TestCase):
             value['handle'].update(adapterId=other_adapter, revision=other_revision)
             with self.assertRaisesRegex(ValueError, ERROR):
                 validate_runtime_observation(value, 'original-operation', other_adapter, other_revision)
+
+    def test_delegated_reader_uses_the_same_body_depth_bound(self):
+        adapter, revision = DELEGATED_OPERATION_ADAPTER
+        value = observation()
+        value['handle']['adapterId'] = adapter
+        for depth in (64, 65, 500):
+            content = 'leaf'
+            for _ in range(depth):
+                content = {'data': content}
+            value['output'] = {'taskId': 'child', 'runId': 'child-run', 'artifacts': [], 'result': content}
+            if depth == 64:
+                self.assertEqual(validate_runtime_observation(value, 'original-operation', adapter, revision), value)
+            else:
+                with self.subTest(depth=depth), self.assertRaisesRegex(ValueError, ERROR):
+                    validate_runtime_observation(value, 'original-operation', adapter, revision)

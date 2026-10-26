@@ -36,3 +36,13 @@ FACTORY_TEST_DATABASE_URL=postgresql://postgres@127.0.0.1:55432/postgres PYTHONP
 `postgres.txt`：6 tests，0 skipped，18.317s，PASS。`postgres.json` 保存精确源码 head、PG17.11 版本、证据边界与 cleanup 查询。真实 child 工具产生的正文含换行/URL/中文和普通业务 token 字段，UTF-8 超过 32 KiB、低于原 64 KiB 预算；原 paused workflow 硬重启后，持久化 custody 与 parent 最终 native content 中的原 wait 结果完整等值，原 child/operation/run 身份及单次 continuation 保持。实际 `closed=true`、effects DONE、原 scope allocation SETTLED；lost ack、撤销后原取消、UNKNOWN 不重派、创建/取消交错、未决 descendant 原边界通过。
 
 实际执行 PostgreSQL/native queue/tool/workflow/custody/预算结算；模型为 deterministic fixture，lost ack/取消失败/并发屏障为注入 seam。没有真实模型、付费资源、GPU 或 SSH 作业。结束后 `pg_database` 中 `af_test_%` 数量为零，相关 Python fixture 子进程为零，共享容器及依赖未改，时隙已归还 coordinator。日志中的 403 撤销错误为已有边界测试的预期路径，测试本身通过。
+
+## Independent review correction: depth
+
+非作者对 `0299819b965723868d910bb21fb55de2155bdef6` 完整实现审查发现：500 层、1006 字节 JSON 可通过正文编码，但后续 observation deepcopy 递归失败，原操作仍 held。方案增量 `7c16722d7d736241267fcf1dc42a56ab14cc1a27` 经同一非作者独立 PASS 后才修正产品。
+
+`before-depth.txt` 记录修正前新增深度回归的首跑：64 层通过，65 层与新增合同预期不符，500 层 `WORKFLOW_CONTRACT_INVALID`。`before-depth.json`／`after-depth.json` 使用同一个实际 SQLite custody fixture，对每个深度独立 `original()`、`completed(nested_content)`、原 `lookup/read/task_held` 并读 `af_effects`：修前 500 层 closed=false/effect UNKNOWN；修后 64 层完整 COMPLETED，65/500 层 FAILED／`DELEGATED_RESULT_INVALID`，全部 closed=true/effect DONE，每例 childDispatches=1。child admission 与 stop facts 仍为合成输入；未将其称作 PostgreSQL。
+
+修正仅在 producer/reader 共用函数增加 root=0、最大64层的结构规则，未新增 catch、重试或恢复路径。`portable-depth.txt`：同上便携命令，52 tests，0 skipped，PASS；覆盖 array custody 和 object 持久化读取深度边界。原始失败日志仅移除行尾空格，错误内容与首跑结果保留。
+
+本次深度修正未复跑 PostgreSQL：原 PG 测试结果数据为 string，新增递归结构限制不会改变该路径；6 项真实 native 证据准确归属 `803c00a`，不冒称后续 head 实测。新结构边界由上述实际 custody/effect 回归验证，最终集成执行由 coordinator 安排。

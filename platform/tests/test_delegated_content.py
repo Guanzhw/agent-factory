@@ -125,6 +125,25 @@ class DelegatedContentTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(self.store.sql('SELECT status FROM af_effects')[0]['status'], 'UNKNOWN')
         self.delegation.create.assert_awaited_once()
 
+    async def test_nested_data_boundary_closes_original_without_copy_failure(self):
+        for depth in (64, 65, 500):
+            with self.subTest(depth=depth):
+                content = 'leaf'
+                for _ in range(depth):
+                    content = [content]
+                original = await self.original('depth-' + str(depth))
+                self.completed(content)
+                record = await self.service.lookup('alice', original['id'])
+                self.assert_closed(record)
+                if depth == 64:
+                    self.assertEqual(record['observation']['state'], 'COMPLETED')
+                    self.assertEqual(record['observation']['output']['result'], content)
+                else:
+                    self.assertEqual(record['observation']['state'], 'FAILED')
+                    self.assertEqual(record['observation']['failure']['code'], 'DELEGATED_RESULT_INVALID')
+                    self.assertIsNone(record['observation']['output'])
+        self.assertEqual(self.delegation.create.await_count, 3)
+
     async def test_closed_short_record_keeps_original_result_after_restart(self):
         original = await self.original()
         self.completed('original short result')
