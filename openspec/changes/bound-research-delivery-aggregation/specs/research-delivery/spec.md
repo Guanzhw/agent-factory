@@ -22,6 +22,10 @@
 - **WHEN** 原正文合法但完整包超过 maximum，包括仅 ZIP 头部造成的超限
 - **THEN** 返回 413 RESEARCH_DELIVERY_TOO_LARGE，失败 create 不留 delivery 或成功回执，不截断/半包
 
+#### Scenario: Historical oversized snapshot remains discoverable
+- **WHEN** 旧创建合同允许的既存快照超过当前导出预算，但当前所有来源仍可读
+- **THEN** list 仍返回该快照的原元数据且不应用聚合正文预算，read/download 返回明确 413；来源撤回后 list 仍隐藏该条
+
 ### Requirement: Current original source and evidence authority
 交付 SHALL 在每次读取或导出时核对当前全部来源和精选证据的身份、大小及字节完整性，不因历史成功免检。
 
