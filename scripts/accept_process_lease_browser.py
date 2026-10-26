@@ -64,7 +64,7 @@ def main():
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             context = browser.new_context(viewport={"width": 1440, "height": 1000})
-            context.set_extra_http_headers(member_headers(fixture.auth, "alice"))
+            context.set_extra_http_headers(member_headers("alice"))
             page = context.new_page()
             errors, mutations = [], []
             page.on("pageerror", lambda error: errors.append(type(error).__name__))
@@ -109,7 +109,7 @@ def main():
             page.set_viewport_size({"width": 1440, "height": 1000})
             page.screenshot(path=str(args.output / "desktop-unknown-held.png"), full_page=True)
             bob = browser.new_context()
-            bob.set_extra_http_headers(member_headers(fixture.auth, "bob"))
+            bob.set_extra_http_headers(member_headers("bob"))
             bob_page = bob.new_page()
             bob_page.goto(origin)
             bob_page.get_by_role("button", name="我的资源连接", exact=True).click()
