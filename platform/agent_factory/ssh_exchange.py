@@ -83,15 +83,20 @@ def exchange(process, payload, *, deadline, max_output, before_write=None, cance
                 else:
                     cancelled.wait(delay)
     finally:
+        close_process(process)
+
+
+def close_process(process):
+    """Close the owned pipes and confirm the direct SSH process has exited."""
+    try:
+        if process.poll() is None:
+            process.kill()
         try:
-            if process.poll() is None:
-                process.kill()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired as error:
-                raise SSHExchangeCleanupError('SSH_EXCHANGE_REAP_UNCONFIRMED') from error
-        finally:
-            if process.stdin is not None:
-                process.stdin.close()
-            if process.stdout is not None:
-                process.stdout.close()
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired as error:
+            raise SSHExchangeCleanupError('SSH_EXCHANGE_REAP_UNCONFIRMED') from error
+    finally:
+        if process.stdin is not None:
+            process.stdin.close()
+        if process.stdout is not None:
+            process.stdout.close()

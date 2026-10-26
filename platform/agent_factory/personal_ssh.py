@@ -5,6 +5,7 @@ prerequisites are checked separately when preparing an application.
 """
 import asyncio
 import base64
+from contextlib import AbstractContextManager
 from dataclasses import dataclass, replace
 import json
 from pathlib import Path, PurePosixPath
@@ -28,7 +29,7 @@ from .ssh_exchange import SSHExchangeCleanupError, exchange as pipe_exchange
 from .ssh_identity import SSHAgentLease, SSHServer, pinned_ssh
 from .resource_sharing import SharingCommand
 
-CODES = frozenset({'SSH_CONTROLLER_PLATFORM_UNSUPPORTED', 'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTHON_MISSING',
+CODES = frozenset({'SSH_CONTROLLER_PLATFORM_UNSUPPORTED', 'SSH_SYSTEM_CLIENT_UNAVAILABLE', 'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTHON_MISSING',
     'SSH_PYTHON_VERSION_REQUIRED', 'SSH_DOCKER_MISSING', 'SSH_DOCKER_PERMISSION', 'SSH_DOCKER_UNAVAILABLE',
     'SSH_DIRECTORY_UNSAFE', 'SSH_DIRECTORY_PARENT_REQUIRED', 'SSH_CHECK_UNCONFIRMED',
     'SSH_AGENT_CAPACITY', 'SSH_CREDENTIAL_UNAVAILABLE'})
@@ -37,7 +38,7 @@ CODES = frozenset({'SSH_CONTROLLER_PLATFORM_UNSUPPORTED', 'SSH_LINUX_ARCH_REQUIR
 class _SSHProbeTransport(Protocol):
     root: Path
 
-    def _ssh(self, server, lease, local, command, forward=None) -> subprocess.Popen: ...
+    def _ssh(self, server, lease, local, command, forward=None, *, deadline) -> AbstractContextManager: ...
 
 
 @dataclass(frozen=True)
@@ -51,9 +52,19 @@ class SSHEnrollmentConfig:
 
 
 class SSHAgents:
+    folder: TemporaryDirectory
+    live: dict
+    lock: threading.RLock
+
     def __init__(self, vault, *, max_agents, seconds):
         if type(max_agents) is not int or not 1 <= max_agents <= 64: raise ValueError('SSH agent capacity invalid')
         self.vault, self.max_agents, self.seconds = vault, max_agents, seconds
+        self.windows = None
+        if sys.platform == 'win32':
+            from .windows_ssh_credentials import WindowsSSHCredentials
+            self.windows = WindowsSSHCredentials(vault, max_agents=max_agents, seconds=seconds)
+            self.root = self.windows.root
+            return
         self.folder = TemporaryDirectory(prefix='af-ssh-agents-')
         self.root = Path(self.folder.name)
         self.live = {}; self.lock = threading.RLock()
@@ -76,8 +87,8 @@ class SSHAgents:
         return SSHAgentLease(item['lease'].socket, item['lease'].public_key, check)
 
     def acquire(self, server, destination, guard):
-        if sys.platform == 'win32':
-            raise RemoteConnectionError('SSH_CONTROLLER_PLATFORM_UNSUPPORTED')
+        if self.windows is not None:
+            return self.windows.acquire(server, destination, guard)
         scope = dict(owner=server.owner, reference=server.credential_ref,
             revision=server.credential_revision, provider_id=PROVIDER_ID, destination=destination)
         key = tuple(scope.values())
@@ -136,7 +147,13 @@ class SSHAgents:
         finally:
             raw = b''; private = None; secret = None
 
+    def controller_diagnostic(self):
+        return self.windows.diagnostic() if self.windows is not None else None
+
     def close(self):
+        if self.windows is not None:
+            self.windows.close()
+            return
         for key in list(self.live): self._close(key)
         self.folder.cleanup()
 
@@ -298,6 +315,8 @@ class PersonalSSHServers:
 
     def probe(self, server, lease, action):
         deadline = time.monotonic() + 30
+        if sys.platform == 'win32':
+            deadline = min(deadline, lease.expires_at)
         lease.validate()
         nonce = secrets.token_hex(12)
         if action == 'inspect':
@@ -320,9 +339,9 @@ class PersonalSSHServers:
             try:
                 lease.validate()
                 if time.monotonic() >= deadline: raise TimeoutError('SSH_CHECK_UNCONFIRMED')
-                process = transport(server, lease, Path(folder), command)
-                output = pipe_exchange(process, payload, deadline=deadline, max_output=8192,
-                                       before_write=lease.validate)
+                with transport(server, lease, Path(folder), command, deadline=deadline) as process:
+                    output = pipe_exchange(process, payload, deadline=deadline, max_output=8192,
+                                           before_write=lease.validate)
                 if b'\n' not in output: raise ValueError()
                 result = json.loads(output)
                 if result.get('nonce') != nonce or type(result.get('ok')) is not bool: raise ValueError()
@@ -387,7 +406,7 @@ def personal_ssh_router(auth, service):
     def capabilities(request: Request):
         auth.require_member(auth.user(request)['id'])
         return {'enabled': service is not None, 'keyType': 'openssh-private-key', 'learnsHostKeys': False,
-                'controllerDiagnostic': 'SSH_CONTROLLER_PLATFORM_UNSUPPORTED' if sys.platform == 'win32' else None}
+                'controllerDiagnostic': service.agents.controller_diagnostic() if service is not None else None}
 
     @router.post('/identity')
     async def identity(request: Request):

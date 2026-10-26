@@ -1,5 +1,6 @@
 import asyncio
 import copy
+from contextlib import contextmanager, nullcontext
 import os
 import subprocess
 import sys
@@ -93,7 +94,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
 
     def test_direct_transport_async_guard_rejects_before_any_spawn(self):
         transport = SSHProcessTransport(self.provider.server,
-            lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
+            lambda action: SimpleNamespace(validate=lambda: None, expires_at=time.monotonic() + 60), interpreter='/python')
         async def guard():
             self.fail('async authority must never execute')
         with patch('agent_factory.ssh_process_provider.pinned_ssh') as spawn, \
@@ -102,6 +103,38 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                 transport(self.provider._request(self.lease, 'submit'), before_effect=guard)
             spawn.assert_not_called()
             exchange.assert_not_called()
+
+    def test_exchange_entry_failure_exits_original_scope_with_same_deadline(self):
+        expiry = time.monotonic() + 10
+        started = time.monotonic()
+        transport = SSHProcessTransport(self.provider.server,
+            lambda action: SimpleNamespace(validate=lambda: None, expires_at=expiry), interpreter='/python')
+        entered, exited, deadlines = [], [], []
+        process = object()
+        @contextmanager
+        def spawn(server, lease, folder, command, *, deadline):
+            entered.append(process)
+            deadlines.append(deadline)
+            try:
+                yield process
+            finally:
+                exited.append(process)
+        failure = SSHExchangeCleanupError('controlled failure before exchange takes ownership')
+        with patch('agent_factory.ssh_process_provider.pinned_ssh', side_effect=spawn), \
+             patch('agent_factory.ssh_process_provider.pipe_exchange', side_effect=failure) as exchange:
+            with self.assertRaises(SSHExchangeCleanupError) as caught:
+                transport(self.provider._request(self.lease, 'submit'))
+        self.assertIs(caught.exception, failure)
+        self.assertEqual(entered, [process])
+        self.assertEqual(exited, [process])
+        self.assertIs(exchange.call_args.args[0], process)
+        self.assertEqual(exchange.call_args.kwargs['deadline'], deadlines[0])
+
+        if sys.platform == 'win32':
+            self.assertEqual(deadlines[0], expiry)
+        else:
+            self.assertGreaterEqual(deadlines[0], started + 30)
+            self.assertLessEqual(deadlines[0], time.monotonic() + 30)
 
     async def test_cancelled_worker_cleanup_error_is_not_hidden_as_cancelled(self):
         entered, finished = threading.Event(), threading.Event()
@@ -172,7 +205,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                         if not release.wait(3):
                             raise TimeoutError('fixture gate')
                 transport = SSHProcessTransport(self.provider.server,
-                    lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
+                    lambda action: SimpleNamespace(validate=lambda: None, expires_at=time.monotonic() + 60), interpreter='/python')
                 def exchange(value, **kwargs):
                     exchanges.append(threading.get_ident())
                     try:
@@ -181,7 +214,7 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
                         finished.set()
                 self.provider.exchange = exchange
                 try:
-                    with patch('agent_factory.ssh_process_provider.pinned_ssh', return_value=process):
+                    with patch('agent_factory.ssh_process_provider.pinned_ssh', return_value=nullcontext(process)):
                         task = asyncio.create_task(self.provider.allocate_bound(
                             self.lease, before_effect=gated_guard))
                         self.assertTrue(await asyncio.to_thread(entered.wait, 3))
@@ -213,15 +246,23 @@ class SSHProcessProviderTests(unittest.IsolatedAsyncioTestCase):
             ready = Path(folder) / 'ready'
             processes = []
             finished = threading.Event()
-            def spawn(*args):
+            @contextmanager
+            def spawn(*args, deadline):
                 process = subprocess.Popen([sys.executable, '-c',
                     'import sys,time; from pathlib import Path; sys.stdin.buffer.read(); '
                     'Path(sys.argv[1]).write_text("received"); time.sleep(60)', str(ready)],
                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
                 processes.append(process)
-                return process
+                try:
+                    yield process
+                finally:
+                    if process.poll() is None:
+                        process.kill()
+                    process.wait(timeout=3)
+                    process.stdin.close()
+                    process.stdout.close()
             transport = SSHProcessTransport(self.provider.server,
-                lambda action: SimpleNamespace(validate=lambda: None), interpreter='/python')
+                lambda action: SimpleNamespace(validate=lambda: None, expires_at=time.monotonic() + 60), interpreter='/python')
             def exchange(value, **kwargs):
                 try:
                     return transport(value, **kwargs)

@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 import shlex
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import time
 import threading
@@ -34,6 +35,8 @@ class SSHProcessTransport:
         value = request(value)
         raw = encoded(value, MAX_REQUEST_BYTES)
         lease = self.lease_for(value['action'])
+        if sys.platform == 'win32':
+            deadline = min(deadline, lease.expires_at)
 
         def fresh():
             lease.validate()
@@ -49,12 +52,12 @@ class SSHProcessTransport:
             fresh()
             if time.monotonic() >= deadline:
                 raise TimeoutError('SSH_PROCESS_UNCONFIRMED')
-            process = pinned_ssh(self.server, lease, Path(folder), command)
-            try:
-                output = pipe_exchange(process, raw, deadline=deadline, max_output=MAX_RESPONSE_BYTES,
-                                       before_write=fresh, cancelled=cancelled)
-            except subprocess.CalledProcessError as error:
-                raise ValueError('SSH_PROCESS_PROTOCOL_INVALID') from error
+            with pinned_ssh(self.server, lease, Path(folder), command, deadline=deadline) as process:
+                try:
+                    output = pipe_exchange(process, raw, deadline=deadline, max_output=MAX_RESPONSE_BYTES,
+                                           before_write=fresh, cancelled=cancelled)
+                except subprocess.CalledProcessError as error:
+                    raise ValueError('SSH_PROCESS_PROTOCOL_INVALID') from error
             lease.validate()
             return json.loads(output)
 

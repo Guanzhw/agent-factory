@@ -1,10 +1,16 @@
 """Pinned SSH identities shared by enrollment and trusted runtime adapters."""
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import os
 from pathlib import Path, PurePosixPath
 import re
 import stat
 import subprocess
+import sys
+import time
+
+from .ssh_exchange import close_process
+from .ssh_command import pinned_arguments
 from typing import Callable
 
 from .store import digest
@@ -71,18 +77,22 @@ class SSHServer:
             ('reference', 'owner', 'address', 'port', 'username', 'host_key', 'allowed_root')})
 
 
-def pinned_ssh(server, lease, local, command, forward=None):
+@contextmanager
+def pinned_ssh(server, lease, local, command, forward=None, *, deadline):
     """Use exactly the member's endpoint, key and host identity for one process."""
+    if time.monotonic() >= deadline:
+        raise TimeoutError('SSH_EXCHANGE_TIMEOUT')
+    if sys.platform == 'win32':
+        with lease.open(server, command, forward=forward, deadline=deadline) as process:
+            yield process
+        return
     identity = local / 'identity.pub'; identity.write_text(lease.public_key + '\n'); identity.chmod(0o600)
     known = local / 'known_hosts'; known.write_text('factory-pinned ' + server.host_key + '\n'); known.chmod(0o600)
-    args = ['ssh', '-F', 'none', '-a', '-T', '-o', 'HostKeyAlias=factory-pinned',
-        '-o', 'StrictHostKeyChecking=yes', '-o', f'UserKnownHostsFile={known}', '-o', 'GlobalKnownHostsFile=/dev/null',
-        '-o', 'IdentitiesOnly=yes', '-o', f'IdentityAgent={lease.socket}', '-i', str(identity),
-        '-o', 'BatchMode=yes', '-o', 'PasswordAuthentication=no', '-o', 'KbdInteractiveAuthentication=no',
-        '-o', 'ProxyCommand=none', '-o', 'ProxyJump=none', '-o', 'ControlMaster=no', '-o', 'ControlPath=none',
-        '-o', 'PermitLocalCommand=no', '-o', 'ExitOnForwardFailure=yes', '-o', 'StreamLocalBindUnlink=no',
-        '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=10', '-o', 'ServerAliveCountMax=2']
-    if forward: args += ['-R', forward]
-    args += ['-l', server.username, '-p', str(server.port), server.address, command]
-    return subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        env={'PATH': '/usr/local/bin:/usr/bin:/bin'}, bufsize=-1)
+    args = pinned_arguments('ssh', server, command,
+        ['-o', 'IdentityAgent=SSH_AUTH_SOCK', '-i', 'identity.pub', '-o', 'BatchMode=yes'], forward=forward)
+    process = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        env={'PATH': '/usr/local/bin:/usr/bin:/bin', 'SSH_AUTH_SOCK': lease.socket}, cwd=str(local), bufsize=-1)
+    try:
+        yield process
+    finally:
+        close_process(process)

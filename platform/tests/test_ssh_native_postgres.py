@@ -4,6 +4,7 @@ The transport still obtains a real disposable ssh-agent/vault lease and speaks
 its bounded JSON protocol. The subprocess runs locally, so this is not sshd,
 GPU, external-host verification or live-model acceptance.
 """
+from contextlib import contextmanager
 import ast
 import hashlib
 import json
@@ -123,7 +124,8 @@ class SSHNativePostgresTests(unittest.TestCase):
         self.configure()
         self.publish()
 
-    def local_helper(self, server, lease, folder, command):
+    @contextmanager
+    def local_helper(self, server, lease, folder, command, *, deadline):
         lease.validate()
         self.assertTrue(command.endswith(' -I -B -m agent_factory.ssh_process_helper'))
         source = str(Path(__file__).resolve().parents[1])
@@ -131,7 +133,14 @@ class SSHNativePostgresTests(unittest.TestCase):
         process = subprocess.Popen([sys.executable, '-c', code], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                    stderr=subprocess.DEVNULL)
         self.processes.append(process)
-        return process
+        try:
+            yield process
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+            process.stdin.close()
+            process.stdout.close()
 
     def start(self):
         self.app = create_app(self.settings)
