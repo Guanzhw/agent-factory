@@ -474,6 +474,7 @@ class ResearchRounds:
                     terminal.update(sharing='publication_failed', continuationBlocked='RESEARCH_PUBLICATION_TOO_LARGE',
                         publicationBytes=len(raw), publicationLimit=maximum)
                 else:
+                    assert agreement.execution is not None
                     artifact = self.db.store.artifact_write(task['run_id'], 'research-terminal.json', raw,
                         metadata={'evidenceKind': 'application_output', 'verificationStatus': 'unverified',
                                   'applicationInterfaceVersion': 1,

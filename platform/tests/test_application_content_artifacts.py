@@ -58,6 +58,10 @@ class ContentArtifactTests(ApplicationCompositionFixture):
         with self.assertRaises(HTTPException) as broken:
             self.service.read('bob', published['id'])
         self.assertEqual(broken.exception.status_code, 409)
+        self.store.sql('DELETE FROM af_artifacts WHERE id=:id', id=body.contentArtifact.artifactId)
+        with self.assertRaises(HTTPException) as missing:
+            self.service.read('bob', published['id'])
+        self.assertEqual(missing.exception.status_code, 404)
 
     def test_body_reference_cannot_bypass_json_shape_safety_or_owner(self):
         for content in ([], {'password': 'synthetic-secret'}, {'text': 'x' * 17000}, {'n': float('nan')}):
