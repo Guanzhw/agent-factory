@@ -42,3 +42,7 @@
 - 独立执行：在上述精确 head，以共享 Python、`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=platform:platform/tests:applications:applications/tests` 运行 `python -m unittest test_delegated_content test_workflow_contracts -v`，**14 tests / 0 skip / PASS**。覆盖真实 SQLite custody/effect、64/65/500 边界、正常正文、原 wait、预算等号/超限、无损类型、非委派/metadata 反例和未知子树。`git diff --check 62614177..342028fa` 通过。
 - 已核对作者新增首败/修后深度 JSON 与日志、52 项便携 PASS；旧首败尾空格已清且错误文本保留。作者报告静态/架构重验 PASS。原 6 项真实 PostgreSQL/native 回执仍精确属于 `803c00a0e7158830b6fedaa2b8496222cdac30e6`；本次没有重跑 PG，且 README 已明确。其实际 child result 是 string，新增结构递归边界不改变该受测分支；不把这一事实伪写成最终 head 的新 PG 实测。
 - 结论：本轮已发现的完成阻断已整改，未发现剩余阻断项，授予上述累计代码范围 **PASS**。这不替代 coordinator 的组合检查、依赖审计、发布判断或真实模型/GPU/SSH/多主机验收。review 记录本身之后的纯文档提交须登记，不视作未审生产增量。
+
+## 证据收敛增量复审 — PASS
+
+精确范围 `da9e3cf9e530d0ba5a12c3587a5c4be8211c19ae` → `e64fe7061068d1d280b956fb7ad6a09dac995d5f`，仅 evidence README 与 5 份原始文本日志的移除。已逐文件比较 `/workspace/audit-remediation/c1-raw/` 与前一提交原字节，全部相等；4 份结构化 JSON、产品与测试均未变，历史日志仍可按 README 的精确提交恢复。文档保留失败、整改、通过、PG 所属旧源码及未重跑边界，`git diff --check` 通过。本增量 PASS，不增加任何运行验证声明。
