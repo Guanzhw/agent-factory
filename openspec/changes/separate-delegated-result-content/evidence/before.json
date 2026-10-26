@@ -1,0 +1,27 @@
+{
+  "productBase": "62614177c23c4d2cd0caf6b7c91418e74fde8ad4",
+  "real": [
+    "SQLite custody",
+    "Store effects",
+    "DelegatedOperations"
+  ],
+  "synthetic": [
+    "child admission",
+    "observer subtree facts"
+  ],
+  "postgresExecuted": false,
+  "attempts": [
+    {
+      "error": "WORKFLOW_CONTRACT_INVALID",
+      "closed": false,
+      "parentHeld": true,
+      "effectStatus": "UNKNOWN"
+    },
+    {
+      "error": "WORKFLOW_CONTRACT_INVALID",
+      "closed": false,
+      "parentHeld": true,
+      "effectStatus": "UNKNOWN"
+    }
+  ]
+}

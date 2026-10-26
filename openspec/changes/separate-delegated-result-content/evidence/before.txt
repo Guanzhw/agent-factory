@@ -1,0 +1,90 @@
+test_normal_content_closes_original_and_survives_custody_restart (test_delegated_content.DelegatedContentTests.test_normal_content_closes_original_and_survives_custody_restart) ... 
+  test_normal_content_closes_original_and_survives_custody_restart (test_delegated_content.DelegatedContentTests.test_normal_content_closes_original_and_survives_custody_restart) (case=0) ... ERROR
+  test_normal_content_closes_original_and_survives_custody_restart (test_delegated_content.DelegatedContentTests.test_normal_content_closes_original_and_survives_custody_restart) (case=1) ... ERROR
+  test_normal_content_closes_original_and_survives_custody_restart (test_delegated_content.DelegatedContentTests.test_normal_content_closes_original_and_survives_custody_restart) (case=2) ... ERROR
+  test_normal_content_closes_original_and_survives_custody_restart (test_delegated_content.DelegatedContentTests.test_normal_content_closes_original_and_survives_custody_restart) (case=3) ... ERROR
+
+======================================================================
+ERROR: test_normal_content_closes_original_and_survives_custody_restart (test_delegated_content.DelegatedContentTests.test_normal_content_closes_original_and_survives_custody_restart) (case=0)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/agent-factory-fix-delegated-content/platform/tests/test_delegated_content.py", line 68, in test_normal_content_closes_original_and_survives_custody_restart
+    record = await self.service.lookup('alice', original['id'])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/workflow_operations.py", line 240, in lookup
+    return self._accept(body, await runtime.lookup(self._context(body), body['id']))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/delegated_operations.py", line 69, in lookup
+    return await self._observe(self._original(context, operation_id))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/delegated_operations.py", line 111, in _observe
+    return validate_runtime_observation(observed, body['id'], self.pin['adapterId'], self.pin['revision'])
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/workflow_contracts.py", line 152, in validate_runtime_observation
+    raise ValueError(ERROR) from None
+ValueError: WORKFLOW_CONTRACT_INVALID
+
+======================================================================
+ERROR: test_normal_content_closes_original_and_survives_custody_restart (test_delegated_content.DelegatedContentTests.test_normal_content_closes_original_and_survives_custody_restart) (case=1)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/agent-factory-fix-delegated-content/platform/tests/test_delegated_content.py", line 68, in test_normal_content_closes_original_and_survives_custody_restart
+    record = await self.service.lookup('alice', original['id'])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/workflow_operations.py", line 240, in lookup
+    return self._accept(body, await runtime.lookup(self._context(body), body['id']))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/delegated_operations.py", line 69, in lookup
+    return await self._observe(self._original(context, operation_id))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/delegated_operations.py", line 111, in _observe
+    return validate_runtime_observation(observed, body['id'], self.pin['adapterId'], self.pin['revision'])
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/workflow_contracts.py", line 152, in validate_runtime_observation
+    raise ValueError(ERROR) from None
+ValueError: WORKFLOW_CONTRACT_INVALID
+
+======================================================================
+ERROR: test_normal_content_closes_original_and_survives_custody_restart (test_delegated_content.DelegatedContentTests.test_normal_content_closes_original_and_survives_custody_restart) (case=2)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/agent-factory-fix-delegated-content/platform/tests/test_delegated_content.py", line 68, in test_normal_content_closes_original_and_survives_custody_restart
+    record = await self.service.lookup('alice', original['id'])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/workflow_operations.py", line 240, in lookup
+    return self._accept(body, await runtime.lookup(self._context(body), body['id']))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/delegated_operations.py", line 69, in lookup
+    return await self._observe(self._original(context, operation_id))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/delegated_operations.py", line 111, in _observe
+    return validate_runtime_observation(observed, body['id'], self.pin['adapterId'], self.pin['revision'])
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/workflow_contracts.py", line 152, in validate_runtime_observation
+    raise ValueError(ERROR) from None
+ValueError: WORKFLOW_CONTRACT_INVALID
+
+======================================================================
+ERROR: test_normal_content_closes_original_and_survives_custody_restart (test_delegated_content.DelegatedContentTests.test_normal_content_closes_original_and_survives_custody_restart) (case=3)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/workspace/agent-factory-fix-delegated-content/platform/tests/test_delegated_content.py", line 68, in test_normal_content_closes_original_and_survives_custody_restart
+    record = await self.service.lookup('alice', original['id'])
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/workflow_operations.py", line 240, in lookup
+    return self._accept(body, await runtime.lookup(self._context(body), body['id']))
+                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/delegated_operations.py", line 69, in lookup
+    return await self._observe(self._original(context, operation_id))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/delegated_operations.py", line 111, in _observe
+    return validate_runtime_observation(observed, body['id'], self.pin['adapterId'], self.pin['revision'])
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/agent-factory-fix-delegated-content/platform/agent_factory/workflow_contracts.py", line 152, in validate_runtime_observation
+    raise ValueError(ERROR) from None
+ValueError: WORKFLOW_CONTRACT_INVALID
+
+----------------------------------------------------------------------
+Ran 1 test in 0.038s
+
+FAILED (errors=4)
