@@ -77,10 +77,12 @@ it('recovers an unknown sharing request by its original receipt without another 
   });
   expect(share).toHaveBeenCalledTimes(1);
   expect(button('共享给团队').disabled).toBe(true);
+  expect(document.activeElement).toBe(host.querySelector('.error-message'));
   await act(async () => button('核对原共享请求').click());
   expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', share.mock.calls[0][3]);
   expect(share).toHaveBeenCalledTimes(1);
   expect(button('核对原共享请求')).toBeUndefined();
+  expect(document.activeElement).toBe(host.querySelector('.success-message'));
 });
 it('accepts model API bases with custom paths and local network destinations', () => {
   const baseURL = 'https://opencode.ai/zen/go/v1';
@@ -411,4 +413,33 @@ it('recovers saved-reference configuration acknowledgement without repeating its
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', original, undefined);
   expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', original.requestId);
   expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(personalRemoteApi.recoverCredential).not.toHaveBeenCalled();
+});
+
+it('reveals submitted validation and confirmed success without moving focus during initial loading', async () => {
+  const scroll = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
+  const initialFocus = document.activeElement;
+  await mount();
+  expect(document.activeElement).toBe(initialFocus); expect(scroll).not.toHaveBeenCalled();
+  await choose('模型提供方', 'openai-compatible'); await choose('模型凭据来源', 'none');
+  await fill('模型名称', row.model); await fill('API 端点', 'ftp://models.example/v1');
+  const submit = button('保存并设为默认');
+  await act(async () => { submit.focus(); submit.click(); });
+  const error = host.querySelector<HTMLDivElement>('.error-message')!;
+  expect(error.textContent).toContain('请输入有效的 HTTP 或 HTTPS API 地址');
+  expect(document.activeElement).toBe(error); expect(error.getAttribute('role')).toBe('alert');
+  expect(scroll.mock.contexts.at(-1)).toBe(error);
+  expect(scroll).toHaveBeenLastCalledWith({ block: 'nearest', behavior: 'instant' });
+  expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
+  await act(async () => { submit.focus(); submit.click(); });
+  expect(document.activeElement).toBe(error); expect(scroll).toHaveBeenCalledTimes(2);
+  const publicModel: OwnerModel = { ...row, credentialRef: null, credentialRevision: null };
+  vi.mocked(ownerModelApi.configure).mockResolvedValue(publicModel);
+  vi.mocked(ownerModelApi.default).mockResolvedValue({ ...publicModel, isDefault: true });
+  await choose('模型提供方', 'openai');
+  await act(async () => submit.click());
+  const success = host.querySelector<HTMLDivElement>('.success-message')!;
+  expect(success.textContent).toContain('模型已保存并设为默认'); expect(success.getAttribute('role')).toBe('status');
+  expect(document.activeElement).toBe(success); expect(scroll.mock.contexts.at(-1)).toBe(success);
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.default).toHaveBeenCalledTimes(1);
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
 });

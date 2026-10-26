@@ -26,6 +26,7 @@ export function ModelSettings({ ownerId, onBack, onCredentials, navigation, back
   const [savedReference, setSavedReference] = useState('');
   const [editing, setEditing] = useState<Extract<OwnerModel, { isOwner: true }> & { credentialRef: string; credentialRevision: string }>(); const [confirmRevoke, setConfirmRevoke] = useState('');
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
+  const feedback = useRef<HTMLDivElement>(null); const [feedbackRevision, setFeedbackRevision] = useState(0);
   const [refresh, setRefresh] = useState(0); const [ready, setReady] = useState(false);
   const sharingStorage = `factory-model-sharing:${encodeURIComponent(ownerId)}`;
   const [pendingSharing, setPendingSharing] = useState<{ requestId: string; reference: string; visibility: 'personal' | 'team' } | null>(() => {
@@ -33,6 +34,13 @@ export function ModelSettings({ ownerId, onBack, onCredentials, navigation, back
   });
   const alive = useRef(true); const lock = useRef(false); const commandKeys = useCommandKeys(ownerId);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  // Reads never steal focus; a repeated submission must reveal the same error again.
+  useEffect(() => {
+    if (!feedbackRevision) return;
+    feedback.current?.focus({ preventScroll: true });
+    feedback.current?.scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  }, [feedbackRevision]);
+  function revealFeedback() { setFeedbackRevision(value => value + 1); }
   useEffect(() => {
     const controller = new AbortController(); setReady(false);
     void Promise.all([ownerModelApi.capabilities(controller.signal), ownerModelApi.list(ownerId, controller.signal)])
@@ -143,6 +151,7 @@ export function ModelSettings({ ownerId, onBack, onCredentials, navigation, back
   }
   function stopWaiting() {
     if (!pending || busy || unresolved.length >= 100) return;
+    setError(''); setNotice('');
     try {
       const previous = readModelSetups(localStorage.getItem(unresolvedStorage), ownerId);
       if (previous.length >= 100) throw new Error('未确认记录已满。');
@@ -151,6 +160,7 @@ export function ModelSettings({ ownerId, onBack, onCredentials, navigation, back
       setUnresolved(next); setConfirmStopWaiting(false); setEditing(undefined); setKey(''); setRefresh(n => n + 1);
       setNotice('已停止等待，原请求仍保留。原操作可能已完成；核对记录不会重放写入或执行尚未发送的后续设置。');
     } catch { setError('暂时无法保留原请求，请继续等待或稍后重试。'); }
+    finally { revealFeedback(); }
   }
   async function checkArchived(s: ModelSetup) {
     if (s.stage === 'credential') setupCredential(await personalRemoteApi.recoverCredential(s.credentialRequest, ownerId), s);
@@ -164,15 +174,16 @@ export function ModelSettings({ ownerId, onBack, onCredentials, navigation, back
     if (lock.current) return; lock.current = true; setBusy(true); setError(''); setNotice('');
     try { await verifyOwner(); await work(); }
     catch (e) { if (alive.current && (e instanceof ModelRequestError || e instanceof RemoteRequestError) && e.code === 'EXPECTED_OWNER_MISMATCH') accountChanged(); else if (alive.current) setError(e instanceof ModelRequestError || e instanceof RemoteRequestError ? e.message : '设置尚未确认，请核对原请求或重新读取设置。'); }
-    finally { lock.current = false; if (alive.current) setBusy(false); }
+    finally { lock.current = false; if (alive.current) { setBusy(false); revealFeedback(); } }
   }
   function save() {
     if (pending || !ready || !capability?.enabled || !model.trim() || (editing || credentialSource === 'new' ? !key.trim() : credentialSource === 'saved' && !selectedCredential)) return;
+    setNotice('');
     let baseURL: string;
     try { baseURL = modelEndpoint(endpoint); }
-    catch { setError('请输入有效的 HTTP 或 HTTPS API 地址。'); return; }
+    catch { setError('请输入有效的 HTTP 或 HTTPS API 地址。'); revealFeedback(); return; }
     const selectedModel = model.trim();
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}$/.test(selectedModel) || selectedModel === key.trim()) { setError('请核对模型名称；密钥只能填入 API 密钥字段。'); return; }
+    if (!/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}$/.test(selectedModel) || selectedModel === key.trim()) { setError('请核对模型名称；密钥只能填入 API 密钥字段。'); revealFeedback(); return; }
     void run(async () => {
       const s = retain({ owner: ownerId, provider, baseURL, model: selectedModel,
         ...(protocol ? { protocol } : {}), dispatched: {},
@@ -269,7 +280,7 @@ export function ModelSettings({ ownerId, onBack, onCredentials, navigation, back
     {navigation}
     <p className="model-purpose">任务内容会发送给所选模型提供方，费用由你的提供方账户承担。密钥加密保存，不回显。</p>
     {onCredentials && <button className="text-button" disabled={busy} onClick={onCredentials}>管理已保存凭据</button>}
-    {error && <div className="error-message" role="alert">{error}</div>}{notice && <div className="success-message" role="status">{notice}</div>}
+    {error && <div ref={feedback} tabIndex={-1} className="error-message" role="alert">{error}</div>}{notice && <div ref={error ? undefined : feedback} tabIndex={-1} className="success-message" role="status">{notice}</div>}
     {pendingSharing && <p role="alert">共享请求尚未确认。<button disabled={busy} onClick={() => void recoverSharing()}>核对原共享请求</button></p>}
     {!ready && !error && <p role="status">正在读取模型设置…</p>}
     <button className="text-button" disabled={busy} onClick={() => { setError(''); setRefresh(n => n + 1); }}>重新读取设置</button>

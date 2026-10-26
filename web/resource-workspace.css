@@ -34,6 +34,8 @@
 .factory-shell .resource-workspace input[type=checkbox] { width: 18px; height: 18px; min-height: 18px; flex: 0 0 18px; margin: 3px 0 0; accent-color: var(--blue); }
 .factory-shell .resource-workspace textarea { width: 100%; box-sizing: border-box; }
 .factory-shell .resource-workspace input, .factory-shell .resource-workspace select, .factory-shell .resource-workspace textarea { max-width: 100%; min-width: 0; }
+.factory-shell .resource-workspace input::placeholder,
+.factory-shell .resource-workspace textarea::placeholder { color: var(--muted); opacity: 1; }
 .factory-shell .resource-workspace .material-editor { max-width: 900px; }
 .factory-shell .resource-workspace .state-note { max-width: 900px; overflow-wrap: anywhere; }
 .factory-shell .resource-workspace .state-note button { margin: 8px 8px 0 0; }
