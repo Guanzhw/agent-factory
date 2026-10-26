@@ -16,7 +16,8 @@ from fastapi import HTTPException
 from agent_factory.connections import TrustedConnectionBinding
 from agent_factory.execution_bindings import AdapterRegistration, BindingContext
 from agent_factory.go_legacy import APPLICATION_ID, MODEL_ADAPTER_IDS, is_go_plan
-from agent_factory.opencode_go import GoDevelopmentModel, GoLoopbackTransport
+from agent_factory.opencode_go import GoDevelopmentModel
+from go_http_fixture import GoLoopbackTransport
 from agent_factory.go_live import GoLiveCampaign, GoLiveGateError
 from agent_factory.go_project_campaign import GoProjectCampaign
 

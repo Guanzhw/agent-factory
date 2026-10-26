@@ -4,11 +4,13 @@ from pathlib import Path
 import ssl
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 
 from agent_factory.go_http import open_go_client
+from agent_factory.opencode_go import USER_AGENT
+from go_http_fixture import GoHTTPFixture
 
 _ROOT = "https://opencode.ai/zen/go/v1"
 
@@ -91,6 +93,41 @@ class GoHTTPTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIsNone(client._auth)
         handler.assert_called_once()
         self.assertNotIn("authorization", handler.call_args.args[0].headers)
+
+    async def test_loopback_peer_receives_no_authorization_and_closes_on_consumer_error(self):
+        original = httpx.AsyncHTTPTransport
+        transports = []
+
+        def observed_transport(**kwargs):
+            transport = original(**kwargs)
+            transport.aclose = AsyncMock(wraps=transport.aclose)
+            transports.append(transport)
+            return transport
+
+        with GoHTTPFixture() as peer, patch('go_http_fixture.httpx.AsyncHTTPTransport', observed_transport):
+            async with open_go_client(timeout=60, transport=peer.transport) as client:
+                for model, endpoint, messages in (("deepseek-v4-flash", "chat/completions", "messages"),
+                                                  ("gpt-6-luna", "responses", "input")):
+                    for interrupted in (False, True):
+                        with self.subTest(model=model, interrupted=interrupted):
+                            async def consume():
+                                async with client.stream('POST', _ROOT + '/' + endpoint,
+                                        json={'model': model, messages: []}, headers={
+                                            'User-Agent': USER_AGENT, 'x-opencode-session': 'synthetic-loopback-session',
+                                            'Authorization': 'Bearer synthetic-placeholder'}) as response:
+                                    self.assertEqual(response.status_code, 200)
+                                    if interrupted:
+                                        raise RuntimeError('synthetic consumer interruption')
+                                    await response.aread()
+                                self.assertTrue(response.is_closed)
+                            if interrupted:
+                                with self.assertRaisesRegex(RuntimeError, 'synthetic consumer interruption'):
+                                    await consume()
+                            else:
+                                await consume()
+                            self.assertFalse(peer.requests[-1]['hasAuthorization'])
+                            transports[-1].aclose.assert_awaited_once()
+            self.assertEqual(len(peer.requests), 4)
 
     async def test_environment_ca_is_passed_to_verified_ssl_context(self):
         for name, parameter, value in (("SSL_CERT_FILE", "cafile", "/synthetic/reviewed-ca.pem"),

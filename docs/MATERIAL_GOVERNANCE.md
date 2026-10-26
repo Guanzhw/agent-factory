@@ -25,9 +25,11 @@ active discovery and later execution checks. Admission, tool invocation and
 relevant delegated ancestors continue to check current resource state and budgets.
 Completed plans, artifacts and version history retain their original content.
 
-The original synthetic bootstrap versions have exact-content and seed-audit
-adoption. Demo startup preserves an existing withdrawal or archive; it does not
-reactivate it. Synthetic seed publication remains restricted to demo use.
+Historical synthetic bootstrap bodies and seed-audit records are retained as
+history; bootstrap versions cannot authorize current execution (`BOOTSTRAP_MATERIAL_DISABLED`). Startup
+does not publish synthetic seeds or reactivate withdrawn or archived versions.
+Isolated tests explicitly publish their fixture materials through the same
+member publication API.
 
 ## Bounded inert import and tool declarations
 

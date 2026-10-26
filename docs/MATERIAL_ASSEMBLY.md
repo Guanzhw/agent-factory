@@ -84,9 +84,10 @@ execution; the runtime does not reconstruct missing bindings. Remote receiver
 mappings retain source identities and validate the mapped local bindings; see
 [remote bindings](REMOTE_BINDINGS.md).
 
-The status endpoint reports demo/production mode separately from live integration
-verification: `liveEnabled` describes production mode, `liveIntegrationVerified`
-is not implied by configuration, and admission uses per-plan preflight.
+The status endpoint reports `mode: live`, `deploymentMode: production` and
+`liveEnabled: true`. These describe the configured execution path, not live
+acceptance: `liveIntegrationVerified` remains false and `verificationStatus`
+is `unverified`. Admission uses per-plan preflight.
 Capacity depends on the configured native worker bound, not the number of accounts.
 
 Current commands and verification boundaries are in

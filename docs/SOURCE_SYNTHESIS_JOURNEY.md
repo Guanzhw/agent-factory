@@ -1,5 +1,11 @@
 # Verified source to controlled synthesis
 
+Historical milestone: the demo-mode configuration, synthetic login and runner
+entrypoints below are retired. They are retained to explain the original
+acceptance results, not as current startup instructions. Current application
+registration and identity requirements are in
+[application development](APPLICATION_DEVELOPMENT.md) and [security](SECURITY.md).
+
 This milestone extends the existing AutoResearch journey from an owner's completed,
 verified literature task to an immutable source snapshot, a member-submitted plan,
 one native execution, and downloadable JSON/Markdown output. It builds on

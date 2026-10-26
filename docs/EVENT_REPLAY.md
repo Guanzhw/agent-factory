@@ -6,9 +6,9 @@ current-read-authorized view of `af_events`. It is a Factory application stream;
 
 A task's persisted stream UUID survives API restart. An HMAC cursor is derived
 from the trusted server signing key with a distinct domain; it binds owner,
-task, stream, last row ID and task-relative sequence. Production replicas and
-restores must retain their operator-managed signing key. Demo ephemeral keys
-change after startup and require fresh login/replay.
+task, stream, last row ID and task-relative sequence. Startup requires an explicit
+signing key; restarts and restores must retain that operator-managed key to
+preserve cursor verification. There is no ephemeral demo-key startup path.
 
 Pages use one SQL snapshot for rows, high watermark and visible count. Other
 tasks' global ID gaps are normal. PostgreSQL sequence allocation is not commit

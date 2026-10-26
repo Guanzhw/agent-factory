@@ -10,7 +10,7 @@ Agno 原生 `Workflow`，由 Agno 保存进度、暂停要求和续跑状态。
 
 ## 源码归属与静态装配
 
-默认发行包只安装底座与部署入口，应用注册列表为空。旧 Research 源码、页面和种子已移除。
+普通部署入口的应用注册列表默认为空。Research 使用独立的显式部署入口，默认启动不装配 Research。
 需要组合现有能力的应用可由成员显式发布材料和声明；新增可信代码则由部署方显式注册，
 不向底座增加应用业务分支，也不通过 HTTP 安装代码。
 
@@ -21,12 +21,14 @@ Agno 原生 `Workflow`，由 Agno 保存进度、暂停要求和续跑状态。
 | `web/composition.tsx` | 公共壳与显式页面装配；默认应用目录为空 |
 | `platform/tests/core_native_fixture.py` | 测试显式安装的合成应用与适配器，不是启动种子 |
 
-`agent_factory.main.create_app` 与 `agent_factory_server.main.create_app` 均不安装旧研究应用。
+`agent_factory.main.create_app` 与 `agent_factory_server.main.create_app` 均不默认安装 Research；
+`agent_factory_server.research.create_app` 显式装配研究工作流及应用。
 应用函数与客户端优先使用下文 Application Interface；部署工厂内部接线上下文不是稳定公共 SDK。
 新空库可使用登录、资源和成员发布入口。移除源码不删除旧记录、凭据、vault key、产物或备份；
 旧应用任务需要原代码才能继续，永久删除旧数据仍需准确清单与单独确认。
 
-根 `pyproject.toml` 生成底座加部署入口的 wheel，保留 `agent-factory` 命令；
+根 `pyproject.toml` 生成含底座、部署入口和 Research 代码的 wheel；
+`agent-factory` 默认无应用，`agent-factory-research` 使用显式研究部署入口。
 `platform/pyproject.toml` 生成仅包含 `agent_factory` 的独立底座：
 
 ```bash
@@ -62,7 +64,7 @@ python -m agent_factory_server
 未知应答继续查询原请求/操作，不能靠重建请求绕过原操作恢复。
 
 `member-self-service` 是唯一支持的新运行模式；`bounded-synthetic`、`admin-review`、
-`separate-admin` 等旧计划或发布模式作为当前配置会明确报错，demo 也不恢复旧审批路径。
+`separate-admin` 等旧计划或发布模式作为当前配置会明确报错；产品不提供 demo 模式。
 数据库中的旧审批模式、记录、摘要和版本保留，启动使用当前传入配置。
 流程及迁移边界见 [成员发布](MEMBER_PUBLICATION.md) 与
 [部门协作说明](department-minimal-integration.md)。
@@ -282,7 +284,8 @@ SQLite 在这个例子中只是合成外部后端，不是生产 ConvertD。
 查看 [`Settings`](../platform/agent_factory/config.py)、
 [适配器接线](MATERIAL_ASSEMBLY.md)、[token ledger](TOKEN_LEDGER.md) 和
 [执行绑定实现](../platform/agent_factory/execution_bindings.py)。独立底座提供通用资源接入；
-研究部署另外安装自己的显式 demo 工厂。成员 CLI/MCP 工具不需要额外工具许可登记或审批
+研究部署由 `agent_factory_server.research` 显式安装应用与工作流，不提供 demo 工厂。
+成员 CLI/MCP 工具不需要额外工具许可登记或审批
 policy revision；发布核对所选 adapter ID、revision、工具名和声明能力，实际调用还检查资源状态。
 
 ### 2. 发布素材与应用
@@ -356,7 +359,7 @@ v2 `config` 是应用声明数据，用户本轮值由 `inputSchema/inputValues`
 更换材料需显式创建新计划，并完成该操作要求的原生确认，不能修改进行中的不可变 plan。
 
 部署生产实例需独立数据库、受管成员身份、账号管理员标记、私密服务配置及实际 runtime 资源边界。
-默认 demo 登录仅适合 loopback。远端执行还需单独的受信映射和当前源授权，不能把应用
+登录需要显式配置外部身份提供方；缺少配置时拒绝认证。远端执行还需单独的受信映射和当前源授权，不能把应用
 输入中的地址当受信执行目标。参见 [部署决策](PRODUCTION_DECISIONS.md)、
 [部门协作与历史计划迁移](department-minimal-integration.md) 和 [远端绑定](REMOTE_BINDINGS.md)。
 
