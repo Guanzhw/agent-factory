@@ -26,7 +26,8 @@ class DelegatedOperationsTests(unittest.IsolatedAsyncioTestCase):
         custody = SimpleNamespace(_load=Mock(return_value=self.body), _identity=Mock(),
             _context=Mock(return_value=self.context))
         self.store = SimpleNamespace(workflow=custody, sql=Mock(return_value=[self.link]),
-            task=Mock(return_value=self.child), artifacts=Mock(return_value=[]))
+            task=Mock(return_value=self.child), artifacts=Mock(return_value=[]),
+            plan=Mock(return_value={'budget': {'outputBytes': 65536}}))
         self.delegation = SimpleNamespace(store=self.store, create=AsyncMock(), _ancestry=Mock(return_value=('parent', [])),
             _root_lock=Mock(side_effect=lambda _: nullcontext()))
         self.facts = {'nativeStatus': 'completed', 'failed': False, 'content': 'actual checksum result'}

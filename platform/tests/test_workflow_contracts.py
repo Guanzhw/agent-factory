@@ -2,7 +2,7 @@
 from copy import deepcopy
 import unittest
 
-from agent_factory.workflow_contracts import (ERROR, WorkflowContext, validate_failure_json,
+from agent_factory.workflow_contracts import (DELEGATED_OPERATION_ADAPTER, ERROR, WorkflowContext, validate_failure_json,
     validate_runtime_observation)
 
 
@@ -80,3 +80,41 @@ class WorkflowContractTests(unittest.TestCase):
         value = observation(); value['authorityGranted'] = True
         with self.assertRaisesRegex(ValueError, ERROR):
             validate(value)
+
+    def test_delegated_body_has_separate_capacity_without_relaxing_metadata(self):
+        adapter, revision = DELEGATED_OPERATION_ADAPTER
+        value = observation()
+        value['handle']['adapterId'] = adapter
+        value['output'] = {'taskId': 'child', 'runId': 'child-run', 'artifacts': [],
+            'result': {'token': 'https://example.invalid\n' + '数' * 20000, 'values': list(range(100))}}
+        checked = validate_runtime_observation(value, 'original-operation', adapter, revision)
+        self.assertEqual(checked, value)
+        checked['output']['result']['values'].append('detached')
+        self.assertEqual(len(value['output']['result']['values']), 100)
+        for patch in ({'host': 'not data'}, {'taskId': 'https://example.invalid'},
+                      {'artifacts': [{'url': 'https://example.invalid'}]},
+                      {'artifacts': ['x' * 4096] * 5}, {'result': 'x' * 1048575}):
+            changed = deepcopy(value); changed['output'].update(patch)
+            with self.subTest(patch=list(patch)), self.assertRaisesRegex(ValueError, ERROR):
+                validate_runtime_observation(changed, 'original-operation', adapter, revision)
+        value['output']['result'] = 'x' * (1048576 - 2)
+        self.assertEqual(validate_runtime_observation(value, 'original-operation', adapter, revision), value)
+        for other_adapter, other_revision in (('trusted-science', '1'), (adapter, '2')):
+            value['handle'].update(adapterId=other_adapter, revision=other_revision)
+            with self.assertRaisesRegex(ValueError, ERROR):
+                validate_runtime_observation(value, 'original-operation', other_adapter, other_revision)
+
+    def test_delegated_reader_uses_the_same_body_depth_bound(self):
+        adapter, revision = DELEGATED_OPERATION_ADAPTER
+        value = observation()
+        value['handle']['adapterId'] = adapter
+        for depth in (64, 65, 500):
+            content = 'leaf'
+            for _ in range(depth):
+                content = {'data': content}
+            value['output'] = {'taskId': 'child', 'runId': 'child-run', 'artifacts': [], 'result': content}
+            if depth == 64:
+                self.assertEqual(validate_runtime_observation(value, 'original-operation', adapter, revision), value)
+            else:
+                with self.subTest(depth=depth), self.assertRaisesRegex(ValueError, ERROR):
+                    validate_runtime_observation(value, 'original-operation', adapter, revision)

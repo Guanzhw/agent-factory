@@ -32,6 +32,12 @@ from pg_fixture import IsolatedPostgres
 import test_native_workflow_factory_postgres as fixture
 
 PAYLOAD = 'actual delegated child checksum'
+CHILD_REPORT = '实际测量\nhttps://example.invalid/result\n' + '测量结果' * 3500
+
+
+def child_result():
+    return {'sha256': hashlib.sha256(PAYLOAD.encode()).hexdigest(), 'inputBytes': len(PAYLOAD.encode()),
+        'report': CHILD_REPORT, 'token': 'ordinary measurement token'}
 
 
 class DelegatedModel(fixture.WorkflowFixtureModel):
@@ -68,9 +74,9 @@ def configured(configuration, holder):
         def child_compute(run_context: RunContext):
             """Compute actual fixture bytes, preserving the original task artifact."""
             ctx.store.authorize_tool(run_context, 'child_compute')
-            value = {'sha256': hashlib.sha256(PAYLOAD.encode()).hexdigest(), 'inputBytes': len(PAYLOAD.encode())}
-            ctx.store.artifact_write(run_context.run_id, 'child-checksum.json', json.dumps(value))
-            return json.dumps(value)
+            value = json.dumps(child_result(), ensure_ascii=False)
+            ctx.store.artifact_write(run_context.run_id, 'child-checksum.json', value)
+            return value
         return child_compute
     settings.runtime_adapters.append(AdapterRegistration('tool', 'delegated-compute-v1', '1', tools,
         tool_name='child_compute', permissions=(fixture.PERMISSION,)))
@@ -134,12 +140,16 @@ def serve(configuration):
         operations = [store.workflow.read('alice', row['id']) for row in store.sql(
             'SELECT id FROM af_external_operations WHERE task_id=:id', id=taskId)] if task else []
         children = store.sql('SELECT child_id FROM af_delegation_links WHERE parent_id=:id', id=taskId) if task else []
+        workflow_output = state['store'].native_workflows.registrations[fixture.APP].component.get_run_output(
+            run_id=task['run_id'], session_id=task['id']) if task and task['run_id'] else None
         return {'application': application, 'task': task,
             'native': store.native_db.get_job(task['run_id']) if task else None, 'custody': operations,
             'children': [store.task(row['child_id'], 'alice') for row in children],
             'childNative': [store.native_db.get_job(store.task(row['child_id'], 'alice')['run_id'])
                 if store.task(row['child_id'], 'alice')['run_id'] else None for row in children],
             'scope': store.local_budget_scopes.inspect('alice', 'fixture-scope') if task else None,
+            'workflowContent': workflow_output.content if workflow_output else None,
+            'effects': store.sql('SELECT status FROM af_effects WHERE task_id=:id', id=taskId) if task else [],
             'nativeSteps': fixture.persisted_steps(store, task, configuration) if task else [],
             'nativeCount': store.sql('SELECT count(*) AS n FROM ai.agno_jobs WHERE session_id=:id', id=taskId)[0]['n'] if task else 0}
     uvicorn.run(state["http_app"], host='127.0.0.1', port=configuration['port'], log_level='error', access_log=False)
@@ -200,10 +210,21 @@ class DelegatedNativeWorkflowTests(unittest.TestCase):
         repeated = self.request('POST', '/workflows/' + task['id'] + '/commands', command)
         self.assertEqual({key: value for key, value in response.items() if key != 'workflow'},
             {key: value for key, value in repeated.items() if key != 'workflow'})
-        done = self.until(task, lambda facts: facts['native']['status'] == 'completed')
+        done = self.until(task, lambda facts: facts['native']['status'] == 'completed'
+            and facts['scope']['allocations'][0]['state'] == 'SETTLED')
         serialized = json.dumps(done['nativeSteps'])
         self.assertIn(hashlib.sha256(PAYLOAD.encode()).hexdigest(), serialized)
         self.assertIn('receivedOriginalChild', serialized)
+        observation = done['custody'][0]['observation']
+        child_content = json.dumps(child_result(), ensure_ascii=False)
+        self.assertGreater(len(child_content.encode()), 32768)
+        self.assertLess(len(child_content.encode()), 65536)
+        self.assertTrue(done['custody'][0]['closed'])
+        self.assertEqual(observation['state'], 'COMPLETED')
+        self.assertEqual(observation['output']['result'], child_content)
+        received = json.loads(done['workflowContent'])['receivedOriginalChild']['operations']
+        self.assertEqual(received, [observation])
+        self.assertEqual({effect['status'] for effect in done['effects']}, {'DONE'})
         self.assertEqual(len(done['children']), 1)
         self.assertEqual(done['custody'][0]['id'], operation['id'])
         self.assertEqual(done['nativeCount'], 1)
