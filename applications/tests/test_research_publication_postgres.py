@@ -56,8 +56,15 @@ class ResearchPublicationPostgresTests(unittest.TestCase):
                 # Seed the immutable pre-upgrade identity after the actual native run stopped.
                 plan = store.plan(task['plan_id'], 'alice')
                 plan['nativeComponent'] = OLD_PIN
-                store.sql('UPDATE af_plans SET body=CAST(:body AS JSONB), hash=:hash WHERE id=:id',
-                          body=canonical(plan), hash=digest(plan), id=plan['id'])
+                with store.transaction() as conn:
+                    store.local_budget_scopes.admission_lock(conn)
+                    store.sql('UPDATE af_plans SET body=CAST(:body AS JSONB), hash=:hash WHERE id=:id',
+                              body=canonical(plan), hash=digest(plan), id=plan['id'])
+                    allocations = store.local_budget_scopes.allocations
+                    allocation = conn.execute(select(allocations).where(allocations.c.task_id == task['id'])).mappings().one()
+                    binding = digest({'allocationSha256': allocation['hash'], 'taskId': task['id'], 'planSha256': digest(plan)})
+                    conn.execute(allocations.update().where(allocations.c.task_id == task['id'])
+                                 .values(plan_sha=digest(plan), binding_hash=binding))
                 owners = store.application_runtime.owners(task)
                 self.assertEqual(len(owners), 1)
                 self.assertIsNotNone(store.application_runtime.finalization_context(task))
