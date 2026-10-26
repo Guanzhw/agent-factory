@@ -13,7 +13,7 @@ def initialize_members(auth):
                 auth.account_roles.assign(owner, ACCOUNT_ADMIN_ROLE)
 
 
-def member_headers(auth, owner):
+def member_headers(owner):
     return {'Authorization': 'Bearer ' + access_token(owner)}
 
 
@@ -25,7 +25,7 @@ def authorize_client(client, owner, auth=None):
         auth = app.state.factory['auth']
     initialize_members(auth)
     client.base_url = str(client.base_url).replace('http://', 'https://', 1)
-    client.headers.update(member_headers(auth, owner))
+    client.headers.update(member_headers(owner))
     return client.get('/api/factory/session')
 
 
@@ -40,7 +40,7 @@ def internal_headers(key, owner):
 def disabled_member_request(test, state, client, method, path, *, owner='alice', **kwargs):
     """Assert external rejection, then exercise the native current-member guard."""
     from fastapi.testclient import TestClient
-    headers = kwargs.pop('headers', {}) | member_headers(state['auth'], owner)
+    headers = kwargs.pop('headers', {}) | member_headers(owner)
     external = client.request(method, path, headers=headers, **kwargs)
     test.assertEqual(external.status_code, 401, external.text)
     test.assertEqual(external.json(), {'detail': 'OIDC_ACCESS_TOKEN_INVALID'})

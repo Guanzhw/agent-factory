@@ -244,10 +244,10 @@ class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.Te
         self.governance = self.store.material_governance
 
     def test_http_member_can_publish_and_archive_own_resource(self):
-        headers = member_headers(self.auth, "alice")
+        headers = member_headers("alice")
         material = self.material()
         application = self.application()
-        bob_headers = member_headers(self.auth, "bob")
+        bob_headers = member_headers("bob")
         for identity, expected in ((headers, True), (bob_headers, False)):
             response = self.client.get("/api/factory/materials", headers=identity)
             self.assertEqual(response.status_code, 200, response.text)
@@ -279,8 +279,8 @@ class DepartmentPublicationPostgresTests(DepartmentPublicationCases, unittest.Te
         self.assertTrue(published.json()["published"])
 
     def test_http_own_private_archive_preserves_owner_visibility(self):
-        headers = member_headers(self.auth, "alice")
-        bob_headers = member_headers(self.auth, "bob")
+        headers = member_headers("alice")
+        bob_headers = member_headers("bob")
         material, application = self.material(), self.application()
         for path in (f"/api/factory/material-governance/versions/{material['id']}/1",
                      f"/api/factory/applications/{application['id']}/versions/1"):
