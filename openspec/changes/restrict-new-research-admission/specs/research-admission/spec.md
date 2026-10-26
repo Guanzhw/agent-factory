@@ -15,7 +15,7 @@
 
 #### Scenario: 未安装研究 Workflow
 - **WHEN** 仅安装 Research 项目/历史端口，没有当前研究 Workflow
-- **THEN** 新执行不可用且公开 start 拒绝；历史读取与原请求恢复端口仍保留
+- **THEN** 新执行不可用且公开 start 拒绝；项目历史、legacy/round 的持久原命令结果与 core 原 task 读取/清理仍可用，不承诺新增 round 列表投影或补造旧执行器
 
 ### Requirement: 持久原请求优先于当前新准入判别
 系统 SHALL 用持久 owner/request 命令和原项目、expectedVersion 指纹识别原启动/续接意图，先核对并恢复原 intent；不根据当前目标或当前可用 pin 将原请求改派。其他 owner、不同项目/版本或复用其他动作请求键 MUST 冲突或拒绝。
