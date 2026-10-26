@@ -2,7 +2,7 @@
 
 An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Department members create and publish versioned materials and application definitions, compose exact scoped task plans, and inspect native runs. Administrators manage accounts; resource owners control their own sharing, changes, withdrawal and archival. The default deployment contains no installed applications or seeded materials. Members publish explicit application definitions and use the generic composition API and registered executors.
 
-The current core-only change removes the former Research application, its pages and default registrations. Login, the application catalog, tasks and owner-managed resources remain in the shared workspace. A new database starts with an empty application catalog; resources and member publication remain available. Synthetic native fixtures are installed explicitly by tests, never by default startup.
+The default deployment is core-only. Login, the application catalog, tasks and owner-managed resources remain in the shared workspace. A new database starts with an empty application catalog; resources and member publication remain available. The explicit Research composition installs AutoResearch; select its paired frontend build and server entrypoint described below. Synthetic native fixtures are installed explicitly by tests, never by default startup.
 
 This change's runtime, browser and CI acceptance must be recorded against its exact revision; earlier Research results do not establish core-only acceptance. Real external identity providers, paid models, remote hosts and scientific workflows are not validated by local synthetic checks. Historical implementation and acceptance records remain linked below.
 
@@ -82,6 +82,14 @@ explicit Research workspace, use `npm run build:research` instead of `npm run bu
 and `agent_factory_server.research:create_app` in the same server command, then
 enter AutoResearch from the application catalog. Login does not configure a model
 or start research.
+
+The workspace opens on **应用** (Applications), with installed application entries,
+your recent tasks and read-only model/server summaries. **我的资源** groups models,
+servers, tools, credentials and remote services; advanced connection records and
+execution leases remain available there. **更多** contains the existing less-used
+workspace pages. When entering resources or task details from Research, use
+**返回 AutoResearch** to keep the original project context. Saving configuration
+does not verify an external provider or start a task.
 
 `npm start`, `npm run dev` and `npm run start:configured` retain the plain HTTP
 server entrypoint; use the HTTPS command above or an already configured HTTPS

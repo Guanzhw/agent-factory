@@ -2,13 +2,15 @@
 
 ## 当前状态
 
-方案非作者审查及 OpenSpec strict 通过，产品实施尚未开始。调查基线为 `768e4adcb0e218f9ec27b81e5627db1fb3f21034`。产品基线须等登录 PR #150 最终合入后记录；不得把开放 PR 的浏览器调查当作本次最终实现验收。
+方案和远端凭据恢复增量的非作者审查及 OpenSpec strict 通过。产品实施基线为登录 PR #150 合入的 main `3ec76ad34a97c3803933df646fd30966d4019024`；tree 为 `e681f891d2cd7a49e67713a9828696ab9b7eabf8`，与登录最终 head `80ba675df28352b9b928cdef77970ec528a5e969` 完全相同，head 为 main 祖先。已读核验 PR merged=true、main push [CI 40365597025](https://github.com/Guanzhw/agent-factory/actions/runs/40365597025) attempt 1 精确指向上述 main、全部五 jobs 成功。两条规范提交无冲突 rebase 后才开始产品修改。
+
+此前开放 PR 浏览器调查不代替本次最终实现验收。登录历史 full 的 MCP late 测试超时根因仍未明确；后续诊断增强及最终 full 通过不证明该历史根因已修复。
 
 ## 验收范围
 
 | 边界 | 需要取得的证据 | 当前结果 |
 | --- | --- | --- |
-| 最终登录基线 | PR 合入状态、main SHA、原 head 祖先关系及源码 | 待前置合入 |
+| 最终登录基线 | PR 合入状态、main SHA、原 head 祖先关系及源码 | PASS，见上述精确版本 |
 | 定向行为 | 首页真实/空/失败/陈旧/owner 切换，资源分类与原请求恢复，研究来源及浏览器历史 | 未执行 |
 | 前端检查 | lint/typecheck/tests/core 与 Research build、架构检查、生产和全量依赖审计 | 未执行 |
 | 非作者审查 | 完整累计 diff、权限与简洁性、整改复审及最终文档增量 | 仅方案 PASS |

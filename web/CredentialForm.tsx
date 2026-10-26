@@ -1,20 +1,25 @@
 import { useRef, useState } from 'react';
 import { personalRemoteApi, RemoteRequestError, type PersonalCredential } from './personalRemoteApi.js';
 
-export function CredentialForm({ owner, providerId, destination, onSaved, onCancel, credentialKind = 'password' }: { credentialKind?: 'password' | 'service-token'; owner: string; providerId: string; destination: string; onSaved: (value: PersonalCredential) => void; onCancel: () => void }) {
+export function pendingCredentialRequest(owner: string) {
+  try { return window.localStorage.getItem(`factory-credential-pending:${encodeURIComponent(owner)}`) ?? ''; } catch { return ''; }
+}
+
+export function CredentialForm({ owner, providerId, destination, onSaved, onCancel, credentialKind = 'password', recoveryOnly = false }: { credentialKind?: 'password' | 'service-token'; owner: string; providerId: string; destination: string; onSaved: (value: PersonalCredential) => void; onCancel: () => void; recoveryOnly?: boolean }) {
   // Persist only an opaque command ID, never credentials or a hash of credentials.
   const storageKey = `factory-credential-pending:${encodeURIComponent(owner)}`;
-  const [requestId, setRequestId] = useState(() => { try { return window.localStorage.getItem(storageKey) ?? ''; } catch { return ''; } });
+  const [requestId, setRequestId] = useState(() => pendingCredentialRequest(owner));
   const [username, setUsername] = useState(''); const serviceToken = credentialKind === 'service-token'; const [password, setPassword] = useState('');
   const [consent, setConsent] = useState(false); const [busy, setBusy] = useState(false); const [unknown, setUnknown] = useState(!!requestId);
   const pending = useRef(false); const [rejected, setRejected] = useState(false);
+  const [recoveryFailed, setRecoveryFailed] = useState(false);
   function accepted(value: PersonalCredential, recovered = false) {
     if ((!recovered && (value.providerId !== providerId || value.destination !== destination)) || typeof value.providerId !== 'string' || typeof value.destination !== 'string' || value.status !== 'active' || !value.credentialRef || !value.credentialRevision) throw new Error('Invalid credential receipt');
     try { window.localStorage.removeItem(storageKey); } catch { /* No secrets are persisted. */ }
     setUsername(''); setPassword(''); setRequestId(''); setUnknown(false); onSaved(value);
   }
   async function save() {
-    if (pending.current || unknown || !consent || !serviceToken && !username || !password) return;
+    if (recoveryOnly || pending.current || unknown || !consent || !serviceToken && !username || !password) return;
     pending.current = true; setBusy(true); setRejected(false); const id = crypto.randomUUID(); setRequestId(id);
     try { window.localStorage.setItem(storageKey, id); } catch { setRequestId(''); setRejected(true); setUsername(''); setPassword(''); setConsent(false); setBusy(false); pending.current = false; return; }
     const secret = password; setPassword('');
@@ -30,11 +35,16 @@ export function CredentialForm({ owner, providerId, destination, onSaved, onCanc
   }
   async function recover() {
     if (pending.current || !requestId) return;
-    pending.current = true; setBusy(true);
+    pending.current = true; setBusy(true); setRecoveryFailed(false);
     try { accepted(await personalRemoteApi.recoverCredential(requestId, owner), true); }
-    catch { setUnknown(true); }
+    catch { setUnknown(true); setRecoveryFailed(true); }
     finally { setBusy(false); pending.current = false; }
   }
+  if (recoveryOnly) return <section className="state-note" aria-label="原远程凭据核对">
+    <h3>上次凭据保存尚未确认</h3><p>已保留原请求，输入已清空。核对只读取当前账户的原回执，无需重新填写目标，也不会重发秘密或配置服务。</p>
+    {recoveryFailed && <p role="alert">暂未取得可核对的回执。原请求仍保留，请稍后再核对；这不代表原保存没有发生。</p>}
+    <p>原请求标识：{requestId}</p><button type="button" disabled={busy || !requestId} onClick={() => void recover()}>{busy ? '正在核对…' : '核对原凭据请求'}</button>
+  </section>;
   return <form className="material-editor" aria-label="安全保存个人凭据" onSubmit={event => { event.preventDefault(); void save(); }}>
     <h3>保存到服务器凭据保险库</h3><p>提供方 {providerId} · 仅用于 {destination}。凭据由当前登录用户持有；不会作为材料或提示词保存。</p>
     <p>这里只保存远程服务登录凭据，模型密钥留在远程服务。{serviceToken && '请填写远程服务令牌，不要填写模型 API 密钥。'}</p>

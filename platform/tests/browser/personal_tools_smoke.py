@@ -94,7 +94,11 @@ class SyntheticAPI:
             '/personal-credentials/capabilities': {'enabled': True,
                                                  'providerIds': [DESCRIPTOR['credentialProviderId']]},
             '/personal-remotes': [], '/personal-remotes/providers': [],
-            '/personal-models': [], '/personal-ssh': [], '/personal-ssh/capabilities': {'enabled': False},
+            '/personal-models': [],
+            '/personal-models/capabilities': {'enabled': True, 'credentialsEnabled': True,
+                                            'providers': ['openai', 'openai-compatible'],
+                                            'liveCompatibilityVerified': False},
+            '/personal-ssh': [], '/personal-ssh/capabilities': {'enabled': False},
             '/resources/leases': {'leases': [], 'nextCursor': None},
             '/application-environments': [], '/application-environments/servers': [],
             '/application-environments/capabilities': {'locations': [], 'applications': []},
@@ -232,9 +236,11 @@ def scenario(browser, base, output, name, mode, viewport):
 
     try:
         page.goto(base + '/', wait_until='networkidle')
-        page.get_by_role('button', name='资源', exact=True).click()
+        if viewport['width'] <= 760:
+            page.get_by_role('button', name='展开导航', exact=True).click()
+        page.get_by_role('button', name='我的资源', exact=True).click()
         expect(page.get_by_role('heading', name='我的资源', exact=True)).to_be_visible()
-        page.get_by_role('button', name='管理服务器与连接', exact=True).click()
+        page.get_by_role('button', name='管理工具', exact=True).click()
         expect(page.get_by_role('heading', name='我的工具连接', exact=True)).to_be_visible()
         panel = page.get_by_role('region', name='我的工具连接', exact=True)
         panel.get_by_label('个人工具', exact=True).select_option(DESCRIPTOR['adapterId'])

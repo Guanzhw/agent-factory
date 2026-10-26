@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { api } from './api.js';
+import { IconArrowLeft } from '@tabler/icons-react';
 import { ControlRecovery, commandNotice } from './ControlRecovery.js';
 import { persistCommandPointer, type ControlIntent } from './controlCommandStorage.js';
 import { ApprovedRecoveryPanel, approvedRecovery } from './ApprovedRecovery.js';
@@ -24,7 +25,7 @@ export function TaskWorkspace({ context, Detail = TaskDetail, title, modeLabels 
   const panel = useRef<HTMLElement>(null);
   useEffect(() => { if (selected) panel.current?.focus(); }, [selected]);
   return <><ControlRecovery ownerId={user.id} onSelect={onTask} busy={busy} act={act}/>
-    <div className="page-heading"><div><h1>任务与证据</h1><p>查看原任务、审批、执行进度与证据。</p></div><div className="worker-metrics"><span><b>{status?.activeWorkers ?? '—'}</b>执行中</span><span><b>{status?.queuedJobs ?? '—'}</b>排队</span><span><b>{status?.maxWorkers ?? '—'}</b>执行上限</span></div></div>
+    <div className="page-heading"><div>{context.applicationSource && <button className="text-button application-return" onClick={() => context.navigate({ tab: context.applicationSource!.tab, modelReturn: undefined, resource: undefined })}><IconArrowLeft size={18} aria-hidden="true"/>返回 {context.applicationSource.label}</button>}<h1>我的任务</h1><p>查看执行状态、待处理事项与结果。</p></div><details className="platform-capacity"><summary>平台执行容量</summary><div className="worker-metrics"><span><b>{status?.activeWorkers ?? '—'}</b>执行中</span><span><b>{status?.queuedJobs ?? '—'}</b>排队</span><span><b>{status?.maxWorkers ?? '—'}</b>执行上限</span></div></details></div>
     <div className={`task-grid ${selected ? 'has-task' : 'new-task-layout'}`}><div className="task-left"><TaskList jobs={jobs} selected={selected} select={onTask} loading={!jobsLoaded} title={title} modeLabels={modeLabels}/><ErrorMessage message={jobsError && `任务列表更新失败：${jobsError}`} retry={retry}/><ErrorMessage message={historyError && `更早任务读取失败：${historyError}`} retry={loadEarlier}/>{nextCursor && <button className="secondary" disabled={historyLoading} onClick={loadEarlier}>{historyLoading ? '正在读取更早任务…' : '加载更早任务'}</button>}</div>
     <section className="task-panel" aria-label="任务详情" id="task-detail" ref={panel} tabIndex={-1}>
       {selected ? detail?.job.id === selected ? <Detail key={detail.job.id} detail={detail} busy={busy} act={act} onNotice={onNotice} onSelect={onTask} jobs={jobs} drafts={drafts} ownerId={user.id} onCompose={onCompose} modeLabels={modeLabels}/>

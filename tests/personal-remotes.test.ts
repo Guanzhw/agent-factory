@@ -21,7 +21,7 @@ async function fill() {
       const el = host.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!;
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(el, value); el.dispatchEvent(new Event('input', { bubbles: true }));
     }
-    host.querySelector<HTMLInputElement>('input[type=checkbox]')!.click();
+    host.querySelector<HTMLInputElement>('[aria-label="安全保存个人凭据"] input[type=checkbox]')!.click();
   });
 }
 it('requires explicit custody consent, password field, one submission and clears successful secret', async () => {
@@ -149,4 +149,77 @@ it('binds remote service secret custody to the form owner and clears a rejected 
   expect(save).toHaveBeenCalledWith(expect.objectContaining({ password: 'synthetic-secret-only' }), owner.id);
   expect(saved).not.toHaveBeenCalled(); expect(host.querySelector<HTMLInputElement>('[aria-label="服务密码"]')!.value).toBe('');
   expect(localStorage.getItem('factory-credential-pending:fixture-owner')).toBeNull();
+});
+
+it('offers owner-scoped credential recovery after remount before providers load, without restoring secrets or posting', async () => {
+  const storage = `factory-credential-pending:${owner.id}`;
+  localStorage.setItem(storage, 'original-lost-receipt');
+  vi.spyOn(api, 'session').mockResolvedValue(owner);
+  vi.spyOn(personalRemoteApi, 'providers').mockImplementation(() => new Promise(() => {}));
+  vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([]);
+  vi.spyOn(personalRemoteApi, 'credentialAvailability').mockResolvedValue({ enabled: false, providerIds: [] });
+  const recovery = vi.spyOn(personalRemoteApi, 'recoverCredential').mockRejectedValue(new Error('untrusted response body'));
+  const save = vi.spyOn(personalRemoteApi, 'saveCredential'); const configure = vi.spyOn(personalRemoteApi, 'configure');
+  await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
+  expect(button('核对原凭据请求')).toBeDefined(); expect(host.querySelector('input')).toBeNull();
+  expect(recovery).not.toHaveBeenCalled();
+  await act(async () => { button('核对原凭据请求').click(); button('核对原凭据请求').click(); });
+  expect(recovery).toHaveBeenCalledTimes(1); expect(recovery).toHaveBeenCalledWith('original-lost-receipt', owner.id);
+  expect(localStorage.getItem(storage)).toBe('original-lost-receipt'); expect(host.textContent).toContain('暂未取得可核对的回执'); expect(host.textContent).not.toContain('untrusted response body');
+  await act(async () => root.unmount()); root = createRoot(host);
+  await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
+  expect(button('核对原凭据请求')).toBeDefined(); expect(recovery).toHaveBeenCalledTimes(1);
+  recovery.mockResolvedValue(credential);
+  await act(async () => button('核对原凭据请求').click());
+  expect(localStorage.getItem(storage)).toBeNull(); expect(host.textContent).toContain('凭据已确认'); expect(save).not.toHaveBeenCalled(); expect(configure).not.toHaveBeenCalled();
+});
+
+it('restores a recovered credential target for explicit configuration and resets it when owner changes', async () => {
+  localStorage.setItem(`factory-credential-pending:${owner.id}`, 'original-target');
+  vi.spyOn(api, 'session').mockResolvedValue(owner);
+  vi.spyOn(personalRemoteApi, 'providers').mockResolvedValue([{ providerId: credential.providerId, kind: 'environment', capabilities: [] }]);
+  vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([]);
+  vi.spyOn(personalRemoteApi, 'credentials').mockResolvedValue([]);
+  vi.spyOn(personalRemoteApi, 'credentialAvailability').mockResolvedValue({ enabled: true, providerIds: [credential.providerId] });
+  vi.spyOn(personalRemoteApi, 'recoverCredential').mockResolvedValue(credential);
+  const configure = vi.spyOn(personalRemoteApi, 'configure');
+  await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
+  await act(async () => button('核对原凭据请求').click());
+  expect(host.querySelector<HTMLInputElement>('[aria-label="服务地址"]')!.value).toBe(credential.destination);
+  expect(host.querySelector<HTMLSelectElement>('[aria-label="远程提供方"]')!.value).toBe(credential.providerId);
+  expect(button('确认保存配置').disabled).toBe(true); expect(configure).not.toHaveBeenCalled();
+  const nextOwner = { ...owner, id: 'different-owner' }; vi.mocked(api.session).mockResolvedValue(nextOwner);
+  await act(async () => root.render(createElement(PersonalRemotes, { user: nextOwner, jobs: [], onChanged: vi.fn() })));
+  expect(host.querySelector<HTMLInputElement>('[aria-label="服务地址"]')!.value).toBe('');
+  expect(button('核对原凭据请求')).toBeUndefined(); expect(configure).not.toHaveBeenCalled();
+});
+
+it('keeps a failed credential save reachable after closing its form and returning to the remote page', async () => {
+  vi.spyOn(api, 'session').mockResolvedValue(owner);
+  vi.spyOn(personalRemoteApi, 'providers').mockResolvedValue([{ providerId: credential.providerId, kind: 'environment', capabilities: [] }]);
+  vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([]);
+  vi.spyOn(personalRemoteApi, 'credentials').mockResolvedValue([]);
+  vi.spyOn(personalRemoteApi, 'credentialAvailability').mockResolvedValue({ enabled: true, providerIds: [credential.providerId] });
+  const save = vi.spyOn(personalRemoteApi, 'saveCredential').mockRejectedValue(new Error('synthetic-secret-only'));
+  const recover = vi.spyOn(personalRemoteApi, 'recoverCredential').mockResolvedValue(credential);
+  const configure = vi.spyOn(personalRemoteApi, 'configure');
+  await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
+  await act(async () => {
+    const provider = host.querySelector<HTMLSelectElement>('[aria-label="远程提供方"]')!;
+    provider.value = credential.providerId; provider.dispatchEvent(new Event('change', { bubbles: true }));
+    const origin = host.querySelector<HTMLInputElement>('[aria-label="服务地址"]')!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(origin, credential.destination); origin.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  await act(async () => button('输入并保存个人凭据').click());
+  await fill(); await act(async () => button('确认安全保存凭据').click());
+  const requestId = save.mock.calls[0][0].requestId;
+  expect(localStorage.getItem(`factory-credential-pending:${owner.id}`)).toBe(requestId);
+  await act(async () => button('取消并清空').click());
+  expect(host.querySelector('[aria-label="原远程凭据核对"]')).not.toBeNull();
+  expect(host.querySelector('input[type=password]')).toBeNull(); expect(recover).not.toHaveBeenCalled();
+  await act(async () => root.unmount()); root = createRoot(host);
+  await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
+  await act(async () => button('核对原凭据请求').click());
+  expect(recover).toHaveBeenCalledExactlyOnceWith(requestId, owner.id);
+  expect(save).toHaveBeenCalledTimes(1); expect(configure).not.toHaveBeenCalled(); expect(JSON.stringify(localStorage)).not.toContain('synthetic-secret-only');
 });

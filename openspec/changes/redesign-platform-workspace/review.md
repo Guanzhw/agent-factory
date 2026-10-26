@@ -20,3 +20,18 @@
 现有 `CredentialForm.tsx:31` 已显式调用 `recoverCredential(requestId, owner)`，`:11` 在恢复时从成功回执接受真实目标；`credential_vault.py:188` 按 owner 与 request ID 读取既有结果，`:392` 为 GET 路由。复用此路径无需保存目标、秘密或新建恢复机制。实施时入口应独立于新配置表单的 `eligible`/提供方加载条件，未知或失败仍保留原标识；不得因显示入口而自动 GET/POST，成功读取后也不自动配置远端。
 
 已独立重跑 OpenSpec strict 与 `git diff --check`：PASS。本增量没有产品修改；既有最终登录 main 前置与后续实现验收仍有效。
+
+## 实施独立审查
+
+**初审待整改，尚非最终 PASS。** 非作者以 `3ec76ad34a97c3803933df646fd30966d4019024` 为产品基线，审查当前累计产品、测试、公开文档及未跟踪新增文件，直接查看选定方案 1 原图。当前实现仍在补充测试与验收；最终结论须复核冻结 tree、整改增量及浏览器证据。
+
+初审必修项：
+
+1. `web/composition.tsx` 的 `onModels` 在直接打开 `?tab=models`、没有 `modelReturn` 时，点击当前“模型”分类会补 `modelReturn=resources` 并新增同页历史。当前页动作应保持原路由和返回语义，补充此深链接重复点击测试。
+2. `platform/tests/browser/personal_tools_smoke.py` 的移动场景仍直接点击默认隐藏的“我的资源”。新导航在 390px 先需展开菜单；修正真实操作步骤并保留全部移动场景。
+
+已核对：登录/会话函数与协议未改；普通成员账号入口及路由归一保留；首页沿用 owner 范围只读模型/SSH接口和原任务记录，未造个人 KPI；模型禁用与无保险库的无认证配置区分；摘要取消旧读取并保留失败/陈旧语义；资源用途、可信绑定/引用/租约入口完整；原远端凭据恢复仅使用 owner 范围 opaque 请求标识、显式 GET，不恢复秘密或自动配置。新增样式限 `.factory-shell`，Research 业务目录未改，未引入框架、通用恢复引擎或重复兼容层。上述是源码审查结果，不等同于浏览器或外部服务验证。
+
+仍待复核：最终累计测试/文档增量、全套检查和审计结果、真实密码登录与保存/失败/恢复/退出、320px 与 Research 同视口回归。没有真实截图证据前不宣称视觉 PASS。
+
+首轮整改复核：`onModels` 已对当前模型页直接返回，新增直达无 `modelReturn` 连续点击测试；移动 smoke 已先展开导航，默认八场景及三个手机场景保留。独立运行 `workspace-home`、`resource-workspace`、`workspace-shell-navigation`、`personal-remotes`、`personal-ssh`、`core-workspace` 六个测试文件，**66/66 通过**；`git diff --check` 通过。两个初审问题源码已修复，尚待最终验收与冻结 tree 复审。高级页面深链接时折叠的“更多”已有 `aria-current="page"`，展开后显示精确子项，无需增加导航状态或自动展开机制。

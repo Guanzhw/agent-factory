@@ -49,7 +49,7 @@ async function select(name: string) {
 
 it('renders an empty catalog without inventing an application or selecting an entry', async () => {
   await render([]);
-  expect(host.querySelector('h1')?.textContent).toBe('应用目录');
+  expect(host.querySelector('h1')?.textContent).toBe('应用');
   expect(host.textContent).toContain('选择应用，开始工作。');
   expect(host.querySelectorAll('button')).toHaveLength(0);
   expect(onSelect).not.toHaveBeenCalled();
@@ -106,18 +106,18 @@ it('registers a second application in test composition and restores its entry th
   const backToCatalog = Array.from(host.querySelectorAll('button')).find(button => button.textContent === '返回应用目录');
   expect(backToCatalog).toBeTruthy();
   await act(async () => backToCatalog!.click());
-  expect(host.querySelector('h1')?.textContent).toBe('应用目录');
+  expect(host.querySelector('h1')?.textContent).toBe('应用');
   expect(host.querySelector('[data-synthetic-entry]')).toBeNull();
   const length = window.history.length;
   await act(async () => { window.history.back(); await new Promise(resolve => setTimeout(resolve, 20)); });
   expect(new URL(window.location.href).searchParams.get('tab')).toBe(checking.entry.tab);
   expect(host.querySelector('h1')?.textContent).toBe(checking.name);
   await act(async () => { window.history.back(); await new Promise(resolve => setTimeout(resolve, 20)); });
-  expect(host.querySelector('h1')?.textContent).toBe('应用目录');
+  expect(host.querySelector('h1')?.textContent).toBe('应用');
   await act(async () => { window.history.forward(); await new Promise(resolve => setTimeout(resolve, 20)); });
   expect(host.querySelector('h1')?.textContent).toBe(checking.name);
   await act(async () => { window.history.forward(); await new Promise(resolve => setTimeout(resolve, 20)); });
-  expect(host.querySelector('h1')?.textContent).toBe('应用目录');
+  expect(host.querySelector('h1')?.textContent).toBe('应用');
   expect(window.history.length).toBe(length);
   expect(host.querySelector('[role="alert"]')).toBeNull();
   expect(fetch).not.toHaveBeenCalled();

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { api } from './api.js';
 import { credentialReceipt, matchCredentialReceipt, SSH_CREDENTIAL_PROVIDER } from './credentialManagement.js';
 import { personalRemoteApi, RemoteRequestError, type PersonalCredential } from './personalRemoteApi.js';
-import { personalSSHApi, sshMessages, type PersonalSSHServer, type SSHAction, type SSHIdentity, type SSHIdentityInput } from './personalSSHApi.js';
+import { personalSSHApi, sshMessages, serverReceipt, type PersonalSSHServer, type SSHAction, type SSHIdentity, type SSHIdentityInput } from './personalSSHApi.js';
 
 type Pending = { owner: string; requestId: string; action: SSHAction | 'credential'; reference?: string; input?: SSHIdentityInput;
   destination?: string; credentialRef?: string; credentialRevision?: string };
@@ -25,13 +25,6 @@ function readPending(value: unknown, owner: string): Pending | null {
   }
   return p;
 }
-function serverReceipt(value: PersonalSSHServer): PersonalSSHServer {
-  if (!value || !/^remote-[a-f0-9]{32}$/.test(value.reference) || typeof value.enabled !== 'boolean' || typeof value.executionEnabled !== 'boolean' ||
-      typeof value.name !== 'string' || typeof value.hostKey !== 'string' || typeof value.hostFingerprint !== 'string' ||
-      typeof value.allowedRoot !== 'string' || value.isOwner !== false && (!identifier(value.credentialRef) || !identifier(value.credentialRevision))) throw new Error('Invalid server receipt');
-  return value;
-}
-
 type Props = { ownerId: string; onChanged: () => void; revision?: number };
 export function PersonalSSHServers(props: Props) {
   return <OwnerSSHServers key={props.ownerId} {...props}/>;

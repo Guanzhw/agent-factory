@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { api, ApiError } from './api.js';
+import { IconHome, IconCheckbox, IconDatabase, IconDots, IconChevronDown, IconChevronRight, IconMenu2, IconX, IconUser, IconLogout } from '@tabler/icons-react';
 import { compareJobOrder, mergeJobHistory } from './jobHistory.js';
 import { FeeVisibility } from './FeeVisibility.js';
 import { browserAuthConfig, BrowserAuthError, clearBrowserSession, consumeSigninFailure, startBrowserLogin, startLocalLogin, subscribeSessionExpiry, type BrowserAuthConfig } from './browserAuth.js';
-import { defaultNavigation, readWorkspaceRoute, sameWorkspaceRoute, workspaceUrl, type WorkspaceNavigation, type WorkspaceRoute, type WorkspaceTab } from './workspaceNavigation.js';
+import { applicationReturn, clearApplicationContext, defaultNavigation, readWorkspaceRoute, sameWorkspaceRoute, workspaceUrl, type WorkspaceNavigation, type WorkspaceRoute, type WorkspaceTab } from './workspaceNavigation.js';
 import { ErrorMessage, time } from './workspaceUI.js';
 import type { JobSummary, FactoryMaterial, FactoryStatus, JobDetail, ExecutionTarget, User } from './models.js';
 import type { ChildDraft } from './TaskWorkspace.js';
@@ -17,6 +18,8 @@ export interface WorkspaceContext {
   detail?: JobDetail; detailError: string; busy: string; syncedAt: string;
   act: (name: string, work: () => Promise<void>) => Promise<void>;
   notice: (message: string) => void; retry: () => void; onTask: (task: string) => void;
+  refreshRevision: number; applicationSource?: { tab: string; label: string };
+  openApplication: (entry: Partial<WorkspaceRoute>) => void;
   drafts: Map<string, ChildDraft>; onCompose?: (seed: ComposerSeed, notice: string) => void;
 }
 
@@ -97,17 +100,24 @@ export default function App({ workspace: WorkspaceComponent = Workspace }: { wor
 
 export function Workspace({ user, logout, sessionBusy, sessionError, navigation = defaultNavigation, children, onCompose, applicationView }: WorkspaceSessionProps & { navigation?: WorkspaceNavigation; children?: (context: WorkspaceContext) => ReactNode; applicationView?: (context: WorkspaceContext) => ReactNode | undefined; onCompose?: WorkspaceContext['onCompose'] }) {
   const [navigationOpen, setNavigationOpen] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
   const [route, setRoute] = useState(() => readWorkspaceRoute(new URL(window.location.href), user.role === 'manager', navigation));
   const routeRef = useRef(route);
   const navigate = (patch: Partial<WorkspaceRoute>) => {
-    const next = { ...routeRef.current, ...patch };
+    const nextURL = workspaceUrl(new URL(window.location.href), { ...routeRef.current, ...patch }, navigation);
+    const next = readWorkspaceRoute(new URL(nextURL, window.location.href), user.role === 'manager', navigation);
     if (sameWorkspaceRoute(next, routeRef.current)) return;
     window.history.pushState(null, '', workspaceUrl(new URL(window.location.href), next, navigation));
     routeRef.current = next; setRoute(next);
   };
   const tab = route.tab;
   const selected = route.task;
-  const setTab = (tab: WorkspaceTab) => navigate({ tab, modelReturn: undefined });
+  const setTab = (tab: WorkspaceTab) => {
+    navigate(tab === 'catalog' ? { ...clearApplicationContext(navigation), tab } : { tab, modelReturn: applicationReturn(routeRef.current, navigation)?.tab });
+    setMobileOpen(false);
+  };
+  const openApplication = (entry: Partial<WorkspaceRoute>) => navigate({ ...clearApplicationContext(navigation), ...entry, modelReturn: undefined });
   const setSelected = (task: string) => { navigate({ tab: 'tasks', task }); setActionError(''); };
   useEffect(() => {
     const restore = () => {
@@ -220,19 +230,30 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
     finally { mutationLock.current = false; setBusy(''); }
   }, []);
   const retry = () => setRefresh(n => n + 1);
-  const context: WorkspaceContext = { user, route, navigate, status, materials, targets, jobs, jobsLoaded, jobsError: readErrors.jobs, historyError, historyLoading, nextCursor, loadEarlier: () => void loadEarlier(), detail, detailError, busy, syncedAt, act, notice: setNotice, retry, onTask: setSelected, drafts: childDrafts.current, onCompose };
+  const context: WorkspaceContext = { user, route, navigate, status, materials, targets, jobs, jobsLoaded, jobsError: readErrors.jobs, historyError, historyLoading, nextCursor, loadEarlier: () => void loadEarlier(), detail, detailError, busy, syncedAt, act, notice: setNotice, retry, onTask: setSelected, drafts: childDrafts.current, onCompose, refreshRevision: refresh, applicationSource: applicationReturn(route, navigation), openApplication };
   const tabs = navigation.tabs;
   const appView = applicationView?.(context);
   if (appView !== undefined) return appView;
   return <FeeVisibility enabled={status?.feeManagementEnabled === true}><div className="factory-shell">
-    <aside className="sidebar"><div className="brand"><span className="brand-symbol" aria-hidden="true">F</span><div><strong>Agent Factory</strong><small>应用与任务</small></div></div>
-    <nav aria-label="工作区"><span className="nav-group-label">工作区</span><button aria-current={tab === 'catalog' || navigation.applicationTabs?.includes(tab) ? 'page' : undefined} onClick={() => setTab('catalog')}>应用</button><button aria-current={['resources', 'models', 'connections'].includes(tab) ? 'page' : undefined} onClick={() => setTab('resources')}>资源</button><button aria-current={tab === 'tasks' ? 'page' : undefined} onClick={() => setTab('tasks')}>任务</button>
-      <button className="mobile-nav-toggle" aria-expanded={navigationOpen} aria-controls="secondary-navigation" onClick={() => setNavigationOpen(value => !value)}>{navigationOpen ? '收起高级与管理入口' : '高级与管理'}</button>
-      <div id="secondary-navigation" className={`secondary-navigation ${navigationOpen ? 'expanded' : ''}`}><span className="nav-group-label">高级工具</span>{(navigation.advancedTabs ?? ['schedules', 'storage']).map(value => <button key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>{tabs[value]}</button>)}<button aria-current={tab === 'developer' ? 'page' : undefined} onClick={() => setTab('developer')}>开发者装配</button>{<><span className="nav-group-label">共享应用与材料</span>{(['applications', 'materials', 'reviews'] as const).map(value => <button key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>{tabs[value]}</button>)}</>}{user.role === 'manager' && <><span className="nav-group-label">账号</span><button aria-current={tab === 'accounts' ? 'page' : undefined} onClick={() => setTab('accounts')}>账号管理</button></>}</div>
-    </nav><div className="sidebar-context"><span className="sidebar-line"/><p>能力来自已发布材料。<br/>连接只在授权范围内使用。</p></div><div className="identity"><div className="avatar" aria-hidden="true">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><small>{user.role === 'manager' ? '账号管理员' : '成员'}</small></div><button className="logout" disabled={sessionBusy || !!busy} onClick={logout}>退出</button></div></aside>
-    <main className="workspace"><header className="workspace-header"><div><span className="quiet">工作区 / </span><strong>{tabs[tab]}</strong></div><div className="sync-state"><span className={`connection-dot ${syncError ? 'disconnected' : ''}`} aria-hidden="true"/>{syncError ? '部分区域更新失败' : syncedAt ? '页面已同步' : '页面同步中'}<button className="text-button" onClick={retry} disabled={!!busy}>刷新</button></div></header>
-    <div className="workspace-body"><div className="runtime-strip"><div><strong>{status ? '运行状态' : '运行状态待确认'}</strong><span>{status ? '实际执行与证据状态以任务记录为准' : '等待服务端确认，尚未创建任务'}</span></div><span className="integration">{status?.integration ?? '集成状态未知'}</span></div>
+    <aside className={`sidebar ${mobileOpen ? 'mobile-expanded' : ''}`}>
+      <div className="sidebar-top"><div className="brand"><span className="brand-symbol" aria-hidden="true">F</span><strong>Agent Factory</strong></div><button className="mobile-menu-toggle" aria-expanded={mobileOpen} aria-controls="workspace-navigation" aria-label={mobileOpen ? '收起导航' : '展开导航'} onClick={() => setMobileOpen(value => !value)}>{mobileOpen ? <IconX/> : <IconMenu2/>}</button></div>
+      <nav id="workspace-navigation" className={mobileOpen ? 'workspace-navigation expanded' : 'workspace-navigation'} aria-label="工作区">
+        <button aria-current={tab === 'catalog' || navigation.applicationTabs?.includes(tab) ? 'page' : undefined} onClick={() => setTab('catalog')}><IconHome aria-hidden="true"/>应用</button>
+        <button aria-current={tab === 'tasks' ? 'page' : undefined} onClick={() => setTab('tasks')}><IconCheckbox aria-hidden="true"/>我的任务</button>
+        <button aria-current={['resources', 'models', 'connections'].includes(tab) ? 'page' : undefined} onClick={() => setTab('resources')}><IconDatabase aria-hidden="true"/>我的资源</button>
+        <button className="more-navigation-toggle" aria-current={!navigationOpen && !['catalog', 'tasks', 'resources', 'models', 'connections'].includes(tab) ? 'page' : undefined} aria-expanded={navigationOpen} aria-controls="secondary-navigation" onClick={() => setNavigationOpen(value => !value)}><IconDots aria-hidden="true"/>更多{navigationOpen ? <IconChevronDown className="navigation-chevron" aria-hidden="true"/> : <IconChevronRight className="navigation-chevron" aria-hidden="true"/>}</button>
+        <div id="secondary-navigation" className="secondary-navigation" hidden={!navigationOpen}>
+          <span className="nav-group-label">高级工具</span>{(navigation.advancedTabs ?? ['schedules', 'storage']).map(value => <button key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>{tabs[value]}</button>)}<button aria-current={tab === 'developer' ? 'page' : undefined} onClick={() => setTab('developer')}>开发者装配</button>
+          <span className="nav-group-label">共享内容</span>{(['applications', 'materials', 'reviews'] as const).map(value => <button key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>{tabs[value]}</button>)}
+          {user.role === 'manager' && <><span className="nav-group-label">账号</span><button aria-current={tab === 'accounts' ? 'page' : undefined} onClick={() => setTab('accounts')}>账号管理</button></>}
+        </div>
+      </nav>
+      <div className="identity"><button className="identity-toggle" aria-expanded={accountOpen} aria-controls="workspace-account" onClick={() => setAccountOpen(value => !value)}><span className="avatar" aria-hidden="true"><IconUser size={21}/></span><span className="identity-name"><strong>{user.name}</strong><small>{user.role === 'manager' ? '账号管理员' : '成员'}</small></span><IconChevronDown size={18} aria-hidden="true"/></button><div id="workspace-account" className="account-actions" hidden={!accountOpen}><button className="logout" disabled={sessionBusy || !!busy} onClick={logout}><IconLogout size={18} aria-hidden="true"/>{sessionBusy ? '正在退出…' : '退出'}</button></div></div>
+    </aside>
+    <main className="workspace"><div className="workspace-body">
       <ErrorMessage message={sessionError}/><ErrorMessage message={readErrors.status && `运行状态更新失败：${readErrors.status}`} retry={retry}/>{['catalog', 'developer', 'materials', 'applications'].includes(tab) && <ErrorMessage message={readErrors.materials && `材料目录更新失败：${readErrors.materials}`} retry={retry}/>}<ErrorMessage message={readErrors.targets && `执行目标更新失败：${readErrors.targets}`} retry={retry}/><ErrorMessage message={actionError}/>{notice && <div className="success-message" role="status">{notice}</div>}
-      {children?.(context)}<footer className="workspace-footer"><span>最近成功读取 {time(syncedAt)}</span><span>任务执行与结果验证分别记录</span></footer>
-    </div></main></div></FeeVisibility>;
+      {children?.(context)}
+      <footer className="workspace-footer"><details><summary>连接与运行信息</summary><p>{status?.integration ?? '集成状态待确认'}</p><p>任务与基础记录最近成功读取：{time(syncedAt)}。资源摘要的读取结果单独显示。</p></details><div className="sync-state"><span>{syncError ? '部分基础记录更新失败' : !syncedAt ? '正在读取基础记录…' : ''}</span><button className="text-button" onClick={retry} disabled={!!busy}>刷新页面</button></div></footer>
+    </div></main>
+  </div></FeeVisibility>;
 }

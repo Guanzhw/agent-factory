@@ -6,6 +6,8 @@ import { api } from './api.js';
 import { processExecutionState, processLeasePage, processLeaseState, processLeaseView, type ProcessLease } from './processLeaseView.js';
 import { useCommandKeys } from './commandKeys.js';
 import type { ConnectionRegistration, JobSummary, User, UserConnection } from './models.js';
+import type { ResourceSection } from './workspaceNavigation.js';
+import './resource-workspace.css';
 
 type Act = (name: string, work: () => Promise<void>) => Promise<void>;
 const names: Record<string, string> = { model: '模型', tool: '工具', knowledge: '知识', environment: '环境', orx: '历史适配器' };
@@ -37,7 +39,12 @@ export function ProcessLeasePanel({ leases, owner }: { leases: unknown[]; owner:
   })}</div>;
 }
 
-export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, onBack, applicationLabel = '应用', remoteServices }: { user: User; jobs: JobSummary[]; busy: string; act: Act; onNotice: (message: string) => void; onTask?: (id: string) => void; onModels?: () => void; onBack?: () => void; applicationLabel?: string; remoteServices?: (refresh: number, changed: () => void) => ReactNode }) {
+type ConnectionsProps = { user: User; jobs: JobSummary[]; busy: string; act: Act; onNotice: (message: string) => void; onTask?: (id: string) => void; onModels?: () => void; onBack?: () => void; applicationLabel?: string; remoteServices?: (refresh: number, changed: () => void) => ReactNode; section?: ResourceSection; navigation?: ReactNode; backLabel?: string };
+export function ConnectionsPanel(props: ConnectionsProps) { return <OwnerConnections key={props.user.id} {...props}/>; }
+function OwnerConnections({ user, jobs, busy, act, onNotice, onModels, onBack, applicationLabel = '应用', remoteServices, section = 'servers', navigation, backLabel }: ConnectionsProps) {
+  const [visited, setVisited] = useState<readonly ResourceSection[]>([section]);
+  useEffect(() => { setVisited(current => current.includes(section) ? current : [...current, section]); }, [section]);
+  const mounted = (value: ResourceSection) => value === section || visited.includes(value);
   const [connections, setConnections] = useState<UserConnection[]>([]);
   const [registrations, setRegistrations] = useState<ConnectionRegistration[]>([]);
   const [registrationRef, setRegistrationRef] = useState('');
@@ -55,6 +62,8 @@ export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, on
   const registration = registrations.find(item => item.registrationRef === registrationRef);
   const activeJobs = jobs.filter(job => !['completed', 'failed', 'canceled'].includes(job.status));
   useEffect(() => {
+    if (section !== 'advanced') return;
+    setReady(false);
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
@@ -66,8 +75,9 @@ export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, on
       if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 5000);
     }
     void poll(); return () => { controller.abort(); clearTimeout(timer); };
-  }, [user.id, refresh]);
+  }, [user.id, refresh, section]);
   useEffect(() => {
+    if (section !== 'advanced') return;
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     setLeasesReady(false); setLeaseError('');
     async function poll() {
@@ -81,7 +91,7 @@ export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, on
       if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 5000);
     }
     void poll(); return () => { controller.abort(); clearTimeout(timer); };
-  }, [user.id, refresh, after]);
+  }, [user.id, refresh, after, section]);
   function selectRegistration(ref: string) { setRegistrationRef(ref); setCapabilities(registrations.find(item => item.registrationRef === ref)?.capabilities ?? []); }
   async function bind() {
     if (!ready || !registration?.available || !registration.allowedActions.includes('bind')) return;
@@ -103,23 +113,26 @@ export function ConnectionsPanel({ user, jobs, busy, act, onNotice, onModels, on
       key.acknowledged(); setRefresh(n => n + 1); onNotice('连接已撤销。后续执行会重新检查绑定；已有证据保留。');
     });
   }
-  return <section className="connections-page"><div className="page-heading"><div><h1>我的凭据与连接</h1><p>管理自己的凭据、远程服务与资源绑定。</p></div><div className="button-row">{onBack && <button className="secondary" disabled={!!busy} onClick={onBack}>返回 {applicationLabel}</button>}<button className="secondary" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>刷新资源</button></div></div>
-    <PersonalSSHServers key={`ssh:${user.id}`} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)}/>
-    <PersonalCredentials key={`credentials:${user.id}`} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onModels={onModels}/>
-    <PersonalToolConnections ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)}/>
-    {remoteServices?.(refresh, () => setRefresh(n => n + 1))}
+  return <section className="resource-workspace connections-page"><div className="page-heading"><div><h1>我的资源</h1><p>管理自己的连接、凭据与运行环境。</p></div><div className="button-row">{onBack && <button className="secondary" disabled={!!busy} onClick={onBack}>{backLabel ?? `返回 ${applicationLabel}`}</button>}<button className="secondary" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>刷新资源</button></div></div>
+    {navigation}
+    {mounted('servers') && <div hidden={section !== 'servers'} data-resource-section="servers"><PersonalSSHServers key={`ssh:${user.id}`} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)}/></div>}
+    {mounted('credentials') && <div hidden={section !== 'credentials'} data-resource-section="credentials"><PersonalCredentials key={`credentials:${user.id}`} ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)} onModels={onModels}/></div>}
+    {mounted('tools') && <div hidden={section !== 'tools'} data-resource-section="tools"><PersonalToolConnections ownerId={user.id} revision={refresh} onChanged={() => setRefresh(n => n + 1)}/></div>}
+    {mounted('remotes') && <div hidden={section !== 'remotes'} data-resource-section="remotes">{remoteServices?.(refresh, () => setRefresh(n => n + 1)) ?? <p className="state-note">此部署没有接入远程服务配置。</p>}</div>}
+    {mounted('advanced') && <div className="resource-advanced" hidden={section !== 'advanced'} data-resource-section="advanced">
     {error && <div role="alert" className="error-message">资源列表暂不可用。请刷新资源；原绑定保留，未自动重试绑定。<span>{error}</span></div>}
-    <details><summary>高级：绑定已有可信登记</summary><p className="state-note">兼容管理员已配置的资源登记；不创建云资源。可用状态不代表真实提供商已验证。</p>
+    <details><summary>高级：绑定已有可信登记</summary><p className="state-note">使用部署中已有的可信资源登记；不创建云资源。可用状态不代表真实提供商已验证。</p>
     <form className="material-editor" onSubmit={event => { event.preventDefault(); void bind(); }}><h2>绑定可信资源</h2><div className="editor-grid"><label>可信登记<select aria-label="可信登记" value={registrationRef} disabled={!!busy || !ready} onChange={event => selectRegistration(event.target.value)}><option value="">选择已授权登记</option>{registrations.map(item => <option key={item.registrationRef} value={item.registrationRef} disabled={!item.available || !item.allowedActions.includes('bind')}>{names[item.kind]} · {item.registrationRef} · {states[item.status]}</option>)}</select></label><label>任务范围<select aria-label="连接任务范围" value={taskId} disabled={!!busy || !ready} onChange={event => setTaskId(event.target.value)}><option value="">我的用户范围</option>{activeJobs.map(job => <option key={job.id} value={job.id}>{job.input.topic}</option>)}</select></label></div>
       {registration && <><fieldset className="dependency-picker" disabled={!!busy || !ready}><legend>允许能力（可缩小）</legend>{registration.capabilities.length ? registration.capabilities.map(capability => <label key={capability}><input type="checkbox" checked={capabilities.includes(capability)} onChange={event => setCapabilities(current => event.target.checked ? [...current, capability] : current.filter(item => item !== capability))}/>{capability}</label>) : <p className="quiet">此登记没有附加能力。</p>}</fieldset><p className="quiet">配置版本 {registration.revision} · 到期 {date(registration.expiresAt)}</p></>}
-      {!registrations.length && <p className="quiet">{ready ? '当前没有可绑定的登记。可在上方自行接入工具、模型或服务器。' : '正在核对可信登记。'}</p>}
+      {!registrations.length && <p className="quiet">{ready ? '当前没有可绑定的登记。可从资源分类接入工具、模型或服务器。' : '正在核对可信登记。'}</p>}
       <button className="primary" disabled={!!busy || !ready || !registration?.available || !registration.allowedActions.includes('bind')}>{busy === 'bind-connection' ? '等待绑定确认…' : '确认绑定'}</button>
     </form></details>
-    <h2>我的连接引用</h2>{connections.length ? connections.map(item => <article className="material-row review-row" key={item.ref}><div className="material-info"><h3>{names[item.kind]} · {item.registrationRef}</h3><p><span className={`badge ${item.available ? 'status-ready' : 'status-blocked'}`}>{states[item.status]}</span></p><dl className="plan-details"><dt>允许能力</dt><dd>{item.capabilities.join('、') || '无附加能力'}</dd><dt>绑定范围</dt><dd>{item.taskId ? jobs.find(job => job.id === item.taskId)?.input.topic ?? '已绑定任务' : '我的用户范围'}</dd><dt>到期</dt><dd>{date(item.expiresAt)}</dd></dl><details className="technical-detail"><summary>连接凭据与版本</summary><span>引用 {item.ref}</span><span>版本 {item.revision}</span><span>指纹 {item.fingerprint}</span><span>创建 {date(item.createdAt)}</span>{item.revokedAt && <span>撤销 {date(item.revokedAt)}</span>}{item.taskId && <span>任务 {item.taskId}</span>}</details></div><div className="material-actions"><button className="secondary danger" disabled={!!busy || !ready || !item.allowedActions.includes('revoke')} onClick={() => void revoke(item)}>{item.status === 'revoked' ? '已撤销' : '撤销此连接'}</button></div></article>) : <p className="list-empty">{error ? '连接列表暂不可用。请查看上方错误并刷新资源。' : ready ? '你尚未绑定连接引用。合成演示无需真实提供商连接。' : '正在读取自己的连接。'}</p>}
+    <h2>我的连接引用</h2>{connections.length ? connections.map(item => <article className="material-row review-row" key={item.ref}><div className="material-info"><h3>{names[item.kind]} · {item.registrationRef}</h3><p><span className={`badge ${item.available ? 'status-ready' : 'status-blocked'}`}>{states[item.status]}</span></p><dl className="plan-details"><dt>允许能力</dt><dd>{item.capabilities.join('、') || '无附加能力'}</dd><dt>绑定范围</dt><dd>{item.taskId ? jobs.find(job => job.id === item.taskId)?.input.topic ?? '已绑定任务' : '我的用户范围'}</dd><dt>到期</dt><dd>{date(item.expiresAt)}</dd></dl><details className="technical-detail"><summary>连接凭据与版本</summary><span>引用 {item.ref}</span><span>版本 {item.revision}</span><span>指纹 {item.fingerprint}</span><span>创建 {date(item.createdAt)}</span>{item.revokedAt && <span>撤销 {date(item.revokedAt)}</span>}{item.taskId && <span>任务 {item.taskId}</span>}</details></div><div className="material-actions"><button className="secondary danger" disabled={!!busy || !ready || !item.allowedActions.includes('revoke')} onClick={() => void revoke(item)}>{item.status === 'revoked' ? '已撤销' : '撤销此连接'}</button></div></article>) : <p className="list-empty">{error ? '连接列表暂不可用。请查看上方错误并刷新资源。' : ready ? '你尚未绑定连接引用。' : '正在读取自己的连接。'}</p>}
     <section aria-label="我的执行租约"><h2>我的执行租约</h2><p className="quiet">展示当前页服务端记录的租约，每页最多 100 条。停止证据、执行终态与预约容量释放分别核对；此页面不会分配或启动进程。</p>
       {leaseError ? <p className="error-message" role="alert">{leaseError}</p> : !leasesReady ? <p className="list-empty">正在核对执行租约…</p> : leases.length ? <ProcessLeasePanel leases={leases} owner={user.id}/> : <p className="list-empty">当前页没有可见执行租约。</p>}
       <div className="material-actions">{after && <button className="secondary" onClick={() => setAfter(undefined)}>返回第一页</button>}{nextCursor && <button className="secondary" disabled={!leasesReady || !!leaseError} onClick={() => setAfter(nextCursor)}>查看下一页</button>}</div>
       {leasesReady && <p className="quiet">当前页 {leases.length} 条；分页读取不是完整快照。可返回第一页重新核对。</p>}
     </section>
+    </div>}
   </section>;
 }

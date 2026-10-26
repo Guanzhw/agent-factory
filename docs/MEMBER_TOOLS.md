@@ -1,6 +1,6 @@
 # Member CLI and MCP tools
 
-Open **Connections → My tool connections** to connect a tool. Any active member can create a personal resource, bind a team resource, and publish materials or applications that use it. Each resource starts as personal. Its owner can select **Share with team** and later return it to personal visibility.
+Open **我的资源 → 管理工具** (My resources → Manage tools) to connect a tool. Any active member can create a personal resource, bind a team resource, and publish materials or applications that use it. Each resource starts as personal. Its owner can select **Share with team** and later return it to personal visibility.
 
 MCP resources accept HTTP or HTTPS URLs, including localhost, private networks, IPv6 and custom ports. HTTPS verifies the server certificate. Select **Discover MCP tools**, select a returned tool, and save it with a native call name. Discovery reads the server's tool declarations. The selected tool's JSON Schema is checked again before its first business call in each session; a changed schema produces an explicit error.
 

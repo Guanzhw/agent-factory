@@ -1,17 +1,20 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError } from './api.js';
-import { CredentialForm } from './CredentialForm.js';
+import { CredentialForm, pendingCredentialRequest } from './CredentialForm.js';
 import { useCommandKeys } from './commandKeys.js';
 import { personalRemoteApi, remoteCanBind, definitivelyRejected, RemoteRequestError, type PersonalCredential, type PersonalRemote, type RemoteProvider } from './personalRemoteApi.js';
 import type { JobSummary, User } from './models.js';
 const statusNames: Record<string, string> = { configured: '配置已保存，尚未验证', verified: '只读验证有效', expired: '验证已过期，需重新验证并绑定', revoked: '已撤销', credential_unavailable: '凭据不可用或已轮换', policy_changed: '部署策略已变更', unavailable: '当前不可用', failed: '验证未通过' };
 function validOrigin(value: string) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && url.origin === value && !url.username && !url.password; } catch { return false; } }
-export function PersonalRemotes({ user, jobs, onChanged }: { user: User; jobs: JobSummary[]; onChanged: () => void }) {
+type PersonalRemotesProps = { user: User; jobs: JobSummary[]; onChanged: () => void };
+export function PersonalRemotes(props: PersonalRemotesProps) { return <OwnerRemotes key={props.user.id} {...props}/>; }
+function OwnerRemotes({ user, jobs, onChanged }: PersonalRemotesProps) {
   const [providers, setProviders] = useState<RemoteProvider[]>([]); const [remotes, setRemotes] = useState<PersonalRemote[]>([]);
   const [ready, setReady] = useState(false); const [vault, setVault] = useState(false); const [error, setError] = useState('');
   const [providerId, setProviderId] = useState(''); const [origin, setOrigin] = useState(''); const [projectId, setProjectId] = useState('');
   const [credentials, setCredentials] = useState<PersonalCredential[]>([]);
   const [credential, setCredential] = useState<PersonalCredential | null>(null); const [showCredential, setShowCredential] = useState(false);
+  const [recoveringCredential, setRecoveringCredential] = useState(() => !!pendingCredentialRequest(user.id));
   const [noCredentials, setNoCredentials] = useState(false);
   const [editing, setEditing] = useState<string | undefined>(); const [busy, setBusy] = useState(false); const lock = useRef(false);
   const [refresh, setRefresh] = useState(0); const [notice, setNotice] = useState(''); const [taskId, setTaskId] = useState('');
@@ -59,6 +62,7 @@ export function PersonalRemotes({ user, jobs, onChanged }: { user: User; jobs: J
     finally { lock.current = false; setBusy(false); }
   }
   const eligible = ready && !pendingRequest && (vault || noCredentials) && providers.some(p => p.providerId === providerId) && validOrigin(origin);
+  function credentialSaved(value: PersonalCredential) { setProviderId(value.providerId); setOrigin(value.destination); setCredential(value); setShowCredential(false); setRecoveringCredential(false); setNotice('凭据已确认。请核对服务目标和项目，再明确保存配置。'); }
   async function configure() {
     if (!eligible || !noCredentials && (!credential || credential.destination !== origin || credential.providerId !== providerId) || !projectId) return;
     await perform(async () => {
@@ -84,14 +88,16 @@ export function PersonalRemotes({ user, jobs, onChanged }: { user: User; jobs: J
     <p>保存服务凭据 → 配置目标 → 只读验证 → 绑定。</p><p className="quiet">绑定只授予服务端声明的能力，不会启动任务。</p>
     {pendingRequest && <p role="alert">待核对原请求 {pendingRequest.requestId}。<button disabled={busy} onClick={() => void recover()}>核对原远程请求</button></p>}
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
-    {ready && (!providers.length || !vault) && <p className="state-note">此部署尚未启用{!providers.length ? '个人远程提供方' : '安全凭据保险库'}。需要部署管理员配置后才能自助连接；下面仍可查看已登记状态。</p>}
-    {ready && !!providers.length && <div className="material-editor"><h3>{editing ? '重新配置远程服务' : '添加个人远程服务'}</h3>
+    {recoveringCredential && <CredentialForm owner={user.id} providerId="" destination="" recoveryOnly onSaved={credentialSaved} onCancel={() => {}}/>}
+    {ready && !providers.length && <p className="state-note">此部署尚未启用个人远程提供方。下面仍可查看已登记状态。</p>}
+    {ready && !!providers.length && !vault && <p className="state-note">此部署未启用凭据保险库。无需认证的服务仍可配置；需要凭据的服务暂不可接入。</p>}
+    {ready && !!providers.length && !recoveringCredential && <div className="material-editor"><h3>{editing ? '重新配置远程服务' : '添加个人远程服务'}</h3>
       <fieldset disabled={busy || showCredential || !!credential}><label>提供方<select aria-label="远程提供方" value={providerId} onChange={event => { setProviderId(event.target.value); setNoCredentials(false); }}><option value="">选择提供方</option>{providers.map(p => <option key={p.providerId} value={p.providerId}>{p.providerId}</option>)}</select></label>
       <label>服务地址<input aria-label="服务地址" value={origin} placeholder="https://remote.example.org" onChange={event => setOrigin(event.target.value)} /></label></fieldset>
       <label>预期项目 ID<input aria-label="预期项目 ID" disabled={busy} value={projectId} onChange={event => setProjectId(event.target.value)} /></label>
       <label><input type="checkbox" aria-label="远程服务无需认证" checked={noCredentials} disabled={busy || !!credential || showCredential} onChange={event => setNoCredentials(event.target.checked)}/>无需认证</label>{noCredentials && <button disabled={busy || !eligible || !projectId} onClick={() => void configure()}>确认保存配置</button>}{!noCredentials && !credential && !showCredential && <label>已有此目标的凭据<select aria-label="已有此目标的凭据" disabled={!eligible || busy} value="" onChange={event => setCredential(credentials.find(c => c.credentialRef === event.target.value) ?? null)}><option value="">选择已保存凭据（可选）</option>{credentials.filter(c => c.status === 'active' && c.destination === origin && c.providerId === providerId).map(c => <option key={c.credentialRef} value={c.credentialRef}>{c.credentialRef}</option>)}</select></label>}
       {!noCredentials && !credential && !showCredential && <button disabled={!eligible || busy} onClick={() => setShowCredential(true)}>输入并保存个人凭据</button>}
-      {showCredential && <CredentialForm key={`${providerId}:${origin}`} owner={user.id} providerId={providerId} destination={origin} onSaved={value => { setProviderId(value.providerId); setOrigin(value.destination); setCredential(value); setShowCredential(false); }} onCancel={() => setShowCredential(false)} />}
+      {showCredential && <CredentialForm key={`${providerId}:${origin}`} owner={user.id} providerId={providerId} destination={origin} onSaved={credentialSaved} onCancel={() => { setShowCredential(false); setRecoveringCredential(!!pendingCredentialRequest(user.id)); }} />}
       {!noCredentials && credential && <><p>凭据已安全保存，仅保留不透明引用。配置将使用此目标与凭据版本。</p><button disabled={busy || !eligible || !projectId} onClick={() => void configure()}>确认{editing ? '重新配置' : '保存配置'}</button><button disabled={busy} onClick={() => void perform(async () => { const key = await keys('personal-credential-revoke', { ref: credential.credentialRef, revision: credential.credentialRevision }); remember(key.requestId, 'credential_revoke'); await personalRemoteApi.revokeCredential(credential, key.requestId); key.acknowledged(); acknowledge(); setCredential(null); setNotice('已撤销尚未用于配置的凭据。'); })}>撤销此凭据（关联连接将失效）</button></>}
       {editing && <p>重新配置会使旧验证与绑定失效。保存后必须重新验证、绑定和制定计划。</p>}
     </div>}

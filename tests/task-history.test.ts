@@ -58,7 +58,7 @@ it('updates jobs, status and targets when the catalog fails, and continues polli
   expect(context.jobs.map(value => value.id)).toEqual(['new']);
   expect(context.status?.activeWorkers).toBe(1);
   expect(api.executionTargets).toHaveBeenCalledOnce();
-  expect(host.textContent).toContain('部分区域更新失败');
+  expect(host.textContent).toContain('部分基础记录更新失败');
   vi.mocked(api.jobs).mockResolvedValue({ items: [job('newest'), job('new')], nextCursor: 'next' });
   await act(async () => { await vi.advanceTimersByTimeAsync(5000); });
   expect(context.jobs.map(value => value.id)).toContain('newest');

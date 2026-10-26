@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { ownerModelApi, ModelRequestError, type ModelCapabilities, type OwnerModel } from './ownerModelApi.js';
 import { personalRemoteApi, RemoteRequestError, definitivelyRejected } from './personalRemoteApi.js';
 import { credentialReceipt } from './credentialManagement.js';
@@ -7,8 +7,9 @@ import type { PersonalCredential } from './personalRemoteApi.js';
 import { useCommandKeys } from './commandKeys.js';
 import { modelEndpoint, readModelSetup, readModelSetups, setupCredential, setupDispatched, setupMetadata, type ModelSetup } from './ownerModelSetup.js';
 import { MODEL_PROVIDER_PRESETS } from './modelProviderConfig.js';
+import './resource-workspace.css';
 
-export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: string; onBack: () => void; onCredentials?: () => void }) {
+export function ModelSettings({ ownerId, onBack, onCredentials, navigation, backLabel = '返回我的资源' }: { ownerId: string; onBack: () => void; onCredentials?: () => void; navigation?: ReactNode; backLabel?: string }) {
   const storage = `factory-model-setup:${encodeURIComponent(ownerId)}`;
   const [pending, setPending] = useState<ModelSetup | null>(() => { try { return readModelSetup(localStorage.getItem(storage), ownerId); } catch { return null; } });
   const unresolvedStorage = `${storage}:unresolved`;
@@ -263,10 +264,11 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
     catch { return false; }
   });
   const selectedCredential = matchingCredentials.find(c => c.credentialRef === savedReference);
-  return <section className="model-settings" aria-labelledby="model-settings-title">
-    <div className="page-heading"><div><p className="quiet">个人设置 · 我的默认模型</p><h1 id="model-settings-title">我的模型/API</h1><p>保存一次自己的模型，原生任务使用默认设置。</p></div><button className="secondary" onClick={onBack} disabled={busy}>返回工作区</button></div>
-    <p className="model-purpose">研究内容会发送给所选模型提供方，费用由你的提供方账户承担。密钥加密保存，不回显。</p>
-    {onCredentials && <button className="secondary" disabled={busy} onClick={onCredentials}>管理我的凭据与连接</button>}
+  return <section className="resource-workspace model-settings" aria-labelledby="model-settings-title">
+    <div className="page-heading"><div><h1 id="model-settings-title">模型与 API</h1><p>保存自己的模型，选择任务使用的默认设置。</p></div><button className="secondary" onClick={onBack} disabled={busy}>{backLabel}</button></div>
+    {navigation}
+    <p className="model-purpose">任务内容会发送给所选模型提供方，费用由你的提供方账户承担。密钥加密保存，不回显。</p>
+    {onCredentials && <button className="text-button" disabled={busy} onClick={onCredentials}>管理已保存凭据</button>}
     {error && <div className="error-message" role="alert">{error}</div>}{notice && <div className="success-message" role="status">{notice}</div>}
     {pendingSharing && <p role="alert">共享请求尚未确认。<button disabled={busy} onClick={() => void recoverSharing()}>核对原共享请求</button></p>}
     {!ready && !error && <p role="status">正在读取模型设置…</p>}

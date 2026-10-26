@@ -24,6 +24,14 @@ export const sshMessages: Record<string, string> = {
   SSH_AGENT_CAPACITY: '当前 SSH 身份使用量已达到限额。请稍后重新检查。',
   SSH_CREDENTIAL_UNAVAILABLE: 'SSH 身份已失效或不可用。请绑定本人当前有效的身份后重新检查。',
 };
+const identifier = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_.:@-]{1,200}$/.test(value);
+export function serverReceipt(value: PersonalSSHServer): PersonalSSHServer {
+  if (!value || !/^remote-[a-f0-9]{32}$/.test(value.reference) || typeof value.enabled !== 'boolean' || typeof value.executionEnabled !== 'boolean' ||
+      typeof value.name !== 'string' || typeof value.hostKey !== 'string' || typeof value.hostFingerprint !== 'string' ||
+      typeof value.allowedRoot !== 'string' || value.isOwner !== false && (!identifier(value.credentialRef) || !identifier(value.credentialRevision))) throw new Error('Invalid server receipt');
+  return value;
+}
+
 async function call<T>(owner: string, path: string, method = 'GET', body?: unknown, signal?: AbortSignal): Promise<T> {
   try { return await factoryRequest<T>(`/personal-ssh${path}`, method, body, signal, owner); }
   catch (e) { throw new RemoteRequestError(e instanceof ApiError && (definitivelyRejected(e.status) || !!e.code && !!sshMessages[e.code]), e instanceof ApiError ? e.code : undefined); }

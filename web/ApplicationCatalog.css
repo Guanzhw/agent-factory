@@ -1,21 +1,41 @@
-.application-catalog-grid {
+.factory-shell .application-catalog-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr));
-  gap: 24px;
-  max-width: 1120px;
+  gap: 20px;
 }
-
-.application-card {
+.factory-shell .application-card {
   display: flex;
-  flex-direction: column;
   align-items: flex-start;
-  padding: 30px;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--white);
+  gap: 26px;
+  min-height: 220px;
+  padding: 34px 36px;
+  border: 1px solid #d6e4fa;
+  border-radius: 10px;
+  background: #edf4ff;
 }
-
-.application-card h2 { font-size: 25px; margin-bottom: 12px; }
-.application-card p { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
-.application-card button { margin-top: auto; }
-.application-catalog-empty { color: var(--muted); font-size: 14px; padding: 24px 0; }
+.factory-shell .application-icon {
+  display: grid;
+  place-items: center;
+  width: 80px;
+  height: 80px;
+  flex-shrink: 0;
+  background: #fff;
+  border: 1px solid #dfe9f8;
+  border-radius: 12px;
+  color: var(--blue);
+}
+.factory-shell .application-content { min-width: 0; }
+.factory-shell .application-card h2 { font-size: 28px; margin: 0 0 10px; overflow-wrap: anywhere; }
+.factory-shell .application-card p { color: var(--muted); font-size: 16px; margin: 0 0 20px; }
+.factory-shell .application-card .primary { display: inline-flex; align-items: center; gap: 24px; padding: 13px 18px; }
+.factory-shell .application-catalog-empty { color: var(--muted); padding: 28px 0; }
+@media (max-width: 760px) {
+  .factory-shell .application-card { padding: 24px 20px; gap: 16px; min-height: 0; }
+  .factory-shell .application-icon { width: 48px; height: 48px; border-radius: 8px; }
+  .factory-shell .application-icon svg { width: 26px; height: 26px; }
+  .factory-shell .application-card h2 { font-size: 22px; }
+  .factory-shell .application-card p { font-size: 14px; }
+}
+@media (max-width: 440px) {
+  .factory-shell .application-card { flex-direction: column; }
+  .factory-shell .application-card .primary { gap: 12px; font-size: 14px; }
+}

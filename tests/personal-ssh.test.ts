@@ -1,12 +1,14 @@
 // @vitest-environment happy-dom
 import { webcrypto } from 'node:crypto';
-import { act, createElement } from 'react';
+import { act, createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { api } from '../web/api.js';
 import { PersonalCredentials } from '../web/PersonalCredentials.js';
 import { PersonalSSHServers } from '../web/PersonalSSHServers.js';
 import { ConnectionsPanel } from '../web/ConnectionsPanel.js';
+import { ResourceNavigation } from '../web/ResourceNavigation.js';
+import type { ResourceSection } from '../web/workspaceNavigation.js';
 import { credentialDestination, credentialReceipt, SSH_CREDENTIAL_PROVIDER } from '../web/credentialManagement.js';
 import { personalRemoteApi, RemoteRequestError } from '../web/personalRemoteApi.js';
 import { personalSSHApi, type PersonalSSHServer, type SSHIdentityInput } from '../web/personalSSHApi.js';
@@ -92,18 +94,25 @@ it('refreshes SSH identity revisions after rotation in the sibling credentials p
   vi.spyOn(api, 'connectionRegistrations').mockResolvedValue([]);
   vi.spyOn(api, 'resourceLeases').mockResolvedValue({ leases: [], nextCursor: null });
   vi.spyOn(ownerModelApi, 'list').mockResolvedValue([]);
-  await act(async () => root.render(createElement(ConnectionsPanel, {
-    user: { id: 'alice', name: 'Alice', role: 'user' }, jobs: [], busy: '',
-    act: async (_name: string, work: () => Promise<void>) => { await work(); }, onNotice: vi.fn(),
-  })));
+  function GroupedResources() {
+    const [section, setSection] = useState<ResourceSection>('servers');
+    return createElement(ConnectionsPanel, {
+      user: { id: 'alice', name: 'Alice', role: 'user' }, jobs: [], busy: '', section,
+      navigation: createElement(ResourceNavigation, { active: section, onModels: vi.fn(), onConnections: setSection }),
+      act: async (_name: string, work: () => Promise<void>) => { await work(); }, onNotice: vi.fn(),
+    });
+  }
+  await act(async () => root.render(createElement(GroupedResources)));
   await act(async () => button('更换连接设置').click());
   await act(async () => button('核对服务器身份').click());
   await field('已保存的此服务器 SSH 身份', credential.credentialRef); await consent();
+  await act(async () => button('凭据').click());
   await act(async () => button('更换凭据').click());
   await field('新的专用 SSH 私钥', secret);
   await act(async () => host.querySelector<HTMLInputElement>('.personal-credentials input[type=checkbox]')!.click());
   await act(async () => button('保存更换后的凭据').click());
   expect(personalRemoteApi.rotateCredential).toHaveBeenCalledTimes(1);
+  await act(async () => button('服务器').click());
   expect(host.textContent).toContain('SSH 身份版本已改变或撤销');
   expect(button('保存身份并登记服务器').disabled).toBe(true);
   await field('已保存的此服务器 SSH 身份', credential.credentialRef); await consent();
