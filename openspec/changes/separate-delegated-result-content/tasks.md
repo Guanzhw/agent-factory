@@ -7,7 +7,7 @@
 
 ## 2. 最小实现与消费者验证
 
-- [ ] 2.1 仅为固定 native-delegated envelope 分离正文合同及原 child 输出预算分类；验证上述失败回归转为完整等值结果/closed=true/effect DONE、预算边界及超界一字节、非JSON明确失败、未知子树仍不闭合、其他适配器与metadata反例仍拒绝，并保留旧短正文读取测试。
+- [ ] 2.1 仅为固定 native-delegated envelope 分离正文合同及原 child 输出预算分类；验证上述失败回归转为完整等值结果/closed=true/effect DONE、预算边界及超界一字节、非JSON明确失败、正文64层成功和65/500层INVALID闭合、未知子树仍不闭合、其他适配器与metadata反例仍拒绝，并保留旧短正文读取测试。
 - [ ] 2.2 在既有 WorkflowControl 和 Research fixture 中核对原 wait tool result、本轮 results、前轮 context 收到完整正文，CLI/SSH evidence 原task/run引用保持；不改消费者生产源码，记录受影响便携测试实际计数和结果。
 
 ## 3. 原生集成与完整 diff 审查

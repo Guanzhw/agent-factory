@@ -6,7 +6,7 @@
 
 ### Requirement: 原委派正文使用独立数据合同
 
-系统 SHALL 完整保存原生委派任务在原输出预算内的 JSON 结果，允许正常换行、URL、Unicode、超过 4096 字符的文本和任意合法业务键。正文不能因控制字段黑名单被拒绝，正文以外的元数据继续遵守原身份和结构约束。
+系统 SHALL 完整保存原生委派任务在原输出预算内、正文结构深度不超过 64 的 JSON 结果，允许正常换行、URL、Unicode、超过 4096 字符的文本和任意合法业务键。根深度为 0，每进入 object/list 的值增加 1；producer 和持久化读取 MUST 使用同一深度规则。正文不能因控制字段黑名单被拒绝，正文以外的元数据继续遵守原身份和结构约束。
 
 #### Scenario: 普通正文进入现有消费者
 - **WHEN** 原 child 子树已正向成功停止，正文包含多行、URL、业务 token/host/command 键且 UTF-8 JSON 大小不超过原输出预算
@@ -22,7 +22,7 @@
 
 ### Requirement: 输出预算失败不伪装为执行未知
 
-系统 SHALL 仅在原子树已经正向停止后，将不能表示为 JSON 或超出原 child 输出预算的结果标记为明确的技术失败，并闭合该原 operation；不得截断正文后宣称成功，也不得仅因该结果错误保留 UNKNOWN。原 native 结果和任务身份保持不变。
+系统 SHALL 仅在原子树已经正向停止后，将不能表示为 JSON、超过正文结构深度或超出原 child 输出预算的结果标记为明确的技术失败，并闭合该原 operation；不得截断正文后宣称成功，也不得仅因该结果错误保留 UNKNOWN。原 native 结果和任务身份保持不变。
 
 #### Scenario: 预算边界和超限
 - **WHEN** 完整正文 UTF-8 JSON 字节数恰等于原输出预算
@@ -35,6 +35,10 @@
 #### Scenario: 仍有未知效果
 - **WHEN** native child 已返回正文但其子树仍有未知或运行中的效果
 - **THEN** operation 保持原非终态，不能用正文合法或超限代替正向停止证明
+
+#### Scenario: 正文深度边界不阻塞已停止操作
+- **WHEN** 已停止 child 的 JSON 正文字节数在预算内，最深值位于 64 层
+- **THEN** 完整成功并可由原 custody 重读；65 层以及审查复现的 500 层结果均返回 `DELEGATED_RESULT_INVALID`，原 operation 闭合、effect DONE，不进入递归复制后的 UNKNOWN 死锁
 
 ### Requirement: 保留原读取和恢复行为
 

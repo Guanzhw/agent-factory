@@ -15,3 +15,14 @@
 实施复审重点：严格检查 JSON 无损类型（尤其非字符串对象键、tuple、非有限数、循环/不可编码对象）；确认正文未被外层 32 KiB 再次计入，metadata 限额仍生效；超限停止结果实际闭合 effect，原 child 不重派；保留真实 native 继续收到全文的回执。以上是已通过方案的验收细化，不增加新机制或审批步骤。
 
 本 PASS **仅为方案门槛**。未审实现、未运行新测试或 PostgreSQL，不代表最终代码 PASS。实施后的完整 `base..head`、失败基线与修后证据必须另行复审；PostgreSQL 时隙由 coordinator 安排，任务勾选归 coordinator。
+
+## 实现首审 — NEEDS_FIX
+
+- 本次完整范围：`62614177c23c4d2cd0caf6b7c91418e74fde8ad4` → `0299819b965723868d910bb21fb55de2155bdef6`，19 文件；已读 2 个生产文件、全部测试/规范/证据变化。源码实现提交为 `803c00a0e7158830b6fedaa2b8496222cdac30e6`；其后仅增加 PG 回执/README，没有继承成未审代码 PASS。
+- 普通正文修复保持 2 个产品文件，接线最小。已检查作者首跑 4 subtest 的原 `WORKFLOW_CONTRACT_INVALID`、50 个便携测试 PASS、6 个真实 PostgreSQL/native 测试 PASS 的日志及测试断言。PG 证据覆盖 >32 KiB 原 child 正文、原暂停/硬重启/继续、最终全文等值、effect DONE、原 allocation SETTLED；模型仍为 deterministic fixture。本 reviewer 未重复运行 PG。
+- **需修：正文验证与后续复制的结构能力不一致。** `delegated_result_bytes` 可接受 500 层嵌套 list 的有效 JSON；其 UTF-8 编码仅 1006 字节，远小于测试原预算 65536。但 `validate_runtime_observation` 最后的 `deepcopy(value)` 触发 `RecursionError`，被转成 `WORKFLOW_CONTRACT_INVALID`。producer 已走过“格式失败则 FAILED”的分类位置，导致实际原 custody 仍 `closed=false`、effect `UNKNOWN`。这保留了一个与方案承诺相反的完成阻断；不是安全漏洞或 PostgreSQL 故障结论。
+- 独立窄复现直接使用本提交 `DelegatedContentTests` 的真实 SQLite custody/effect：将 `content='leaf'` 连续包装为单元素 list，再依次 `original()`、`completed(content)`、`service.lookup(...)`。深度 100/250/400 分别为 206/506/806 字节，均 COMPLETED/closed=true/DONE；深度 500 为 1006 字节，得到上述 ValueError/closed=false/UNKNOWN。测试只替换 child stop facts，不运行 native child。
+- 期望整改：先明确正文结构支持边界，并让 producer 与持久化读取共用同一规则，确保不能安全表示/复制的已停止结果进入明确 INVALID 闭合；或证明完整复制路径可处理所承诺的所有结构。不要在多个消费者追加 catch、吞数据库错误或新增恢复框架。补边界成功、超界失败闭合和原未知仍 held 的回归；修后再审精确新 head。
+- 文档小项：`git diff --check` 指出 `evidence/before.txt:1` 有尾空格。可去掉日志行尾空白，保留原失败文本和首跑证据。
+
+当前结论为 **NEEDS_FIX，未授予最终实现 PASS**；其余已检查普通正文/元数据/消费者路径暂未发现阻断项。原方案 PASS 是历史方案阶段事实，不能覆盖本次实现发现。

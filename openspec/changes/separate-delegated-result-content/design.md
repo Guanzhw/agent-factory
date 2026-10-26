@@ -18,7 +18,7 @@
 
 仅精确 `native-delegated-operations-v1`、revision `1` 的 COMPLETED output 使用固定 `{taskId, runId, result, artifacts}` 形状。共享常量放在无运行时依赖的既有合同模块，避免合同反向导入适配器；原 adapter pin 的值不变。
 
-`result` 为 JSON 数据：string/object/array/number/bool/null，object 键为字符串，数值有限；不做执行字段、URL或可打印字符过滤。一个小型共用编码/尺寸函数被 producer 和持久化合同复用，UTF-8 JSON 使用 `ensure_ascii=False`、固定紧凑分隔符、`allow_nan=False`；保存仍为 deepcopy 原值，不归一化或截断内容。
+`result` 为 JSON 数据：string/object/array/number/bool/null，object 键为字符串，数值有限；不做执行字段、URL或可打印字符过滤。正文根深度为 0，每进入 object/list 的值增加 1，最大深度 64；由同一个共用正文函数在 producer 与持久化合同中判定。这个明确结构边界给后续 observation/journal 的递归复制留足空间，避免正文编码成功后又在 deepcopy 中失败。一个小型共用编码/尺寸函数被 producer 和持久化合同复用，UTF-8 JSON 使用 `ensure_ascii=False`、固定紧凑分隔符、`allow_nan=False`；保存仍为 deepcopy 原值，不归一化或截断内容。
 
 去掉 result 后的 output metadata 仍调用原 `_inert` 和 16 KiB 上限；外层 observation 去掉 result 后仍用原结构/32 KiB 上限。正文独立使用既有 application schema 最大输出预算 1 MiB 作为持久化读取的绝对上限，producer 使用具体 child plan 的 `budget.outputBytes`（既有 1024..1048576 范围）。不可再将完整 observation 套回 32 KiB，否则同一 bug 会换阈值重现。UTF-8 数据限额不是 ASCII 转义后的存储字符数；原 SQL JSON 序列化可能更长，但其膨胀有界。
 
@@ -26,7 +26,7 @@
 
 ### 2. 结果失败只在正向停止之后分类
 
-`_observe` 继续先核对子树 allStopped 和原 failed/cancelled 分支。仅原 child 子树成功停止时才检查正文：预算内完整输出为 COMPLETED；超过 child 输出预算为 FAILED／`DELEGATED_RESULT_LIMIT`，不可编码数据为 FAILED／`DELEGATED_RESULT_INVALID`，均使用既有 FailureJSON 和 allStopped=true，output=None。异常捕获仅围绕正文转换，不吞掉 owner/child/stop/DB 读取错误。
+`_observe` 继续先核对子树 allStopped 和原 failed/cancelled 分支。仅原 child 子树成功停止时才检查正文：结构和预算内完整输出为 COMPLETED；超过 child 输出预算为 FAILED／`DELEGATED_RESULT_LIMIT`，不可编码或超过正文结构深度的数据为 FAILED／`DELEGATED_RESULT_INVALID`，均使用既有 FailureJSON 和 allStopped=true，output=None。异常捕获仅围绕正文转换，不吞掉 owner/child/stop/DB 读取错误。
 
 这不是把未知工作强制结算：原停止证明先成立；新错误只是明确结果合同失败。原 native content 不改写，用户仍可沿现有原 native task/run 读取口检查它；不把失败结果自动发布为成功成果。既有 `_accept`、effect_complete、observer completion 与预算 settle 承担闭合，无新状态。
 
@@ -40,6 +40,7 @@
 
 - [放宽到任意控制字段] → exact adapter/revision 和固定 output 形状；只对 result 数据例外，原其他合同反例继续失败。
 - [把小的固定上限换成新的完成死锁] → producer 使用原 task 输出预算，超限在已停止之后明确 FAILED 并闭合；容量边界/超界一字节均回归，不靠原样重试。
+- [编码通过但递归复制失败] → 独立实现审查复现 500 层、1006 字节的 JSON 能编码但 observation deepcopy 失败；补充根深度 0、最大 64 的单一正文结构边界。64 层成功、65/500 层在已停止后 INVALID 闭合，producer/reader 共用规则，不新增恢复路径。
 - [结果丢失或消费链断开] → custody 读写等值、原 wait 后续模型收到全文、本轮/前轮 Research 读取等值；真实 native fixture 使用含换行/URL且 >16 KiB 的正文。
 - [读旧记录时新限额误杀] → 旧合同允许的结果小于新绝对容量；shape保持既有 producer 形状。旧 closed 不改写，原 open 由同 pin 正常 lookup/inspect 完成。
 - [误称集成成功] → 先保留便携失败回归；PostgreSQL 时隙由 coordinator 串行批准，实际运行前不得把 native continuation／预算闭合写成通过。
