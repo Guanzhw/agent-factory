@@ -114,6 +114,11 @@ def scenario(browser, origin, output, mode, identity, viewport):
         page.get_by_role('button', name='发布研究执行配置', exact=True).click()
         expect(page.get_by_role('heading', name='配置已发布', exact=True)).to_be_visible()
         page.get_by_role('button', name='用于当前研究约定', exact=True).click()
+        # The published setup also contains an experiment mode. Only its exact
+        # current research Workflow is a new Research admission choice.
+        modes = page.get_by_role('combobox', name=re.compile('^执行方式'))
+        expect(modes).to_have_value('research')
+        assert modes.locator('option').evaluate_all('(items) => items.map(item => item.value)') == ['', 'research']
         page.get_by_label('研究截止时间（本地时间）', exact=True).fill((datetime.now() + timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M'))
         page.get_by_label('每轮工具调用上限', exact=True).fill('32')
         page.get_by_role('button', name='保存配置并生成待确认版本', exact=True).click()
@@ -155,6 +160,7 @@ def scenario(browser, origin, output, mode, identity, viewport):
         expect(page.get_by_text('Agent 分析 · 尚未独立验证', exact=True)).to_be_visible()
         page.locator('.rw-identity > button').click()
         page.get_by_role('button', name='退出登录', exact=True).click()
+        expect(page.get_by_role('button', name=login_name, exact=True)).to_be_enabled()
         page.goto(origin + '/?tab=research')
         login('bob')
         assert context.request.get(origin + '/api/factory/research/projects').json()['items'] == []

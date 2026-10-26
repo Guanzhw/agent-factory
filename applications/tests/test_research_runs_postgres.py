@@ -1,4 +1,4 @@
-"""First research root through real PG admission and synthetic native execution."""
+"""Persisted historical intents through real PG recovery; no old Workflow executor claim."""
 from concurrent.futures import ThreadPoolExecutor
 import os
 import time
@@ -10,7 +10,9 @@ from core_native_fixture import FixtureModel
 
 import test_applications_composition as fixtures
 from research.public import install
-from research.projects import ProjectCommand
+from research.projects import Agreement, ProjectCommand
+from research_history_fixture import seed_legacy_intent
+from agent_factory.store import digest
 from test_research_projects import agreement
 
 
@@ -39,8 +41,13 @@ class ResearchRunsPostgresTests(unittest.TestCase):
         self.assertEqual(confirm.status_code, 200, confirm.text)
         self.body = {'requestId': 'pg-runs-start', 'expectedVersion': 1}
 
+    def seed_history(self):
+        return seed_legacy_intent(self.fixture.state['research_runs'], 'alice', self.url.rsplit('/', 1)[1],
+            ProjectCommand.model_validate(self.body), Agreement.model_validate(self.agreement))
+
     def test_concurrent_start_one_native_root_and_restart_original_receipt(self):
         fixture = self.fixture
+        self.seed_history()
         observed_inputs = []
         response = FixtureModel._response
 
@@ -84,6 +91,7 @@ class ResearchRunsPostgresTests(unittest.TestCase):
 
     def test_lost_dispatch_ack_is_unknown_and_end_never_replays(self):
         fixture = self.fixture
+        self.seed_history()
         with patch.object(fixture.state['bridge'], 'submit', AsyncMock(side_effect=TimeoutError('controlled missing acknowledgement'))) as submit:
             first = fixture.client.post(self.url + '/start', json=self.body)
             self.assertEqual(first.status_code, 202, first.text)
@@ -103,29 +111,60 @@ class ResearchRunsPostgresTests(unittest.TestCase):
             self.assertEqual(replay.json()['execution']['state'], 'unknown')
             submit.assert_not_awaited()
 
-    def test_preparation_failure_rolls_back_scope_allocation_and_domain_intent(self):
+    def test_without_workflow_new_start_is_unavailable_and_creates_no_intent(self):
         fixture = self.fixture
         scopes = fixture.store.local_budget_scopes
         runs = fixture.state['research_runs']
-        bind = scopes.bind_request
-
-        def fail_after_bind(*args):
-            bind(*args)
-            raise RuntimeError('controlled failure before research intent commit')
-
-        with patch.object(scopes, 'bind_request', fail_after_bind), \
-                patch.object(fixture.state['bridge'], 'submit', AsyncMock()) as submit:
-            with self.assertRaisesRegex(RuntimeError, 'controlled failure'):
-                fixture.client.post(self.url + '/start', json=self.body)
+        self.assertEqual(fixture.client.get(self.url).json()['execution'], {
+            'available': False, 'reason': 'RESEARCH_NATIVE_COMPONENT_REQUIRED'})
+        with patch.object(fixture.state['bridge'], 'submit', AsyncMock()) as submit:
+            reply = fixture.client.post(self.url + '/start', json=self.body)
+            self.assertEqual(reply.status_code, 409, reply.text)
+            self.assertEqual(reply.json()['code'], 'RESEARCH_NATIVE_COMPONENT_REQUIRED')
             submit.assert_not_awaited()
         with fixture.store.transaction(read_only=True) as conn:
             for table in (scopes.scopes, scopes.allocations, scopes.requests, runs.commitments, runs.experiments, runs.attempts):
                 self.assertEqual(conn.execute(select(func.count()).select_from(table)).scalar(), 0, table.name)
 
+    def test_without_workflow_round_commands_recover_original_receipts_and_resume_result(self):
+        fixture = self.fixture
+        runs = fixture.state['research_runs']
+        # Persist the historical command shape explicitly, without supplying an old executor.
+        old = self.seed_history()
+        project = old['projectId']
+        stored = {key: old[key] for key in ('projectId', 'goalVersion', 'scopeId', 'allocationId', 'request')}
+        stored['roundId'] = 'original-round'
+        with runs.projects.db.write() as conn:
+            conn.execute(runs.projects.commands.update().where(runs.projects.commands.c.actor_id == 'alice',
+                runs.projects.commands.c.request_id == self.body['requestId']).values(action='research.round.start',
+                    fingerprint=digest({'action': 'round.start', 'project': project, 'expectedVersion': 1}), result=stored))
+        with patch.object(fixture.state['bridge'], 'submit', AsyncMock(side_effect=TimeoutError('original unknown'))) as submit:
+            first = fixture.client.post(self.url + '/start', json=self.body)
+            self.assertEqual(first.status_code, 202, first.text)
+            self.assertEqual(first.json()['roundId'], 'original-round')
+            self.assertEqual(first.json()['execution']['state'], 'unknown')
+            self.assertEqual(submit.await_count, 1)
+        fixture.stop(); fixture.start(); install(fixture.state); fixture.login('alice')
+        runs = fixture.state['research_runs']
+        resume = {'projectId': project, 'goalVersion': 1, 'eventId': 'original-event', 'contentId': 'original-content'}
+        with runs.projects.db.write() as conn:
+            runs.projects.db.record(conn, runs.projects.commands, 'alice', 'original-resume',
+                digest({'action': 'round.start', 'project': project, 'expectedVersion': 1}), 'research.round.resume', resume)
+        with patch.object(fixture.state['bridge'], 'submit', AsyncMock()) as submit:
+            repeated = fixture.client.post(self.url + '/start', json=self.body)
+            self.assertEqual(repeated.json(), first.json())
+            result = fixture.client.post(self.url + '/start', json={'requestId': 'original-resume', 'expectedVersion': 1})
+            self.assertEqual(result.json(), resume)
+            changed = fixture.client.post(self.url + '/start', json={**self.body, 'expectedVersion': 2})
+            self.assertEqual(changed.status_code, 409)
+            submit.assert_not_awaited()
+        self.assertEqual(len(fixture.store.tasks('alice')), 1)
+
     def test_prepared_research_request_cannot_bypass_scope_via_public_core_start(self):
         fixture = self.fixture
         runs = fixture.state['research_runs']
         project_id = self.url.rsplit('/', 1)[-1]
+        self.seed_history()
         intent = runs._prepare('alice', project_id, ProjectCommand.model_validate(self.body))
         self.assertEqual(len(fixture.store.tasks('alice')), 0)
         ended = fixture.client.post(self.url + '/end', json={'requestId': 'pg-prepared-end',
