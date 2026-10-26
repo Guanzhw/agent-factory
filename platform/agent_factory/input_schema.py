@@ -14,7 +14,7 @@ def require(value):
         raise ValueError(ERROR)
 
 
-def bounded_json(value, *, maximum=65536):
+def bounded_json(value, *, maximum=65536, ensure_ascii=True):
     count = 0
     def walk(item, depth):
         nonlocal count
@@ -34,7 +34,7 @@ def bounded_json(value, *, maximum=65536):
             require(item is None or type(item) is bool)
     try:
         walk(value, 0)
-        require(len(json.dumps(value, allow_nan=False, ensure_ascii=True).encode()) <= maximum)
+        require(len(json.dumps(value, allow_nan=False, ensure_ascii=ensure_ascii).encode()) <= maximum)
         return deepcopy(value)
     except (TypeError, ValueError, OverflowError, RecursionError):
         raise ValueError(ERROR) from None

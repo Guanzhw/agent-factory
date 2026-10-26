@@ -1,4 +1,5 @@
 """Explicit optional installation; the deployment owns ApplicationAssembly."""
+from types import SimpleNamespace
 from agent_factory.application_runs import ApplicationRuns
 from .runs import ResearchRuns, runs_router
 from .records import ResearchRecords
@@ -49,6 +50,11 @@ def install(state, *, workflow=None, qa_workflow=None):
         workflow.bind(rounds)
         store.application_runtime.register('research-round', rounds,
             native_components=(tuple(pin[key] for key in ('kind', 'id', 'revision', 'sha256')),),
+            finalizes=True)
+        # Baseline 62614177 stopped tasks need their original completion responsibility.
+        store.application_runtime.register('research-round-62614177-completion',
+            SimpleNamespace(finalization_context=rounds.finalization_context), native_components=((
+                'workflow', 'research-round', '1', '2c1fcb5650d8473d2171f6d374035b8d4db452b53603337e2b13f3b43f661c54'),),
             finalizes=True)
         projects.execution = rounds
         state['research_rounds'] = rounds

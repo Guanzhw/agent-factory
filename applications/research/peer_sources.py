@@ -70,9 +70,9 @@ class ResearchPeerSources:
             row = conn.execute(select(self.inputs).where(self.inputs.c.round_id == round_id)).mappings().first()
             return dict(row) if row else None
 
-    def publication(self, owner, round_id, identifier, revision, body, *, artifacts=()):
+    def publication(self, owner, round_id, identifier, revision, body, *, artifacts=(), content_artifact=None):
         return self.content.publish(owner, ContentPublication(source=ContentSource(
-            application='research', record=identifier, revision=revision), content=body, visibility='team',
+            application='research', record=identifier, revision=revision), content=body, contentArtifact=content_artifact, visibility='team',
             artifacts=list(artifacts), sourceContentIds=self.dependencies(round_id)),
             'research-record:' + identifier + ':' + revision)['id']
 
