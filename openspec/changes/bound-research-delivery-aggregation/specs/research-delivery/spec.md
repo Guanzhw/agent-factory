@@ -24,3 +24,14 @@
 #### Scenario: A non-cited dependency is withdrawn
 - **WHEN** 任一原 sourceId 撤回或缺失，或精选制品损坏
 - **THEN** 保留原 404/409 边界，read/download 不返回缓存正文，list 不泄露撤回内容；不得把此类错误伪装成预算不足
+
+### Requirement: Original project ending snapshot
+新交付 SHALL 保存创建快照的完整原 ending 及 project ownerId，read/UI/download 均保留其原文、outcome、goalVersion、endedAt、resourceCleanup 及已有 verificationStatus；不得伪造 actor、科学成功或资源已清理。
+
+#### Scenario: Manual ending includes negative findings and remaining questions
+- **WHEN** 用户填写未达标/取消结束依据和剩余问题后创建成果
+- **THEN** JSON 与 ZIP 的 ending 原 reason 逐字相等，UI 显示完整原文和版本/owner/清理事实；not_observed 保持原值，重试不替换该快照
+
+#### Scenario: No original ending in a new or old manifest
+- **WHEN** 创建时项目未结束，或读取旧 manifest 没有 ending
+- **THEN** 不从当前项目推测历史原因；UI 明示没有结束快照且不声称没有剩余问题
