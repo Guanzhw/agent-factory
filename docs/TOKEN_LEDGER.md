@@ -1,15 +1,16 @@
 # Durable token and amount ledger
 
-The Factory admits each native Model provider primitive through a PostgreSQL
-reservation before calling it. Agno remains the owner of model retries, tool
-loops, native runs and queue tickets. The ledger does not launch a model, create
-credentials, authorize a paid provider, or act as a second scheduler.
+When fee management is explicitly enabled, the ledger admits each participating
+native Model provider primitive through a PostgreSQL reservation before calling
+it. Agno remains the owner of model retries, tool loops, native runs and queue
+tickets. The ledger does not launch a model, create credentials, authorize a paid
+provider, or act as a second scheduler.
 
-The installed defaults are two explicit local contracts: `DemoModel` and
-`LocalORXWorkflowModel`. Their registered provider/model identities and zero
-tariff are fixed. Both return authoritative zero provider usage because they
-make no provider request. A real ORX evaluator subprocess is separate from model
-usage. A zero tariff is not evidence of autonomous scientific discovery.
+The core's `Settings.usage_pricing` and `default_zero_prices()` are empty by
+default. Tests explicitly register synthetic models and their exact zero-price
+contracts; no demo model or free provider is installed by startup. A local
+no-provider contract reports zero usage only for its registered implementation.
+A zero tariff does not establish real provider or scientific-model compatibility.
 
 ## Immutable approval and prices
 
@@ -44,8 +45,10 @@ the original user ceiling requires a separately designed, explicit migration.
 primitive again, so every actual retry has its own durable attempt. These hooks
 reserve before the call; run-level aggregate metrics are not an admission gate.
 Adapters must disable hidden provider SDK retries and register a trusted guard
-that enforces the actual input and output request limits. Only the two installed
-local implementations bypass this provider-specific contract.
+that enforces the actual input and output request limits. An explicitly registered
+zero-price local contract may instead identify its no-provider implementation
+with `local_model_type`; invocation checks that the selected model matches that
+type. This exception does not install a default model or authorize a provider.
 
 One short PostgreSQL advisory transaction serializes the intersection of task,
 every persisted ancestor, root and the owner's lifetime account. It checks

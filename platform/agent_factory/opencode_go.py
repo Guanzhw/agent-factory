@@ -33,55 +33,6 @@ def safe_actual_model(value):
     return value if type(value) is str and value in MODELS else None
 
 
-class _LoopbackResponseStream(httpx.AsyncByteStream):
-    def __init__(self, response, transport):
-        self.response, self.transport = response, transport
-
-    async def __aiter__(self):
-        async for chunk in self.response.aiter_raw():
-            yield chunk
-
-    async def aclose(self):
-        try:
-            await self.response.aclose()
-        finally:
-            await self.transport.aclose()
-
-
-class GoLoopbackTransport(httpx.AsyncBaseTransport):
-    """Explicit synthetic wire fixture, incapable of routing to the Go host.
-
-    Only literal loopback HTTP origins are accepted, with no proxy, redirect,
-    credentials, or hidden HTTP retry. Authorization is never forwarded.
-    """
-
-    def __init__(self, base_url: str):
-        url = httpx.URL(base_url)
-        if (url.scheme != "http" or url.host not in {"127.0.0.1", "::1"} or url.port is None
-                or not 1 <= url.port <= 65535 or url.userinfo or url.query or url.fragment
-                or url.path not in {"", "/"}):
-            raise ValueError("Go fixture requires an explicit literal loopback HTTP origin")
-        self._origin = url
-
-    async def handle_async_request(self, request):
-        if (request.method != "POST" or str(request.url) not in {BASE_URL + "/chat/completions", BASE_URL + "/responses"}
-                or request.headers.get("user-agent") != USER_AGENT
-                or not re.fullmatch(r"[A-Za-z0-9_-]{8,128}", request.headers.get("x-opencode-session", ""))):
-            raise ValueError("Go fixture request differs from the reviewed wire contract")
-        transport = httpx.AsyncHTTPTransport(retries=0, trust_env=False)
-        try:
-            forwarded = httpx.Request("POST", self._origin.copy_with(path=request.url.path),
-                content=await request.aread(), headers={"content-type": "application/json",
-                    "user-agent": USER_AGENT, "x-opencode-session": request.headers["x-opencode-session"]},
-                extensions=request.extensions)
-            response = await transport.handle_async_request(forwarded)
-            return httpx.Response(response.status_code, headers=response.headers,
-                stream=_LoopbackResponseStream(response, transport), request=request)
-        except BaseException:
-            await transport.aclose()
-            raise
-
-
 def _unknown(message="Go protocol response is invalid", status=400, *, original_error=None, rejection_code=None, incomplete_reason=None, reported_usage=None):
     # Never interpolate server bodies, request headers, credentials or SDK errors.
     error = ModelProviderError(message=message, status_code=status, model_name="OpenCode Go development")

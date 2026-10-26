@@ -110,7 +110,7 @@ class GoContractTests(unittest.TestCase):
             self.assertEqual(len(requests), 1)
 
     def test_loopback_transport_rejects_nonliteral_or_credentialed_targets(self):
-        from agent_factory.opencode_go import GoLoopbackTransport
+        from go_http_fixture import GoLoopbackTransport
         for target in ("https://opencode.ai", "http://localhost:8000", "http://example.invalid:8000",
                        "http://127.0.0.1:8000/path", "http://user:pass@127.0.0.1:8000",
                        "http://127.0.0.1:8000/?query=1"):

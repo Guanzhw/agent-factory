@@ -61,7 +61,7 @@ class GoDevelopmentProfileTests(unittest.TestCase):
         with self.assertRaises(ValueError): GoDevelopmentHandle(credential=Mock(), native_retries=1)
 
     def test_fixture_transport_allowlist_rejects_network_and_subclass_escape(self):
-        from agent_factory.opencode_go import GoLoopbackTransport
+        from go_http_fixture import GoLoopbackTransport
         class DisguisedMock(httpx.MockTransport):
             pass
         network = httpx.AsyncHTTPTransport()

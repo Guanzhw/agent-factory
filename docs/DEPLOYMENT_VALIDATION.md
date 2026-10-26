@@ -30,8 +30,10 @@ adapter. It does not create child groups, write limits, move tasks, exercise
 
 Linux is the selected target platform. Exact host capacity and production runtime
 remain unspecified. The existing unified-login service is not currently supplied;
-development uses an explicitly enabled mock identity provider only. Mock login is
-not production IdP/TLS/identity acceptance and does not unblock those checks.
+product login requires an explicitly configured external identity provider and
+rejects authentication when that configuration is absent. Synthetic OIDC peers
+exist only in isolated tests; they do not establish production IdP/TLS/identity
+acceptance or unblock those checks.
 
 Config-only CLI reading also supports platforms without POSIX `O_NOFOLLOW`:
 regular-file and symlink checks plus pre/post-open file identity checks protect

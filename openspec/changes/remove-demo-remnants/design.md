@@ -14,7 +14,7 @@
 
 1. 将两个类整体移入 `platform/tests/go_http_fixture.py`，由该文件导入产品 `BASE_URL/USER_AGENT`；同步 `fixture_go_development.py`、`test_go_development_profile.py`、`test_opencode_go.py`，不加 product re-export、兼容开关或新 abstraction。保留端点、header 白名单、不重试及 response/transport cleanup；peer 增加“收到 Authorization”布尔观测，在定向 loopback 用例断言 false，不记录值。
 2. UI 只删两个 demo 三元分支；`source` 优先级、`evidenceKind`、`validationStatus`、指标名和数据不变。使用既有 task-history 渲染检查与完整 npm check，不加实现镜像测试。
-3. 精确指南范围：TEAM_MEMBERSHIP 去默认演示身份；DEPLOYMENT_VALIDATION 区分正式配置与测试 OIDC；APPLICATION_DEVELOPMENT 说明无默认 demo、默认无应用及 Research 显式入口；SECURITY 同段对齐账号管理员/成员自服务；MATERIAL_GOVERNANCE 旧 seed 标历史；MATERIAL_ASSEMBLY 对齐固定 live/production 与未验字段；EVENT_REPLAY 说明显式签名密钥；TOKEN_LEDGER 说明默认 pricing 为空、合成零价测试显式注册。SOURCE_SYNTHESIS_JOURNEY 仅增加退役提示，历史 audit/spec/review/evidence 不改。
+3. 精确指南范围：TEAM_MEMBERSHIP 去默认演示身份；DEPLOYMENT_VALIDATION 区分正式配置与测试 OIDC；APPLICATION_DEVELOPMENT 说明无默认 demo、默认无应用及 Research 显式入口；SECURITY 的身份及默认策略说明对齐账号管理员/成员自服务与现有 runtime bounds；MATERIAL_GOVERNANCE 旧 seed 标历史；MATERIAL_ASSEMBLY 对齐固定 live/production 与未验字段；EVENT_REPLAY 说明显式签名密钥；TOKEN_LEDGER 说明默认 pricing 为空、合成零价测试显式注册。SOURCE_SYNTHESIS_JOURNEY 仅增加退役提示，历史 audit/spec/review/evidence 不改。
 
 ## Risks / Trade-offs
 
