@@ -11,6 +11,10 @@
 - **WHEN** 交付包含 R1 长中文正文或读取旧含 records 副本的 manifest
 - **THEN** records 完整还原；正文载体不另作精选证据导出，原 sourceIds 不减少
 
+#### Scenario: A terminal round has no published record
+- **WHEN** 创建快照包含 terminal 已确认但 terminal_record 缺失的轮次，即使其他轮次有完整成果
+- **THEN** missingEvidence 保存 round_not_published:<原roundId>，与该轮的 round_not_terminal 互斥；不伪造正文或改变 outcome，旧成功快照不动态回填
+
 ### Requirement: One actual export budget
 交付 SHALL 使用既有 maximum 限制完整 UTF-8 manifest、精选附件与实际 ZIP 开销；create/read/download 对相同来源、配置和字节 SHALL 得到同一可交付结果。
 
