@@ -5,9 +5,9 @@ from ctypes import wintypes as wt
 import os
 import time
 import sys
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
-if sys.platform == 'win32':
+if sys.platform == 'win32' or TYPE_CHECKING:
     import pywintypes
     import win32api
     import win32con
