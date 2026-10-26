@@ -2,6 +2,8 @@
 
 审查者：`/root/audit_crosscheck`；非方案/实施作者，仅写本审查文件。旧审计结论和旧 PASS 不替代本次精确范围审查。
 
+当前结论：**实现 PASS**，截至 `342028fa3d182eee57c8873a992a400a02972b1f`；下文保留最初 NEEDS_FIX 与整改链。
+
 ## 方案审查 — PASS
 
 - 基线：`62614177c23c4d2cd0caf6b7c91418e74fde8ad4`。
@@ -32,3 +34,11 @@
 精确范围 `0299819b965723868d910bb21fb55de2155bdef6` → `7c16722d7d736241267fcf1dc42a56ab14cc1a27`，4 个规范/审查文件，产品与测试源码未变。已核对新增的根深度 0、object/list 值递进、最大 64 的单一正文结构规则；producer/reader 共用该规则，65/500 层只在正向停止之后转 INVALID 并闭合，64 层完整往返。它为既有递归复制预留空间，原旧合同最多 6 层的已闭合正文不受影响，无新 catch/恢复层。
 
 该最小整改方案可实施。仍须修后完整实现复审，当前未授予最终代码 PASS；必须看到 64/65/500 的实际 custody/effect 结果，不能只测独立 helper。
+
+## 修后完整实现复审 — PASS
+
+- 精确累计范围：`62614177c23c4d2cd0caf6b7c91418e74fde8ad4` → `342028fa3d182eee57c8873a992a400a02972b1f`。在前次完整 19 文件审查基础上，核对全部规范、生产、测试与新增证据增量；最终仍只有 `delegated_operations.py`、`workflow_contracts.py` 两个产品文件。未新增正文读取/恢复层或 Research 产品代码变化。
+- 本次生产整改只有共用 `data(item, depth=0)` 的 `depth <= 64` 和两处递归参数；producer 与 reader 同规则。先前 500 层复制错误在进入 observation deepcopy 前已成为 `DELEGATED_RESULT_INVALID`，正向停止后实际 closed=true/effect DONE；64 层全文往返。原 UNKNOWN 分支在正文检查前保持不闭合，没有新增宽泛异常捕获。
+- 独立执行：在上述精确 head，以共享 Python、`PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=platform:platform/tests:applications:applications/tests` 运行 `python -m unittest test_delegated_content test_workflow_contracts -v`，**14 tests / 0 skip / PASS**。覆盖真实 SQLite custody/effect、64/65/500 边界、正常正文、原 wait、预算等号/超限、无损类型、非委派/metadata 反例和未知子树。`git diff --check 62614177..342028fa` 通过。
+- 已核对作者新增首败/修后深度 JSON 与日志、52 项便携 PASS；旧首败尾空格已清且错误文本保留。作者报告静态/架构重验 PASS。原 6 项真实 PostgreSQL/native 回执仍精确属于 `803c00a0e7158830b6fedaa2b8496222cdac30e6`；本次没有重跑 PG，且 README 已明确。其实际 child result 是 string，新增结构递归边界不改变该受测分支；不把这一事实伪写成最终 head 的新 PG 实测。
+- 结论：本轮已发现的完成阻断已整改，未发现剩余阻断项，授予上述累计代码范围 **PASS**。这不替代 coordinator 的组合检查、依赖审计、发布判断或真实模型/GPU/SSH/多主机验收。review 记录本身之后的纯文档提交须登记，不视作未审生产增量。
