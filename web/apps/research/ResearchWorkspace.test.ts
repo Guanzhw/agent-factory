@@ -49,6 +49,15 @@ it('offers personal project creation and real resource navigation without a fake
   expect(researchApi.create).toHaveBeenCalledWith('alice', { requestId: expect.any(String), title: '新研究', assistantId: null, researchAssistantId: 'a' });
   expect(onProject).toHaveBeenCalledWith('project-1'); expect(button('启动研究')).toBeUndefined();
 });
+it('explains an incompatible research configuration while retaining original history and end actions', async () => {
+  vi.mocked(researchApi.project).mockResolvedValue({ ...confirmed, execution: { available: false, reason: 'RESEARCH_NATIVE_COMPONENT_REQUIRED' } });
+  await mount('project-1');
+  expect(host.textContent).toContain('请选择兼容当前研究组件的执行配置');
+  expect(host.textContent).toContain('可从原任务记录核对与清理运行');
+  expect(host.textContent).toContain('目标历史');
+  expect(button('按当前约定启动或续接研究')).toBeUndefined();
+  expect(button('结束研究')).toBeDefined();
+});
 it('saves an agreement before separate confirmation and retains the old goal when revising', async () => {
   await mount('project-1'); await field('研究目标', agreement.objective); await field('评价与达标标准', agreement.evaluation); await field('停止与放弃条件', agreement.stopConditions); await field('最多实验轮数', '3'); await field('最多工具调用', '8');
   await act(async () => button('保存研究约定').click());

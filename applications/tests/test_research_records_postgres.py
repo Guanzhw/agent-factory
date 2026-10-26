@@ -23,6 +23,7 @@ class ResearchRecordsPostgresTests(unittest.TestCase):
 
     def test_concurrent_intent_one_team_snapshot_without_project_or_resource_access(self):
         fixture = self.fixture
+        self.base.seed_history()
         with ThreadPoolExecutor(max_workers=2) as pool:
             intents = list(pool.map(lambda _: self.service._prepare('alice', self.project_id, self.command), range(2)))
         self.assertEqual(intents[0], intents[1])
@@ -53,21 +54,33 @@ class ResearchRecordsPostgresTests(unittest.TestCase):
             self.assertEqual(conn.execute(select(func.count()).select_from(content.contents)).scalar(), 1)
         self.assertEqual(fixture.store.sql('SELECT id FROM af_assistant_events'), [])
 
-    def test_publication_failure_rolls_back_scope_allocation_binding_and_domain_intent(self):
-        fixture = self.fixture
-        original = self.service.records.start
-        def failed(*args):
-            original(*args)
-            raise RuntimeError('synthetic post-publication failure')
-        with patch.object(self.service.records, 'start', side_effect=failed):
-            with self.assertRaisesRegex(RuntimeError, 'post-publication failure'):
-                self.service._prepare('alice', self.project_id, self.command)
-        scopes, content = fixture.store.local_budget_scopes, fixture.state['application_content']
-        with fixture.store.engine.connect() as conn:
-            for table in (self.service.commitments, self.service.experiments, self.service.attempts,
+    def test_current_round_binding_failure_rolls_back_scope_allocation_and_intent(self):
+        import test_research_workflow_postgres as native
+        from research.projects import Agreement, CreateProject, ReviseGoal
+        import time
+        base = native.ResearchNativeWorkflowTests('runTest')
+        self.addCleanup(base.doCleanups)
+        base.setUp()
+        rounds, projects = base.state['research_rounds'], base.state['research_projects']
+        project = projects.create('alice', CreateProject(requestId='rollback-project', title='Current round'))['id']
+        agreement = Agreement.model_validate({**self.base.agreement, 'execution': {
+            'applicationRef': base.ref, 'mode': 'research', 'deadline': time.time() + 120,
+            'perRoundCaps': {'rounds': 1, 'toolCalls': 4}}})
+        projects.change('alice', project, 'revise', ReviseGoal(requestId='rollback-goal', expectedVersion=0, agreement=agreement))
+        projects.change('alice', project, 'confirm', ProjectCommand(requestId='rollback-confirm', expectedVersion=1))
+        command = ProjectCommand(requestId='rollback-start', expectedVersion=1)
+        original = rounds.scopes.bind_request
+        def failed(*args, **kwargs):
+            original(*args, **kwargs)
+            raise RuntimeError('synthetic post-binding failure')
+        with patch.object(rounds.scopes, 'bind_request', side_effect=failed):
+            with self.assertRaisesRegex(RuntimeError, 'post-binding failure'):
+                rounds._prepare('alice', project, command)
+        scopes, content = rounds.scopes, rounds.content
+        with base.state['store'].engine.connect() as conn:
+            for table in (rounds.legacy.commitments, rounds.rounds, rounds.legacy.experiments, rounds.legacy.attempts,
                           scopes.scopes, scopes.allocations, scopes.requests, content.contents, content.commands):
                 self.assertEqual(conn.execute(select(func.count()).select_from(table)).scalar(), 0, table.name)
-        self.assertEqual(fixture.store.tasks('alice'), [])
-        intent = self.service._prepare('alice', self.project_id, self.command)
-        self.assertEqual(content.read('bob', intent['startRecordId'])['content']['experimentId'], intent['experimentId'])
-        self.assertEqual(self.service._prepare('alice', self.project_id, self.command), intent)
+        self.assertEqual(base.state['store'].tasks('alice'), [])
+        intent = rounds._prepare('alice', project, command)
+        self.assertEqual(rounds._prepare('alice', project, command), intent)

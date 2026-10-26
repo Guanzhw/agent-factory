@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from research.projects import Agreement, CreateProject, EndProject, ProjectCommand, ResearchProjects, ReviseGoal
 from research.runs import ResearchRuns
 from research.records import ResearchRecords
+from research_history_fixture import seed_legacy_intent
 from agent_factory.application_content import ApplicationContent
 from agent_factory.resource_sharing import ResourceSharing
 from agent_factory.store import Store
@@ -45,7 +46,12 @@ class ResearchRunsTests(fixtures.ApplicationCompositionFixture):
         self.projects.change('alice', self.project, 'revise', ReviseGoal(
             requestId='runs-goal-original', expectedVersion=0, agreement=value))
         self.projects.change('alice', self.project, 'confirm', ProjectCommand(requestId='runs-goal-confirm', expectedVersion=1))
+        self.agreement = value
         return value
+
+    def prepare_history(self, key='runs-start-original'):
+        return seed_legacy_intent(self.runs, 'alice', self.project,
+            ProjectCommand(requestId=key, expectedVersion=1), self.agreement)
 
     def start(self, key='runs-start-original', version=1):
         return asyncio.run(self.runs.start('alice', self.project, ProjectCommand(requestId=key, expectedVersion=version)))
@@ -56,16 +62,18 @@ class ResearchRunsTests(fixtures.ApplicationCompositionFixture):
         self.confirm(agreement())
         with self.assertRaises(HTTPException) as denied:
             self.start()
-        self.assertEqual(denied.exception.detail['code'], 'RESEARCH_EXECUTION_CONFIGURATION_REQUIRED')
+        self.assertEqual(denied.exception.detail['code'], 'RESEARCH_NATIVE_COMPONENT_REQUIRED')
         self.assertEqual(self.projects.read('alice', self.project)['execution'], {
-            'available': False, 'reason': 'RESEARCH_EXECUTION_CONFIGURATION_REQUIRED'})
+            'available': False, 'reason': 'RESEARCH_NATIVE_COMPONENT_REQUIRED'})
         self.scopes.create_scope.assert_not_called()
         self.scopes.allocate.assert_not_called()
         self.native.start.assert_not_awaited()
 
     def test_original_unknown_receipt_never_dispatches_or_allocates_again(self):
         self.confirm()
-        self.assertEqual(self.projects.read('alice', self.project)['execution'], {'available': True, 'reason': None})
+        self.assertEqual(self.projects.read('alice', self.project)['execution'], {
+            'available': False, 'reason': 'RESEARCH_NATIVE_COMPONENT_REQUIRED'})
+        self.prepare_history()
         unknown = {'taskId': 'original-task', 'runId': None, 'state': 'unknown'}
         # Missing is represented by the real port's 404, never an invented task.
         self.native.request.side_effect = [HTTPException(404, 'APPLICATION_START_RECEIPT_NOT_FOUND'), unknown]
@@ -80,7 +88,7 @@ class ResearchRunsTests(fixtures.ApplicationCompositionFixture):
         self.scopes.allocate.assert_called_once()
         with self.assertRaises(HTTPException) as denied:
             self.start('runs-start-different')
-        self.assertEqual(denied.exception.detail['code'], 'RESEARCH_ORIGINAL_ATTEMPT_REQUIRED')
+        self.assertEqual(denied.exception.detail['code'], 'RESEARCH_NATIVE_COMPONENT_REQUIRED')
         listed = self.runs.list('alice', self.project)['items']
         self.assertEqual(len(listed), 1)
         self.assertEqual(listed[0]['attempt']['execution'], unknown)
@@ -90,6 +98,7 @@ class ResearchRunsTests(fixtures.ApplicationCompositionFixture):
 
     def test_lost_ack_preserves_intent_and_end_blocks_unadmitted_recovery(self):
         self.confirm()
+        self.prepare_history()
         self.native.request.side_effect = HTTPException(404, 'APPLICATION_START_RECEIPT_NOT_FOUND')
         self.native.start.side_effect = TimeoutError('controlled missing native acknowledgement')
         with self.assertRaises(TimeoutError):
@@ -106,6 +115,7 @@ class ResearchRunsTests(fixtures.ApplicationCompositionFixture):
 
     def test_goal_revision_retains_project_commitment_and_original_evidence(self):
         value = self.confirm()
+        self.prepare_history()
         self.native.request.return_value = {'taskId': 'original-task', 'runId': None, 'state': 'unknown'}
         self.start()
         revised = value.model_copy(update={'objective': 'Revised objective'})
@@ -125,6 +135,7 @@ class ResearchRunsTests(fixtures.ApplicationCompositionFixture):
             'type': 'object', 'properties': {'goal': {'type': 'string', 'maxLength': 2000}},
             'required': ['goal'], 'additionalProperties': False}}}}
         agreement = self.confirm()
+        self.prepare_history()
         self.native.request.side_effect = [HTTPException(404, 'APPLICATION_START_RECEIPT_NOT_FOUND'),
             {'taskId': 'original-task', 'runId': None, 'state': 'unknown'}]
         self.start()
@@ -139,13 +150,14 @@ class ResearchRunsTests(fixtures.ApplicationCompositionFixture):
             'type': 'object', 'properties': {'dataset': {'type': 'string'}}, 'required': ['dataset']}}}}
         self.confirm()
         with self.assertRaises(HTTPException) as denied:
-            self.start()
+            self.runs._input_values(self.agreement.execution, self.agreement.execution_goal())
         self.assertEqual(denied.exception.detail['code'], 'RESEARCH_TEXT_INPUT_INCOMPATIBLE')
         self.scopes.create_scope.assert_not_called()
         self.native.start.assert_not_awaited()
 
     def test_mismatched_original_task_receipt_fails_without_dispatch(self):
         self.confirm()
+        self.prepare_history()
         self.native.request.return_value = {'taskId': 'different-task', 'runId': None, 'state': 'unknown'}
         with self.assertRaises(HTTPException) as denied:
             self.start()

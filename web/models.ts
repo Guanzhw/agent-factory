@@ -193,6 +193,7 @@ export type { UserConnection, ConnectionRegistration, ConnectionKind, Connection
 
 export interface ApplicationBudget { toolCalls: number; maxDepth: number; maxChildren: number; experimentSeconds?: number; operationSeconds?: number; outputBytes: number }
 export interface ApplicationMode {
+  nativeComponent?: { kind: 'workflow'; id: string; revision: string; sha256: string } | null;
   configSchema?: import('./applicationInputState.js').ApplicationInputSchema;
   inputSchema?: import('./applicationInputState.js').ApplicationInputSchema;
   materialRefs: MaterialReference[];
