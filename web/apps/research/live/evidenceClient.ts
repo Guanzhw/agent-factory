@@ -11,6 +11,8 @@ export interface ResearchDelivery extends EvidenceEntry {
   sourceIds: string[]; recordIds: string[]; records: Record<string, unknown>[];
   missingEvidence: string[]; verificationStatus: 'unverified';
   remainingQuestions: { status: 'not_provided' }; evidenceFormat: string; continuation: string;
+  ending?: { ownerId: string; sourceIds: string[]; outcome: 'met' | 'not_met' | 'cancelled'; reason: string;
+    goalVersion: number; endedAt: string; resourceCleanup: string; verificationStatus?: string } | null;
 }
 const path = '/research';
 export const evidenceApi = {
