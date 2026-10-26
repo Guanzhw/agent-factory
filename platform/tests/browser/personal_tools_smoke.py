@@ -64,7 +64,7 @@ class SyntheticAPI:
     def values(self):
         own = self.owner == 'alice'
         return {
-            '/auth/config': {'enabled': True, 'loginPath': '/api/factory/auth/login',
+            '/auth/config': {'enabled': True, 'oidcEnabled': True, 'localLoginEnabled': False, 'loginPath': '/api/factory/auth/login',
                              'logoutPath': '/api/factory/auth/logout'},
             '/auth/session': {'authenticated': True, 'csrfToken': CSRF},
             '/session': {'id': self.owner, 'name': 'Synthetic ' + self.owner.title(), 'role': 'user'},

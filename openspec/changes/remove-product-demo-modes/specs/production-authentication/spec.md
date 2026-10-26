@@ -7,12 +7,12 @@
 - **WHEN** 操作员使用旧 demo/mock 开关或未配置必要身份与签名参数启动
 - **THEN** 产品明确拒绝配置或登录，不创建 demo 账号、临时签名密钥或替代会话，不在失败前写入演示数据
 
-#### Scenario: Configured browser identity
+#### Scenario: Configured OIDC browser identity
 - **WHEN** 已配置 OIDC 身份登录、回跳、刷新、退出和重新登录
-- **THEN** 复用真实会话/CSRF/安全重定向与成员权限，不提供绕过身份提供方的入口
+- **THEN** 复用真实会话/CSRF/安全重定向与成员权限，OIDC 验证失败不自动切换身份；另行显式配置的本地密码入口独立验证
 
-#### Scenario: Internal signature cannot replace external identity
-- **WHEN** 无外部身份配置时客户端提交为既有成员签发的合法内部 JWT、旧 demo cookie 或 WebSocket 身份帧
+#### Scenario: Internal signature cannot replace configured authentication
+- **WHEN** 客户端直接向公开入口提交为既有成员签发的合法内部 JWT、旧 demo cookie 或 WebSocket 身份帧
 - **THEN** 公开应用拒绝认证；健康/静态与原有受信任 in-process native 执行路径保持独立
 
 ### Requirement: Synthetic fixtures are not deployable product modes

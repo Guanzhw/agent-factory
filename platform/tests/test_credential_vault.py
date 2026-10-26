@@ -188,15 +188,17 @@ class CredentialVaultTests(unittest.TestCase):
 
     def test_browser_bridge_rejects_missing_csrf_before_body_or_vault(self):
         # Actual bridge checks origin and CSRF before session resolution or app IO.
-        service = SimpleNamespace(config=SimpleNamespace(app_origin="https://factory.example.test"),
+        service = SimpleNamespace(app_origin="https://factory.example.test",
                                   csrf=lambda token: "synthetic-csrf")
         bridge = BrowserAuthBridge(self.app, service)
         client = TestClient(bridge, base_url="https://factory.example.test")
         client.cookies.set(SESSION_COOKIE, "s" * 43)
-        with patch.object(self.vault, "create", side_effect=AssertionError("must not be called")):
-            response = client.post(self.root, json=self.payload, headers=self.headers)
-        self.assertEqual(response.status_code, 403)
-        self.assertNotIn(PASSWORD, response.text)
+        for headers in ({}, {"origin": service.app_origin}):
+            with self.subTest(headers=headers), patch.object(
+                    self.vault, "create", side_effect=AssertionError("must not be called")):
+                response = client.post(self.root, json=self.payload, headers=self.headers | headers)
+                self.assertEqual(response.status_code, 403)
+                self.assertNotIn(PASSWORD, response.text)
 
     def test_existing_remote_binding_invalidated_without_retargeting(self):
         from test_personal_remote_connections import PersonalRemoteTests

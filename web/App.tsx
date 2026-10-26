@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type ComponentType, type Reac
 import { api, ApiError } from './api.js';
 import { compareJobOrder, mergeJobHistory } from './jobHistory.js';
 import { FeeVisibility } from './FeeVisibility.js';
-import { browserAuthConfig, clearBrowserSession, consumeSigninFailure, startBrowserLogin, subscribeSessionExpiry, type BrowserAuthConfig } from './browserAuth.js';
+import { browserAuthConfig, BrowserAuthError, clearBrowserSession, consumeSigninFailure, startBrowserLogin, startLocalLogin, subscribeSessionExpiry, type BrowserAuthConfig } from './browserAuth.js';
 import { defaultNavigation, readWorkspaceRoute, sameWorkspaceRoute, workspaceUrl, type WorkspaceNavigation, type WorkspaceRoute, type WorkspaceTab } from './workspaceNavigation.js';
 import { ErrorMessage, time } from './workspaceUI.js';
 import type { JobSummary, FactoryMaterial, FactoryStatus, JobDetail, ExecutionTarget, User } from './models.js';
@@ -32,6 +32,8 @@ export default function App({ workspace: WorkspaceComponent = Workspace }: { wor
   const [authConfig, setAuthConfig] = useState<BrowserAuthConfig>();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const lock = useRef(false);
   const [generation, setGeneration] = useState(0);
   useEffect(() => {
@@ -44,7 +46,7 @@ export default function App({ workspace: WorkspaceComponent = Workspace }: { wor
         const config = await browserAuthConfig(controller.signal);
         if (controller.signal.aborted) return;
         setAuthConfig(config);
-        if (!config.enabled) { setError('浏览器身份认证尚未配置，请联系服务维护者配置 OIDC。'); return; }
+        if (!config.enabled) { setError('浏览器身份认证尚未配置，请联系服务维护者。'); return; }
         const current = await api.session(controller.signal);
         if (!controller.signal.aborted) { setUser(current); setError(''); }
       } catch (e) {
@@ -65,6 +67,14 @@ export default function App({ workspace: WorkspaceComponent = Workspace }: { wor
     try { window.location.assign(await startBrowserLogin()); }
     catch { setError('登录暂时不可用，请重新开始登录。'); lock.current = false; setBusy(false); }
   }
+  async function localLogin() {
+    if (lock.current) return;
+    lock.current = true; setBusy(true); setError('');
+    const submittedPassword = password; setPassword('');
+    try { await startLocalLogin(username, submittedPassword); setUser(await api.session()); }
+    catch (error) { setError(error instanceof BrowserAuthError && error.status === 401 ? '登录失败，请核对用户名和密码。' : '登录暂时不可用，请重试。'); }
+    finally { lock.current = false; setBusy(false); }
+  }
   async function logout() {
     if (lock.current) return;
     lock.current = true; setBusy(true); setError('');
@@ -72,7 +82,17 @@ export default function App({ workspace: WorkspaceComponent = Workspace }: { wor
     finally { lock.current = false; setBusy(false); }
   }
   if (user && authConfig) return <WorkspaceComponent key={user.id} user={user} logout={() => void logout()} sessionBusy={busy} sessionError={error}/>;
-  return <div className="login-page"><div className="login-brand"><span className="brand-symbol" aria-hidden="true">F</span><span>Agent Factory</span></div><section className="login-panel"><p className="quiet">Agent Factory 工作台</p><h1>从任务目标，<br/>到可核对的结果。</h1><p>选择应用，描述任务目标后开始。进度与结果都在任务记录中。</p><div className="auth-notice"><strong>{authConfig?.enabled ? '统一身份认证' : '身份认证未就绪'}</strong><span>{authConfig?.enabled ? '使用组织的统一身份认证登录，账号权限由服务端核对。' : '需要配置浏览器 OIDC 身份认证后才能登录。'}</span></div><ErrorMessage message={error} retry={() => setGeneration(n => n + 1)}/>{authConfig?.enabled && <div className="login-actions"><button className="primary" disabled={busy || loading} onClick={() => void ssoLogin()}>{busy ? '正在前往登录…' : '使用企业账号登录'}</button></div>}{loading ? <p role="status" className="quiet">正在检查会话…</p> : !authConfig?.enabled && <button className="secondary" onClick={() => setGeneration(n => n + 1)}>重新检查环境</button>}<p className="login-footnote">账号权限与任务范围由服务端检查。</p></section></div>;
+  return <div className="login-page"><div className="login-brand"><span className="brand-symbol" aria-hidden="true">F</span><span>Agent Factory</span></div><section className="login-panel"><p className="quiet">Agent Factory 工作台</p><h1>从任务目标，<br/>到可核对的结果。</h1><p>选择应用，描述任务目标后开始。进度与结果都在任务记录中。</p>
+    <div className="auth-notice"><strong>{authConfig?.enabled ? '账号登录' : '身份认证未就绪'}</strong><span>{authConfig?.enabled ? '使用已配置的登录方式，账号权限由服务端核对。' : '需要配置身份认证后才能登录。'}</span></div>
+    <ErrorMessage message={error} retry={() => setGeneration(n => n + 1)}/>
+    {authConfig?.localLoginEnabled && <form onSubmit={event => { event.preventDefault(); void localLogin(); }}><fieldset disabled={busy || loading}>
+      <label>用户名<input name="username" autoComplete="username" required value={username} onChange={event => setUsername(event.target.value)}/></label>
+      <label>密码<input name="password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)}/></label>
+      <button className="primary wide" type="submit">{busy ? '正在登录…' : '登录'}</button>
+    </fieldset></form>}
+    {authConfig?.oidcEnabled && <div className="login-actions"><button className="primary" disabled={busy || loading} onClick={() => void ssoLogin()}>使用企业账号登录</button></div>}
+    {loading ? <p role="status" className="quiet">正在检查会话…</p> : !authConfig?.enabled && <button className="secondary" onClick={() => setGeneration(n => n + 1)}>重新检查环境</button>}
+    <p className="login-footnote">账号权限与任务范围由服务端检查。</p></section></div>;
 }
 
 export function Workspace({ user, logout, sessionBusy, sessionError, navigation = defaultNavigation, children, onCompose, applicationView }: WorkspaceSessionProps & { navigation?: WorkspaceNavigation; children?: (context: WorkspaceContext) => ReactNode; applicationView?: (context: WorkspaceContext) => ReactNode | undefined; onCompose?: WorkspaceContext['onCompose'] }) {

@@ -392,9 +392,10 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     if settings.oidc_identity is not None:
         from .oidc_identity import OIDCAccessTokenVerifier, OIDCIdentityBridge
         external = OIDCIdentityBridge(native, auth, OIDCAccessTokenVerifier(settings.oidc_identity))
-    if settings.browser_oidc is not None:
+    if settings.browser_oidc is not None or settings.local_login_origin is not None:
         from .browser_auth import BrowserAuthBridge, BrowserSessionService
-        browser_auth = BrowserSessionService(store, auth, settings.browser_oidc)
+        browser_auth = BrowserSessionService(store, auth, settings.browser_oidc,
+            local_login_origin=settings.local_login_origin)
         native.state.factory["browser_auth"] = browser_auth
         return BrowserAuthBridge(native, browser_auth, bearer_app=external)
     return external if external is not None else UnconfiguredIdentityBoundary(native)

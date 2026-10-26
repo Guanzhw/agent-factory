@@ -56,8 +56,19 @@ class LateTeardownCredentialTests(unittest.IsolatedAsyncioTestCase):
             adapter = MCPToolAdapter(descriptor(), url=server.url,
                 teardown_timeout_seconds=0.1, http_transport_factory=ObservedTransport)
             pending = asyncio.create_task(adapter.invoke(replace(invocation, resolve_credential=resolve)))
+            ready = asyncio.create_task(entered.wait())
             try:
-                await asyncio.wait_for(entered.wait(), 2)
+                await asyncio.wait({ready, pending}, timeout=2, return_when=asyncio.FIRST_COMPLETED)
+                if not entered.is_set():
+                    if pending.done():
+                        await pending
+                        self.fail('MCP invocation ended before the late credential callback entered')
+                    self.fail('MCP late credential callback did not enter: ' + str({
+                        'toolCalls': len(server.calls),
+                        'deleteRequests': sum(request.method == 'DELETE' for request in server.requests),
+                        'transportClosed': closed.is_set(), 'lateCalls': len(late_calls),
+                    }))
+                await ready
                 # The callback remains gated until actual transport closure:
                 # only the original DELETE deadline can advance teardown here.
                 await asyncio.wait_for(closed.wait(), 2)
@@ -76,11 +87,14 @@ class LateTeardownCredentialTests(unittest.IsolatedAsyncioTestCase):
                 self.assertFalse(authority.revoked)
             finally:
                 release.set()
-                if entered.is_set():
-                    await asyncio.wait_for(finished.wait(), 2)
-                if not pending.done():
-                    pending.cancel()
-                await asyncio.wait_for(asyncio.gather(pending, return_exceptions=True), 2)
+                try:
+                    if entered.is_set():
+                        await asyncio.wait_for(finished.wait(), 2)
+                finally:
+                    for task in (ready, pending):
+                        if not task.done():
+                            task.cancel()
+                    await asyncio.wait_for(asyncio.gather(ready, pending, return_exceptions=True), 2)
 
     async def test_late_same_credential_cannot_clear_unknown_or_retry(self):
         await self.check_late_resolution('unchanged')

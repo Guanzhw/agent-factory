@@ -5,7 +5,7 @@ import { clearBrowserSession, configureBrowserAuth } from '../web/browserAuth.js
 const application = { id: 'department/app', version: 2, sha256: 'a'.repeat(64), name: 'Synthetic shared application', modes: {} };
 const material = { id: 'department/material', version: 2, sha256: 'b'.repeat(64), published: true };
 const json = (value: unknown) => new Response(JSON.stringify(value), { status: 200 });
-beforeEach(() => { clearBrowserSession(); configureBrowserAuth({ enabled: false, loginPath: '/api/factory/auth/login', logoutPath: '/api/factory/auth/logout' }); });
+beforeEach(() => { clearBrowserSession(); configureBrowserAuth({ enabled: false, oidcEnabled: false, localLoginEnabled: false, loginPath: '/api/factory/auth/login', logoutPath: '/api/factory/auth/logout' }); });
 afterEach(() => { clearBrowserSession(); vi.unstubAllGlobals(); });
 
 it('accepts the actual raw application publication shape and pins the request to its member', async () => {

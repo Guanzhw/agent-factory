@@ -1,0 +1,22 @@
+# Verification
+
+基线 `768e4adcb0e218f9ec27b81e5627db1fb3f21034`；先审方案 `28d730de5667656454dbedcbd6733022f805bae3`、被测实现 `40b8342ddb84bc97959f18849df6fdebfa53165d` 均由非作者 `audit_quality` PASS。其后产品不变；文档收尾与 CI 夹具整改如下。
+
+| 检查 | 实际结果与边界 |
+| --- | --- |
+| 本地密码/原身份回归 | 最终新用例 5 项便携 + 4 项真实 PostgreSQL 全通过；既有 OIDC/会话/禁 demo 回归通过。覆盖 hash/冲突/中断、失败无 session、禁用、CSRF、退出及私有产物 owner 隔离；复验不累计为新增覆盖 |
+| 前端与依赖 | `npm run check` 53 文件、503 测试通过；生产/全量 npm audit 均 0 vulnerabilities；保留既有大 chunk 提示 |
+| 静态/包装 | ruff、pyright、architecture 通过；0 errors、14 条既有 Linux pywin32 源码 warning；531 modules、0 violation/gap。独立 core wheel 三项通过，含实际入口 `--help`、Argon2 依赖、源码一致与无应用导入 |
+| 既有浏览器/选择器 | personal-tools 的 configured/bind-loss 两场景通过；fast 完整收集验证通过，collect-only 不计执行；OpenSpec strict/diff 检查通过 |
+
+独立真实验收 `audit_crosscheck` 于 2026-10-26 在该实现首跑通过：真实 getpass CLI 创建两普通成员，密码不回显、不进入参数/环境；另一密码 76 个 Unicode 码点、141 个 UTF-16 单位（65 个非 BMP 字符）经 CLI→正式表单原值登录。core 与显式 Research 的正式 build/真实 HTTPS 均完成错误密码 401 且无新 session、正确登录 200、刷新、Expected-Owner 403、退出后旧 cookie 401；core 实际进程重启保留两会话，core 目录为空，Research 主页→空工作台→刷新→返回通过。浏览器只证明 owner guard，业务私有产物隔离由上述 PG 用例验证。最终任务数为 0；自有服务进程/端口、PG 容器/卷、临时 TLS/工作区均已清理。
+
+首次结果保留：后端首红仅为新模块尚未实现的 ImportError，不是行为 bug 复现；前端首轮 17/24 通过、7 项为缺新入口。初实现一项测试误读 fieldset 的继承 disabled，修正测试后通过；随后 Unicode 密码真实表单合法性回归先失败，删除 HTML UTF-16 长度限制后目标 24/24 通过。最终后端/浏览器行为检查没有失败重试。提交工具曾因执行环境断连未创建进程；只读确认 HEAD 仍为方案且修改未暂存后才正常提交，未重发不明写入。
+
+[Draft PR #150](https://github.com/Guanzhw/agent-factory/pull/150) 的先审方案映射为 `28d730de5667656454dbedcbd6733022f805bae3` → `264355cc54a4a4cd7aa4ba9d01656c7f3a242844`，实现映射为 `40b8342ddb84bc97959f18849df6fdebfa53165d` → `d42408e5d02b91aab2b752c249b74daf71eb1220`（同 tree `d6bc7c70d0ed3b49a954a0841f7aee5e71eaee90`）；元数据 SHA 差异不是恢复旧提交。最终发布 head 的 CI 仍待协调者核验，任务 3.2 保留未完成。
+
+[首次 full CI](https://github.com/Guanzhw/agent-factory/actions/runs/40346922824) 的 Windows lane 执行 2272 tests、1 failure、884 skips：`test_credential_vault.CredentialVaultTests.test_browser_bridge_rejects_missing_csrf_before_body_or_vault` 的旧 service stub 缺少顶层 `app_origin`，返回 503 而非原断言 403。本地在 `0487f788349a503c990ddc2a46bad99a44ced5f7` 原样复现 1/1 failure 后，仅同步夹具并用无 Origin / 同源缺 CSRF 两情形保留 403、不泄露密码、vault 不被调用断言；精确 selector 加入既有 fast 组。修后 vault/browser_auth/browser_oidc/local_login 51/51 通过、0 skip；fast 收集通过（2272 discovered、406 Python selected、未执行），ruff/diff 检查通过。未改产品或 CI 门槛，未取消或重跑原 run；新候选独立复审与最终精确发布 head CI 仍待完成。
+
+[第二次 full CI](https://github.com/Guanzhw/agent-factory/actions/runs/40351648714) 的 PG lane 执行 2272 tests / 2238.040s，0 failures、1 error、15 skips：既有 `test_late_changed_credential_cannot_clear_unknown_or_retry` 在 entered 的 2 秒等待超时；该测试及 MCP 产品与 PR 基线相同。原 selector 外部诊断单次通过，未复现；受控 DELETE 前置检查阻塞探针证明原 0.1 秒总期限可在 resolver 进入前终止，旧测试只报等待超时。这不确定历史 CI 根因。按先审方案仅改测试等待/失败信息：同探针新版仍 1 error，明确传播 `MCP_AUTHORIZATION_REJECTED`，保持 UNKNOWN / stopped=false、无 DELETE、回调未进入；waiter/server 均回收，未将其记为通过。正常三种 late 用例各执行一次，3/3 通过、0 skip；fast collect-only、ruff/diff 检查通过。原期限、late 全部断言和产品保持；下一精确候选复审/CI 仍待完成，此改动只改善诊断。
+
+原始日志仅存本次云端 `/workspace/local-login-evidence/`，不入 Git。无真实外部 IdP、模型、研究执行、GPU、用户本机验收或部署；不得把隔离本地登录通过提升为这些边界已验。

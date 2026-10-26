@@ -32,6 +32,14 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+def require_production_database(engine):
+    with engine.connect() as conn:
+        if conn.execute(text("SELECT to_regclass('af_bootstrap')")).scalar_one() is not None:
+            mode = conn.execute(text("SELECT mode FROM af_bootstrap WHERE id='mode'")).scalar_one_or_none()
+            if mode is not None and mode != 'production':
+                raise ValueError('Existing demo database cannot be used in production; retained data requires separate review')
+
+
 # Compatibility exports: custody/evidence semantics belong to trusted adapters.
 from .runtime_hooks import effect_unresolved, runtime_custody_held
 from .task_status import finalized_status
@@ -152,10 +160,7 @@ class Store:
             return [dict(row) for row in result.mappings()] if result.returns_rows else []
 
     def initialize(self):
-        if self.sql("SELECT to_regclass('af_bootstrap') AS relation")[0]['relation'] is not None:
-            existing = self.sql("SELECT mode FROM af_bootstrap WHERE id='mode'")
-            if existing and existing[0]['mode'] != 'production':
-                raise ValueError("Existing demo database cannot be used in production; retained data requires separate review")
+        require_production_database(self.engine)
         statements = [
             "CREATE TABLE IF NOT EXISTS af_process_runs (task_id TEXT NOT NULL,effect_key TEXT NOT NULL,owner_id TEXT NOT NULL,native_run_id TEXT NOT NULL,lease_id TEXT UNIQUE NOT NULL,body JSONB NOT NULL,PRIMARY KEY(task_id,effect_key))",
             "CREATE TABLE IF NOT EXISTS af_process_allocations (id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,body JSONB NOT NULL)",

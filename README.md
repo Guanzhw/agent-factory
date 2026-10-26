@@ -47,20 +47,51 @@ for assembly and source-checkout commands.
 
 ## Start with configured authentication
 
-Requires Node 24+, Python 3.12+, uv and an existing operator-managed PostgreSQL database. There is no demo login, bundled identity provider, disposable database launcher or offline research prototype.
+Requires Node 24+, Python 3.12+, uv and an existing operator-managed PostgreSQL database. Choose explicit local password login for function checks or the existing OIDC integration. There is no default account, demo login, bundled identity provider, disposable database launcher or offline research prototype.
+
+For local password login, stop the service and supply `FACTORY_DATABASE_URL` and
+`FACTORY_JWT_KEY` through your existing secure configuration. Set `FACTORY_TLS_CERT`
+and `FACTORY_TLS_KEY` to your existing certificate/key paths; the certificate must
+cover the chosen host and be trusted by the browser. Replace `your-new-member-id`
+with a new member ID:
 
 ```sh
 npm ci --ignore-scripts
 uv sync --frozen
 npm run build
-# Supply FACTORY_DATABASE_URL and FACTORY_JWT_KEY through your existing secure configuration.
-# Configure external identity and existing member mappings before browser use.
-npm start
+uv run agent-factory-local-user your-new-member-id
+# Enter and confirm the password at the hidden prompts, never in arguments or environment variables.
+export FACTORY_LOCAL_LOGIN_ORIGIN=https://127.0.0.1:3100
+uv run python -m uvicorn agent_factory_server.main:create_app --factory \
+  --host 127.0.0.1 --port 3100 \
+  --ssl-certfile "$FACTORY_TLS_CERT" --ssl-keyfile "$FACTORY_TLS_KEY" --no-access-log
 ```
 
-`npm start`, `npm run dev` and `npm run start:configured` use the configured server. Missing signing configuration fails startup; missing browser identity gives a configuration error rather than persona login. Old demo-mode configuration is rejected. A previous demo database cannot be silently used as a production database; keep it untouched pending a precise data inventory and separate cleanup decision.
+The command creates only a new ordinary member and stores a salted password hash.
+It rejects any existing native user or local credential; it does not attach a
+password to an old identity, grant administrator status or reset passwords. A
+failed or interrupted command is not success: it can leave a member without a
+local credential, and must not be retried as an overwrite or followed by deleting
+old data. Passwords are 12–128 characters and are not trimmed. Create each needed
+account explicitly while the service is stopped.
 
-Browser login uses an operator-constructed `Settings.browser_oidc=BrowserOIDCConfig(...)` with HTTPS issuer/endpoints, public-client ID, exact callback, pinned public keys and existing member mappings. See [the browser contract](docs/BROWSER_AUTH_PROCESS_ENFORCEMENT.md) and [upgrade instructions](docs/REMOVE_DEMO_UPGRADE.md). This is trusted deployment composition, not an invented environment-based IdP setup wizard. A separate external bearer-token verifier is available through `Settings.oidc_identity`. No actual organization identity provider is configured or certified by this repository. The frontend-only `npm run dev:web` proxies `/api` to the configured local server and provides no identity bypass.
+Open `https://127.0.0.1:3100`, use the username/password form, and use the workspace
+menu to sign out. The origin must exactly match `FACTORY_LOCAL_LOGIN_ORIGIN`;
+HTTPS, Secure cookies and Origin/CSRF checks also apply on loopback. For the
+explicit Research workspace, use `npm run build:research` instead of `npm run build`
+and `agent_factory_server.research:create_app` in the same server command, then
+enter AutoResearch from the application catalog. Login does not configure a model
+or start research.
+
+`npm start`, `npm run dev` and `npm run start:configured` retain the plain HTTP
+server entrypoint; use the HTTPS command above or an already configured HTTPS
+deployment for browser login. Missing signing configuration fails startup; with
+neither local login nor browser OIDC configured, login remains unavailable. Old
+demo-mode configuration is rejected. A previous demo database cannot be silently
+used as a production database; keep it untouched pending a precise data inventory
+and separate cleanup decision.
+
+The separate OIDC browser entry uses an operator-constructed `Settings.browser_oidc=BrowserOIDCConfig(...)` with HTTPS issuer/endpoints, public-client ID, exact callback, pinned public keys and existing member mappings. See [the browser contract](docs/BROWSER_AUTH_PROCESS_ENFORCEMENT.md) and [upgrade instructions](docs/REMOVE_DEMO_UPGRADE.md). If both login methods are configured, their application origins must match; a failed login never falls back to the other method. This is trusted deployment composition, not an environment-based IdP setup wizard. A separate external bearer-token verifier is available through `Settings.oidc_identity`. Local password checks do not configure or certify an organization identity provider. The frontend-only `npm run dev:web` proxies `/api` to the configured local server and provides no identity bypass.
 
 Normal entrypoints use core `Settings.from_env()` with
 `member-self-service` for task admission and material/application publication.
@@ -87,7 +118,7 @@ access to the service account. An injected organizational vault remains supporte
 - Trusted registered model/tool/knowledge/environment factories selected by immutable material bindings; current owner connection references with bind/revoke, expiry, rotation and redacted metadata.
 - Personal CLI/MCP adapters are installed statically; members register them with matching owner credentials and bind connections for on-demand calls ([setup and lifecycle](docs/PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)).
 - Separate immutable plan, owner/task binding and Agno-owned job/session/ticket. User-scoped semantic fingerprints return 409 for changed duplicate requests.
-- Native managed SQL authorization and fail-closed directory, scoped tool rechecks, owner-only jobs/artifacts, configured external identity with protected browser sessions.
+- Native managed SQL authorization and fail-closed directory, scoped tool rechecks, owner-only jobs/artifacts, explicitly configured local password or external identity with protected browser sessions.
 - Native durable queue (two workers), questions and scoped confirmation, restart-tested snapshots, cancellation and bounded local process custody, persistent application events and artifact hashes.
 - Bounded native child delegation: independent tickets, inherited scope, depth/count and durable shared tool budgets, group inspection and cascading cancellation.
 - Guarded native schedule poller: owner-scoped immutable-plan definitions, per-occurrence admission, current rights/quotas, no blind UNKNOWN replay.
