@@ -4,10 +4,10 @@
 
 基线 `62614177c23c4d2cd0caf6b7c91418e74fde8ad4`；方案 `114391f1906242e4d0eae3f8c305773d5c807dcf`；最终产品/测试源码 `342028fa3d182eee57c8873a992a400a02972b1f`。非作者已审完整累计 diff 并给出最终实现 PASS，另独立运行 14 项合同/custody 回归通过，详见 [review.md](../review.md)。任务勾选及组合验收归 coordinator。
 
-5 份原始文本日志（before.txt、before-depth.txt、portable.txt、portable-depth.txt、postgres.txt，共 288 行）按归档时原字节保全到 `/workspace/audit-remediation/c1-raw/`，逐文件与提交 `da9e3cf9e530d0ba5a12c3587a5c4be8211c19ae` 的内容核对相等后才从当前树移除。本地目录不随仓库分发；完整日志仍可从该精确提交的本 evidence 路径恢复，例如：
+5 份原始文本日志（before.txt、before-depth.txt、portable.txt、portable-depth.txt、postgres.txt，共 288 行）按归档时原字节保全到 `/workspace/audit-remediation/c1-raw/`，逐文件与提交 `da9e3cf9e530d0ba5a12c3587a5c4be8211c19ae` 的内容核对相等后才从当前树移除。本地目录不随仓库分发；完整日志在发布等价提交 `961b74fcb872b8b64e171a3c5bda25cb0ee03de8` 的相同 evidence 路径中保留。两个提交 tree 均为 `80fc7ce1de09377e2666c2e9e670b49ee60f3cf2`；提交 SHA 差异来自插件发布元数据。仓库克隆可按发布提交恢复，例如：
 
 ```sh
-git show da9e3cf9e530d0ba5a12c3587a5c4be8211c19ae:openspec/changes/separate-delegated-result-content/evidence/before.txt
+git show 961b74fcb872b8b64e171a3c5bda25cb0ee03de8:openspec/changes/separate-delegated-result-content/evidence/before.txt
 ```
 
 未重写 Git 历史。最初失败日志在较早修复中只清过行尾空格；本次归档不再改变任何日志字节。仓库保留结构化回执及以下失败/通过摘要。
