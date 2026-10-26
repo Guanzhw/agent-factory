@@ -25,3 +25,5 @@
 ## Migration Plan
 
 本方案先经非作者审查，再实施与目标验证；保留精确 base/head 和首失败事实，交完整 diff 简洁性复审。无数据迁移；按现有 CI 实际规则发布独立 Draft PR，由协调者核验并推进。
+
+补充范围（基线 `f3f931b06f11b7ea910a9efe3d5b8a8ba89442ff`）：复扫发现 `docs/INTEGRATIONS.md:7,19–21` 仍把 Auto-Research fixture 和 demo adapters 描述为当前默认值。仅修正该指南：旧 fixture 说明标历史，对照 `execution_bindings.py:454` 与空默认 `Settings.runtime_adapters` 说明无默认 demo/provider；保留历史结果，不改产品/测试/CI/资源策略。先审本补充方案，再改正文并核对 diff、链接、源码及适用 CI。

@@ -13,4 +13,8 @@
 
 ## 3. 最终验收
 
-- [ ] 3.1 记录目标检查及首失败/未验事实，通过 OpenSpec strict；非作者复审精确完整 diff 与简洁性，完成整改复审，再由协调者核验发布后精确 head 的适用 CI。
+- [x] 3.1 记录目标检查及首失败/未验事实，通过 OpenSpec strict；非作者复审精确完整 diff 与简洁性，完成整改复审，再由协调者核验发布后精确 head 的适用 CI。PR #148 已合并，[main CI 40295987780](https://github.com/Guanzhw/agent-factory/actions/runs/40295987780) 通过；不改变原历史失败记录。
+
+## 4. 现行指南复扫补充
+
+- [ ] 4.1 非作者先审补充方案，再修正 INTEGRATIONS 的当前默认注册与历史 fixture 说明；对照源码及链接、检查完整 diff，并经独立复审与发布后适用 CI 验收。
