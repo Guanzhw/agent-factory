@@ -1,5 +1,7 @@
 # Owned process verification
 
+当前结果：`445a2ce` 的 [portable-pipes job 121330899231](https://github.com/Guanzhw/agent-factory/actions/runs/40247109502/job/121330899231) 60/60 通过，零跳过，包含全部十项 owned-process 测试。新 ownership oracle 已独立审查并实际执行；以下原始失败和诊断保留，不改写为成功。
+
 The first actual Windows isolated run at `3d71479`, [run 40242604328 / job 121317437862](https://github.com/Guanzhw/agent-factory/actions/runs/40242604328/job/121317437862), executed 58 tests in 5.805s: 57 passed and one errored. Eight of the nine new owned-process tests passed, including unrelated inheritable-handle exclusion, concurrent stdio isolation and Job cleanup. This was not a passing job.
 
 The remaining error was in `test_spawn_failure_does_not_leak_parent_handles`: `win32process.GetProcessHandleCount` does not exist. The fixture now calls the [documented Kernel32 GetProcessHandleCount](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesshandlecount) with HANDLE / DWORD pointer / BOOL types. It retains the exact before/after equality assertion over three failed spawns.

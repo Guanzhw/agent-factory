@@ -8,16 +8,18 @@
 - [x] 2.3 Independently review exact full diff and fix unnecessary abstraction or unsafe shortcuts.
 
 ## 3. Verification
-- [ ] 3.1 Run portable scope/guard/limit/failure tests and actual Windows installed-core SSH checks.
+- [x] 3.1 Run portable scope/guard/limit/failure tests and actual Windows installed-core SSH checks.
 - [x] 3.2 Verify Linux checks and standalone wheel behavior.
 - [ ] 3.3 Run controlled Windows-to-Linux original submit/recovery/cancel. BLOCKED: no authorized Linux target/access supplied; the Windows-loopback peer does not satisfy this gate.
 
 
-- [ ] 3.4 Preserve first installed-core failure and independently review fixed safe phase/code instrumentation; run one authorized instrumented acceptance to distinguish acquisition, helper identity/handshake and command failure without changing the oracle.
+- [x] 3.4 Preserve first installed-core failure and independently review fixed safe phase/code instrumentation; run one authorized instrumented acceptance to distinguish acquisition, helper identity/handshake and command failure without changing the oracle.
 
-Implementation/review checks above are complete through f8d59fb; exact fast CI40244764642 passed, including the independent Linux core check. Windows portable checks passed 60/60, but the first installed-product run40244764651 failed at PRODUCTION_CONSUMERS. Thus 3.1 remains open; neither source review nor a successful wheel install closes it. Historical failures remain in verification documents.
+当前回执：精确 `445a2ce` 的 Windows40247109502 三组（portable 60/60、独立安装两消费者及全部原断言）与 fast40247109535 成功，见 [安装证据](verification-installed.md)。此前四次 installed 失败保留；最终 full 仍待运行。3.3 保持 BLOCKED，不以 Windows loopback 代替。
 
 - [x] 3.5 Independently review invocation-local fixed helper filename design against the observed NOT_FOUND/error-2 failure; implement only after review.
-- [ ] 3.6 Verify byte-preserving copy and identity/cleanup wiring, then run the unchanged actual installed Windows acceptance with Unicode-and-space parents; retain all failed reports and keep the Windows-to-Linux gate separate.
+- [x] 3.6 Verify byte-preserving copy and identity/cleanup wiring, then run the unchanged actual installed Windows acceptance with Unicode-and-space parents; retain all failed reports and keep the Windows-to-Linux gate separate.
 
-- [ ] 3.7 Independently review and correct fixed known_hosts lookup under a space-containing child cwd; retain run40246732528 and require the unchanged actual Windows consumer/wrong-pin gates.
+- [x] 3.7 Independently review and correct fixed known_hosts lookup under a space-containing child cwd; retain run40246732528 and require the unchanged actual Windows consumer/wrong-pin gates.
+
+- [ ] 3.8 完成最终精确 head 的 fast/full、作者外文档增量复审及合并后 main 检查；现有 full 仅由 workflow_dispatch 触发。

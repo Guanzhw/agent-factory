@@ -1,5 +1,7 @@
 # Production Windows implementation evidence
 
+当前安装结果见 [精确提交验收](verification-installed.md#current-result--2026-10-26)：`445a2ce` 的实际 Windows 两消费者、pin、取消、撤权与清理通过；下文为保留的实施阶段记录。最终 full 待运行，Windows→Linux 原操作恢复仍 BLOCKED。
+
 Design 2e40205 independently approved before production code; Unicode child-cwd extension 4fb53b0 independently approved before use. Stage A and B mechanism results are in their separate change directories; neither replaces installed-product or Windows-to-Linux acceptance.
 
 The credential/guard tests explicitly fake Windows OS calls. First run: 7/7 passed, 0.194s (`/tmp/af-windows-credentials-portable-first.log`), covering missing-client before secret access, expiry/revocation, one release, capacity, guard at release, concurrent close during initialization and cleanup-error slot release. After child-only cwd and cleanup/type-boundary edits, 7/7 passed, 0.101s (`/tmp/af-windows-credentials-portable-second.log`). No PG, real credential or remote host was used.

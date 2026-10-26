@@ -1,5 +1,7 @@
 # Windows SSH integration checkpoint
 
+当前状态以 [精确提交验收](verification-installed.md#current-result--2026-10-26) 为准：`445a2ce` 的 Windows 三组与 fast 均成功，cleanup 修复已通过独立审查与实际安装检查。下表是历史工作树检查点；最终 full 待运行，跨机器 Linux 验收仍 BLOCKED。
+
 These are coordinator observations of the evolving integration worktree, not a final exact-head acceptance result. Earlier probe failures and review blockers remain in their original records.
 
 | Check | Actual result / boundary |
