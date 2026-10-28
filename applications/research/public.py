@@ -39,6 +39,8 @@ def install(state, *, workflow=None, qa_workflow=None, session_tools=None):
         from .conversations import ResearchConversations, conversations_router
         conversations = ResearchConversations(state['store'], state['auth'], assistants, sessions)
         sessions.conversations = conversations
+        from .session_collaboration import ResearchCollaboration
+        sessions.collaboration = ResearchCollaboration(sessions, conversations, state['assistant_events'])
         state['research_conversations'] = conversations
         state['http_app'].include_router(conversations_router(state['auth'], conversations))
         session_tools.bind(sessions, state['application_content'])

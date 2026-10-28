@@ -29,6 +29,7 @@ class ResearchSessions:
         self.store, self.auth, self.assistants, self.runs = store, auth, assistants, runs
         self.content, self.tools = content, tools
         self.conversations: Any = None
+        self.collaboration: Any = None
         self.setup = ResearchSessionSetup(store, connections, models, tools)
         self.db = GovernedStorage(store, 'research_sessions_v1')
         metadata = MetaData()
@@ -125,6 +126,8 @@ class ResearchSessions:
         for turn in turns:
             if 'assistantReply' in turn['body']:
                 self._reply(owner, identifier, turn['body']['assistantReply'])
+            for snapshot in turn['body'].get('assistantReplies', []):
+                self._reply(owner, identifier, snapshot)
 
     def _reply_projection(self, owner, identifier, snapshot):
         try:
@@ -330,6 +333,8 @@ class ResearchSessions:
             row = self._row(conn, owner, identifier)
             if old is None:
                 self._save_session(conn, row, {**row['body'], 'stopped': True, 'stopRequestId': request.requestId})
+                if self.collaboration is not None:
+                    self.collaboration.stop(conn, owner, identifier)
                 turns = self._turns(conn, identifier)
                 turn_id = turns[-1]['id'] if turns else None
                 if turns:
@@ -432,6 +437,8 @@ class ResearchSessions:
         else:
             self._sources(context.user_id, row['body']['sharedSourceIds'])
             self._replies(context.user_id, row['id'], self._turns(conn, row['id']))
+            if self.collaboration is not None:
+                turn = self.collaboration.receive(conn, row, turn)
         return row, turn, task, ticket, blocked
 
     def _summary_outcome(self, owner, turn_id, claim, status, code):
@@ -520,7 +527,7 @@ class ResearchSessions:
                 current_context = self._bounded(self._context(row, self._turns(conn, row['id'])))
                 body['lastAttempt'] = ticket['attempt']
                 present = {item.id for item in messages}
-                if body.get('compaction'):
+                if body.get('compaction') or body.get('assistantReplies'):
                     identifier = 'research-context:' + turn['id']
                     projection = Message(id=identifier, role='user', content=(
                         '本轮有效研究上下文；摘要仅为叙述，原操作状态和用户原文保持权威：\n' + current_context))
@@ -547,6 +554,8 @@ class ResearchSessions:
                     if changed:
                         self._save_turn(conn, previous, previous_body)
                 self._save_turn(conn, turn, body)
+                if self.collaboration is not None:
+                    self.collaboration.included(conn, row, turn)
         if blocked:
             raise StopAgentRun(blocked)
 
@@ -559,6 +568,18 @@ class ResearchSessions:
                 row = self._row(conn, task['owner_id'], turn['session_id'])
                 if self._turns(conn, row['id'])[-1]['id'] == turn['id']:
                     self._save_session(conn, row, {**row['body'], 'stopped': True})
+                    if self.collaboration is not None:
+                        self.collaboration.stop(conn, task['owner_id'], row['id'])
+
+    async def deliver_collaboration(self, store, origin_task, event_id, message_id):
+        if self.collaboration is None or store is not self.store:
+            return False
+        return await self.collaboration.deliver(origin_task, event_id, message_id)
+
+    def validate_collaboration_admission(self, store, origin_task, event_id, request_id, plan):
+        if self.collaboration is None or store is not self.store:
+            raise PermissionError('RESEARCH_COLLABORATION_UNAVAILABLE')
+        self.collaboration.validate_admission(origin_task, event_id, request_id, plan)
 
     def task_held(self, store, task):
         with self.db.read() as conn:
@@ -621,11 +642,15 @@ class ResearchSessions:
             return {'id': row['id'], 'assistantId': row['assistant_id'],
                 **{key: deepcopy(body[key]) for key in ('title', 'goal', 'boundaries', 'createdAt', 'updatedAt', 'limits', 'sharedSourceIds')},
                 'model': deepcopy(body['configuration']['model']), 'state': state, 'allowedActions': actions,
+                'collaboration': {'enabled': body['configuration'].get('autonomousCollaboration') is True},
                 'blockReason': block, 'context': {'characters': characters, 'maximumCharacters': CONTEXT_CHARACTERS,
                     'rawCharacters': raw_characters, **({'compaction': compact_view} if compact_view else {})},
                 'turns': [{'id': item['id'], 'sequence': item['sequence'],
                     **({'assistantReply': self._reply_projection(owner, identifier, item['body']['assistantReply'])}
                        if 'assistantReply' in item['body'] else {}),
+                    **({'assistantReplies': [self._reply_projection(owner, identifier, snapshot)
+                        for snapshot in item['body']['assistantReplies']]} if 'assistantReplies' in item['body'] else {}),
+                    **({'continuation': deepcopy(item['body']['continuation'])} if 'continuation' in item['body'] else {}),
                     **{key: deepcopy(item['body'].get(key))
                     for key in ('requestId', 'taskId', 'runId', 'status', 'createdAt', 'completedAt', 'result',
                                 'messages', 'events', 'toolResults', 'failure')}} for item in turns]}
