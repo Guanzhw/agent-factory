@@ -64,6 +64,8 @@ class ResearchQAWorkflow:
     def _workflow(self):
         async def research_qa_context(step_input: StepInput, run_context: RunContext):
             result = await asyncio.to_thread(self._service().context, run_context)
+            if 'savedReply' in result:
+                return StepOutput(content=json.dumps(result['savedReply'], ensure_ascii=False), stop=True)
             return StepOutput(content=json.dumps(result, ensure_ascii=False))
 
         async def research_qa_record(step_input: StepInput, run_context: RunContext):

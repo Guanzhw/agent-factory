@@ -84,7 +84,18 @@ class ResearchQA:
                 delivery = self.associations.events.delivery_for_task(ctx.user_id, ctx.session_id)
                 if delivery is not None:
                     return self.associations.context(ctx, message, delivery)
+            saved = self.messages.read(ctx.user_id, message['messageId'])['reply']
             row = conn.execute(select(self.inputs).where(self.inputs.c.task_id == ctx.session_id)).mappings().first()
+            if saved is not None:
+                if row is None:
+                    raise HTTPException(409, 'RESEARCH_QA_ORIGINAL_INPUT_REQUIRED')
+                self._match(row, ctx, message, config)
+                for identifier in row['content_ids']:
+                    self._source(message, identifier)
+                if saved['state'] != 'available':
+                    raise HTTPException(403, 'RESEARCH_QA_REPLY_SOURCE_UNAVAILABLE')
+                return {'savedReply': self.messages.reply_for_task(ctx.user_id, ctx.session_id,
+                    saved['text'], content_ids=row['content_ids'])}
             if row is None:
                 sources = self._select(message)
                 conn.execute(self.inputs.insert().values(task_id=ctx.session_id, owner_id=ctx.user_id,

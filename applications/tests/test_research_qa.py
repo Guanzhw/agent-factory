@@ -1,10 +1,11 @@
 """Portable actual sharing boundaries; synthetic execution ports, no live model."""
 import asyncio
+from contextlib import nullcontext
 import json
 
 import httpx
 from types import MethodType
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from uuid import uuid4
 
 from agno.run import RunContext
@@ -32,6 +33,7 @@ class ResearchQATests(fixtures.ApplicationCompositionFixture):
         self.runs.request.return_value = {'taskId': self.task, 'runId': self.run}
         self.messages.message_for_task.return_value = {'messageId': self.message, 'senderId': 'bob',
             'recipientId': 'alice', 'endpointId': 'original-qa', 'text': 'measurement'}
+        self.messages.read.return_value = {'reply': None}
         self.assistants.configuration_for_endpoint.return_value = {'id': 'stable', 'revision': 1, 'endpointId': 'original-qa'}
         self.service = ResearchQA(self.store, self.assistants, self.messages, self.runs, self.content)
 
@@ -78,6 +80,75 @@ class ResearchQATests(fixtures.ApplicationCompositionFixture):
             self.service.context(self.ctx)
         self.assertEqual(denied.exception.detail, 'RESEARCH_QA_ORIGINAL_MESSAGE_REQUIRED')
         self.assistants.configuration_for_endpoint.assert_not_called()
+        self.messages.reply_for_task.assert_not_called()
+
+    def test_saved_reply_keeps_original_inputs_and_rechecks_exact_reply(self):
+        first, second = self.source('first'), self.source('second')
+        self.service.context(self.ctx)
+        self.source('later')
+        saved = {'state': 'available', 'text': 'Original analysis.',
+                 'contentIds': [first['id'], second['id']], 'createdAt': 'original-time'}
+        original = {'id': self.message, 'reply': saved}
+        self.messages.read.return_value = original
+        self.messages.reply_for_task.return_value = original
+        with patch.object(self.service, '_select', side_effect=AssertionError('Do not select new inputs')):
+            self.assertEqual(self.service.context(self.ctx), {'savedReply': original})
+        args = self.messages.reply_for_task.call_args
+        self.assertEqual(args.args, ('alice', self.task, saved['text']))
+        self.assertEqual(set(args.kwargs['content_ids']), {first['id'], second['id']})
+        self.messages.send.assert_not_called()
+
+    def test_saved_reply_without_original_inputs_does_not_rebuild_them(self):
+        self.source('later')
+        self.messages.read.return_value = {'reply': {'state': 'available', 'text': 'Original answer'}}
+        with patch.object(self.service, '_select', side_effect=AssertionError('Missing inputs must stay missing')), \
+                self.assertRaises(HTTPException) as denied:
+            self.service.context(self.ctx)
+        self.assertEqual(denied.exception.detail, 'RESEARCH_QA_ORIGINAL_INPUT_REQUIRED')
+        with self.service.db.read() as conn:
+            self.assertEqual(conn.execute(self.service.inputs.select()).mappings().all(), [])
+        self.messages.reply_for_task.assert_not_called()
+
+    def test_saved_reply_does_not_bypass_withdrawn_uncited_source(self):
+        self.source('cited')
+        withdrawn = self.source('uncited')
+        self.service.context(self.ctx)
+        self.messages.read.return_value = {'reply': {'state': 'available', 'text': 'Original answer'}}
+        self.content.set_visibility('alice', withdrawn['id'], 'personal', 'withdraw-saved-input')
+        with self.assertRaises(HTTPException):
+            self.service.context(self.ctx)
+        self.messages.reply_for_task.assert_not_called()
+
+    def test_saved_reply_requires_original_run_configuration_and_current_membership(self):
+        self.service.context(self.ctx)
+        self.messages.read.return_value = {'reply': {'state': 'available', 'text': 'Original answer'}}
+        self.ctx.run_id = 'foreign-run'
+        with self.assertRaises(HTTPException) as denied:
+            self.service.context(self.ctx)
+        self.assertEqual(denied.exception.detail, 'RESEARCH_QA_ORIGINAL_RUN_REQUIRED')
+        self.ctx.run_id = self.run
+        configuration = self.assistants.configuration_for_endpoint.return_value
+        self.assistants.configuration_for_endpoint.return_value = {**configuration, 'revision': 2}
+        with self.assertRaises(HTTPException) as denied:
+            self.service.context(self.ctx)
+        self.assertEqual(denied.exception.detail, 'RESEARCH_QA_ORIGINAL_INPUT_REQUIRED')
+        self.assistants.configuration_for_endpoint.return_value = configuration
+        # The public message read hides replies when either member loses access,
+        # including replies whose original evidence set was empty.
+        self.messages.read.return_value = {'reply': {'state': 'source_unavailable'}}
+        with self.assertRaises(HTTPException) as denied:
+            self.service.context(self.ctx)
+        self.assertEqual(denied.exception.detail, 'RESEARCH_QA_REPLY_SOURCE_UNAVAILABLE')
+        self.messages.reply_for_task.assert_not_called()
+
+    def test_association_context_does_not_read_or_reuse_private_reply(self):
+        associations = Mock()
+        associations.sources.guard.return_value = nullcontext()
+        associations.events.delivery_for_task.return_value = {'deliveryId': 'original-event'}
+        associations.context.return_value = {'purpose': 'association', 'sources': []}
+        self.service.associations = associations
+        self.assertEqual(self.service.context(self.ctx), associations.context.return_value)
+        self.messages.read.assert_not_called()
         self.messages.reply_for_task.assert_not_called()
 
     def test_native_model_has_no_tools_or_structured_provider_requirement(self):
