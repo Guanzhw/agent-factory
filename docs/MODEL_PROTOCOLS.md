@@ -20,6 +20,26 @@ Constructors, router mounting, credential provider `byok-chat-v1`, material adap
 provider registry, secret store, table, queue, cost limit or application assembly
 is introduced. The adapter's historical name remains an immutable identifier.
 
+## Request lifetime and cancellation
+
+`OwnerChatModel` uses the existing `FACTORY_NATIVE_TIMEOUT_SECONDS` setting for
+each HTTP request's total lifetime (default 60 seconds, configurable from 60 to
+3600). There is no separate 10-second HTTP phase or 30-second request limit.
+This setting is independent of a tool's operation timeout; the total request
+bound covers connection and response reading. Credential lookup and authority
+checks keep their existing positions outside that HTTP scope.
+
+Agno's earlier whole-run deadline still cancels an asynchronous request. Each
+request receives the current worker's configured duration, not the run's
+remaining time or a persisted original deadline. A synchronous summary request
+can outlive cancellation of its outer task, but remains bounded by its own
+request lifetime; the existing task/attempt/claim checks reject late summaries.
+User stop is cooperative while a model response is pending and does not promise
+immediate provider termination or stopped billing. A timeout retains the safe
+`PERSONAL_MODEL_REQUEST_FAILED` error, without an adapter retry or a claim that
+the provider did not execute. Unknown effects and summaries are not replayed
+automatically. The separate `OwnerRuntimeBroker` retains its 120-second limit.
+
 ## Protocol selection
 
 New metadata accepts `protocol: "chat-completions" | "responses"`. Missing means

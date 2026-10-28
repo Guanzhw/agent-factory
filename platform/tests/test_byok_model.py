@@ -1,20 +1,106 @@
 """Controlled provider wire contract; no credentials or external network."""
 import asyncio
 import json
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from agno.agent import Agent
 from agno.exceptions import ModelProviderError
 from agno.models.message import Message
+from agno.os.job_queue import QueueWorker
 from agno.run import RunStatus
 import httpx
 
 from agent_factory.byok_model import OwnerChatModel, PinnedChatTransport, base_url
+from agent_factory.config import Settings
+from agent_factory.personal_models import OwnerModelHandle, PersonalModels
 from agent_factory.personal_remote_provider import SecretLease
 
 
 class ByokModelTests(unittest.TestCase):
+    def test_registered_model_uses_deployment_native_lifetime_not_operation_limit(self):
+        requests = []
+        def wire(request):
+            requests.append(request)
+            return httpx.Response(200, json={'choices': [{'finish_reason': 'stop',
+                'message': {'role': 'assistant', 'content': 'Synthetic completion'}}]})
+        service = object.__new__(PersonalModels)
+        service.trusted_model_proxy = None
+        service.transport_factory = lambda: httpx.MockTransport(wire)
+        handle = OwnerModelHandle(service, 'alice', {'provider': 'openai-compatible',
+            'model': 'fixture-model', 'baseURL': 'https://fixture.invalid/v1'})
+        handle.credential = lambda: None
+        handle.check = lambda: None
+        bindings = SimpleNamespace(register=Mock())
+        service.register(bindings)
+        create = bindings.register.call_args.args[3]
+        context = SimpleNamespace(connection=handle, plan={'ownerId': 'alice', 'id': 'fixture-plan'},
+            settings=Settings(db_url='sqlite://', jwt_key='synthetic-unused-signing-key-for-unit-test',
+                native_timeout_seconds=180, experiment_timeout_seconds=8))
+        model = create(context)
+        with patch('agent_factory.byok_model.asyncio.timeout', wraps=asyncio.timeout) as timeout:
+            result = asyncio.run(model.ainvoke([Message(role='user', content='Synthetic goal')]))
+        self.assertEqual(result.content, 'Synthetic completion')
+        timeout.assert_called_once_with(180)
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0].extensions['timeout'], dict(connect=None, read=None, write=None, pool=None))
+
+    def test_request_lifetime_bounds_async_and_sync_headers_and_body_without_retry(self):
+        for synchronous in (False, True):
+            for wait_at in ('headers', 'body'):
+                with self.subTest(synchronous=synchronous, wait_at=wait_at):
+                    calls, closed, cancelled = [], [], []
+                    async def wait():
+                        try:
+                            await asyncio.sleep(.2)
+                        except asyncio.CancelledError:
+                            cancelled.append(wait_at)
+                            raise
+                    class Body(httpx.AsyncByteStream):
+                        async def __aiter__(self):
+                            if wait_at == 'body': await wait()
+                            yield b'{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"late"}}]}'
+                        async def aclose(self): closed.append('body')
+                    class Wire(httpx.AsyncBaseTransport):
+                        async def handle_async_request(self, request):
+                            calls.append(request)
+                            if wait_at == 'headers': await wait()
+                            return httpx.Response(200, stream=Body())
+                        async def aclose(self): closed.append('transport')
+                    model = OwnerChatModel({'provider': 'openai-compatible', 'model': 'fixture-model',
+                        'baseURL': 'https://fixture.invalid/v1'}, lambda: None,
+                        transport_factory=Wire, timeout_seconds=.02)
+                    messages = [Message(role='user', content='Synthetic goal')]
+                    with self.assertRaisesRegex(ModelProviderError, '^PERSONAL_MODEL_REQUEST_FAILED$'):
+                        if synchronous: model.invoke(messages)
+                        else: asyncio.run(model.ainvoke(messages))
+                    self.assertEqual(len(calls), 1)
+                    self.assertEqual(cancelled, [wait_at])
+                    self.assertEqual(closed, ['body', 'transport'] if wait_at == 'body' else ['transport'])
+
+    def test_native_deadline_cancels_request_before_its_own_lifetime(self):
+        calls, cancelled = [], []
+        async def wire(request):
+            calls.append(request)
+            try:
+                await asyncio.sleep(.2)
+            except asyncio.CancelledError:
+                cancelled.append(True)
+                raise
+            return httpx.Response(200, json={'choices': [{'finish_reason': 'stop',
+                'message': {'role': 'assistant', 'content': 'Late response'}}]})
+        model = self.model(wire)
+        worker = object.__new__(QueueWorker)
+        worker.config = SimpleNamespace(timeout_seconds=.02)
+        ownership = SimpleNamespace(cancellation_cause=None)
+        with self.assertRaises(TimeoutError):
+            asyncio.run(worker._await_with_timeout(
+                model.ainvoke([Message(role='user', content='Synthetic goal')]), ownership))
+        self.assertEqual(ownership.cancellation_cause, 'timeout')
+        self.assertEqual(cancelled, [True])
+        self.assertEqual(len(calls), 1)
+
     def test_owner_output_limit_reaches_both_protocols_without_per_call_override(self):
         for protocol, field in (('chat-completions', 'max_tokens'), ('responses', 'max_output_tokens')):
             for options, expected in (({}, 4096), ({'maxOutputTokens': 16384}, 16384)):
