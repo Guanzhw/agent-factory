@@ -41,7 +41,7 @@ Go 首两次整链各 6 个已确认响应：终答 `tool_calls:null` 被原项�
 
 门槛：最终源码及文档独立复审、真实 HTTP 停止/重启正反例、桌面手机截图、精确 head CI；通过后才合并。
 
-## Unverified
+## Unverified at the first slice
 
 真实个人 GPU/SSH、64GB/30 活跃会话容量、自动长期摘要、完整安全隔离和研究质量未验证。本地命令按显式配置的 OS 用户权限运行，不能声称跨租户命令隔离。没有生产部署或用户可访问预览 URL。
 
@@ -74,3 +74,37 @@ Go 首两次整链各 6 个已确认响应：终答 `tool_calls:null` 被原项�
 作者和非作者分别在 `a28abd9` 固定快照、独立一次性 PostgreSQL 中复现两条路径：暂停后台观察器时，原测试的预算拒绝 403 后仍为 `PREPARED`；在预算为 4 的拒绝窗口显式调用真实 `observe_root` 与 `reconcile`，则确定性触发同一断言失败。观察器依法持久取消已不符合当前预算的任务，恢复预算后再次派发仍为 409；始终没有原生票据、run 或模型调用。这解释了本次失败，不将其泛称为偶发错误，也不归因于历史 MCP 超时。
 
 只修正测试边界：原例暂停/恢复观察器以严格检查同步拒绝；新增独立例严格检查观察器取消、原绑定不变、预算恢复不复活及零派发。不放宽状态断言，不改产品、授权、CI 或 skip。作者的真实 PG 定向 8 项和非作者独立复跑的两条关键路径均通过（0 failure/error/skip）；测试文件 SHA256 `323f724d0b517e952782ec425222cbe33ca11afcb844531babd7b09dff2823e8`，原反例与独立复审见 [review.md](review.md)。最终测试修复提交仍需重新通过准确 head 的 full，不能复用 `a28abd9` 的门槛。
+
+## Context continuation — PR #152
+
+本片基线为 `3295b0addd235644ba44bdf3710085c60d44db26`，Agno 保持 **3.1.0**。下列证据与前文 PR #151 分开，未用旧片结果代替新功能验收。产品候选 `91c1224efbf838919126fed87e2a1f441d728650` 已完成分层验收；最终交付 head 的 full 和合并仍是独立门槛，不预先计为通过。
+
+### PostgreSQL and protocol checks
+
+作者在独占随机 PostgreSQL 中运行最终 34 项会话/摘要契约，0 failure/error/skip；包含原文和非已确认回复保护、started/ready/迟到响应、撤销与停止、原任务未知不绕过、边界容量及失败分类。此组原生票据/终态为显式 fixture，不是进程崩溃证据。首次 28 项中的一项因测试夹具误用 ContentPublication 字段报错，修正后通过，失败日志保留；未改产品字段迎合夹具。
+
+独审在 `a505741` 发现真实边缘：整理期间接受四条 2000 字符纠正，合法 3000 字符摘要加包装后超过 12000，却误记结果未知。`91c1224` 计入实际包装并将已知本地容量拒绝记为 failed；原始文本不截断、不重打。最终准确边界投影 12000 可成功，额外纠正拒绝且不保存。原失败与修复日志均保留，独立复跑结论见 review.md。
+
+### Real Go and local tools
+
+独立 QA 在产品 `a50574170126bdd384c1924c80d433f86bd20db1` 上实际完成 **1 次原生摘要 + 3 次主研究/工具续接请求**，模型 `glm-5.3-flash`。全部 HTTP 200、返回 billing_source=go、额外 cost=0，没有 provider 回退；既有 Go 秘密只由测试出口在内存中注入，未复制进产品或持久配置。临时 PG、真实 native queue 和真实密码认证经 ASGI 客户端运行；浏览器/TLS另验，不声称产品直连 DNS 出口或部署已经验证。
+
+前置 failed→completed 两轮由明确标记的 scripted provider 经真实 queue 产生，长研究叙述是合成数据。真实 Go 继续时，逐请求核验目标、停止边界、用户原文/ID、来源 ID、原 task/run/effect 状态；原失败仍为失败，原长回复仍保存。实际 research_read_file 读取临时 `check_value.py`，research_run 执行 `python3 -I check_value.py`，退出 0 并输出 `ACTUAL_LOCAL_CHECK_OK_735`；本例不修改文件、不验证研究质量或 GPU。
+
+本例未发送运行中纠正。原 usage 里 correctionExact=false 表示没有此输入，QA 已另附 NOT RUN 说明，不能计为真实模型纠正通过；该行为由后续 scripted provider + 真实 PG/浏览器单独验。独立 reviewer 已核对原始请求/响应、工具事件及版本；后续容量修复以定向 PG 反例验证，不把 a505 的实模记录改标为 91c1224 实跑。
+
+详细产物保存在云端 `/workspace/design-audit/research-context-20261028/`：`backend-contracts-p2-capacity-fix.*`、`independent-capacity-counterexample/`、`qa/live-context-1793185092142197072/`。这些本地路径不是公开下载链接；仓库中的产品回归与本记录提供可检查的事实边界，精选实际截图见下文。
+
+### Real process exits and browser
+
+产品 `91c1224` 的两个真实 OS 退出窗口全部通过：started 时 PID 129300 退出 86，新 PID 129466 恢复同 task/run 的 native attempt 2，摘要总计 1 次、主请求 0 次，结果保持 unknown；ready 保存后 PID 130006 退出 87，新 PID 130182 恢复同 task/run、复用同 checkpoint，摘要总计 1 次、主请求 1 次。没有手改任务终态；两者 GET、原请求查询与重复原提交均新增 0 次调用。后者是既有队列恢复原已授权轮次，不是读取页面触发或新建轮次。全部 provider 为 scripted，真实 PG/OS 行为不冒称真实模型中断。
+
+实际浏览器使用临时 PG、真实密码登录和 loopback HTTPS，浏览器仅对该临时自签证书忽略信任错误，不证明生产可信 TLS。desktop 1440×1000、mobile 390×844 以及 320px 无横向溢出，pageErrors 为空。摘要期间在手机提交纠正，先保持 pending，仅主研究请求才变 included；桌面双击只产生 1 轮；刷新与浏览历史新增 provider 调用为 0。本组总计 1 次摘要/1 次主请求，全部 scripted。前两次 QA 的 Playwright 路由事件阻塞、临时 PG TCP 就绪时序失败保留，修的是验收脚本，不是产品或认证。
+
+本组 build `index-7qsWlz2Z.js` SHA256 `3d1a0f2d8490957add3e494d9803d89e3287fee0326e621d153cb59e08aa45ea`；产品/构建 SHA 与运行前后快照匹配。三张原始 PNG 经 QA 和协调者逐张查看，SYNTHETIC QA 是测试浏览器添加的标识，不是产品 demo 模式：
+
+- [桌面：正在整理，指令待纳入](../../../docs/images/research-session-context/desktop-preparing.png)
+- [桌面：纠正纳入与摘要覆盖范围](../../../docs/images/research-session-context/desktop-ready.png)
+- [手机：摘要范围及下一轮输入](../../../docs/images/research-session-context/mobile-ready.png)
+
+可复核原产物为 `qa/restart-context-1793185822348672387/`、`qa/browser-context-1793185879378720236/` 与 `qa/REPORT.md`。本轮测试进程与自有临时 PG 均已清理；未部署给用户，没有公共预览 URL。真实 GPU/SSH、目标硬件容量、研究质量及完整 OS 隔离仍未验证。

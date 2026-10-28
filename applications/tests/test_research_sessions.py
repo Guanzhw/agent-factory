@@ -81,7 +81,7 @@ class ResearchSessionContracts(unittest.TestCase):
 
     def before(self, messages, ticket=None):
         with patch.object(self.service.runs.factory.bridge.native_db, 'get_job', return_value=ticket or self.ticket):
-            self.service.before_model(self.context, messages)
+            self.service.before_model(self.context, messages, lambda: self.fail('Unexpected auxiliary model request'))
 
     def test_owner_identity_configuration_reuse_and_request_conflict(self):
         self.assertEqual(self.service.create('alice', self.create), self.identifier)

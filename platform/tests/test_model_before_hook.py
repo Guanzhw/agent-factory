@@ -5,7 +5,7 @@ from typing import Any, cast
 import asyncio
 import unittest
 
-from agno.exceptions import InputCheckError, RunCancelledException
+from agno.exceptions import InputCheckError, ModelProviderError, RunCancelledException
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse
@@ -67,8 +67,8 @@ class ModelBeforeHookTests(unittest.IsolatedAsyncioTestCase):
         trace, reservations = [], []
         context = RunContext(run_id='run', session_id='task', user_id='alice', session_state={})
         plan = {'id': 'plan', 'applicationRef': {'id': 'synthetic-application', 'version': 1}}
-        task = {'id': 'task', 'owner_id': 'alice', 'plan_id': 'plan', 'run_id': 'run'}
-        state = SimpleNamespace(denied=False, cancelled=False)
+        task = {'id': 'task', 'owner_id': 'alice', 'plan_id': 'plan', 'run_id': 'run', 'terminal': False}
+        state = SimpleNamespace(denied=False, cancelled=False, models=[], bindings=[], attempts=[], task=task)
 
         def local_current():
             if state.cancelled:
@@ -76,6 +76,7 @@ class ModelBeforeHookTests(unittest.IsolatedAsyncioTestCase):
 
         def current():
             trace.append('current')
+            local_current()
             if state.denied:
                 raise PermissionError('synthetic revoked authority')
 
@@ -87,6 +88,7 @@ class ModelBeforeHookTests(unittest.IsolatedAsyncioTestCase):
 
         def reserve(*args, **kwargs):
             trace.append('reserve')
+            state.attempts.append(args)
             messages = kwargs['keyword_arguments'].get('messages')
             if 'messages' not in kwargs['keyword_arguments']:
                 messages = kwargs['arguments'][0] if kwargs['arguments'] else None
@@ -94,7 +96,7 @@ class ModelBeforeHookTests(unittest.IsolatedAsyncioTestCase):
             return 'attempt'
 
         store = SimpleNamespace(task=scoped_task, plan=lambda *args: plan, effects=lambda *args: [],
-            event=lambda *args: None, reject_model_protocol=lambda *args: None,
+            event=lambda *args: None, reject_model_protocol=lambda *args: trace.append('protocol-rejected'),
             usage_ledger=SimpleNamespace(begin_attempt=reserve, evidence_for=lambda *args: None,
                 finish_attempt=lambda *args: trace.append('finish')))
         if registry:
@@ -102,11 +104,16 @@ class ModelBeforeHookTests(unittest.IsolatedAsyncioTestCase):
             hooks = SimpleNamespace(before_model=callback) if callback is not None else SimpleNamespace()
             store.application_runtime.register('synthetic-owner', hooks,
                 applications=(('synthetic-application' if owned else 'other-application', 1),))
-        model = RequestModel(trace, tool_loop=tool_loop)
-        bindings = SimpleNamespace(store=store, model_from_binding=lambda *args: model,
+        def fresh(binding):
+            model = RequestModel(trace, tool_loop=tool_loop if not state.models else False)
+            state.models.append(model)
+            state.bindings.append(binding)
+            return model
+
+        bindings = SimpleNamespace(store=store, model_from_binding=fresh,
             manifest=lambda *args: {'sha256': 'synthetic-binding'})
         dispatcher = DelegatingModel(cast(Any, bindings))
-        dispatcher._complete_selection((RunOutput(run_id='run', session_id='task', user_id='alice'),
+        model = dispatcher._complete_selection((RunOutput(run_id='run', session_id='task', user_id='alice'),
             plan, context, current, local_current, BindingContext(None, store, plan, context, {})))
         return model, context, trace, reservations, state, store
 
@@ -127,7 +134,7 @@ class ModelBeforeHookTests(unittest.IsolatedAsyncioTestCase):
                     calls, loop_thread = [], get_ident()
                     messages = [Message(role='user', content='synthetic input')]
 
-                    def before(context, actual):
+                    def before(context, actual, auxiliary_model):
                         calls.append((context, actual, get_ident()))
                         trace.append('hook')
                         actual.append(Message(id='correction-1', role='user', content='synthetic correction'))
@@ -158,10 +165,91 @@ class ModelBeforeHookTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual((calls, reservations, model.requests), ([], [], []))
                     self.assertEqual(trace, ['current', 'task'])
 
+    async def test_auxiliary_is_lazy_fresh_same_binding_and_does_not_reenter_hook(self):
+        for mode in MODES:
+            with self.subTest(mode=mode):
+                calls = []
+
+                def before(context, messages, auxiliary_model):
+                    calls.append(context)
+                    helper = auxiliary_model()
+                    answer = helper.response(messages=[Message(role='user', content='summarize confirmed fixture')])
+                    messages.append(Message(role='user', content='checked summary: ' + answer.content))
+
+                model, context, _, reservations, state, _ = self.selected(before)
+                self.assertEqual(len(state.models), 1)
+                await self.call(model, mode, ([Message(role='user', content='main fixture')],))
+                self.assertEqual(calls, [context])
+                self.assertEqual(len(state.models), 2)
+                self.assertIsNot(state.models[0], state.models[1])
+                self.assertIs(state.bindings[0], state.bindings[1])
+                self.assertEqual([item[0] for item in state.attempts], [context, context])
+                self.assertIs(state.attempts[0][2], state.models[1])
+                self.assertIs(state.attempts[1][2], model)
+                self.assertEqual(len(reservations), 2)
+                self.assertEqual(len(state.models[1].requests), 1)
+                self.assertEqual(model.snapshots[0][-1].content, 'checked summary: synthetic-complete')
+
+    async def test_auxiliary_rechecks_revocation_stop_and_terminal_before_construction_and_invocation(self):
+        for failure in ('authority', 'stop', 'terminal'):
+            for constructed in (False, True):
+                with self.subTest(failure=failure, constructed=constructed):
+                    def before(context, messages, auxiliary_model):
+                        helper = auxiliary_model() if constructed else None
+                        if failure == 'authority':
+                            state.denied = True
+                        elif failure == 'stop':
+                            state.cancelled = True
+                        else:
+                            state.task['terminal'] = True
+                        helper = helper or auxiliary_model()
+                        helper.response(messages=[Message(role='user', content='must not dispatch')])
+
+                    model, _, _, reservations, state, _ = self.selected(before)
+                    error = {'authority': PermissionError, 'stop': RunCancelledException, 'terminal': InputCheckError}[failure]
+                    with self.assertRaises(error):
+                        await self.call(model, 'ainvoke', ([Message(role='user', content='main')],))
+                    self.assertEqual(reservations, [])
+                    self.assertEqual(len(state.models), 2 if constructed else 1)
+                    self.assertTrue(all(not item.requests for item in state.models))
+
+    async def test_auxiliary_response_is_accounted_before_post_response_revocation_or_protocol_rejection(self):
+        for failure in ('authority', 'stop', 'terminal', 'protocol'):
+            with self.subTest(failure=failure):
+                def before(context, messages, auxiliary_model):
+                    helper = auxiliary_model()
+                    original = helper.answer
+
+                    def answer(*args, **kwargs):
+                        value = original(*args, **kwargs)
+                        if failure == 'authority':
+                            state.denied = True
+                        elif failure == 'stop':
+                            state.cancelled = True
+                        elif failure == 'terminal':
+                            state.task['terminal'] = True
+                        else:
+                            raise ModelProviderError('PERSONAL_MODEL_TOOL_NOT_DECLARED')
+                        return value
+
+                    helper.answer = answer
+                    helper.response(messages=[Message(role='user', content='auxiliary fixture')])
+
+                model, _, trace, reservations, state, _ = self.selected(before)
+                error = {'authority': PermissionError, 'stop': RunCancelledException,
+                         'terminal': InputCheckError, 'protocol': ModelProviderError}[failure]
+                with self.assertRaises(error):
+                    await self.call(model, 'ainvoke', ([Message(role='user', content='main')],))
+                self.assertEqual(len(reservations), 1)
+                self.assertEqual(trace.count('finish'), 1)
+                self.assertEqual(trace.count('protocol-rejected'), int(failure == 'protocol'))
+                self.assertEqual(model.requests, [])
+                self.assertEqual(len(state.models[1].requests), 1)
+
     async def test_stop_received_during_hook_blocks_every_provider_mode(self):
         for mode in MODES:
             with self.subTest(mode=mode):
-                def before(context, messages):
+                def before(context, messages, auxiliary_model):
                     state.cancelled = True
                 model, _, _, reservations, state, _ = self.selected(before)
                 with self.assertRaises(RunCancelledException):
@@ -216,7 +304,7 @@ class ModelBeforeHookTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(mode=mode):
                 pending, hook_calls, tools_called = ['initial'], [], []
 
-                def before(context, messages):
+                def before(context, messages, auxiliary_model):
                     hook_calls.append(messages)
                     existing = {message.id for message in messages}
                     for identifier in pending:
@@ -254,7 +342,7 @@ class ModelBeforeHookTests(unittest.IsolatedAsyncioTestCase):
             with self.subTest(mode=mode):
                 entered, release, exited = Event(), Event(), Event()
 
-                def before(context, messages):
+                def before(context, messages, auxiliary_model):
                     entered.set()
                     try:
                         if not release.wait(3):

@@ -67,16 +67,31 @@ class DelegatingModel(Model):
 
     def _complete_selection(self, prepared):
         response, plan, context, current, local_current, binding = prepared
-        local_current()
         store = self.bindings.store
-        model = self.bindings.model_from_binding(binding)
-        # Only this fresh per-response adapter is wrapped. Shared Agent/model
-        # state is unchanged, and every provider retry/tool-loop call rechecks.
-        self._guard_provider_calls(model, current, local_current=local_current,
-            ledger=ledger_for_plan(store, plan), plan=plan, context=context,
-            before_model=lambda args, kwargs: self._before_model(context, args, kwargs),
-            on_recovered=lambda: self._model_recovered(context),
-            on_protocol_rejected=lambda: store.reject_model_protocol(context))
+
+        def auxiliary_current():
+            current()
+            if store.task(context.session_id, context.user_id)['terminal']:
+                raise InputCheckError('Auxiliary model invocation requires the original active task')
+
+        def selected_model(*, auxiliary=False):
+            check = auxiliary_current if auxiliary else current
+            if auxiliary:
+                check()
+            else:
+                local_current()
+            model = self.bindings.model_from_binding(binding)
+            # Each adapter is fresh. Auxiliary requests retain the run guards
+            # without recursively entering the application's request hook.
+            self._guard_provider_calls(model, check, local_current=local_current,
+                ledger=ledger_for_plan(store, plan), plan=plan, context=context,
+                before_model=None if auxiliary else lambda args, kwargs: self._before_model(
+                    context, args, kwargs, lambda: selected_model(auxiliary=True)),
+                on_recovered=lambda: self._model_recovered(context),
+                on_protocol_rejected=lambda: store.reject_model_protocol(context))
+            return model
+
+        model = selected_model()
         response.model = model.id
         response.model_provider = model.provider
         store.event(response.run_id, "model_binding_selected", "Exact trusted model adapter selected for this native response",
@@ -91,7 +106,7 @@ class DelegatingModel(Model):
         prepared = await asyncio.to_thread(self._prepare_selection, arguments, kwargs, streaming=streaming)
         return self._complete_selection(prepared)
 
-    def _before_model(self, context, arguments, kwargs):
+    def _before_model(self, context, arguments, kwargs, auxiliary_model):
         """Let the exact application owner amend this provider request in place."""
         store = self.bindings.store
         runtime = getattr(store, "application_runtime", None)
@@ -104,7 +119,7 @@ class DelegatingModel(Model):
         messages = kwargs.get("messages") if "messages" in kwargs else arguments[0] if arguments else None
         if not isinstance(messages, list) or not all(isinstance(message, Message) for message in messages):
             raise InputCheckError("Application model control requires the native request message list")
-        callback(context, messages)
+        callback(context, messages, auxiliary_model)
 
     @staticmethod
     def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None, local_current=None, before_model=None, on_recovered=None, on_protocol_rejected=None):
