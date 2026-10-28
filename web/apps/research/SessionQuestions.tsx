@@ -18,6 +18,7 @@ const collaborationReasons: Record<string, string> = {
   RESEARCH_SOURCE_UNAVAILABLE: '原共享来源已不可读，请核对来源权限。',
   RESEARCH_ORIGINAL_OUTCOME_UNCONFIRMED: '原研究执行结果尚未确认，请核对原任务；不会重复启动。',
   RESEARCH_COLLABORATION_ADMISSION_UNCONFIRMED: '自动继续请求尚未确认，请核对原问题与原任务；不会另建请求。',
+  RESEARCH_COLLABORATION_CONTINUATION_NOT_INCLUDED: '自动继续轮在使用回答前已结束；查看原任务后，可自行决定是否手动继续，能否开始仍以会话当前可用操作为准。',
 };
 
 function QuestionStatus({ question }: { question: ResearchQuestion }) {
