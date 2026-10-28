@@ -37,3 +37,11 @@
 已独立审查修复 `e0f7672` → `5c110376cb26b2c84b01cecf78de82d44ca7e802` 的完整两文件增量，**代码复审 PASS**。POSIX 标志改为无默认值的动态读取；缺少必需标志会在打开文件前失败，没有 0 fallback、类型忽略或放宽 `dir_fd` / `O_NOFOLLOW` / `O_NONBLOCK`。非 POSIX 显式 workspace 仍拒绝。仅启用 host commands 时要求搜索路径各段绝对，解决 Windows 默认 `os.defpath` 含相对段导致禁用配置也不能装配的问题；布尔值和路径类型检查保持。默认工具仍只提供共享证据读取，未新增 Windows 宿主执行能力、CI skip 或配置例外。
 
 Reviewer 在精确修复字节上独立执行 17 项工具与 HTTPS composition 检查全部通过，包括实际 Linux 临时文件/符号链接拒绝、原生 Agent scripted 两轮读改测试、父子进程停止及 4 项新增配置反例。仓库原配置 `pyright --pythonplatform Windows` 为 0 errors / 14 项本机既有 Win32 缺失源警告，Ruff 与 diff check 通过；这不是原生 Windows 执行证据。产品文件 SHA `71013afbf12f13893ea0725b2b859e38eef0bcba2f31be06ac1326469d2671b7`，对应测试 SHA `b04730fcca113b30d380175724f413ac0fcd08584d01d26ee108220b1d089693`。其余已审产品字节未变，累计审查结论保持；新最终 head 的真实 Windows/full CI 门槛仍须另行核实。
+
+## PostgreSQL 观察器测试增量复审
+
+累计基线仍为 `3ec76ad34a97c3803933df646fd30966d4019024`，本次增量基线 `a28abd9d9e85b25e0c2db35f8164267a152fff9d`。独立读取首次 full 的完整 PostgreSQL 日志，确认 2310 项、1 failure / 0 errors / 15 skips、`accepted=false`；六个必跑组全部通过不能抵消 discovery 失败。失败为原预算冲突测试预期 `PREPARED`、实得 `CANCELLED_NO_DISPATCH`。第二轮 [40638208697](https://github.com/Guanzhw/agent-factory/actions/runs/40638208697) 的 Windows Python 已实际成功，新增 4 项配置检查实际通过；完整 PostgreSQL 在本复审时仍运行，未预先计为成功。
+
+Reviewer 在原 `a28abd9` 独立 Git 归档及一次性真实 PostgreSQL 上复现：原测试暂停观察器后通过；在真实 403 返回边界、预算仍为 4 时显式运行原生 `observe_root`/`reconcile`，原断言确定性失败。没有伪造权限结果或写入取消状态；实际产生 `protected_denied`、`current-authority-ended` 事件，原任务从未派发，恢复预算后仍拒绝 409。这证明原测试混入了合法的观察器清理交错，不能把该失败笼统归为环境偶发或历史 MCP 问题。
+
+**测试增量审查 PASS。** 完整审查唯一测试文件的 48 行新增 / 5 行删除：原例只在预算拒绝窗口停止/恢复观察器，保留精确 403、`PREPARED` 和无新票据断言；新独立例验证实际观察器取消、原绑定不变、恢复预算不复活和双方零派发。没有放宽状态集合、修改产品或新增 skip/CI 例外，未引入多余测试框架。冻结测试 SHA256 `323f724d0b517e952782ec425222cbe33ca11afcb844531babd7b09dff2823e8` 在独立归档中真实 PG 复跑两项全部通过（5.529 秒，0 failure/error/skip）；原反例和修复验证各使用新临时容器并已清理，未调用模型。Ruff 与 diff check 通过。产品头仍为 `5c110376`、UI 仍为 `20b9145f`；新的测试/文档交付头需单独通过完整 CI，不能复用前两轮结果替代。

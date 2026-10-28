@@ -64,3 +64,13 @@ Go 首两次整链各 6 个已确认响应：终答 `tool_calls:null` 被原项�
 修复产品头 `5c110376cb26b2c84b01cecf78de82d44ca7e802`：必需的 POSIX 标志使用无默认值的读取，缺失时仍报错；非 POSIX 目录访问在打开前拒绝。命令关闭时不再用 Windows 默认搜索路径的相对段阻断共享证据功能和默认装配；命令启用仍要求绝对路径，参数类型始终严格检查。没有 `getattr(..., 0)`、检查豁免、依赖升级或 Windows 本地命令支持声明。
 
 17 项工具/装配回归通过，包括真实 Linux 临时文件、父子进程和 4 项可移植配置检查；普通与 Windows 目标的 Pyright 均 0 errors（Linux 环境中 14 条原有 win32 缺模块 warnings）。Windows 目标静态检查不冒充真实 Windows 执行，仍须新的精确 head full。UI 文件和截图未变，原实际浏览器版本继续按前文标注；本次不重复模型调用。非作者增量复审见 [review.md](review.md)，最终 CI 结果记录在 PR。
+
+修正后的 `a28abd9` full [40638208697](https://github.com/Guanzhw/agent-factory/actions/runs/40638208697) 已实际通过 Windows Python：Pyright 0 errors / 0 warnings，发现 2314 项、跳过 911 项，4 项新增配置检查均实际执行。此结果只证明默认/共享证据装配兼容，不证明 Windows 宿主命令；其余门槛仍以最终交付 head 为准。
+
+## PostgreSQL test interleaving correction
+
+首次 full 的 PostgreSQL 终态另有 1 failure / 0 errors / 15 skips（发现 2310 项），`accepted=false`：`test_05_owner_key_manifest_catalog_and_budget_conflicts` 期望 `PREPARED`，实际为 `CANCELLED_NO_DISPATCH`。六组必跑检查均成功，不能抵消 discovery 失败。本次测试修正前，该测试及对应远程交接/生命周期源码与 main 基线一致。
+
+作者和非作者分别在 `a28abd9` 固定快照、独立一次性 PostgreSQL 中复现两条路径：暂停后台观察器时，原测试的预算拒绝 403 后仍为 `PREPARED`；在预算为 4 的拒绝窗口显式调用真实 `observe_root` 与 `reconcile`，则确定性触发同一断言失败。观察器依法持久取消已不符合当前预算的任务，恢复预算后再次派发仍为 409；始终没有原生票据、run 或模型调用。这解释了本次失败，不将其泛称为偶发错误，也不归因于历史 MCP 超时。
+
+只修正测试边界：原例暂停/恢复观察器以严格检查同步拒绝；新增独立例严格检查观察器取消、原绑定不变、预算恢复不复活及零派发。不放宽状态断言，不改产品、授权、CI 或 skip。作者的真实 PG 定向 8 项和非作者独立复跑的两条关键路径均通过（0 failure/error/skip）；测试文件 SHA256 `323f724d0b517e952782ec425222cbe33ca11afcb844531babd7b09dff2823e8`，原反例与独立复审见 [review.md](review.md)。最终测试修复提交仍需重新通过准确 head 的 full，不能复用 `a28abd9` 的门槛。
