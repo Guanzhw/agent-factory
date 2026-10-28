@@ -27,6 +27,8 @@
 
 ## Goals / Non-Goals
 
+后续真实 Go `deepseek-v4.1-flash` 在 `afee072af2a8f163795972c33d5a9e7063fd93d7` 已复现目标测试失败，但 repair 对 `project/pytest_asyncio/plugin.py` 搜索时失败：schema/描述未声明仅目录，实现却用 `_directory` 打开文件。只读调用未 reserve effect，两个先前命令均 DONE，源码未改、无 UNKNOWN。普通 `ValueError` 经 core `protected_boundary` 写 `tool_failed`，随后触发 `protected-failure` 结束原轮。13 次真实请求均 HTTP 200 / Go，原件 `qa/live/run-1793210179073291872/diagnosis.json`；不是模型协议或同轮锁故障。另一次 5 请求运行因 8 工具预算在核仓库后耗尽，QA 错误要求首轮已复现而结束，保留为验收脚本失败；修订允许同 session 有限显式继续，不能称无需用户续轮。
+
 **Goals:** 同一个人会话在明确仓库副本和已准备项目环境中读搜改代码、跑完整测试，收到纠正，能停止并在重启后核对、显式继续。先修上述真实障碍。
 
 **Non-Goals:** 新 harness、仓库/依赖管理器、分页框架、第二执行器、全站重画或提高所有上限。无 OS 沙箱/CPU 内存强隔离、PTY、原生 Windows 命令、真实 GPU、30 路容量、长期记忆/动态 teams 完成声明。
@@ -38,6 +40,7 @@
 3. **只接通已有时间预算。** `platform/agent_factory/config.py::Settings.from_env` 将 `FACTORY_OPERATION_TIMEOUT_SECONDS`、`FACTORY_NATIVE_TIMEOUT_SECONDS` 接到现有两个 Settings 字段，保留 core 的 8/60 默认；操作值遵循平台 Budget 的 1–600 秒边界，原生时限沿既有 60–3600 秒校验，不加配置体系。`platform/agent_factory/execution_bindings.py::EnvironmentLimits` 的超时描述范围上限对齐已有 600 秒预算，保留其默认和其他 adapter 自己的实际时限；回归验证不能因共享描述范围改变而隐式增大其他执行时限。`session_routes.py` 采用同一 600 秒 schema 边界；`session_setup.py` 与 `session_tools.py` 去掉重复 30 秒夹断，服从持久化原计划和部署预算。新会话默认使用部署已配置操作时限，成员不用每次展开高级输入；旧会话不改预算或重启操作。验收启动配置为操作 60 秒、原生一轮 300 秒，覆盖已测 35 秒完整测试及本任务模型/工具开销，是此部署配置而非容量保证。通过正常 `agent-factory-research` 启动路径验证，不能只改测试 Settings。
 4. **复用反馈与控制。** `ResearchSessions.tsx::ToolOutput` 已显示命令、cwd、退出、stdout/stderr 和文件 SHA；仅在真实浏览器发现必要状态缺口时修此处，不新造结果组件。沿用 corrections/stop/turns/request 与 effect；纠正在下一模型请求生效，不改写在途命令。GET 不执行，显式继续先核原操作；超时 UNKNOWN 不因进程消失就变成成功或自动重跑。ui-ux-pro-max 的就地错误/异步反馈、impeccable clarify/distill 的“发生什么/下一步”与默认值原则用于任务状态，内部回执保留折叠。
 5. **同一 run 的应用工具串行。** 仅在 `ResearchSessionTools` 用 `(owner, task, run)` 的 `asyncio.Lock` 包住原 invoke，获锁后才执行已有 guard、原 effect 检查及 reserve/execute/complete。各 Function 闭包强持相同锁，应用实例用 `WeakValueDictionary` 复用它，函数释放后自然清理；不建永久锁表、持久队列或通用调度器。不同 run 不共锁；旧/异 run UNKNOWN 仍由原持久 effect 拒绝，不因服务重启或本地锁消失而重放。等待期间 stop/撤权时，获锁后的原 guard 拒绝启动；执行中的命令继续走现有取消和父子进程控制。先用真实双工具响应做零 Go 回归重现，再独审此局部变更，不修改 provider 提示来躲过问题。
+6. **搜索文件与可纠正错误。** `research_search.path` 接受 workspace 内相对文件或目录，省略时仍查当前目录；复用安全目录/文件打开和现有匹配截断，不新增搜索框架。Research 层将 schema 校验、只读文件目标错误及现有明确未派发的失败回执返回为可读失败结果，记录失败事件但不抛出触发 core `tool_failed` 的普通异常；助手可在原轮剩余额度内自行改参数。现有 `CLIProcessError` 只有 `dispatched=False` 且已结束才为 failed，不能把 stopped 等同无副作用。授权/来源撤销、用户停止、未知/未保存回执及可能已经写入或派发的错误保持原阻断。保留原调用/失败回执，不自动重试，不新增全局错误分类或放宽 core 生命周期。
 
 ## Acceptance sequence
 
@@ -48,6 +51,8 @@
 确定性工具/进程回归、真实 PostgreSQL 原生运行、脚本模型、获准 Go 模型自主完成和浏览器分别列结果。已有基线不抵扣上述验收；先沿现有调用次数，必要时同会话分轮，不预增预算。
 
 同轮多工具另作针对性回归：合法双调用均各完成一次；不同 run 不被该锁串行；旧/异 run 与服务重启后的 UNKNOWN 不启动新副作用；停止或撤权时，正在运行的工具按原机制处理，等待者不得随后启动。零 Go 回归仅验证调用与控制协议，不代替恢复真实模型代码任务。
+
+错误恢复另验：原真实单文件搜索参数得到正确行号/片段；正常 native/PG 一轮先收到明确无副作用的参数或文件目标错误，再由模型选择正确参数完成，失败原事件保留且没有 `protected-failure`。对照权限撤回、原 UNKNOWN、取消及可能已经派发的命令仍阻止新增操作。最终实模通过以只读验证阶段的新 target/full 回执和源码前后 SHA 一致为准，不能沿用修改前的测试结果。
 
 ## Risks / Trade-offs
 

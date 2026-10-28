@@ -37,3 +37,9 @@
 按 (owner, task, run) 在 ResearchSessionTools 内复用锁、Function 闭包强持及弱引用索引，是针对实测失败的最小顺序执行机制，简洁性 PASS。完整 invoke 获锁后重新执行原权限/停止/effect 检查，不松持久 UNKNOWN、不建新队列、不以 provider 提示代替修复。实现须验证双调用各一次、不同 run 不互阻、旧/重启 UNKNOWN 不重放、stop/撤权后的等待者不启动；锁释放不等于进程已停止。
 
 项目源明文 .pth 是操作方环境前置调整，不改产品或原测试；oracle 单目标通过不抵扣会话副本完整测试。网络对照只能收敛为净化环境兼容性缺口，逐变量因果和真实研究公网路径仍未通过。本次仅批准实施该方案，不覆盖新产品 head 的代码/真实模型/浏览器/CI 验收；没有发布操作。
+
+## 单文件搜索与可恢复错误窄复审
+
+在产品 `afee072af2a8f163795972c33d5a9e7063fd93d7` 上，非作者 `coding_minimal_design_check` 核读 13 次真实 DeepSeek 失败及四稿增量，aggregate `8ce6c338ce76cb0c8cd3b0dcd88ea86c71e1ad3efe96e34a86cffbee290fe550`，独立 strict validate PASS：**方案 PASS**。
+
+仅在 Research 工具层支持 file/dir search 和明确无副作用的可读失败结果；不修改 core protected_boundary。保留 guard 与原 UNKNOWN 核对，不能以宽泛 OSError catch 吞掉其子类 PermissionError；授权/共享来源撤销、取消、写入后错误和回执保存失败保持阻断。CLI 只采用现有 failed 且 stopped 契约（构造器保证未派发），不能仅凭 stopped。失败事件保留，由模型在原预算内自行修正，不自动重试。需要同轮 native/PG 恢复及反例；无新框架必要，不代表产品或发布验收通过。

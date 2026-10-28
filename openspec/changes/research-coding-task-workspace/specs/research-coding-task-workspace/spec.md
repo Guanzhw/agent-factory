@@ -26,6 +26,10 @@
 - **WHEN** 搜索文本实际存在于大于 12KB 的正常源码
 - **THEN** 搜索包含该文件的真实匹配，不因尺寸跳过而返回无截断的空结果；编辑不因整文件大于旧限制拒绝，不改未选中的内容
 
+#### Scenario: Search a specific source file
+- **WHEN** 助手将 workspace 内具体 UTF-8 源文件作为搜索 path
+- **THEN** 返回该文件的真实匹配、行号与既有截断信息；目录搜索和相对路径权限保持，不因 path 是文件而结束原轮
+
 #### Scenario: Real tests exceed the old time limit
 - **WHEN** 基线证明正常完整测试超过 30 秒，部署已配置足够操作预算
 - **THEN** 测试在真实预算内完成且可停止；不插入等待、换空测试或删用例冒充通过
@@ -57,6 +61,18 @@
 #### Scenario: Encounter an unresolved older operation
 - **WHEN** 原持久 effect 为 UNKNOWN，包括异 run 或服务重启后再进入工具
 - **THEN** 原未知操作仍阻止新增副作用，本地串行状态不替代持久记录，也不自动重放
+
+### Requirement: Let the assistant correct errors before side effects
+
+系统 SHALL 将明确未产生副作用的参数或文件目标错误返回为可读失败结果，让助手在原轮剩余预算内选择修正；保留失败事实，不自动重试或当作执行成功。权限/来源撤销、取消和 UNKNOWN SHALL 保持阻断，不能因进程已停止便断言没有副作用。
+
+#### Scenario: Correct a recoverable tool call in the same turn
+- **WHEN** 当前权限有效，工具在派发前拒绝参数，或只读文件目标不存在
+- **THEN** 助手收到明确失败原因和修正方向，原轮可选择正确参数继续；原失败事件可查，不触发全局 protected-failure
+
+#### Scenario: Keep authority and uncertain effects blocking
+- **WHEN** 权限撤回、用户停止、原结果 UNKNOWN 或可能已经执行的操作缺少回执
+- **THEN** 原阻断保持，不把它转换为普通可恢复参数错误，不盲目重复操作
 
 ### Requirement: Correct and stop the real task
 
