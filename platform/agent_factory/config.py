@@ -112,6 +112,8 @@ class Settings:
             raise ValueError("Native task timeout must be 60 through 3600 seconds")
         if type(self.experiment_timeout_seconds) is not int or not 1 <= self.experiment_timeout_seconds <= 600:
             raise ValueError("Operation timeout must be 1 through 600 seconds")
+        if type(self.max_tool_calls) is not int or not 1 <= self.max_tool_calls <= 128:
+            raise ValueError("Max tool calls must be 1 through 128")
         if self.browser_oidc is not None:
             from .browser_oidc import BrowserOIDCConfig
             if type(self.browser_oidc) is not BrowserOIDCConfig:
@@ -175,4 +177,5 @@ class Settings:
                    storage_retention_grace_seconds=int(os.getenv("FACTORY_STORAGE_RETENTION_GRACE_SECONDS", "86400")),
                    storage_allow_purge=os.getenv("FACTORY_STORAGE_ALLOW_PURGE", "false") == "true",
                    max_workers=int(os.getenv("FACTORY_MAX_WORKERS", "2")),
+                   max_tool_calls=int(os.getenv("FACTORY_MAX_TOOL_CALLS", "8")),
                    port=int(os.getenv("FACTORY_PORT", "3100")))

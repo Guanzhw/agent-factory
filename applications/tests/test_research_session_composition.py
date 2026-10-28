@@ -60,6 +60,37 @@ class ResearchSessionCompositionTests(unittest.TestCase):
                     'FACTORY_OPERATION_TIMEOUT_SECONDS': value}, clear=True), self.assertRaises(ValueError):
                 research.create_app()
 
+    def test_normal_factory_loads_tool_limit_without_changing_default(self):
+        environment = {'FACTORY_DATABASE_URL': 'postgresql://unused',
+            'FACTORY_JWT_KEY': 'synthetic-signing-key-at-least-32bytes'}
+        with patch.dict(os.environ, environment, clear=True):
+            self.assertEqual(Settings.from_env().max_tool_calls, 8)
+        with patch.dict(os.environ, {**environment, 'FACTORY_MAX_TOOL_CALLS': '32'}, clear=True), \
+                patch.object(research, 'create_deployment') as deployment:
+            research.create_app()
+        self.assertEqual(deployment.call_args.args[0].max_tool_calls, 32)
+
+    def test_invalid_tool_limit_is_rejected_at_startup(self):
+        for value in ('0', '129', 'not-calls'):
+            with self.subTest(value=value), patch.dict(os.environ, {
+                    'FACTORY_DATABASE_URL': 'postgresql://unused',
+                    'FACTORY_JWT_KEY': 'synthetic-signing-key-at-least-32bytes',
+                    'FACTORY_MAX_TOOL_CALLS': value}, clear=True), \
+                    patch.object(research, 'create_deployment') as deployment:
+                with self.assertRaises(ValueError):
+                    research.create_app()
+                deployment.assert_not_called()
+
+    def test_direct_settings_require_bounded_integer_tool_limit(self):
+        for value in (1, 128):
+            with self.subTest(value=value):
+                self.assertEqual(Settings(db_url='postgresql://unused',
+                    jwt_key='synthetic-signing-key-at-least-32bytes', max_tool_calls=value).max_tool_calls, value)
+        for value in (0, 129, True, 1.5, '32'):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                Settings(db_url='postgresql://unused',
+                    jwt_key='synthetic-signing-key-at-least-32bytes', max_tool_calls=value)
+
     def test_invalid_host_command_flag_rejects_factory_startup(self):
         with patch.dict(os.environ, {'FACTORY_RESEARCH_HOST_COMMANDS': 'true'}, clear=True):
             with self.assertRaisesRegex(ValueError, 'FACTORY_RESEARCH_HOST_COMMANDS'):

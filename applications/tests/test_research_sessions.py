@@ -125,6 +125,30 @@ class ResearchSessionContracts(unittest.TestCase):
             configuration = self.service._row(conn, 'alice', longer)['body']['configuration']
         self.assertEqual(configuration['budget']['operationSeconds'], 60)
 
+    def test_new_tool_default_preserves_existing_plan_and_explicit_lower_budget(self):
+        _, original_task = self.reserved()
+        original_plan = deepcopy(self.store.plan(original_task['plan_id'], 'alice'))
+        self.store.settings.max_tool_calls = 32
+        option = self.service.options('alice')['limits']['toolCallsPerTurn']
+        self.assertEqual(option, {'min': 1, 'max': 32, 'default': 32})
+        wider = self.service.create('alice', self.create.model_copy(update={
+            'requestId': 'create-wider-tool-session',
+            'limits': SessionLimits(maxTurns=4, toolCallsPerTurn=option['default'], operationSeconds=5)}))
+        explicit = self.service.create('alice', self.create.model_copy(update={'requestId': 'create-explicit-tool-session'}))
+        self.assertEqual(asyncio.run(self.service.read('alice', wider))['limits']['toolCallsPerTurn'], 32)
+        self.assertEqual(asyncio.run(self.service.read('alice', explicit))['limits']['toolCallsPerTurn'], 4)
+        self.assertEqual(self.read()['limits']['toolCallsPerTurn'], 4)
+        with self.service.db.read() as conn:
+            old_config = self.service._row(conn, 'alice', self.identifier)['body']['configuration']
+            explicit_config = self.service._row(conn, 'alice', explicit)['body']['configuration']
+            wider_config = self.service._row(conn, 'alice', wider)['body']['configuration']
+        self.assertEqual(old_config, explicit_config)
+        self.assertEqual(wider_config['budget']['toolCalls'], 32)
+        self.assertEqual(self.store.plan(original_task['plan_id'], 'alice'), original_plan)
+        self.identifier = wider
+        _, wider_task = self.reserved('turn-wider-tool-budget')
+        self.assertEqual(self.store.plan(wider_task['plan_id'], 'alice')['budget']['toolCalls'], 32)
+
     def test_concurrent_reservations_have_one_active_turn_and_duplicate_is_read_only(self):
         barrier = Barrier(2)
         def reserve(index):
