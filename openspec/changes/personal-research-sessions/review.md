@@ -57,3 +57,22 @@ Reviewer 在原 `a28abd9` 独立 Git 归档及一次性真实 PostgreSQL 上复�
 实现验收仍须实际覆盖：旧超限会话准入与保护区超限拒绝、原生摘要→主请求同 owner/model 且零工具/无递归、摘要挂起时纠正和停止可提交、撤权后零主调用、started/ready 两个崩溃窗口、重复请求与旧回执迟到、无效/超长摘要保留原历史；最终上下文的序列化大小也须满足界限。PG/scripted、真实 Go 小例和桌面手机分别给证据，不以首片成功或本方案审查替代。
 
 本轮独立 `openspec validate personal-research-sessions --strict` 通过；没有新增模型、PG或产品测试调用，没有产品修改。审阅文件 SHA256：proposal `cb608be95048d6eec9dbe4681289ea7f884cad47f3b2e99cfade04538678a277`；design `4c5cb42b70fb9ff8fa196c978d56eeb5f03dc0852936dab51e1a9cbf599c3fb4`；spec `72837bf62d49cc134c486c4921ad2401d391e4995ba017f4bc7e91ab43b265d2`；tasks（4.1 勾选前）`89c3ef3f426fd437ceb13a7e0f670eee26228d32bbbb9efecf19047ad40590e7`。
+
+## Context continuation 实现审查
+
+**累计实现与验收证据审查 PASS：容量/失败分类反例已整改并独立复验，实际浏览器与两个 OS 退出窗口证据已核对，无未关闭的代码或验收证据阻断。可冻结最终交付 head 并进入准确 head 的 full CI；尚未将 CI、合并或部署计为通过。** 本片累计基线 `3295b0addd235644ba44bdf3710085c60d44db26`，先完整审查候选 `a50574170126bdd384c1924c80d433f86bd20db1` 的 16 文件，再完整复审产品头 `91c1224efbf838919126fed87e2a1f441d728650` 的三文件增量。UI 四文件完整审查与 23 项产品回归、6 项独立交错反例通过；core 11 项独立协议检查、原生摘要至 OwnerChatModel 两协议的 8 项离线检查通过，相关 SHA 与最终产品头一致。真实随机 PostgreSQL 上初次独立复跑 32 项会话/摘要契约全部通过（41.861 秒、0 failure/error/skip），原生任务/queue 观察在该组仍为显式 fixture，不能替代 OS 退出和真实模型验收。
+
+新增独立真实 PG 反例曾在 `a505741` 复现：摘要进行期间接受 4 条各 2000 字符的纠正，保护区 8977 字符；模型返回合法、恰为 3000 字符的摘要对象，最终投影加包装字段超过 12000。代码确实拒绝主研究请求、保留原历史和 pending 纠正，但把已知 `RESEARCH_CONTEXT_LIMIT` 归为 `unknown/RESEARCH_SUMMARY_UNKNOWN`，错误表示模型结果未确认。独立反例 SHA256 `398a41d1016b86c3724b417e58cdec4bb5aa26e0bb49a4e82aaeb02e395d1951`，观察结果 `c6f43e0cbe1804efc15bb15fae944411f366ed0045657d9d3623d2badfe446f5`；初次自写 fixture 的整点容量假设失败单独保留，不当作产品失败。
+
+`91c1224` 用一个局部 helper 计算实际摘要包装容量，在准入和运行中纠正共用；已收到结果后的确定容量拒绝单独记 failed，来源撤销、网络或落盘不明未被宽化为已知失败。没有放宽上限、截断原文或自动重试。Reviewer 在最终三文件 SHA 稳定的真实 PG 环境独立运行 **34 项产品契约 + 2 项独立边界反例，36 项全部通过**（51.225 秒、0 failure/error/skip）。独立例直接构造实际序列化投影、不调用新容量 helper 计算期望：12000 字符投影和 3000 字符摘要可 ready，额外纠正拒绝且未写；摘要期间原 `_refresh` 补齐 task/run 身份后触发已知容量失败，状态/原因准确、全消息 pending、无 checkpoint，attempt 2 不重打。脚本 SHA256 `452b72ef0f5c80a7d85d8a6bbc59b8e980cb6bb46ec708d1a50fa8b083bcd7c1`，结果 JSON `eaebab04e3ff73eb94c6506665aa9829625e063b478a8fafb767d4a4f71fb083`。
+
+同时复核两项前置修复：未参加摘要的 failed/canceled 回复仍保留；`_refresh` 在写锁内重新判断 compaction，锁外 started 观察不再把已 ready/completed 的结果改成失败。方案与使用文档的 12k/3k/48k、显式摘要触发及下一片交接边界一致；无新 harness、通用状态层、权限系统、无谓 fallback 或测试 skip。基线 UI 的迟到 A 请求会显示无会话名的全局 notice，但不会覆盖 B 的摘要/草稿；本片未声称所有提示已隔离。
+
+真实 Go 小例已只读复核脚本、4 条原始响应/用量和工具事件：在 `a505741` 完成 1 次原生摘要、3 次主请求，真实读取与本地测试退出 0；前置历史是明确 scripted、运行中纠正该例 NOT RUN，不能宣称研究质量或完整实模历史验证。后续容量修复由上述 PG 边界验证，不改标旧实模版本。Reviewer 未追加外部模型调用、修改产品或安装依赖；上述临时 PG 容器均已清理。
+
+
+最终只读复核独立 QA 的 `91c1224` 原始结果、脚本、请求计数及源码/构建映射：真实 OS started 退出后原 native attempt 1→2，摘要总 1、主请求 0，保持 unknown；ready 事务提交后退出，同 task/run 的原队列 attempt 2 复用同 checkpoint，摘要总 1、主请求 1。没有手改 task/effect 状态，GET、原请求查询和重复原提交均新增 0 次调用。该 ready 路径是恢复已授权的原任务；不是页面读取创建任务，也不代表安全终态会话无需显式开始下一轮。两者 provider 为 scripted，不把受控断点当远端模型 exactly-once 保证。
+
+浏览器真实使用临时 PG、密码登录、loopback HTTPS 与 Chromium；已核摘要期间纠正 pending→仅主请求 included、双击仅 1 轮、刷新/历史零新增调用和手机空输入反馈。1440×1000、390×844 及 320px 无横向溢出；临时自签证书的测试信任例外不是生产 TLS 验收。Reviewer 已逐张查看三张交付 PNG 及手机错误截图；三张仓库文件与最终 QA 原图逐字相同，仅 PNG 图像块，无附加 metadata，内容为明确 SYNTHETIC QA/临时账号与合成输入，无真实个人材料或秘密，适合在现有仓库范围公开。未把这些 scripted 截图当实模研究结果。
+
+最终累计核对 **20 个文件**（含文档及三张 PNG）：使用说明的 ready 自动续原任务与 started 不重打边界准确；verification 保留真实 Go `a505741` 与最终 `91c1224` 的不同证据版本、两次 QA 夹具失败和未验证范围；tasks 4.7 保持未完成，下一片只作已核源码的任务交接。未扩大本片实现或提前声称生产部署。最终交付提交产生后，只需核其字节与本审阅快照一致，并独立核验准确 head 的 CI。
