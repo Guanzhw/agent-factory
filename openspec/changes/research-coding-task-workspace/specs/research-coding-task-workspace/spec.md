@@ -12,7 +12,7 @@
 
 #### Scenario: Start a real repository task
 - **WHEN** 成员提供公共 URL/commit 与代码问题，本环境公网 Git 连接失败，操作方提供已核官方副本到会话目录
-- **THEN** 助手用现有命令实际核 pwd、origin、HEAD 和源码 SHA；操作方随后准备隔离 venv editable 指向该副本，主/测试子进程导入路径可核，同一 session 显式继续；本地准备不计作公网成功，不声称自动配环境
+- **THEN** 助手用现有命令实际核 pwd、origin、HEAD 和源码 SHA；操作方随后准备隔离 venv 的标准项目源路径（可用只含路径的 .pth），主/测试子进程导入与 pytest 发现均核为该副本，再在同一 session 显式继续；不靠 PYTHONPATH/代理注入，不将仅 editable 安装或本地准备分别算环境/公网通过，不声称自动配环境
 
 ### Requirement: Complete ordinary source changes and project tests
 
@@ -41,6 +41,22 @@
 #### Scenario: Inspect failure or uncertainty
 - **WHEN** 测试非零退出、工具返回失败或原结果未知
 - **THEN** 用户能核实际依据和文件变化，知道可纠正/继续还是需核原操作；未知不得显示为成功
+
+### Requirement: Accept multiple tools in one model response
+
+系统 SHALL 接受同一 run 的合法多工具回复，并在 Research 应用内顺序执行；不能把本 run 正常在途工具误判为遗留 UNKNOWN。执行前 SHALL 继续核当前权限、停止状态和原持久 effect，不通过提示词禁止并行或放松 UNKNOWN 保护。
+
+#### Scenario: Complete two legitimate calls
+- **WHEN** 同一模型回复给出 pwd 与 ls 等两个合法工具调用
+- **THEN** 两调用在同一 run 各执行一次并返回真实回执，不因前一个尚在途而错误停止整轮；不同 run 不共用该执行锁
+
+#### Scenario: Stop while another tool waits
+- **WHEN** 第一工具执行中、第二工具等待，用户停止或权限被撤销
+- **THEN** 执行工具沿原取消机制核结果，等待工具执行前重新核状态并拒绝启动，不在停止后补跑
+
+#### Scenario: Encounter an unresolved older operation
+- **WHEN** 原持久 effect 为 UNKNOWN，包括异 run 或服务重启后再进入工具
+- **THEN** 原未知操作仍阻止新增副作用，本地串行状态不替代持久记录，也不自动重放
 
 ### Requirement: Correct and stop the real task
 
