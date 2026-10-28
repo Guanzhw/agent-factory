@@ -386,7 +386,7 @@ class DelegationService:
         """Request cancellation of an unsubmitted placement, without claiming stop proof."""
         return False
 
-    async def create(self, owner: str, parentTaskId: str, goal: str, mode: str, requestId: str, *, placement: dict | None = None, original_operation_id: str | None = None) -> dict[str, Any]:
+    async def create(self, owner: str, parentTaskId: str, goal: str, mode: str, requestId: str, *, placement: dict | None = None, original_operation_id: str | None = None, input_values: dict | None = None) -> dict[str, Any]:
         if not isinstance(requestId, str) or not 8 <= len(requestId) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in requestId):
             raise HTTPException(422, "A bounded delegation request ID is required")
         if not isinstance(goal, str) or not 2 <= len(goal.strip()) <= 2000 or not isinstance(mode, str) or not 1 <= len(mode) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in mode):
@@ -396,6 +396,8 @@ class DelegationService:
         self.auth.require_member(owner)
         parent = self.store.task(parentTaskId, owner)
         request = self._creation_request(owner, parent, goal, mode, placement)
+        if input_values is not None:
+            request['inputValues'] = input_values
         root_id, _ = self._ancestry(parent)
         fp = digest(request)
         native_request = "delegation:" + digest({"parent": parent["id"], "request": requestId})
@@ -442,9 +444,11 @@ class DelegationService:
                     raise HTTPException(429, "Shared delegation depth or lifetime child budget exhausted")
                 binding = {"parentTaskId": parent["id"], "rootTaskId": root_id, "depth": depth}
                 planner_store = _ChildPlannerStore(self.store, plans, binding)
+                if input_values is not None and plans[-1].get('remoteHandoff'):
+                    raise HTTPException(409, 'Remote child input binding is unavailable')
                 plan = self.store.admit_plan(owner, native_request, request,
                     lambda: planner_store.remote_child_plan(owner, goal.strip(), mode) if plans[-1].get("remoteHandoff")
-                    else create_plan(planner_store, owner, goal.strip(), mode, plans[0]["application"]))
+                    else create_plan(planner_store, owner, goal.strip(), mode, plans[0]["application"], input_values=input_values))
                 if plan["status"] != "ready":
                     raise HTTPException(409, "Child preflight is blocked: " + "; ".join(plan["missing"]))
                 link = {"owner_id": owner, "parent_id": parent["id"], "request_id": requestId, "root_id": root_id,

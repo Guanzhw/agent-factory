@@ -22,6 +22,7 @@ from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLim
 from agent_factory.personal_cli import PersonalCliAdapter
 from agent_factory.personal_tool_contract import ToolInvocationError, validate_tool_arguments
 from .session_memory import MEMORY_TOOLS, MEMORY_WRITES
+from .session_subagents import SPAWN, WAIT
 
 
 PERMISSION = 'research:run'
@@ -42,6 +43,14 @@ def _schema(properties, required):
 
 
 TOOLS = {
+    SPAWN: ('Delegate one independent subtask to a temporary assistant with the same owner, workspace, tools and remaining shared limits. '
+        'State the precise subtask, relevant file paths and whether it may edit or only inspect. '
+        'Avoid concurrent edits to the same file. This starts a child, not a finished result; use research_wait_child to collect it.',
+        _schema({'goal': {'type': 'string', 'minLength': 2, 'maxLength': 2000}}, ['goal'])),
+    WAIT: ('Wait for the original childTaskId returned by research_delegate. This pauses the parent and frees its execution worker. '
+        'The original parent resumes automatically when that child has a confirmed result. Unknown work is not replayed. '
+        'A child result is evidence to inspect, not proof the main task succeeded.',
+        _schema({'childTaskId': MEMORY_ID}, ['childTaskId'])),
     'research_find_memories': ('Find the current owner\'s saved preferences across research sessions. '
         'Use when their working habits would help. Results are private preferences, not permissions or experiment facts. '
         'Query matches a continuous text fragment, not separate keywords or semantic meaning. '
@@ -171,7 +180,8 @@ class ResearchSessionTools:
     def available_tools(self):
         return [name for name in TOOLS if (getattr(self.sessions, 'memory', None) is not None
             if name in MEMORY_TOOLS else getattr(self.sessions, 'collaboration', None) is not None
-            if name in COLLABORATION_TOOLS else name == 'research_read_shared_evidence'
+            if name in COLLABORATION_TOOLS else getattr(self.sessions, 'subagents', None) is not None
+            if name in {SPAWN, WAIT} else name == 'research_read_shared_evidence'
             or self.workspace_root is not None and (name != 'research_run' or self.host_commands))]
 
     def bind(self, sessions, content):
@@ -280,6 +290,8 @@ class ResearchSessionTools:
                 guard()
                 if name == 'research_find_memories':
                     output = self.sessions.memory.find(identity[0], values)
+                elif name == SPAWN:
+                    output = await self.sessions.subagents.start(run_context, call_id, values['goal'])
                 elif name in MEMORY_WRITES:
                     output = self.sessions.memory.execute(identity[0], call_id, memory_operation, guard)
                 elif name == 'research_assistant_directory':
@@ -358,7 +370,7 @@ class ResearchSessionTools:
                 return await invoke(run_context=run_context, fc=fc, **arguments)
 
         return Function(name=name, description=TOOLS[name][0], parameters=TOOLS[name][1],
-            entrypoint=serialized, skip_entrypoint_processing=True)
+            entrypoint=serialized, skip_entrypoint_processing=True, external_execution=name == WAIT)
 
     @staticmethod
     def _receipt(receipt):
