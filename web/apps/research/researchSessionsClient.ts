@@ -13,6 +13,7 @@ export interface SessionOptions {
 }
 export interface SessionMessage { id: string; kind: 'instruction' | 'correction'; text: string; state: 'pending' | 'included'; createdAt: string; includedAt: string | null }
 export interface SessionEvent { id: number; jobId: string; type: string; message: string; data: Record<string, unknown>; createdAt: string }
+export interface SessionChild { childTaskId: string; runId: string | null; goal: string; status: string; result: string | null }
 export type SessionAssistantReply = { questionId: string; state: 'unavailable'; code: string } | {
   questionId: string; state: 'available'; senderId: string; recipientId: string; endpointId: string;
   questionText: string; reply: Extract<ResearchQuestion['reply'], { state: 'available' }>; delivery: ResearchQuestion['delivery'];
@@ -25,6 +26,7 @@ export interface SessionTurn {
   assistantReply?: SessionAssistantReply;
   assistantReplies?: SessionAssistantReply[];
   continuation?: { questionIds: string[] };
+  children?: SessionChild[];
 }
 export interface SessionSummary {
   id: string; assistantId: string; title: string; goal: string; boundaries: string; createdAt: string; updatedAt: string;

@@ -34,6 +34,11 @@ const memoryTools: Record<string, { operation: string; title: string; completed:
   research_update_memory: { operation: 'update', title: '纠正个人记忆', completed: '已修改' },
   research_forget_memory: { operation: 'forget', title: '忘记个人记忆', completed: '已忘记' },
 };
+const subagentTools: Record<string, string> = { research_delegate: '分派临时子助手', research_wait_child: '等待子助手结果' };
+const childStates: Record<string, string> = {
+  pending: '待执行', queued: '排队中', running: '执行中', paused: '已暂停，等待继续',
+  completed: '已完成', failed: '执行失败', cancelled: '已停止', canceled: '已停止', canceling: '停止请求已接收，尚未确认停止', unknown: '结果未知，请核对原子任务',
+};
 
 function MemoryEventResult({ data }: { data: Record<string, unknown> }) {
   const tool = memoryTools[String(data.toolName)];
@@ -128,14 +133,20 @@ function ToolOutput({ result }: { result: Record<string, unknown> }) {
 
 function TurnRecord({ turn, onTask, onQuestion }: { turn: SessionTurn; onTask: (id: string) => void; onQuestion: (id: string) => void }) {
   const replies = [...(turn.assistantReply ? [turn.assistantReply] : []), ...(turn.assistantReplies ?? [])];
-  return <article className="rs-turn"><header><h3>第 {turn.sequence} 轮</h3><span>{turn.status}</span><time>{time(turn.createdAt)}</time></header>
+  const children = turn.children ?? [];
+  return <article className="rs-turn"><header><h3>第 {turn.sequence} 轮</h3><span>{children.length && turn.status === 'waiting_approval' ? '等待子助手结果' : turn.status}</span><time>{time(turn.createdAt)}</time></header>
     {turn.continuation && <div className="rs-continuation"><p>由同事回复自动发起本轮。创建轮次不代表回复已纳入模型请求，请核对下方引用与原问题状态。</p>{turn.continuation.questionIds.map(id => <button key={id} className="rs-text-button" onClick={() => onQuestion(id)}>自动继续的原问题 {id}</button>)}</div>}
     {turn.messages.map(message => <div key={message.id} className={`rs-message rs-${message.kind}`}><div className="rs-message-heading"><strong>{message.kind === 'correction' ? '你的纠正' : turn.continuation ? '自动继续指令' : '你的指令'}</strong><span>{message.state === 'included' ? '已纳入研究请求' : '待纳入研究请求'}</span></div><p>{message.text}</p></div>)}
     {turn.result !== null && <div className="rs-message rs-reply"><strong>助手回复</strong><p>{turn.result}</p></div>}
     {!!replies.length && <section className="rs-adopted-reply" aria-label={`第 ${turn.sequence} 轮引用的同事回复`}><h4>本轮引用的同事回复</h4>{replies.map(reply => <div key={reply.questionId}><button className="rs-text-button" onClick={() => onQuestion(reply.questionId)}>核对原问题 {reply.questionId}</button>{reply.state === 'available' ? <><p>{reply.questionText}</p><p>{reply.reply.text}</p><p className="rw-muted">作为引用证据，不代表实验已验证。输入依据：{reply.reply.contentIds.length ? reply.reply.contentIds.join('、') : '无可用团队依据'}</p></> : <p role="status">引用的回复当前不可用，正文与来源已隐藏；后续研究需先核对权限。</p>}</div>)}</section>}
     {turn.failure && <p className="rw-error" role="alert">本轮未完成：{turn.failure}</p>}
+    {!!children.length && <section aria-label={`第 ${turn.sequence} 轮临时子助手`}><h4>临时子助手</h4><p className="rw-muted">本轮临时分工，使用你的工作区与授权。停止本会话也会请求停止子任务。</p>{children.map(child => <div className="rs-message rs-reply" key={child.childTaskId}>
+      <p><strong>{child.goal}</strong></p><p role="status">{childStates[child.status] ?? childStates.unknown}</p>
+      {child.status === 'completed' && (child.result !== null ? <details><summary>查看子助手结果</summary><p>{child.result}</p></details> : <p className="rw-muted">尚无已确认的结果正文。</p>)}
+      <button className="rs-text-button" onClick={() => onTask(child.childTaskId)}>查看原子任务记录</button>
+    </div>)}</section>}
     {!!turn.toolResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{turn.toolResults.map(item => <details key={item.effectKey} open={item.status.toUpperCase() === 'UNKNOWN'}><summary><span>{item.status.toUpperCase() === 'UNKNOWN' ? '结果未知，需核对原操作' : `工具回执：${item.status}`}</span><code>{item.effectKey}</code></summary>{item.result ? <ToolOutput result={item.result}/> : <p>还没有已确认的结果。</p>}</details>)}</section>}
-    <details className="rs-events" open={turn.events.some(event => Object.hasOwn(memoryTools, String(event.data.toolName)) || event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required')}><summary>执行事件 · {turn.events.length} 条</summary><p className="rw-muted">以下是已保存的任务事件，不是模型全文流。</p>{turn.events.length ? <ol>{turn.events.map(event => <li key={event.id}><time>{time(event.createdAt)}</time><strong>{memoryTools[String(event.data.toolName)]?.title ?? event.type}</strong>{event.type === 'research_tool_finished' && Object.hasOwn(memoryTools, String(event.data.toolName)) ? <MemoryEventResult data={event.data}/> : <p>{event.message}</p>}{Object.keys(event.data).length > 0 && <details><summary>事件详情</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details>}</li>)}</ol> : <p>还没有任务事件。</p>}</details>
+    <details className="rs-events" open={turn.events.some(event => Object.hasOwn(memoryTools, String(event.data.toolName)) || event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required')}><summary>执行事件 · {turn.events.length} 条</summary><p className="rw-muted">以下是已保存的任务事件，不是模型全文流。</p>{turn.events.length ? <ol>{turn.events.map(event => <li key={event.id}><time>{time(event.createdAt)}</time><strong>{memoryTools[String(event.data.toolName)]?.title ?? subagentTools[String(event.data.toolName)] ?? event.type}</strong>{event.type === 'research_tool_finished' && Object.hasOwn(memoryTools, String(event.data.toolName)) ? <MemoryEventResult data={event.data}/> : <p>{event.message}</p>}{Object.keys(event.data).length > 0 && <details><summary>事件详情</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details>}</li>)}</ol> : <p>还没有任务事件。</p>}</details>
     {turn.taskId && <button className="rs-text-button" onClick={() => onTask(turn.taskId!)}>查看原任务记录</button>}
   </article>;
 }
