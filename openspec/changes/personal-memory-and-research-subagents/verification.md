@@ -64,4 +64,6 @@
 
 精选实际渲染：[桌面真实 Go 子结果](../../../docs/images/research-session-subagents/desktop-real-go-result.png)、[手机真实 Go 子结果](../../../docs/images/research-session-subagents/mobile-real-go-result.png)、[手机实际停止](../../../docs/images/research-session-subagents/mobile-child-stop.png)、[手机原子任务入口](../../../docs/images/research-session-subagents/mobile-original-child.png)。前两张来自真实模型分文件任务，后两张来自明确 SCRIPTED 的实际 PG/浏览器行为测试；不是用户部署地址。长文本视窗和原样 Markdown 的可读性尚未完善，不以无横溢代替视觉验收。
 
-待完成：公开仓库任务、子助手最终准确 head full CI、适用发布/main 门禁。未验证：真实 GPU/SSH、目标64GB/30会话容量、部署、任意同文件并发编辑、一般研究质量。忘记不删除旧聊天/摘要；旧会话更新配置、正常依赖获取、长结果展示与全站易用性继续原 roadmap。
+后续9630候选在公开仓库完成原父子分工、源码修复及206项测试，模型补丁由非作者独立复跑通过；该campaign仍因child执行一次被提示禁止的ls而FAIL。功能目标与指令遵守分列，详见[模型请求期限验收](../research-model-request-lifetime/verification.md)，不声称硬只读子权限。此前3次失败不改写。运行中的派发窗口可暂显待核对并由只读刷新恢复，尚非理想呈现。
+
+待完成：子助手最终准确 head full CI、适用发布/main 门禁。未验证：默认首次启动、真实GPU/SSH、目标64GB/30会话容量、部署、任意同文件并发编辑、一般研究质量。忘记不删除旧聊天/摘要；旧会话更新配置、正常依赖获取、长结果展示与全站易用性继续原 roadmap。
