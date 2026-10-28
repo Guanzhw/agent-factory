@@ -45,3 +45,15 @@ Reviewer 在精确修复字节上独立执行 17 项工具与 HTTPS composition 
 Reviewer 在原 `a28abd9` 独立 Git 归档及一次性真实 PostgreSQL 上复现：原测试暂停观察器后通过；在真实 403 返回边界、预算仍为 4 时显式运行原生 `observe_root`/`reconcile`，原断言确定性失败。没有伪造权限结果或写入取消状态；实际产生 `protected_denied`、`current-authority-ended` 事件，原任务从未派发，恢复预算后仍拒绝 409。这证明原测试混入了合法的观察器清理交错，不能把该失败笼统归为环境偶发或历史 MCP 问题。
 
 **测试增量审查 PASS。** 完整审查唯一测试文件的 48 行新增 / 5 行删除：原例只在预算拒绝窗口停止/恢复观察器，保留精确 403、`PREPARED` 和无新票据断言；新独立例验证实际观察器取消、原绑定不变、恢复预算不复活和双方零派发。没有放宽状态集合、修改产品或新增 skip/CI 例外，未引入多余测试框架。冻结测试 SHA256 `323f724d0b517e952782ec425222cbe33ca11afcb844531babd7b09dff2823e8` 在独立归档中真实 PG 复跑两项全部通过（5.529 秒，0 failure/error/skip）；原反例和修复验证各使用新临时容器并已清理，未调用模型。Ruff 与 diff check 通过。产品头仍为 `5c110376`、UI 仍为 `20b9145f`；新的测试/文档交付头需单独通过完整 CI，不能复用前两轮结果替代。
+
+## Context continuation 方案审查
+
+2026-10-28，非作者 `/root/compare_review` 完整审查本次 proposal/design/tasks/spec，辅助模型调用链由 `/root/compare_review/hook_early_review` 交叉复核。**方案 PASS，无未关闭的方案阻断；仅允许进入实现，不代表新增功能已通过验收。** 本片基线为已合入的 `3295b0addd235644ba44bdf3710085c60d44db26`，与上文首片审查分开。
+
+原生 Agno 3.1.0 SummaryManager 无 RunOutput、OwnerChatModel 拒绝 response_format、旧 task 终态不能借身份、既有 before_model 持事务及 12k 准入先于运行等实际接口均已核对。方案采用当前活动 turn 的窄辅助绑定和精确 JSON-object 文本桥、事务外摘要、可信历史 prefix 与有界保护包，解决这些接点而不改全局 task/session 不变量或通用 codec。目标、全部用户原文、来源与操作事实独立保留；仅压缩回复叙述，不引入新 harness、队列、记忆系统或账本。12k/3k/48k 为字符界限，不是 token/费用保证。
+
+摘要 started/unknown 在同 task 不重打；原 task 真正安全终态且无业务 UNKNOWN/custody 后才允许用户显式新 turn 重试，失败也计入原 maxTurns，旧回执不能覆盖新 checkpoint。该区别合理，不为只读摘要增加永久死路，也未放松原工具副作用防重放。摘要阶段不得标记主请求已纳入纠正；来源撤销/停止须在保存及主请求前重新核查。
+
+实现验收仍须实际覆盖：旧超限会话准入与保护区超限拒绝、原生摘要→主请求同 owner/model 且零工具/无递归、摘要挂起时纠正和停止可提交、撤权后零主调用、started/ready 两个崩溃窗口、重复请求与旧回执迟到、无效/超长摘要保留原历史；最终上下文的序列化大小也须满足界限。PG/scripted、真实 Go 小例和桌面手机分别给证据，不以首片成功或本方案审查替代。
+
+本轮独立 `openspec validate personal-research-sessions --strict` 通过；没有新增模型、PG或产品测试调用，没有产品修改。审阅文件 SHA256：proposal `cb608be95048d6eec9dbe4681289ea7f884cad47f3b2e99cfade04538678a277`；design `4c5cb42b70fb9ff8fa196c978d56eeb5f03dc0852936dab51e1a9cbf599c3fb4`；spec `72837bf62d49cc134c486c4921ad2401d391e4995ba017f4bc7e91ab43b265d2`；tasks（4.1 勾选前）`89c3ef3f426fd437ceb13a7e0f670eee26228d32bbbb9efecf19047ad40590e7`。
