@@ -46,6 +46,21 @@ it('validates beside fields and keeps drafts through resource navigation and rem
   await mount('', 'bob'); expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('');
 });
 
+it('focuses and scrolls the first invalid field and opens collapsed invalid limits', async () => {
+  const scroll = vi.spyOn(HTMLElement.prototype, 'scrollIntoView').mockImplementation(() => {});
+  await mount(); await field('会话名称', '保留研究目标'); await field('停止边界', '测试通过后停止');
+  await act(async () => button('创建并开始研究').click());
+  const goal = host.querySelector('textarea')!;
+  expect(document.activeElement).toBe(goal); expect(goal.getAttribute('aria-invalid')).toBe('true');
+  expect(scroll.mock.contexts.at(-1)).toBe(goal.closest('label')); expect(scroll).toHaveBeenLastCalledWith({ block: 'center' });
+  await field('研究目标', '检查测试程序'); await field('会话最多轮次', '99');
+  const limits = host.querySelector<HTMLDetailsElement>('.rs-limits')!; limits.open = false;
+  await act(async () => button('创建并开始研究').click());
+  const input = limits.querySelector('input')!;
+  expect(limits.open).toBe(true); expect(document.activeElement).toBe(input);
+  expect(scroll.mock.contexts.at(-1)).toBe(input.closest('label')); expect(api.create).not.toHaveBeenCalled();
+});
+
 it('creates once on double click and retains the created session when the first turn reply is lost', async () => {
   let resolveCreate!: (value: ResearchSession) => void;
   vi.mocked(api.create).mockReturnValue(new Promise(resolve => { resolveCreate = resolve; }));
@@ -92,14 +107,40 @@ it('starts a new turn after completion even when the service also permits stored
   expect(api.correct).not.toHaveBeenCalled();
 });
 
+it('keeps a new idle session waiting without a stop action even when the API permits a stop marker', async () => {
+  current = { ...current, allowedActions: ['start', 'stop'] };
+  await mount(session.id);
+  expect(host.querySelector('.rs-detail-heading .rs-state')?.textContent).toBe('待开始');
+  expect(button('请求停止')).toBeUndefined(); expect(button('开始这一轮')).toBeDefined();
+  expect(api.stop).not.toHaveBeenCalled(); expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('updates the list from detail polling and presents a completed session as ready to continue', async () => {
+  vi.useFakeTimers();
+  try {
+    current = { ...current, state: 'running', allowedActions: ['correct', 'stop'], turns: [{ id: 'turn-a', sequence: 1, requestId: 'start-id', taskId: 'task-a', runId: null, status: 'running', createdAt: session.createdAt, completedAt: null, result: null, failure: null, messages: [], events: [], toolResults: [] }] };
+    vi.mocked(api.list).mockResolvedValue({ items: [current], nextCursor: null });
+    await mount(session.id); expect(host.querySelector('.rs-session-list')?.textContent).toContain('执行中');
+    current = { ...current, state: 'idle', updatedAt: '2026-10-28T08:01:00Z', allowedActions: ['start', 'correct', 'stop'], turns: [{ ...current.turns[0], status: 'completed', completedAt: '2026-10-28T08:01:00Z', result: '本轮已完成。' }] };
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(api.list).toHaveBeenCalledOnce();
+    expect(host.querySelector('.rs-session-list')?.textContent).toContain('就绪');
+    expect(host.querySelector('.rs-session-list')?.textContent).not.toContain('执行中');
+    expect(host.querySelector('.rs-session-list')?.textContent).toContain(new Date(current.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
+    expect(host.querySelector('.rs-detail-heading .rs-state')?.textContent).toBe('可继续');
+    expect(button('请求停止')).toBeUndefined(); expect(button('开始这一轮')).toBeDefined(); expect(api.turn).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
 it('shows stop pending separately from confirmation and keeps UNKNOWN original operation visible', async () => {
   current = { ...current, state: 'running', allowedActions: ['correct', 'stop'] };
   vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopping', allowedActions: [] }; return current; });
   await mount(session.id); await act(async () => button('请求停止').click());
   expect(host.textContent).toContain('目前不能确认已停止'); expect(api.stop).toHaveBeenCalledOnce();
-  current = { ...current, state: 'blocked', blockReason: 'RESEARCH_EFFECT_UNKNOWN', turns: [{ id: 'turn-a', sequence: 1, requestId: 'start-id', taskId: 'task-a', runId: null, status: 'unknown', createdAt: session.createdAt, completedAt: null, result: null, failure: null, messages: [], events: [], toolResults: [{ effectKey: 'original-operation', status: 'UNKNOWN', result: null }] }] };
+  current = { ...current, state: 'blocked', allowedActions: ['stop'], blockReason: 'RESEARCH_EFFECT_UNKNOWN', turns: [{ id: 'turn-a', sequence: 1, requestId: 'start-id', taskId: 'task-a', runId: null, status: 'unknown', createdAt: session.createdAt, completedAt: null, result: null, failure: null, messages: [], events: [], toolResults: [{ effectKey: 'original-operation', status: 'UNKNOWN', result: null }] }] };
   await act(async () => button('刷新会话').click());
   expect(host.textContent).toContain('结果未知，需核对原操作'); expect(host.querySelector('.rs-tool-results details')?.hasAttribute('open')).toBe(true); expect(button('开始这一轮')).toBeUndefined();
+  expect(button('请求停止')).toBeDefined();
   await act(async () => button('查看原任务记录').click()); expect(task).toHaveBeenCalledWith('task-a'); expect(api.turn).not.toHaveBeenCalled();
 });
 

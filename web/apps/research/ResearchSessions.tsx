@@ -6,7 +6,7 @@ import { draftKey, readStored, removeStored, requestKey, writeStored, type Pendi
 import './sessions.css';
 
 type Props = { ownerId: string; selectedId?: string; onSelect: (id: string) => void; onModels: () => void; onTask: (id: string) => void };
-const states = { idle: '待开始', running: '执行中', stopping: '停止请求已接收', stopped: '已停止', blocked: '需要核对' };
+const states = { idle: '就绪', running: '执行中', stopping: '停止请求已接收', stopped: '已停止', blocked: '需要核对' };
 const reasons: Record<string, string> = {
   RESEARCH_CONTEXT_LIMIT: '上下文已达到容量上限，不能加入新的模型请求；历史仍保留。',
   RESEARCH_SOURCE_UNAVAILABLE: '已引用的共享来源当前不可访问，需要核对发布状态或权限。',
@@ -37,7 +37,16 @@ function CreateSessionForm({ ownerId, options, busy, blocked, onModels, onCreate
   const draft = useDraft(draftKey(ownerId), initialDraft);
   const initialized = useRef(readStored(draftKey(ownerId), null) !== null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const form = useRef<HTMLFormElement | null>(null);
   const value = draft.value;
+  useEffect(() => {
+    const invalid = form.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
+    if (!invalid) return;
+    const disclosure = invalid.closest('details');
+    if (disclosure) disclosure.open = true;
+    invalid.focus({ preventScroll: true });
+    invalid.closest('label')?.scrollIntoView?.({ block: 'center' });
+  }, [errors]);
   useEffect(() => {
     if (!options || initialized.current) return;
     initialized.current = true;
@@ -55,20 +64,19 @@ function CreateSessionForm({ ownerId, options, busy, blocked, onModels, onCreate
     if (!options?.models.some(model => model.available && model.connectionRef === value.modelConnectionRef)) problems.model = '请选择当前可用的模型连接。';
     if (options) for (const key of ['maxTurns', 'toolCallsPerTurn', 'operationSeconds'] as const) {
       const limit = options.limits[key];
-      if (!Number.isInteger(value.limits[key]) || value.limits[key] < limit.min || value.limits[key] > limit.max) problems.limits = `操作限制必须在服务支持的范围内（${limit.min}–${limit.max}）。`;
+      if (!Number.isInteger(value.limits[key]) || value.limits[key] < limit.min || value.limits[key] > limit.max) problems[key] = `请输入 ${limit.min}–${limit.max} 之间的整数。`;
     }
     setErrors(problems);
     if (!Object.keys(problems).length) onCreate({ ...value, title: value.title.trim(), goal: value.goal.trim(), boundaries: value.boundaries.trim() });
   }
   return <section className="rs-create"><h2>从一个研究目标开始</h2><p className="rw-muted">同一会话保留目标、边界和每轮记录。重新打开时不会自动执行。</p>
-    <form className="rw-form" noValidate onSubmit={event => { event.preventDefault(); submit(); }}><fieldset disabled={busy || blocked}>
+    <form ref={form} className="rw-form" noValidate onSubmit={event => { event.preventDefault(); submit(); }}><fieldset disabled={busy || blocked}>
       <label>会话名称<input maxLength={120} value={value.title} onChange={event => draft.change({ ...value, title: event.target.value })} aria-invalid={!!errors.title}/>{errors.title && <span role="alert">{errors.title}</span>}</label>
       <label>研究目标<textarea rows={4} maxLength={2000} value={value.goal} onChange={event => draft.change({ ...value, goal: event.target.value })} aria-invalid={!!errors.goal}/>{errors.goal && <span role="alert">{errors.goal}</span>}</label>
       <label>停止边界<textarea rows={2} maxLength={2000} value={value.boundaries} onChange={event => draft.change({ ...value, boundaries: event.target.value })} aria-invalid={!!errors.boundaries}/><small>写明达标条件、禁止事项或需要先问你的情况。这是给助手的指令；下面的调用次数和时限由系统限制。</small>{errors.boundaries && <span role="alert">{errors.boundaries}</span>}</label>
       <label>使用模型<select value={value.modelConnectionRef} onChange={event => draft.change({ ...value, modelConnectionRef: event.target.value })} aria-invalid={!!errors.model}><option value="">选择模型连接</option>{options?.models.map(model => <option key={model.connectionRef} value={model.connectionRef} disabled={!model.available}>{model.provider} · {model.model}{!model.available ? '（不可用）' : ''}</option>)}</select>{errors.model && <span role="alert">{errors.model}</span>}</label>
       <button type="button" className="rs-text-button" onClick={onModels}>配置我的模型</button>
-      <details className="rs-limits"><summary>调用次数与操作时限</summary><div className="rs-limit-grid">{([['maxTurns', '会话最多轮次'], ['toolCallsPerTurn', '每轮最多工具调用'], ['operationSeconds', '单次操作时限（秒）']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={options?.limits[key].min ?? 1} max={options?.limits[key].max} value={value.limits[key]} onChange={event => draft.change({ ...value, limits: { ...value.limits, [key]: Number(event.target.value) } })}/>{options && <small>范围 {options.limits[key].min}–{options.limits[key].max}</small>}</label>)}</div></details>
-      {errors.limits && <p role="alert">{errors.limits}</p>}
+      <details className="rs-limits"><summary>调用次数与操作时限</summary><div className="rs-limit-grid">{([['maxTurns', '会话最多轮次'], ['toolCallsPerTurn', '每轮最多工具调用'], ['operationSeconds', '单次操作时限（秒）']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={options?.limits[key].min ?? 1} max={options?.limits[key].max} value={value.limits[key]} onChange={event => draft.change({ ...value, limits: { ...value.limits, [key]: Number(event.target.value) } })} aria-invalid={!!errors[key]}/>{options && <small>范围 {options.limits[key].min}–{options.limits[key].max}</small>}{errors[key] && <span role="alert">{errors[key]}</span>}</label>)}</div></details>
       {options ? <p className="rw-muted">未提供 token 或费用计量。{options.workspace.configured ? '文件和命令使用服务配置的本机会话目录；目录限制不等同于操作系统沙箱。' : '服务尚未配置会话工作目录，需要维护者启用后才能执行。'}</p> : <p role="status">正在读取模型与执行环境…</p>}
       {!options?.available && options && <p className="rw-error" role="alert">当前无法开始：{reasons[options.unavailableCode ?? ''] ?? options.unavailableCode ?? '研究环境不可用'}<small> {options.unavailableCode}</small></p>}
       <button className="rw-primary" disabled={!options?.available}>{busy ? '正在保存并开始…' : '创建并开始研究'}</button>
@@ -111,11 +119,13 @@ function SharedSources({ ownerId, ids }: { ownerId: string; ids: string[] }) {
 function SessionDetail({ ownerId, value, busy, blocked, onSend, onStop, onTask }: { ownerId: string; value: ResearchSession; busy: boolean; blocked: boolean; onSend: (text: string, correction: boolean) => Promise<boolean>; onStop: () => void; onTask: (id: string) => void }) {
   const draft = useDraft(draftKey(ownerId, value.id), ''); const [error, setError] = useState('');
   const correction = value.state === 'running' && value.allowedActions.includes('correct');
+  const stateLabel = value.state === 'idle' ? value.turns.length ? value.allowedActions.includes('start') ? '可继续' : '本轮已结束' : '待开始' : states[value.state];
+  const needsStop = ['running', 'stopping'].includes(value.state) || value.turns.some(turn => !turn.completedAt || turn.status === 'unknown' || turn.toolResults.some(item => item.status.toUpperCase() === 'UNKNOWN'));
   async function send() {
     if (!draft.value.trim()) { setError('请填写这一轮要做的事，或要补充的限制。'); return; }
     setError(''); if (await onSend(draft.value.trim(), correction)) draft.change('');
   }
-  return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`}>{states[value.state]}</span></div>{value.allowedActions.includes('stop') && <button disabled={busy} onClick={onStop}>请求停止</button>}</header>
+  return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`}>{stateLabel}</span></div>{needsStop && value.allowedActions.includes('stop') && <button disabled={busy} onClick={onStop}>请求停止</button>}</header>
     {value.state === 'stopping' && <p className="rs-warning" role="status">已记录停止请求，仍在等待执行边界和本地进程的停止回执；目前不能确认已停止。</p>}
     {value.state === 'blocked' && <p className="rw-error" role="alert">本会话不能开始新一轮：{reasons[value.blockReason ?? ''] ?? '原操作需要核对。'} 历史和原任务记录仍可查看，不会自动重放。<code>{value.blockReason}</code></p>}
     <details className="rs-agreement"><summary>目标、停止边界与模型</summary><h3>研究目标</h3><p>{value.goal}</p><h3>停止边界</h3><p>{value.boundaries}</p><p>{value.model.provider} · {value.model.model}</p><p>最多 {value.limits.maxTurns} 轮 · 每轮最多 {value.limits.toolCallsPerTurn} 次工具调用 · 单次操作 {value.limits.operationSeconds} 秒</p><p>上下文 {value.context.characters} / {value.context.maximumCharacters} 字符；达到上限会明确拒绝新一轮。</p></details>
@@ -131,6 +141,12 @@ export function ResearchSessions({ ownerId, selectedId = '', onSelect, onModels,
   const [detail, setDetail] = useState<ResearchSession | null>(null); const [after, setAfter] = useState('');
   const [readError, setReadError] = useState(''); const [detailError, setDetailError] = useState(''); const [actionError, setActionError] = useState(''); const [notice, setNotice] = useState('');
   const [refresh, setRefresh] = useState(0); const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!detail) return;
+    setPage(previous => previous && previous.items.some(item => item.id === detail.id && (item.state !== detail.state || item.updatedAt !== detail.updatedAt))
+      ? { ...previous, items: previous.items.map(item => item.id === detail.id ? { ...item, state: detail.state, updatedAt: detail.updatedAt } : item) }
+      : previous);
+  }, [detail, page]);
   const feedback = useRef<HTMLDivElement | null>(null);
   useEffect(() => { if (actionError || notice) { feedback.current?.focus(); feedback.current?.scrollIntoView?.({ block: 'nearest' }); } }, [actionError, notice]);
   const [requests, setRequests] = useState<PendingSessionRequest[]>(() => {

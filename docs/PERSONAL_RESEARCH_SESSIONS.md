@@ -4,7 +4,7 @@
 
 ## 启动条件
 
-先完成现有 PostgreSQL、身份验证及凭据存储配置，参见项目部署文档。成员在“我的资源”配置自己的模型连接，再进入 Auto Research 的“研究会话”。本入口没有默认账号、模型或凭据。
+先按 [README 的身份验证启动步骤](../README.md#start-with-configured-authentication) 完成现有 PostgreSQL、身份验证及凭据存储配置，并准备浏览器信任的 HTTPS 证书。已有账号可直接使用，不必重新创建。成员在“我的资源”配置自己的模型连接，再进入 Auto Research 的“研究会话”。本入口没有默认账号、模型或凭据。
 
 Linux/POSIX 部署可显式选择本地研究工作目录。目录必须事先存在、为绝对路径，且路径中不能有符号链接：
 
@@ -14,8 +14,13 @@ export FACTORY_RESEARCH_HOST_COMMANDS=1
 # 可选：仅覆盖可执行文件查找路径；默认使用 OS 标准路径，不继承服务 PATH。
 export FACTORY_RESEARCH_COMMAND_PATH=/usr/bin:/bin
 npm run build:research
-uv run agent-factory-research
+export FACTORY_LOCAL_LOGIN_ORIGIN=https://127.0.0.1:3100
+uv run python -m uvicorn agent_factory_server.research:create_app --factory \
+  --host 127.0.0.1 --port 3100 \
+  --ssl-certfile "$FACTORY_TLS_CERT" --ssl-keyfile "$FACTORY_TLS_KEY" --no-access-log
 ```
+
+打开 `https://127.0.0.1:3100`。证书路径、数据库和签名配置沿用现有安全配置，不能直接把 HTTP 测试服务当作用户部署。`agent-factory-research` 的 HTTP 入口只适用于已经配置 HTTPS 终止代理的环境；上面的 Uvicorn factory 同样读取研究工具配置。
 
 这些参数只启用受控本地工具，不创建 OS 沙箱。命令使用部署进程的 OS 用户权限，仍可能访问该用户可读的其他文件或网络；不能把 cwd、目录校验或清理环境变量当作跨租户隔离。请仅在符合团队信任边界的独立执行环境中启用，不要在有额外敏感文件的服务账户下直接开放任意命令。未配置时界面报告缺项，不默认使用服务源码目录。当前不提供自动依赖安装，也未证明 Windows 本地命令或远程个人 GPU 接入可用。
 
