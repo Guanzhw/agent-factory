@@ -607,10 +607,12 @@ class Store:
             self.request_cancel(context.session_id)
 
     def request_cancel(self, task_id):
-        with self.transaction():
+        with self.transaction() as conn:
+            if self.engine.dialect.name == 'postgresql':
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             self.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id", id=task_id)
             if self.application_runtime:
-                self.application_runtime.mark_cancel(self.task(task_id))
+                self.application_runtime.mark_cancel(self.task(task_id), reason='cancel-requested')
             self.event(task_id, "cancel_requested", "Cancellation requested; waiting for native run and experiments to stop", {})
 
     def cancellation_requested(self, identifier):

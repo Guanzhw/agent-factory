@@ -559,7 +559,7 @@ class ResearchSessions:
         if blocked:
             raise StopAgentRun(blocked)
 
-    def mark_cancel(self, store, task_id):
+    def mark_cancel(self, store, task_id, *, reason: str):
         task = store.task(task_id)
         with self._write() as conn:
             turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
@@ -567,6 +567,9 @@ class ResearchSessions:
             if turn is not None:
                 row = self._row(conn, task['owner_id'], turn['session_id'])
                 if self._turns(conn, row['id'])[-1]['id'] == turn['id']:
+                    if (reason == 'native-failure' and self.collaboration is not None
+                            and self.collaboration.retain_after_native_failure(conn, row, turn, task)):
+                        return
                     self._save_session(conn, row, {**row['body'], 'stopped': True})
                     if self.collaboration is not None:
                         self.collaboration.stop(conn, task['owner_id'], row['id'])

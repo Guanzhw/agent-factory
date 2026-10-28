@@ -151,12 +151,12 @@ class ApplicationRuntimeRegistry:
                 return reason
         return None
 
-    def mark_cancel(self, task):
+    def mark_cancel(self, task, *, reason: str):
         # Caller owns the same metadata transaction as the task cancellation.
         for owner in self.owners(task):
             callback = self.callback(owner, 'mark_cancel')
             if callback is not None:
-                callback(self.store, task['id'])
+                callback(self.store, task['id'], reason=reason)
 
     async def cancel(self, task):
         errors = []

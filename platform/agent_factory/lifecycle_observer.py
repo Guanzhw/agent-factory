@@ -19,6 +19,7 @@ from typing import Any, Callable
 from agno.agent import Agent
 from agno.db.base import SessionType
 from fastapi import HTTPException
+from sqlalchemy import text
 
 from .plan_policy import NativeMandateCompleted
 from .remote_handoff import HandoffCancellationRequested
@@ -185,13 +186,15 @@ class FactoryLifecycleObserver:
     def _mark_cancel(self, task: dict, reason: str) -> None:
         # Readers classify cleanup from both the flag and its failure provenance.
         # Publish them together so authority loss cannot look like user cancel.
-        with self.store.transaction():
-            registry = getattr(self.store, 'application_runtime', None)
-            if registry is not None:
-                registry.mark_cancel(task)
+        with self.store.transaction() as conn:
+            if self.store.engine.dialect.name == 'postgresql':
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             changed = self.store.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id AND owner_id=:owner AND NOT cancel_requested RETURNING id",
                                      id=task["id"], owner=task["owner_id"])
             if changed:
+                registry = self.store.application_runtime
+                if registry is not None:
+                    registry.mark_cancel(self.store.task(task['id'], task['owner_id']), reason=reason)
                 if reason == "current-authority-ended":
                     self.store.event(task["id"], "protected_denied", "Current authority ended; existing owned work requires cleanup",
                                      {"boundary": "lifecycle", "createsExecution": False})
@@ -269,7 +272,7 @@ class FactoryLifecycleObserver:
             with self.store.delegation._root_lock(root_id):
                 _, tasks, _ = self._subtree(owner, child_id)
                 for task in tasks:
-                    self._mark_cancel(task, 'cancel-requested')
+                    self.store.request_cancel(task['id'])
                 return tasks
         tasks = await asyncio.to_thread(mark)
         requested, errors = [], []

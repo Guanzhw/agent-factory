@@ -136,6 +136,41 @@ class ResearchCollaboration:
             self.store.effect_complete(body['runId'], 'research-session-tool:' + body['callId'],
                 {'outcome': 'completed', 'output': ack})
 
+    def retain_after_native_failure(self, conn, row, turn, task):
+        if (row['body']['stopped'] or turn['body'].get('stopRequestId')
+                or turn['body'].get('blockReason') not in {None, *QUESTION_BLOCKS}):
+            return False
+        history = self.store.sql("""SELECT
+            EXISTS(SELECT 1 FROM af_events WHERE task_id=:task AND type='research_reconciliation_required'
+                AND data->>'code' IN ('RESEARCH_EFFECT_UNCONFIRMED','RESEARCH_RESTART_REQUIRES_RECONCILIATION')) AS guarded,
+            EXISTS(SELECT 1 FROM af_events WHERE task_id=:task AND (
+                type IN ('protected_denied','tool_failed','experiment_failed','cancel_requested') OR
+                type='research_reconciliation_required' AND data->>'code' NOT IN
+                    ('RESEARCH_EFFECT_UNCONFIRMED','RESEARCH_RESTART_REQUIRES_RECONCILIATION') OR
+                type='lifecycle_cleanup_requested' AND data->>'reason'<>'native-failure')) AS protected
+            """, task=task['id'])[0]
+        if not history['guarded'] or history['protected']:
+            return False
+        intents = {item['body']['effectKey']: item for item in self._rows(conn, row['owner_id'], row['id'])
+            if (item['body']['originTaskId'], item['body']['originTurnId'], item['body']['runId']) ==
+               (task['id'], turn['id'], task['run_id'])}
+        if not any(intent['body']['state'] not in TERMINAL for intent in intents.values()):
+            return False
+        effects = self.store.effects(task['id'])
+        if not effects:
+            return False
+        for effect in effects:
+            original = intents.get(effect['effect_key'])
+            if original is None or effect['status'] not in {'DONE', 'UNKNOWN'}:
+                return False
+            try:
+                ack = self._proof(original)
+            except (HTTPException, PermissionError):
+                return False
+            if effect['status'] == 'DONE' and effect['result'] != {'outcome': 'completed', 'output': ack}:
+                return False
+        return True
+
     async def _release_question_block(self, origin_task, intent):
         service = self.sessions
         owner, session_id = intent['owner_id'], intent['session_id']

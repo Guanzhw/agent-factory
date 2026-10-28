@@ -365,3 +365,76 @@ class ResearchCollaborationContracts(unittest.TestCase):
         with self.service._write() as conn:
             self.collaboration.stop(conn, 'alice', self.identifier)
         self.assertFalse(self.release(question_id))
+
+    def cleanup_guard(self):
+        self.block_question_turn()
+        self.store.event(self.task['id'], 'research_reconciliation_required', 'Synthetic original restart guard',
+            {'code': 'RESEARCH_RESTART_REQUIRES_RECONCILIATION'})
+
+    def test_native_cleanup_retains_exact_saved_unknown_question_without_completing_it(self):
+        question_id, _ = self.ask(complete=False)
+        self.cleanup_guard()
+        observer = self.store.lifecycle_observer
+        observer._mark_cancel(self.store.task(self.task['id']), 'native-failure')
+        observer._mark_cancel(self.store.task(self.task['id']), 'cancel-requested')
+        with self.service.db.read() as conn:
+            row = self.service._row(conn, 'alice', self.identifier)
+            self.assertFalse(row['body']['stopped'])
+            self.assertEqual(len(self.service._turns(conn, self.identifier)), 1)
+        self.assertEqual(self.store.effects(self.task['id'])[0]['status'], 'UNKNOWN')
+        self.assertEqual(self.intent(question_id)['body']['state'], 'waiting')
+        self.assertTrue(self.store.task(self.task['id'])['cancel_requested'])
+
+    def test_cleanup_after_guard_release_is_not_stop_but_later_explicit_cancel_always_is(self):
+        question_id, _ = self.ask()
+        self.cleanup_guard()
+        self.assertTrue(self.release(question_id))
+        self.store.lifecycle_observer._mark_cancel(self.store.task(self.task['id']), 'native-failure')
+        with self.service.db.read() as conn:
+            self.assertFalse(self.service._row(conn, 'alice', self.identifier)['body']['stopped'])
+        self.store.request_cancel(self.task['id'])
+        with self.service.db.read() as conn:
+            self.assertTrue(self.service._row(conn, 'alice', self.identifier)['body']['stopped'])
+        self.assertEqual(self.intent(question_id)['body']['state'], 'stopped')
+
+    def test_native_failure_without_original_guard_stops_the_session(self):
+        question_id, _ = self.ask()
+        self.store.lifecycle_observer._mark_cancel(self.store.task(self.task['id']), 'native-failure')
+        with self.service.db.read() as conn:
+            self.assertTrue(self.service._row(conn, 'alice', self.identifier)['body']['stopped'])
+        self.assertEqual(self.intent(question_id)['body']['state'], 'stopped')
+
+    def test_protected_failure_outside_display_window_still_stops_native_cleanup(self):
+        question_id, _ = self.ask()
+        self.cleanup_guard()
+        self.store.event(self.task['id'], 'protected_denied', 'Synthetic original denial', {})
+        self.store.sql("""INSERT INTO af_events(task_id,type,message,data,created_at)
+            SELECT :task,'synthetic_fixture','Display window filler','{}'::jsonb,:stamp
+            FROM generate_series(1,1001)""", task=self.task['id'], stamp=now())
+        self.assertFalse(any(item['type'] == 'protected_denied' for item in self.store.events(self.task['id'])))
+        self.store.lifecycle_observer._mark_cancel(self.store.task(self.task['id']), 'native-failure')
+        with self.service.db.read() as conn:
+            self.assertTrue(self.service._row(conn, 'alice', self.identifier)['body']['stopped'])
+        self.assertEqual(self.intent(question_id)['body']['state'], 'stopped')
+
+    def test_mixed_done_file_effect_stops_native_cleanup(self):
+        question_id, _ = self.ask()
+        self.cleanup_guard()
+        self.store.effect_reserve(self.context.run_id, 'research-session-tool:synthetic-file', {'fixture': 'file-write'})
+        self.store.effect_complete(self.context.run_id, 'research-session-tool:synthetic-file',
+            {'outcome': 'completed', 'output': {'path': 'synthetic.py'}})
+        self.store.lifecycle_observer._mark_cancel(self.store.task(self.task['id']), 'native-failure')
+        with self.service.db.read() as conn:
+            self.assertTrue(self.service._row(conn, 'alice', self.identifier)['body']['stopped'])
+        self.assertEqual(self.intent(question_id)['body']['state'], 'stopped')
+
+    def test_late_old_task_cleanup_cannot_stop_explicitly_created_new_turn(self):
+        question_id, _ = self.ask()
+        self.finish(self.task, 'Synthetic completed original round')
+        later, _ = self.service._reserve('alice', self.identifier,
+            SessionTurn(requestId='manual-newer-turn', text='Explicitly continue in a new round'))
+        self.store.request_cancel(self.task['id'])
+        with self.service.db.read() as conn:
+            self.assertFalse(self.service._row(conn, 'alice', self.identifier)['body']['stopped'])
+            self.assertEqual(self.service._turns(conn, self.identifier)[-1]['id'], later)
+        self.assertEqual(self.intent(question_id)['body']['state'], 'waiting')
