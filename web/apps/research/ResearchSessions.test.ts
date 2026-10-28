@@ -132,6 +132,22 @@ it('updates the list from detail polling and presents a completed session as rea
   } finally { vi.useRealTimers(); }
 });
 
+it.each(['2026-10-28T08:01:00Z', session.updatedAt])('keeps a freshly read running list when detail refresh fails, even with unchanged updatedAt (%s)', async updatedAt => {
+  vi.mocked(api.list).mockResolvedValue({ items: [current], nextCursor: null });
+  await mount(session.id); expect(host.querySelector('.rs-session-list')?.textContent).toContain('就绪');
+  const newer = { ...current, state: 'running' as const, updatedAt };
+  vi.mocked(api.list).mockResolvedValue({ items: [newer], nextCursor: null });
+  let rejectDetail!: (reason: unknown) => void;
+  vi.mocked(api.get).mockImplementation(() => new Promise((_resolve, reject) => { rejectDetail = reject; }));
+  await act(async () => button('刷新会话').click());
+  expect(host.querySelector('.rs-session-list')?.textContent).toContain('执行中');
+  await act(async () => rejectDetail(new ApiError('详情暂时不可读取', 503)));
+  expect(host.textContent).toContain('详情暂时不可读取'); expect(api.list).toHaveBeenCalledTimes(2);
+  expect(host.querySelector('.rs-session-list')?.textContent).toContain('执行中');
+  expect(host.querySelector('.rs-session-list')?.textContent).toContain(new Date(updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
+  expect(api.turn).not.toHaveBeenCalled();
+});
+
 it('shows stop pending separately from confirmation and keeps UNKNOWN original operation visible', async () => {
   current = { ...current, state: 'running', allowedActions: ['correct', 'stop'] };
   vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopping', allowedActions: [] }; return current; });

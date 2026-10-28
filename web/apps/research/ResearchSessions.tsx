@@ -141,12 +141,6 @@ export function ResearchSessions({ ownerId, selectedId = '', onSelect, onModels,
   const [detail, setDetail] = useState<ResearchSession | null>(null); const [after, setAfter] = useState('');
   const [readError, setReadError] = useState(''); const [detailError, setDetailError] = useState(''); const [actionError, setActionError] = useState(''); const [notice, setNotice] = useState('');
   const [refresh, setRefresh] = useState(0); const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!detail) return;
-    setPage(previous => previous && previous.items.some(item => item.id === detail.id && (item.state !== detail.state || item.updatedAt !== detail.updatedAt))
-      ? { ...previous, items: previous.items.map(item => item.id === detail.id ? { ...item, state: detail.state, updatedAt: detail.updatedAt } : item) }
-      : previous);
-  }, [detail, page]);
   const feedback = useRef<HTMLDivElement | null>(null);
   useEffect(() => { if (actionError || notice) { feedback.current?.focus(); feedback.current?.scrollIntoView?.({ block: 'nearest' }); } }, [actionError, notice]);
   const [requests, setRequests] = useState<PendingSessionRequest[]>(() => {
@@ -168,7 +162,15 @@ export function ResearchSessions({ ownerId, selectedId = '', onSelect, onModels,
     let reading = false;
     const read = async () => {
       if (reading) return; reading = true; const version = readVersion.current;
-      try { const value = await api.get(ownerId, selectedId, controller.signal); if (!controller.signal.aborted && version === readVersion.current) { setDetail(value); setDetailError(''); } }
+      try {
+        const value = await api.get(ownerId, selectedId, controller.signal);
+        if (!controller.signal.aborted && version === readVersion.current) {
+          setDetail(value); setDetailError('');
+          // Only a successful current read updates the list. Retained detail
+          // must not overwrite a newer list while its own refresh is pending.
+          setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === value.id ? { ...item, state: value.state, updatedAt: value.updatedAt } : item) } : previous);
+        }
+      }
       catch (reason) { if (!controller.signal.aborted && version === readVersion.current) { setDetail(null); setDetailError(describe(reason)); } }
       finally { reading = false; }
     };
