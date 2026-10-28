@@ -8,11 +8,11 @@
 
 ### Requirement: Work on an explicit repository copy
 
-系统 SHALL 使用成员明确给出的公共仓库与版本，在会话目录内取得副本并提供真实目录、来源和 commit 回执；沿用所有权/凭据边界，不覆盖原仓库或暗换目录，不将宿主权限执行称 OS 沙箱。不要求新增仓库管理页面。
+系统 SHALL 在会话目录内使用成员明确指定公共来源/版本的副本，并由助手提供真实目录、origin、commit 与源码 SHA 回执；副本可由操作方明确准备，不能把该步骤冒充公网 clone 或自动 fallback。沿用所有权/凭据边界，不覆盖原仓库或暗换目录，不将宿主权限执行称 OS 沙箱。不要求新增仓库管理页面。
 
 #### Scenario: Start a real repository task
-- **WHEN** 成员提供公共 URL/commit 与代码问题，项目依赖由操作方在隔离环境准备
-- **THEN** 助手通过现有命令取得并核副本，用户可见 pwd、remote、HEAD；项目主/测试子进程导入该副本，预配置步骤明确，不声称自动配环境
+- **WHEN** 成员提供公共 URL/commit 与代码问题，本环境公网 Git 连接失败，操作方提供已核官方副本到会话目录
+- **THEN** 助手用现有命令实际核 pwd、origin、HEAD 和源码 SHA；操作方随后准备隔离 venv editable 指向该副本，主/测试子进程导入路径可核，同一 session 显式继续；本地准备不计作公网成功，不声称自动配环境
 
 ### Requirement: Complete ordinary source changes and project tests
 
