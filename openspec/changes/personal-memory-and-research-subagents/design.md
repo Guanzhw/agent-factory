@@ -32,6 +32,8 @@
 
 当前 `task_held` 把研究 `blockReason` 本身计为 custody，因此不能等待 task 终态后才清该标记，否则互相等待。记忆观察仅在原 native 身份/结束状态已核、原记忆回执已确认且无其他未知 effect 时释放对应应用标记；不自行标 task 成功/终态。随后仍由既有执行观察器检查 native/process/workflow custody，`_safe` 确认任务真正结束后才开放显式下一轮。无原记忆核对依据的一般重试不采用此路径。
 
+实施反例还确认：记忆 effect 正常 DONE 后、原生最终回复前退出，仍会因一般重试守卫阻断；不能只处理 UNKNOWN 回执窗口。对这类仅记忆原操作同样核原请求 fingerprint、条目证明与原生终态后允许显式下一轮；混合命令继续服从原守卫。另已复现同 call ID 改成 forget 时错配别的 UNKNOWN effect，观察必须核对原请求 fingerprint，不能仅按 effect key/条目不存在结算。
+
 原生 MemoryTools 不原样注册，原因是上述实际 owner 缺口及无关 think/analyze 工具；不为修它们创建 DB 代理。也不启动 MemoryManager 二次推理来重复主模型决策。用户明确要求记忆时可直接执行，不添加每条人工确认；首片不自主摘录项目资料或共享材料。现有工具记录承担结果展示，自然语言承担修改/忘记入口。
 
 ### 2. 子助手复用 DelegationService，保持 child 自己的身份
