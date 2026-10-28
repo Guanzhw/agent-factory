@@ -3,7 +3,7 @@
 **结论：PASS（方案可实施，不代表代码或运行验收通过）。**
 
 - 非作者主审：`context_capabilities`；并行非作者事件/停止边界复核：`compare_review/hook_early_review`。Coordinator 编写四份方案；主审只写本记录，不改产品或其余方案。
-- 原产品基线：`2f324a80ea72a78951e6ecb50d1ec0c4887b063e`；初稿：`0c72e65c0bc1d3cc61c515dba337f379940a4e2b`；行为方案审定：`51cc25b26865e2cdf3dcb71820547670446bd19b`。其后仅 proposal/tasks 的实施顺序措辞补充已复核通过，以下 SHA256 对应该未提交补充；design/spec 字节保持不变。
+- 原产品基线：`2f324a80ea72a78951e6ecb50d1ec0c4887b063e`；初稿：`0c72e65c0bc1d3cc61c515dba337f379940a4e2b`；行为方案审定：`51cc25b26865e2cdf3dcb71820547670446bd19b`。其后 proposal/tasks 的实施顺序修订复核通过，并随 `e24b2000ba9b8a4f91341c0f51c7b0a512006bdb` 记录；末尾 SHA256 是该次复核时的历史快照，后续任务勾选及本次停止语义补充见下文。
 - 已读取 AGENTS、ARCHITECTURE、OpenSpec explore 指导与实际源码。通过已有本地 CLI 独立运行 `openspec validate research-autonomous-collaboration --strict`。未安装软件、调用模型、启动服务、运行 PG 或改动 PR #153 工作区。
 
 ## 已要求并闭合的修正
@@ -24,11 +24,19 @@
 - `ResearchSessionSetup.prepare` 把工具注册、指令和 schema 纳入 fingerprint，并持久固定 applicationRef；新增工具可仅用于新配置会话，旧引用继续执行原工具集合，无须热扩权或修改历史任务。
 - maxTurns、工具次数、原 B 问答预算和上下文容量分别限制各自行为，不宣称 token/费用总上限。此片保留自主 Agent 发问与自动继续目标，不用逐条人工批准替代它。
 
+## 最小接口与停止边界早审
+
+**ABI 方案 PASS；冻结实现及测试仍待审。** 基于 `e24b2000ba9b8a4f91341c0f51c7b0a512006bdb` 核对 core/Research 两作者约定：
+
+- `emit_collaboration(conn, owner, message_id, origin_task_id)` 同事务存原身份；已有 worker 沿原 B 消息恢复后，通过现有 registry 调用异步 `deliver_collaboration(store, origin_task, event_id, message_id)`。True 仅表示持久已纳入/停止/永久受阻，False/None 保持公平 pending，不提前 ACK。
+- 内部 `private_event_id` 沿 ApplicationRuns→FactoryAPI→Store 透传，不增加 HTTP 字段。`Store.reserve_task` 保留既有任务去重返回，在真正新 INSERT 前核事件身份及 shutdown；A 的同步 `validate_collaboration_admission` 再借当前事务按 admission→session 锁序核原 intent、自动 turn、请求/plan 绑定和 stop。观察、B recover、队列提交都在元数据事务外。该改动不需要新 registry、总线或通用路由器。
+- 本次准确规格补充仅是 design 第4节新增停止解释，以及 spec 的“停止后迟到”限定为 A 执行并新增“A 停止与 B 尚未准入”。已逐项复核：A 在发问提交前停止不得新发；提交给 B 后，A stop 只撤销 A 的回复采用/继续意图，既有原消息仍可在 B 当前有效授权预算内补齐 B 缺失任务。A 不能取消 B 已有任务；恢复 B 也不能解除 A stop。两作者接口与该语义一致，未扩大权限或引入人工审批。
+
 ## 实施门槛与未验证项
 
 方案无剩余阻断。Coordinator 先核 PR #153 冻结 head/full 状态；方案独审通过后允许在独立依赖分支实施和测试，不修改前片候选。PR #153 最终合入后再核 main/tree 并整合必要差异；未满足前片及本片发布门槛，不提前发布。此顺序调整不改变行为、权限、验收范围，也不代表本次方案证明了代码可运行。后续须按 tasks 做真实 PG 竞争、至少两个退出窗口、脚本原生链、有限真实 Go 和桌面手机验收；未执行不得标通过。完整实现仍需另一位作者之外 reviewer 审查累计 diff、简洁性及精确 head CI。
 
-## 审定产物 SHA256
+## 历史方案审定产物 SHA256（实施顺序复核快照）
 
 - `proposal.md`: `6afc849d48437bacd439853836814e826fed79a02d64ad21b86150fea4f0a47e`
 - `design.md`: `6f17c16c3afc88071cb18b545c700925677393425d16353a7e61e6d081df6166`
