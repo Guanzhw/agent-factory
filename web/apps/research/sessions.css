@@ -75,8 +75,6 @@
 }
 @media (max-width: 700px) {
   .rw-session-shell .rw-main { padding: 24px 16px; }
-  .rw-session-shell .rw-sidebar nav { flex-wrap: wrap; }
-  .rw-session-shell .rw-sidebar nav button { min-height: 44px; }
   .rw-session-shell .rw-heading h1 { font-size: 25px; }
   .rs-limit-grid { grid-template-columns: minmax(0, 1fr); }
   .rs-detail-heading, .rs-recovery > div { flex-wrap: wrap; }
