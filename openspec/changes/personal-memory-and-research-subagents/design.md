@@ -48,6 +48,8 @@
 
 先以测试 child 验证 native external-execution 暂停和原 ControlCommand/requirement 回填。当前 `_model_boundary` 对 `attempt > 1 and effects` 阻断，必须仅允许已核对原等待身份的合法 continuation；一般重试和未知命令仍拒绝。不允许 child 冒充 parent、不用清空 effects 通过验收。
 
+完整代码审查又复现：若父助手第一个工具就是派发，持久 delegation link 已建立，但父任务没有 af_effects；普通队列 attempt=2 不能仅因 effects 为空而重新进入模型。恢复守卫同时识别已有委派原操作，合法原 ControlCommand 续入仍沿原证明放行；复用现有 link，不另造 effect 或状态框架。
+
 首样本一个 child + 主助手：保留 `maxChildren=1`、每用户两个活动任务、两个 worker。并行两用户各有 parent+child，证明等待真正释放 worker且原结果可返回；暂停不意味活动任务不计数。若已有原生协议不能满足该反例，停止子助手扩展并报告具体失败，先完成不依赖它的记忆片，不能先抬并发或写新调度器。
 
 验证通过后串起真实任务：child 调查一处、主助手调查另一处→原会话收集→修改测试；再让 child 在明确文件分工下实际编辑/运行。第一样本只读是任务选择，不是全局工具禁令。现有锁是 run 级，不能宣称同文件并发编辑安全；先明确分工与单写者，发现真实冲突再补最小修复，不预造隔离工作树。
