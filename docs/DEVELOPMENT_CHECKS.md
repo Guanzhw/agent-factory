@@ -223,8 +223,9 @@ Earlier results against the split core wheel are historical; rerun this gate for
 The default deployment uses core `Settings` and an empty application registration
 list. Browser mounting and component assembly remain exact startup files,
 `web/main.tsx` and `web/composition.tsx`; ordinary core/application callers cannot
-use either as a boundary bypass. Research source, routes, pages, seeds and its
-application-only test tree are removed. Generic tests publish explicit checksum
+use either as a boundary bypass. The separate `agent-factory-research` and
+`web/research-composition.tsx` entries install Research explicitly; application
+tests live in `applications/tests`. Generic tests publish explicit checksum
 applications and register synthetic adapters through `platform/tests/core_native_fixture.py`.
 BYOK and proxy tests retain real native execution with fake provider transports.
 
@@ -233,21 +234,22 @@ owner/model selection, credential scope/rotation/revocation, original request
 identity, UNKNOWN reconciliation, cancellation, usage and restart behavior.
 Synthetic credentials and local transports do not establish live provider or
 remote compatibility. Historical Research/ORX/Go campaign evidence remains in its
-recorded documents and Git history; removed application commands are not current
-acceptance steps.
+recorded documents and Git history; rerun current application commands against
+the explicit Research composition before claiming current acceptance.
 
 ## Core-only workspace acceptance
 
 Record exact-revision results separately from previous split-core or Research
 passes. Check actual login, logout/relogin, direct URLs and refresh, an empty
 application catalog/task list, owner resources and explicitly published test
-applications. Old Research URLs must not expose the removed application or leave
-a broken workspace. Run test-only local synthetic
+applications. Research URLs must not expose an application in the core-only
+composition; verify them separately with the explicit Research composition.
+Run test-only local synthetic
 authentication separately; real external production identity remains unverified
 unless exercised with its actual protocol/provider.
 
 Use newly created isolated PostgreSQL databases and workspaces, and serialize
-heavy database/browser checks. Do not reuse old deployment data for this removal
+heavy database/browser checks. Do not reuse old deployment data for this
 verification. Source removal is not authorization to delete old records,
 credentials, vault keys, artifacts or backups; permanent deletion awaits a precise
 target inventory and confirmation. No current pass is implied by the commands in
