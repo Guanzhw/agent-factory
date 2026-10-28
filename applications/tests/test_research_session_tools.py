@@ -19,7 +19,7 @@ from agno.run import RunContext
 from agno.tools.function import FunctionCall
 from fastapi import HTTPException
 
-from agent_factory.execution_bindings import BindingContext
+from agent_factory.execution_bindings import BindingContext, EnvironmentLimits
 from agent_factory.store import digest
 from research.session_tools import EFFECT_PREFIX, ResearchSessionTools, _directory
 
@@ -28,6 +28,15 @@ CONTENT_ID = 'abcdefab-1111-2222-3333-abcdefabcdef'
 
 
 class ResearchSessionConfigurationTests(unittest.TestCase):
+    def test_research_plan_can_select_longer_operation_without_changing_environment_default(self):
+        limits = ResearchSessionTools._environment(SimpleNamespace(plan={
+            'budget': {'operationSeconds': 60, 'outputBytes': 65536}}))
+        self.assertEqual(limits.timeout_seconds, 60)
+        self.assertEqual(EnvironmentLimits().timeout_seconds, 8)
+        self.assertEqual(EnvironmentLimits(timeout_seconds=.15).timeout_seconds, .15)
+        with self.assertRaises(ValueError):
+            EnvironmentLimits(timeout_seconds=601)
+
     def test_default_and_disabled_search_path_leave_only_shared_evidence_available(self):
         self.assertEqual(ResearchSessionTools().available_tools, ['research_read_shared_evidence'])
         self.assertEqual(ResearchSessionTools(command_path='.').available_tools, ['research_read_shared_evidence'])
@@ -244,6 +253,34 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('not isinstance(v, bool)', (workspace / 'calc.py').read_text())
         codes = [event['data']['exitCode'] for event in self.store.events if 'exitCode' in event['data']]
         self.assertEqual(codes, [1, 0, 1, 0])
+
+    async def test_normal_source_larger_than_12kb_can_be_read_found_and_edited(self):
+        original = '# ordinary unchanged source line\n' * 1400 + 'answer = 40 + 1\n'
+        source = self.workspace() / 'module.py'
+        source.write_text(original)
+        self.assertGreater(source.stat().st_size, 12000)
+        read = await self.invoke('research_read_file', {'path': 'module.py'})
+        self.assertEqual(read['text'], original)
+        found = await self.invoke('research_search', {'query': 'answer = 40 + 1'})
+        self.assertEqual(found['matches'], [{'path': 'module.py', 'line': 1401, 'text': 'answer = 40 + 1'}])
+        self.assertFalse(found['truncated'])
+        changed = await self.invoke('research_edit_file', {'path': 'module.py',
+            'old': 'answer = 40 + 1', 'new': 'answer = 40 + 2'})
+        self.assertEqual(source.read_text(), original.replace('answer = 40 + 1', 'answer = 40 + 2'))
+        self.assertNotEqual(changed['beforeSha256'], changed['afterSha256'])
+        self.assertEqual(changed['bytes'], source.stat().st_size)
+
+    async def test_read_above_return_budget_reports_reason_without_changing_file(self):
+        original = '# unchanged source\n' * 4000
+        source = self.workspace() / 'oversized-result.py'
+        source.write_text(original)
+        call = self.call('research_read_file', {'path': 'oversized-result.py'})
+        result = await call.aexecute()
+        self.assertEqual(result.status, 'failure')
+        self.assertIn('RESEARCH_TOOL_OUTPUT_TOO_LARGE', result.error)
+        self.assertEqual(source.read_text(), original)
+        self.assertEqual(self.store.effects('task-alice'), [])
+        self.assertEqual(self.store.events[-1]['data']['code'], 'RESEARCH_TOOL_OUTPUT_TOO_LARGE')
 
     async def test_owner_paths_symlinks_traversal_and_exact_edit_failure(self):
         await self.invoke('research_edit_file', {'path': 'private.txt', 'old': '', 'new': 'alice-private'})

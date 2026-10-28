@@ -112,6 +112,19 @@ class ResearchSessionContracts(unittest.TestCase):
         self.assertEqual(first_config['applicationRef'], third_config['applicationRef'])
         self.assertNotEqual(first_config['connectionRefs'], third_config['connectionRefs'])
 
+    def test_new_session_uses_configured_timeout_without_rewriting_old_session(self):
+        self.store.settings.experiment_timeout_seconds = 60
+        option = self.service.options('alice')['limits']['operationSeconds']
+        self.assertEqual(option, {'min': 1, 'max': 60, 'default': 60})
+        longer = self.service.create('alice', self.create.model_copy(update={
+            'requestId': 'create-longer-session',
+            'limits': SessionLimits(maxTurns=4, toolCallsPerTurn=4, operationSeconds=option['default'])}))
+        self.assertEqual(asyncio.run(self.service.read('alice', longer))['limits']['operationSeconds'], 60)
+        self.assertEqual(self.read()['limits']['operationSeconds'], 5)
+        with self.service.db.read() as conn:
+            configuration = self.service._row(conn, 'alice', longer)['body']['configuration']
+        self.assertEqual(configuration['budget']['operationSeconds'], 60)
+
     def test_concurrent_reservations_have_one_active_turn_and_duplicate_is_read_only(self):
         barrier = Barrier(2)
         def reserve(index):

@@ -12,7 +12,7 @@ class SessionLimits(BaseModel):
     model_config = ConfigDict(extra='forbid')
     maxTurns: int = Field(strict=True, ge=1, le=20)
     toolCallsPerTurn: int = Field(strict=True, ge=1, le=128)
-    operationSeconds: int = Field(strict=True, ge=1, le=30)
+    operationSeconds: int = Field(strict=True, ge=1, le=600)
 
 
 class CreateSession(BaseModel):

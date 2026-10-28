@@ -54,7 +54,7 @@ class ResearchSessionSetup:
     def ceilings(self):
         caps = budget_limits(self.store.settings, 2)
         return {'maxTurns': 20, 'toolCallsPerTurn': caps['toolCalls'],
-                'operationSeconds': min(30, caps['operationSeconds']), 'outputBytes': min(65536, caps['outputBytes'])}
+                'operationSeconds': caps['operationSeconds'], 'outputBytes': min(65536, caps['outputBytes'])}
 
     def options(self, owner):
         models = [{key: item[key] for key in ('connectionRef', 'provider', 'model', 'available') if key in item}
@@ -71,7 +71,7 @@ class ResearchSessionSetup:
         return {'available': code is None, 'unavailableCode': code, 'models': models,
             'collaboration': {'available': COLLABORATION_TOOLS <= available & required},
             'limits': {name: {'min': 1, 'max': caps[name], 'default': min(default, caps[name])}
-                for name, default in (('maxTurns', 8), ('toolCallsPerTurn', 8), ('operationSeconds', 8))}
+                for name, default in (('maxTurns', 8), ('toolCallsPerTurn', 8), ('operationSeconds', caps['operationSeconds']))}
                 | {'contextCharacters': CONTEXT_CHARACTERS},
             'workspace': {'configured': workspace, 'hostCommands': commands,
                           'isolation': 'host-user-not-os-sandbox'},

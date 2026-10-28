@@ -39,6 +39,27 @@ class ResearchSessionCompositionTests(unittest.TestCase):
             self.assertIsNone(tools.workspace_root)
             self.assertNotIn('research_run', tools.available_tools)
 
+    def test_normal_factory_loads_configured_timeouts_without_changing_defaults(self):
+        environment = {'FACTORY_DATABASE_URL': 'postgresql://unused',
+            'FACTORY_JWT_KEY': 'synthetic-signing-key-at-least-32bytes'}
+        with patch.dict(os.environ, environment, clear=True):
+            defaults = Settings.from_env()
+        self.assertEqual((defaults.experiment_timeout_seconds, defaults.native_timeout_seconds), (8, 60))
+        with patch.dict(os.environ, {**environment, 'FACTORY_OPERATION_TIMEOUT_SECONDS': '60',
+                'FACTORY_NATIVE_TIMEOUT_SECONDS': '300'}, clear=True), \
+                patch.object(research, 'create_deployment') as deployment:
+            research.create_app()
+        configured = deployment.call_args.args[0]
+        self.assertEqual((configured.experiment_timeout_seconds, configured.native_timeout_seconds), (60, 300))
+
+    def test_invalid_operation_timeout_is_rejected_at_startup(self):
+        for value in ('0', '601', 'not-seconds'):
+            with self.subTest(value=value), patch.dict(os.environ, {
+                    'FACTORY_DATABASE_URL': 'postgresql://unused',
+                    'FACTORY_JWT_KEY': 'synthetic-signing-key-at-least-32bytes',
+                    'FACTORY_OPERATION_TIMEOUT_SECONDS': value}, clear=True), self.assertRaises(ValueError):
+                research.create_app()
+
     def test_invalid_host_command_flag_rejects_factory_startup(self):
         with patch.dict(os.environ, {'FACTORY_RESEARCH_HOST_COMMANDS': 'true'}, clear=True):
             with self.assertRaisesRegex(ValueError, 'FACTORY_RESEARCH_HOST_COMMANDS'):

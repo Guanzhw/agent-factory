@@ -13,6 +13,9 @@ export FACTORY_RESEARCH_WORKSPACE_ROOT=/absolute/owned/research-workspaces
 export FACTORY_RESEARCH_HOST_COMMANDS=1
 # 可选：仅覆盖可执行文件查找路径；默认使用 OS 标准路径，不继承服务 PATH。
 export FACTORY_RESEARCH_COMMAND_PATH=/usr/bin:/bin
+# 例如：项目完整测试需要约 35 秒时，给单次操作 60 秒、原生一轮 300 秒。
+export FACTORY_OPERATION_TIMEOUT_SECONDS=60
+export FACTORY_NATIVE_TIMEOUT_SECONDS=300
 npm run build:research
 export FACTORY_LOCAL_LOGIN_ORIGIN=https://127.0.0.1:3100
 uv run python -m uvicorn agent_factory_server.research:create_app --factory \
@@ -21,6 +24,10 @@ uv run python -m uvicorn agent_factory_server.research:create_app --factory \
 ```
 
 打开 `https://127.0.0.1:3100`。证书路径、数据库和签名配置沿用现有安全配置，不能直接把 HTTP 测试服务当作用户部署。`agent-factory-research` 的 HTTP 入口只适用于已经配置 HTTPS 终止代理的环境；上面的 Uvicorn factory 同样读取研究工具配置。
+
+操作时限可配置为 1–600 秒，原生一轮时限为 60–3600 秒；未配置时仍为 8/60 秒。新会话默认使用部署操作时限，旧会话预算不被回写。以上示例不代表任意项目都能在该时间内完成。
+
+代码任务先在目标中给出明确的公共仓库 URL 和 commit。操作方可将已核来源与版本的副本准备到会话目录，助手通过 `pwd`、remote、HEAD 和源码 SHA 核对；也可在网络允许时通过现有命令 clone/checkout，但预置副本不证明联网路径可用。项目环境仍需操作方准备：预先将 `FACTORY_RESEARCH_COMMAND_PATH` 指向隔离 venv 的 bin 与系统路径；取得会话副本后，在该 venv 安装项目固定依赖，并将 editable 安装指向此副本，再显式继续。核对主进程及测试子进程实际导入的文件路径，避免测试旧副本。命令不继承环境中的 `PYTHONPATH`；这不是自动依赖安装功能。
 
 这些参数只启用受控本地工具，不创建 OS 沙箱。命令使用部署进程的 OS 用户权限，仍可能访问该用户可读的其他文件或网络；不能把 cwd、目录校验或清理环境变量当作跨租户隔离。请仅在符合团队信任边界的独立执行环境中启用，不要在有额外敏感文件的服务账户下直接开放任意命令。未配置时界面报告缺项，不默认使用服务源码目录。当前不提供自动依赖安装，也未证明 Windows 本地命令或远程个人 GPU 接入可用。
 

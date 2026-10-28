@@ -106,12 +106,10 @@ def _directory(root, parts=(), *, create=False):
 
 def _read_opened(handle):
     info = os.fstat(handle)
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_TEXT:
-        raise ValueError('RESEARCH_FILE_UNSUPPORTED_OR_TOO_LARGE')
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise ValueError('RESEARCH_FILE_UNSUPPORTED')
     with os.fdopen(handle, 'rb', closefd=False) as stream:
-        raw = stream.read(MAX_TEXT + 1)
-    if len(raw) > MAX_TEXT:
-        raise ValueError('RESEARCH_FILE_TOO_LARGE')
+        raw = stream.read()
     return raw.decode('utf-8')
 
 
@@ -163,7 +161,7 @@ class ResearchSessionTools:
         # Only time/output are enforced by this host command adapter. The
         # common descriptor's CPU/memory fields are not an OS sandbox claim.
         return EnvironmentLimits(runtime_id='research-session-host-v1',
-            timeout_seconds=min(30, budget.get('operationSeconds', budget.get('experimentSeconds', 30))),
+            timeout_seconds=budget.get('operationSeconds', budget.get('experimentSeconds', 30)),
             output_bytes=min(65536, budget.get('outputBytes', 65536)))
 
     def _workspace(self, execution):
@@ -252,6 +250,8 @@ class ResearchSessionTools:
                     else:
                         output = self._files(workspace, name, values)
                 if len(json.dumps(output, ensure_ascii=False).encode()) > self._environment(binding).output_bytes:
+                    if not mutating:
+                        raise _rejected('RESEARCH_TOOL_OUTPUT_TOO_LARGE')
                     raise ValueError('RESEARCH_TOOL_OUTPUT_TOO_LARGE')
                 receipt = {'outcome': 'completed', 'output': output}
             except CLIProcessError as error:
@@ -328,7 +328,7 @@ class ResearchSessionTools:
                                 search(child, (*prefix, filename), depth + 1)
                             finally:
                                 os.close(child)
-                        elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= MAX_TEXT:
+                        elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
                             try:
                                 content = _read(parent, filename)
                             except UnicodeError:
@@ -370,8 +370,6 @@ class ResearchSessionTools:
                     if old and before.count(old) != 1:
                         raise ValueError()
                     raw = (before.replace(old, new, 1) if old else new).encode()
-                    if len(raw) > MAX_TEXT:
-                        raise ValueError()
                 except (ValueError, OSError, UnicodeError):
                     raise _rejected('RESEARCH_EDIT_MATCH_OR_SIZE_INVALID') from None
                 output.seek(0)
