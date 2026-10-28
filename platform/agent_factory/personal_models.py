@@ -19,7 +19,7 @@ from .applications import GovernedStorage
 from .byok_model import ADAPTER_ID, CAPABILITY, PROVIDER_ID, OwnerChatModel
 from .connections import TrustedConnectionBinding
 from .credential_vault import CredentialVaultError
-from .model_endpoint_policy import ADDITIONAL_BASE_URLS, base_url, generation_options, model_id, model_origin
+from .model_endpoint_policy import ADDITIONAL_BASE_URLS, base_url, generation_options, max_output_tokens, model_id, model_origin
 from .model_protocol import protocol_name
 from .store import digest, now
 from .resource_sharing import SharingCommand
@@ -100,7 +100,7 @@ class PersonalModels:
         body = dict(row['body'])
         default_binding_current = True
         if row['owner_id'] != owner:
-            body = {key: body[key] for key in ('ownerId', 'reference', 'revision', 'updatedAt', 'provider', 'baseURL', 'model', 'protocol', 'thinkingMode') if key in body}
+            body = {key: body[key] for key in ('ownerId', 'reference', 'revision', 'updatedAt', 'provider', 'baseURL', 'model', 'protocol', 'thinkingMode', 'maxOutputTokens') if key in body}
             binding = conn.execute(select(self.shared_defaults).where(self.shared_defaults.c.actor_id == owner,
                 self.shared_defaults.c.reference == reference)).mappings().first()
             if binding:
@@ -142,6 +142,7 @@ class PersonalModels:
                 # Preserve the fingerprint of legacy commands which omitted protocol.
                 values.pop('protocol', None)
             generation_options(values)
+            max_output_tokens(values)
             if values.get('thinkingMode') in (None, 'default'):
                 values.pop('thinkingMode', None)
         except (KeyError, ValueError):
@@ -305,6 +306,7 @@ class ConfigureModel(BaseModel):
     credentialRevision: str | None = Field(default=None, min_length=1, max_length=200)
     protocol: Literal['chat-completions', 'responses'] | None = None
     thinkingMode: Literal['default', 'disabled'] | None = None
+    maxOutputTokens: int | None = None
     requestId: str = Field(min_length=8, max_length=100)
 
     @model_validator(mode='after')
@@ -318,6 +320,11 @@ class ConfigureModel(BaseModel):
     def explicit_protocol(cls, value):
         if value is None: raise ValueError('An explicit protocol cannot be null')
         return value
+
+    @field_validator('maxOutputTokens', mode='before')
+    @classmethod
+    def explicit_output_limit(cls, value):
+        return max_output_tokens({'maxOutputTokens': value})
 
 
 class ModelCommand(BaseModel):

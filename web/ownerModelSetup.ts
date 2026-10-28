@@ -1,4 +1,4 @@
-import type { OwnerModel } from './ownerModelApi.js';
+import { validOutputTokens, type OwnerModel } from './ownerModelApi.js';
 import { validModelProtocol, validThinkingMetadata, type ModelProtocol } from './modelProviderConfig.js';
 import type { PersonalCredential } from './personalRemoteApi.js';
 import { modelEndpoint } from './modelEndpoint.js';
@@ -8,6 +8,7 @@ const identifier = (value: unknown): value is string => typeof value === 'string
 export interface ModelSetup {
   owner: string; provider: OwnerModel['provider']; baseURL: string; model: string;
   thinkingMode?: OwnerModel['thinkingMode'];
+  maxOutputTokens?: number;
   protocol?: ModelProtocol;
   dispatched?: { model?: true; default?: true };
   credentialRequest: string; modelRequest: string; defaultRequest: string;
@@ -27,6 +28,7 @@ export function setupCredential(value: PersonalCredential, setup: ModelSetup): P
 /** This is deliberately a whitelist: no key, secret value or secret hash is stored. */
 export function setupMetadata(setup: ModelSetup): ModelSetup {
   if (!validThinkingMetadata(setup)
+      || Object.prototype.hasOwnProperty.call(setup, 'maxOutputTokens') && !validOutputTokens(setup.maxOutputTokens)
       || Object.prototype.hasOwnProperty.call(setup, 'protocol') && !validModelProtocol(setup.protocol)
       || setup.reference !== undefined && !identifier(setup.reference)
       || setup.rotating && ![setup.rotating.credentialRef, setup.rotating.credentialRevision].every(identifier)
@@ -39,6 +41,7 @@ export function setupMetadata(setup: ModelSetup): ModelSetup {
     ...(Object.prototype.hasOwnProperty.call(setup, 'protocol') ? { protocol: setup.protocol } : {}),
     ...(setup.dispatched ? { dispatched: { ...(setup.dispatched.model ? { model: true as const } : {}), ...(setup.dispatched.default ? { default: true as const } : {}) } } : {}),
     ...(setup.thinkingMode ? { thinkingMode: setup.thinkingMode } : {}),
+    ...(Object.prototype.hasOwnProperty.call(setup, 'maxOutputTokens') ? { maxOutputTokens: setup.maxOutputTokens } : {}),
     ...(setup.credential ? { credential: setupCredential(setup.credential, setup) } : {}),
     ...(setup.rotating ? { rotating: { credentialRef: setup.rotating.credentialRef, credentialRevision: setup.rotating.credentialRevision } } : {}) };
 }

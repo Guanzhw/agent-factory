@@ -10,6 +10,7 @@ interface ModelMetadata {
   protocol?: ModelProtocol;
   updatedAt: string;
   thinkingMode?: 'disabled';
+  maxOutputTokens?: number;
   status: 'configured' | 'credential_unavailable' | 'revoked'; available: boolean; isDefault: boolean;
 }
 export type OwnerModel = ModelMetadata & ({ isOwner: true; credentialRef: string | null; credentialRevision: string | null }
@@ -20,6 +21,7 @@ export interface ModelConfiguration {
   credentialRef?: string; credentialRevision?: string; requestId: string;
   protocol?: ModelProtocol;
   thinkingMode?: 'default' | 'disabled';
+  maxOutputTokens?: number;
 }
 export interface OwnerModelReceipt {
   ownerId: string; requestId: string; action: 'model.configure' | 'model.default' | 'model.revoke' | 'model.sharing';
@@ -28,13 +30,16 @@ export interface OwnerModelReceipt {
 export class ModelRequestError extends Error {
   constructor(public readonly status: number, public readonly code?: string) {
     super(status === 403 ? '当前账号没有此操作权限。' : status === 401 ? '登录已过期，请重新登录后核对原请求。'
-      : status === 422 ? '配置未被接受，请检查提供方、端点和模型名称。' : '请求尚未确认，请核对原操作。');
+      : status === 422 ? '配置未被接受，请检查提供方、端点、模型名称和输出上限。' : '请求尚未确认，请核对原操作。');
   }
 }
 // Neither secret inputs nor raw server/provider error text reach the UI.
 async function safe<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, expectedOwner?: string): Promise<T> {
   try { return await factoryRequest<T>(path, method, body, signal, expectedOwner); }
   catch (error) { throw new ModelRequestError(error instanceof ApiError ? error.status : 0, error instanceof ApiError ? error.code : undefined); }
+}
+export function validOutputTokens(value: unknown): value is number {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 }
 export function ownerModel(value: unknown, owner: string): OwnerModel {
   const m = value as Record<string, unknown>;
@@ -51,6 +56,7 @@ export function ownerModel(value: unknown, owner: string): OwnerModel {
       || typeof m.updatedAt !== 'string' || !Number.isFinite(Date.parse(m.updatedAt))
       || Object.prototype.hasOwnProperty.call(m, 'protocol') && !validModelProtocol(m.protocol)
       || !validThinkingMetadata(m as { baseURL: string; model: string; thinkingMode?: unknown })
+      || Object.prototype.hasOwnProperty.call(m, 'maxOutputTokens') && !validOutputTokens(m.maxOutputTokens)
       || !['configured', 'credential_unavailable', 'revoked'].includes(String(m.status))
       || typeof m.isDefault !== 'boolean' || typeof m.available !== 'boolean' || m.available !== (m.status === 'configured')) {
     throw new ModelRequestError(200, 'INVALID_RESPONSE');
@@ -66,6 +72,7 @@ export function ownerModel(value: unknown, owner: string): OwnerModel {
     model: m.model as string, ...(m.isOwner ? { credentialRef: m.credentialRef as string | null, credentialRevision: m.credentialRevision as string | null } : {}),
     updatedAt: m.updatedAt as string, ...(Object.prototype.hasOwnProperty.call(m, 'protocol') ? { protocol: m.protocol as ModelProtocol } : {}),
     ...(Object.prototype.hasOwnProperty.call(m, 'thinkingMode') ? { thinkingMode: m.thinkingMode as 'disabled' } : {}),
+    ...(Object.prototype.hasOwnProperty.call(m, 'maxOutputTokens') ? { maxOutputTokens: m.maxOutputTokens as number } : {}),
     status: m.status as OwnerModel['status'], available: m.available as boolean, isDefault: m.isDefault as boolean,
   } as OwnerModel;
 }

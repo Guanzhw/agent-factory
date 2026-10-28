@@ -32,6 +32,16 @@ provider outputs fail with fixed safe errors. An empty, whitespace-only or
 reasoning-only response without a valid tool call is an explicit empty-output
 failure, never an empty successful answer. Optional usage is a metric only.
 
+Owner model metadata may include a positive integer `maxOutputTokens`. Both
+`OwnerChatModel` and `OwnerRuntimeBroker` use that saved value, mapped to CC
+`max_tokens` or Responses `max_output_tokens`; a client request cannot override
+the owner's value. Omission still requests 4096 and does not rewrite old records
+or command fingerprints. The model settings page can change this value without
+creating or rotating credentials. Changes use the existing configuration revision;
+old research sessions do not automatically adopt a new binding. This is a response
+limit, not a cost budget. BYOK remains outside the platform UsageLedger. A provider
+rejection or incomplete response does not trigger a silent limit change or retry.
+
 Responses uses `store:false` and carries validated reasoning/function output
 items through the associated tool turn. Matching accepts the actual SDK's
 `null`/empty tool-message text and equivalent JSON argument serialization;

@@ -25,7 +25,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .model_endpoint_policy import (
-    base_url, chat_headers, continuation_scope, generation_options, model_origin, requires_session,
+    base_url, chat_headers, continuation_scope, generation_options, max_output_tokens, model_origin, requires_session,
 )
 from .model_protocol import (
     assistant_message_matches, decode_response, encode_request, function_call, protocol_name, protocol_path,
@@ -300,7 +300,8 @@ class OwnerRuntimeBroker:
                 raise ValueError('MODEL_CONTINUATION_LIMIT')
             continuation, transcript, parent = self._history(encoded, session_id, scope,
                 tools=bool(body.get('tools')), require_text=protocol == 'chat-completions' and bool(body.get('tools')))
-        chat = {'model': self.handle.body['model'], 'messages': encoded, 'max_tokens': 4096, 'stream': False}
+        chat = {'model': self.handle.body['model'], 'messages': encoded,
+            'max_tokens': max_output_tokens(self.handle.body), 'stream': False}
         if body.get('tools'):
             chat.update(tools=body['tools'], parallel_tool_calls=False)
         if body.get('tool_choice') is not None:

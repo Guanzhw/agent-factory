@@ -25,7 +25,7 @@ from .model_endpoint_policy import (
     GO_CURRENT_BASE as GO_CURRENT_BASE, base_url as base_url,
     chat_headers as chat_headers, continuation_scope,
     generation_options as generation_options, model_id as model_id,
-    model_origin as model_origin,
+    model_origin as model_origin, max_output_tokens,
 )
 from .model_protocol import (
     assistant_message_matches, decode_response, encode_request, function_call as function_call,
@@ -49,6 +49,7 @@ class OwnerChatModel(Model):
             name='Owner Model', retries=0)
         self._base = base_url(configuration['baseURL'])
         self._protocol = protocol_name(configuration)
+        self._max_output_tokens = max_output_tokens(configuration)
         self._scope = continuation_scope(configuration)
         generation_options(configuration)
         self._thinking_mode = configuration.get('thinkingMode')
@@ -98,7 +99,7 @@ class OwnerChatModel(Model):
                 elif required:
                     raise rejected('PERSONAL_MODEL_CONTINUATION_REQUIRED')
             encoded.append(item)
-        chat = {'model': self.id, 'messages': encoded, 'max_tokens': 4096, 'stream': False}
+        chat = {'model': self.id, 'messages': encoded, 'max_tokens': self._max_output_tokens, 'stream': False}
         if tools:
             provider_tools = []
             for tool in tools:
