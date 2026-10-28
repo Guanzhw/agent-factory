@@ -104,14 +104,26 @@ class ResearchCollaborationToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sum(bool(result.tool_call_error) for result in results), 1)
         self.assertEqual(native.calls, 0, 'Native executor test must not invoke even a scripted model')
 
-    async def test_confirmed_precommit_rejection_is_terminal_and_never_retried(self):
+    async def test_confirmed_precommit_rejection_is_readable_and_original_is_never_retried(self):
         with patch.object(self.collaboration, 'ask', side_effect=ToolInvocationError(
                 'ASSISTANT_ENDPOINT_DISABLED', outcome='failed', stopped=True)) as ask:
-            self.assertEqual((await self.call().aexecute()).status, 'failure')
-            self.assertEqual((await self.call().aexecute()).status, 'failure')
+            first = await self.invoke(self.call())
+            self.assertEqual(first['outcome'], 'failed')
+            self.assertEqual(first['code'], 'ASSISTANT_ENDPOINT_DISABLED')
+            self.assertTrue(first['message'])
+            self.assertEqual(await self.invoke(self.call()), first)
         self.assertEqual(ask.call_count, 1)
-        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'DONE')
+        effect = self.store.effects('task-alice')[0]
+        self.assertEqual(effect['status'], 'DONE')
+        self.assertEqual(effect['result'], {'outcome': 'failed', 'stopped': True,
+            'code': 'ASSISTANT_ENDPOINT_DISABLED'})
+        self.assertEqual(self.store.events[-1]['data']['outcome'], 'failed')
+        self.assertEqual(self.collaboration.saved, {})
+        self.assertEqual(self.collaboration.calls, [])
         self.assertEqual(self.collaboration.reconciliations, [])
+        self.assertEqual(await self.invoke(self.call(call_id='corrected-call')), ACK)
+        self.assertEqual(await self.invoke(self.call()), first)
+        self.assertEqual(self.collaboration.calls, [(('alice', 'run-alice', 'corrected-call'), QUESTION)])
 
     async def test_lost_receipt_reconciles_original_saved_message_without_resending(self):
         with patch.object(self.store, 'effect_complete', side_effect=ConnectionError('synthetic lost ack')):
@@ -155,7 +167,13 @@ class ResearchCollaborationToolTests(unittest.IsolatedAsyncioTestCase):
         for arguments in ({**QUESTION, 'owner_id': 'bob'}, {**QUESTION, 'text': 'x'},
                 {**QUESTION, 'text': 'x' * 2001}):
             with self.subTest(arguments=list(arguments)):
-                self.assertEqual((await self.call(arguments=arguments).aexecute()).status, 'failure')
+                result = await self.invoke(self.call(arguments=arguments))
+                self.assertEqual(result['outcome'], 'failed')
+                self.assertEqual(result['code'], 'PERSONAL_TOOL_INPUT_INVALID')
+                self.assertTrue(result['message'])
+                self.assertEqual(self.collaboration.calls, [])
+                self.assertEqual(self.store.receipts, {})
+                self.assertEqual(self.store.events[-1]['data']['outcome'], 'failed')
         stale = self.call()
         stale.function._run_context.user_id = 'bob'
         self.assertEqual((await stale.aexecute()).status, 'failure')
