@@ -123,10 +123,48 @@ class ResearchChildCancellationContracts(unittest.TestCase):
             ('session', 'turn', 'child', 'child-run'))
 
 
+class ResearchSubagentRetryContracts(unittest.TestCase):
+    """Actual model boundary; scripted ticket/link metadata, no restart claim."""
+
+    def boundary(self, *, linked=True, continuation=False):
+        context = RunContext(user_id='alice', session_id='root', run_id='root-run')
+        row, turn = {'id': 'session', 'body': {'sharedSourceIds': []}}, {'id': 'turn', 'body': {}}
+        task = {'id': 'root', 'run_id': 'root-run', 'owner_id': 'alice', 'researchChild': False}
+        service = object.__new__(ResearchSessions)
+        service._execution = lambda *_: (row, turn, task)
+
+        def links(query, **values):
+            self.assertEqual(values, {'owner': 'alice', 'parent': 'root'})
+            return [{'child_id': 'original-child'}] if linked else []
+
+        service.store = SimpleNamespace(effects=lambda _: [], sql=links, event=lambda *_: None)
+        ticket = {'session_id': 'root', 'user_id': 'alice', 'attempt': 2}
+        service.runs = SimpleNamespace(factory=SimpleNamespace(bridge=SimpleNamespace(
+            native_db=SimpleNamespace(get_job=lambda _: ticket))))
+        service.subagents = SimpleNamespace(permits_continuation=lambda *_: continuation)
+        service._sources = service._replies = lambda *_: None
+        service._turns = lambda *_: [turn]
+        service._save_turn = lambda _conn, _turn, body: turn.update(body=body)
+        service.collaboration = None
+        return service._model_boundary(None, context)[-1], turn
+
+    def test_first_tool_delegate_blocks_unrelated_retry_without_parent_effect(self):
+        blocked, turn = self.boundary()
+        self.assertEqual(blocked, 'RESEARCH_RESTART_REQUIRES_RECONCILIATION')
+        self.assertEqual(turn['body']['blockReason'], blocked)
+
+    def test_original_wait_continuation_remains_allowed_and_empty_retry_is_unchanged(self):
+        for options in ({'continuation': True}, {'linked': False}):
+            with self.subTest(options=options):
+                blocked, turn = self.boundary(**options)
+                self.assertIsNone(blocked)
+                self.assertNotIn('blockReason', turn['body'])
+
+
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'requires disposable loopback PostgreSQL')
 class ResearchSubagentProbe(unittest.TestCase):
     def boot(self, owners=('alice',), *, hold_children=False, command_child=False,
-             same_call_memory=False, lose_child_receipt=False):
+             same_call_memory=False, lose_child_receipt=False, first_tool_delegate=False):
         isolated = self.enterContext(IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']))
         scratch = Path(self.enterContext(TemporaryDirectory()))
         workspace = scratch / 'workspace'
@@ -169,6 +207,8 @@ class ResearchSubagentProbe(unittest.TestCase):
             memory_call = same_call_memory and phase == 0
             if same_call_memory:
                 phase -= 1
+            if first_tool_delegate and not child:
+                phase += 1
             if memory_call:
                 name, arguments = 'research_remember', {'memory': 'Use unittest.'}
             elif child:
@@ -314,6 +354,38 @@ class ResearchSubagentProbe(unittest.TestCase):
         tampered = deepcopy(ticket)
         tampered['payload']['continue']['kwargs']['metadata']['factoryControlCommand']['fingerprint'] = 'forged'
         self.assertFalse(self.sessions.subagents.permits_continuation(root, tampered))
+
+    def test_first_tool_delegate_original_native_wait_continues_without_parent_effect(self):
+        self.boot(first_tool_delegate=True)
+        self.wait(lambda: len(self.roots()) == 1 and self.ticket(self.roots()[0]).get('status') == 'completed',
+                  'Original wait must resume a parent whose first tool was delegation')
+        root = self.roots()[0]
+        links = self.store.sql('SELECT * FROM af_delegation_links')
+        self.assertEqual(len(links), 1)
+        child = self.store.task(links[0]['child_id'])
+        self.assertEqual(self.store.effects(root['id']), [])
+        self.assertEqual(self.ticket(root)['attempt'], 2)
+        self.assertEqual(self.ticket(child)['attempt'], 1)
+        self.assertTrue(self.sessions.subagents.permits_continuation(root, self.ticket(root)))
+        self.assertEqual(len(self.calls), 5)
+
+    def test_first_tool_delegate_existing_native_child_blocks_unrelated_retry(self):
+        self.boot(first_tool_delegate=True, hold_children=True)
+        self.wait(lambda: self.roots() and self.ticket(self.roots()[0]).get('status') == 'paused',
+                  'Original first-tool delegation must persist before inspecting a retry')
+        root = self.roots()[0]
+        self.assertEqual(self.store.effects(root['id']), [])
+        self.assertEqual(len(self.store.sql('SELECT * FROM af_delegation_links')), 1)
+        retry = {**self.ticket(root), 'attempt': 2}
+        self.assertFalse(self.sessions.subagents.permits_continuation(root, retry))
+        context = RunContext(user_id='alice', session_id=root['id'], run_id=root['run_id'])
+        with patch.object(self.store.native_db, 'get_job', return_value=retry):
+            with self.sessions._write() as conn:
+                blocked = self.sessions._model_boundary(conn, context)[-1]
+        self.assertEqual(blocked, 'RESEARCH_RESTART_REQUIRES_RECONCILIATION')
+        self.assertEqual(len([item for item in self.calls if not item['child']]), 2)
+        self.post('alice', '/sessions/' + self.identifiers['alice'] + '/stop', {'requestId': 'stop-rejected-retry'})
+        self.client.portal.call(self.release.set)
 
     def test_parent_and_child_same_memory_call_id_use_their_own_native_receipts(self):
         self.boot(same_call_memory=True)
