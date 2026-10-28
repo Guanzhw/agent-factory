@@ -48,3 +48,22 @@
 - `specs/research-autonomous-collaboration/spec.md`: `5b9798f90b58a9c6dbd52bbe9e107492aa6e4ec76fab79eacdcc2da13b1cc995`
 
 按上列顺序连接 `path SHA256\n` 得到的 manifest SHA256：`33b05b97ab62a2913e4140fb39bc94a9fac855cdd38db043705ce3836924a793`。
+
+## 最终累计代码复审（执行验收仍 pending）
+
+**代码与独立 PostgreSQL 反例 PASS，不代表整片运行或发布验收通过。** 非作者主审 `autonomous_review` 核对完整累计 diff：base `2f324a80ea72a78951e6ecb50d1ec0c4887b063e` → head `e99885d2dab6d4f0203f863cf1614eb711ebabb0`，tree `657bddc23636208b24a3cdd84eeca24c72e5c75a`。36 个变更文件逐字节匹配已审清单；独立 PG 运行前后 17 个产品文件 SHA 均匹配该 commit，本次仅做映射，没有重复测试。映射记录 `commit-map-e99885d.json` SHA256 为 `225d22fd9f92a599abdce0cb9e6877aeb1bb9a9484a40bc3537f4fdaeeb3949e`。
+
+- 原反例与修正已闭合：引用保存不再冒充实际纳入；原自动轮终态却未纳入时明确 blocked，不再重开；解除自身阻断不再先要求被该阻断阻止的平台终态；DONE 提问仍检查 adapter effect hold。真实退出曾暴露 native-failure 清理误停整个会话，现以既有 hook 的必填可信 reason 修正，不清任何用户 stop、不伪造 UNKNOWN 完成。
+- 冻结修后独立 `frozen-full-07`：**27 PASS，0 failures/errors/skips**，源码前后稳定、自有临时 PG 已清理。包含多回复与人工引用并存、准入 UNKNOWN 不重派、混合 DONE 文件 effect、绑定/attempt/custody、cleanup 与 receipt 两顺序，以及失败标记已存在后的用户/子树/协议停止。PG/事务/守卫真实，native 观察明确为脚本事实，不冒充真实 OS 或模型运行。累计简洁性审查未发现新增通用框架、签名 fallback 或第二消息机制。
+- 停止边界准确限定：首次其他 cleanup 原因仍通知应用停止；背景重复 cleanup 不重复通知。后置撤权依靠现有当前权限及继续准入守卫阻止新增执行，**不宣称重复 hook 再次通知或该通知已被验证**。明确取消每次通知，旧 task 迟到清理不停止已明确创建的新轮。
+- 真实 OS 修后复验、真实 Go、最终 CI 与发布门禁仍 pending。原失败日志保留。B 已存 reply、原生任务仍 RUNNING 时，重启同一 B run 会再次调用旧 QA 模型的窗口仍是已知未解决限制；A 隔离窗口通过不能覆盖它，也不能由唯一 task 数推断模型未重算。未证明真实 GPU、目标容量或部署。
+
+## 交付证据复核
+
+**分层证据与交付文档 PASS，发布门禁仍 pending。** `autonomous_review` 只读核对 `verification.md`、design 澄清与 tasks 增量，并读 QA 脚本和原始结果；没有重跑模型或测试。`qa/version-map.json` 的 15 个冻结文件匹配 `e99885d2dab6d4f0203f863cf1614eb711ebabb0`，浏览器前后源码/构建一致；3 张提交 PNG 与原截图字节相同，均已逐张查看，明确标记 SYNTHETIC QA，无可见秘密。
+
+- 上节尚待的执行证据现已补齐其限定范围：`browser-1793199171043399951` 为真实 PG/密码/HTTPS/Chromium 加 9 次脚本请求；`os/run-1793199347088720781` 两个真实进程退出窗口通过，原 ask 失败断言保留并修后同断言通过。原 A 仍 failed、未清用户 stop，只在原会话创建一次新 A 轮；A reservation 窗口先隔离 B 实际终态，不能证明 B 尾窗修复。
+- `live-autonomous-1793199476043057573` 的原 ledger 与 5 份 HTTP 响应确认 A4/B1、全部 200、`billing_source=go`、`cost=0`，目录/发问为真实工具调用，回复不是脚本。实际模型文本保留原来源 ID 与合成/未验证说明。既有 secret 只由 QA transport 内存注入，产品临时 vault 为合成 placeholder；这不证明生产凭据或生产网络配置已接通。
+- `os/baseline-tail/run-1793199719266709068` 在旧 `2c9177e1100a82dae8c76626a65001b8893d5728` 实际复现 B 已存回复后同 task/run attempt1→2 再算一次，回复及时间戳不变，且没有新自主意图表。旧 QA 源码与当前相同；不同答案冲突只有源码依据、未实测。本片明确保留该限制及旧 pin 兼容后续，不把隔离正例用于覆盖它。
+
+证据支持当前 2.1/3.2/4.1/4.2 的有限完成标记，且未把脚本模型、真实 Go、PG、浏览器或退出证据混同。后置 authority 的当前守卫边界已准确澄清。科学质量、真实模型退出、GPU/SSH、容量、完整隔离及部署仍未验；PR #153 Ready 拒绝待明确确认、本片准确交付 head full 未运行，5.2 不得据本次审查勾选。
