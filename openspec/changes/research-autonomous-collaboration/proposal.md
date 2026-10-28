@@ -24,7 +24,7 @@ PR #153 把问题和回答带回原研究会话，但仍依赖成员发问和选
 
 ## Impact
 
-候选依赖 PR #153 head `2f324a80ea72a78951e6ecb50d1ec0c4887b063e`，full 正在运行。独立工作区 `/workspace/agent-factory-autonomous-collaboration` 保留前片冻结状态；依赖合入后核对 main/tree，再实施本片。
+候选依赖 PR #153 head `2f324a80ea72a78951e6ecb50d1ec0c4887b063e`，full 正在运行。独立工作区 `/workspace/agent-factory-autonomous-collaboration` 保留前片冻结状态；方案独审后可在依赖分支继续实施和测试，前片合入后核对 main/tree 并整合必要差异，未满足前片门槛不提前发布本片。
 
 主要影响 Research 的工具注册、原会话问题关联、模型安全点和界面，以及 core 现有 AssistantMessages / AssistantEvents 的私人回复投递接线。core 不导入 Research；不新增第二消息总线、独立调度器、泛化 agent 框架、Team 或角色系统。私人回复投递与闲置会话继续当前尚不存在，必须经独立方案审查及真实 PG/原生运行验证，不能以内容事件名称相似代替实现。
 
