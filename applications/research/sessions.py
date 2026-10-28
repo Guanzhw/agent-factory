@@ -90,7 +90,7 @@ class ResearchSessions:
         pending = turns[-1]['body'].get('compaction') if turns else None
         if pending and pending['status'] in {'pending', 'started', 'unknown', 'failed'}:
             protected = session_context.project(row, turns, protected=True)
-            if len(protected) + session_context.SUMMARY_CHARACTERS > CONTEXT_CHARACTERS:
+            if session_context.summary_capacity(protected, pending['throughSequence']) > CONTEXT_CHARACTERS:
                 raise rejected('RESEARCH_CONTEXT_LIMIT', '必要上下文与摘要预留超过容量；原历史已保留。')
             return protected
         return self._bounded(self._context(row, turns))
@@ -458,13 +458,15 @@ class ResearchSessions:
                         raise rejected('RESEARCH_CONTEXT_CHANGED', '原历史与整理结果不一致。')
                     saved = {**identity, 'summary': summary, 'turnId': current_turn['id'], 'runId': context.run_id}
                     session_body = {**current_row['body'], 'contextCheckpoint': saved}
-                    self._bounded(self._context({**current_row, 'body': session_body}, self._turns(conn, current_row['id'])))
+                    projected = self._context({**current_row, 'body': session_body}, self._turns(conn, current_row['id']))
+                    if len(projected) > CONTEXT_CHARACTERS:
+                        raise ValueError('RESEARCH_CONTEXT_LIMIT')
                     self._save_session(conn, current_row, session_body)
                     self._save_turn(conn, current_turn, {**current_turn['body'], 'compaction': {**claim, 'status': 'ready'}})
             if blocked:
                 raise StopAgentRun(blocked)
         except ValueError as error:
-            code = str(error) if str(error) in {'RESEARCH_SUMMARY_INVALID', 'RESEARCH_SUMMARY_TOO_LARGE'} else 'RESEARCH_SUMMARY_INVALID'
+            code = str(error) if str(error) in {'RESEARCH_SUMMARY_INVALID', 'RESEARCH_SUMMARY_TOO_LARGE', 'RESEARCH_CONTEXT_LIMIT'} else 'RESEARCH_SUMMARY_INVALID'
             self._summary_outcome(context.user_id, turn['id'], claim, 'failed', code)
             raise StopAgentRun(code) from None
         except BaseException:

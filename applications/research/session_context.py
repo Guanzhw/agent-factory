@@ -70,18 +70,25 @@ def summary_source(row, turns):
                     'sourceDigest': digest(source)}
 
 
+def summary_capacity(protected, through):
+    summary = {'summary': '', 'topics': []}
+    packet = {**json.loads(protected), 'summary': {
+        'throughSequence': through, 'nonAuthoritative': True, **summary}}
+    return len(canonical(packet)) - len(canonical(summary)) + SUMMARY_CHARACTERS
+
+
 def prepare(row, turns, instruction=None, *, prospective=None):
     projected = [*turns, prospective] if prospective is not None else turns
     context = project(row, projected, instruction)
     if len(context) <= CONTEXT_CHARACTERS:
         return context, None
     protected = project(row, projected, instruction, protected=True)
-    if len(protected) + SUMMARY_CHARACTERS > CONTEXT_CHARACTERS:
+    if summary_capacity(protected, turns[-1]['sequence'] if turns else 0) > CONTEXT_CHARACTERS:
         raise rejected('RESEARCH_CONTEXT_LIMIT', '目标、用户原文与原操作状态已超过上下文容量；这些内容不会被截断。')
     _, identity = summary_source(row, turns)
     pending = {**identity, 'status': 'pending'}
     packet = {**json.loads(protected), 'summaryPending': identity}
-    if len(canonical(packet)) + SUMMARY_CHARACTERS > CONTEXT_CHARACTERS:
+    if len(canonical(packet)) > CONTEXT_CHARACTERS:
         raise rejected('RESEARCH_CONTEXT_LIMIT', '必要上下文与摘要预留超过容量；原历史已保留。')
     return canonical(packet), pending
 

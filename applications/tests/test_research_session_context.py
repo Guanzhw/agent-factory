@@ -117,6 +117,69 @@ class ResearchContextContracts(unittest.TestCase):
         self.assertEqual(self.rows()[1][-1]['body']['messages'][-1]['state'], 'included')
         self.assertNotIn('Never change the public API', str(response.call_args))
 
+    def fill_summary_capacity(self):
+        for index in range(8):
+            row, turns = self.rows()
+            through = turns[-1]['body']['compaction']['throughSequence']
+            protected = session_context.project(row, turns, protected=True)
+            capacity = session_context.summary_capacity(protected, through)
+            candidate = deepcopy(turns[-1]['body'])
+            candidate['messages'].append(self.service._message('correction', 'x'))
+            changed = [*turns[:-1], {**turns[-1], 'body': candidate}]
+            overhead = session_context.summary_capacity(session_context.project(
+                row, changed, protected=True), through) - capacity - 1
+            count = min(2000, 12000 - capacity - overhead)
+            if count <= 0:
+                break
+            self.service.correct('alice', self.identifier,
+                SessionText(requestId=f'capacity-correction-{index}', text='x' * count))
+        row, turns = self.rows()
+        self.assertEqual(session_context.summary_capacity(session_context.project(
+            row, turns, protected=True), through), 12000)
+        summary = {'summary': '', 'topics': []}
+        summary['summary'] = 's' * (3000 - len(session_context.canonical(summary)))
+        self.assertEqual(len(session_context.canonical(summary)), 3000)
+        return ModelResponse(role='assistant', content=json.dumps(summary))
+
+    def test_actual_summary_wrapper_capacity_accepts_boundary_and_rejects_extra_correction(self):
+        self.long_turn()
+        def response(**kwargs):
+            result = self.fill_summary_capacity()
+            accepted = deepcopy(self.rows()[1][-1]['body']['messages'])
+            with self.assertRaises(HTTPException) as caught:
+                self.service.correct('alice', self.identifier, SessionText(requestId='one-more', text='z'))
+            self.assertEqual(caught.exception.detail['code'], 'RESEARCH_CONTEXT_LIMIT')
+            self.assertEqual(self.rows()[1][-1]['body']['messages'], accepted)
+            return result
+        factory, provider = self.model(action=response)
+        messages = self.before(factory)
+        row, turns = self.rows()
+        self.assertEqual(turns[-1]['body']['compaction']['status'], 'ready')
+        self.assertEqual(len(self.service._context(row, turns)), 12000)
+        self.assertEqual(len(messages[-1].content.split('\n', 1)[1]), 12000)
+        self.assertTrue(all(message['state'] == 'included' for message in turns[-1]['body']['messages']))
+        self.assertEqual(provider.call_count, 1)
+
+    def test_known_final_capacity_failure_is_failed_not_unknown(self):
+        _, task = self.long_turn()
+        def response(**kwargs):
+            result = self.fill_summary_capacity()
+            # A real observation can fill task/run identities after admission.
+            with patch.object(self.service.runs.factory, 'detail', return_value=self.observed_detail(task, 'running')):
+                asyncio.run(self.service._refresh('alice', self.identifier))
+            return result
+        factory, provider = self.model(action=response)
+        with self.assertRaises(StopAgentRun):
+            self.before(factory)
+        row, turns = self.rows()
+        self.assertEqual(turns[-1]['body']['compaction']['status'], 'failed')
+        self.assertEqual(turns[-1]['body']['compaction']['code'], 'RESEARCH_CONTEXT_LIMIT')
+        self.assertNotIn('contextCheckpoint', row['body'])
+        self.assertTrue(all(message['state'] == 'pending' for message in turns[-1]['body']['messages']))
+        with self.assertRaises(StopAgentRun):
+            self.before(factory)
+        self.assertEqual(provider.call_count, 1)
+
     def test_invalid_summary_preserves_pending_messages_and_explicit_retry_requires_safe_task(self):
         _, task = self.long_turn()
         factory, response = self.model(content='not JSON')
