@@ -1,4 +1,4 @@
-"""Transactional content notifications; native admission remains the execution owner."""
+"""Transactional assistant notifications; native admission remains the execution owner."""
 import asyncio
 import time
 from uuid import uuid4
@@ -24,7 +24,10 @@ DELIVERY_ERROR_CODES = frozenset({
     'ASSISTANT_EVENT_SUBSCRIPTION_MISMATCH', 'ASSISTANT_EVENT_DELIVERY_MISMATCH',
     'ASSISTANT_EVENT_ADMISSION_MISMATCH', 'ASSISTANT_EVENT_ALLOCATION_MISMATCH',
     'ASSISTANT_DELIVERY_STOPPING',
+    'ASSISTANT_COLLABORATION_BINDING_MISMATCH', 'ASSISTANT_COLLABORATION_OWNER_UNAVAILABLE',
 })
+
+PRIVATE_COLLABORATION = 'private-collaboration'
 
 
 def error_code(error):
@@ -196,6 +199,55 @@ class AssistantEvents:
         self.content.read(subscription['owner_id'], value['contentId'])
         return endpoint
 
+    def emit_collaboration(self, conn, owner, message_id, origin_task_id):
+        if conn is None or conn is not self.store._connection.get():
+            raise RuntimeError('Collaboration emit requires the current domain transaction')
+        self.auth.require_member(owner)
+        self.scopes.admission_lock(conn)
+        message = self.messages._row(conn, message_id)
+        self.store.task(origin_task_id, owner)
+        if message['sender_id'] != owner:
+            raise HTTPException(404, 'ASSISTANT_MESSAGE_NOT_FOUND')
+        value = {'kind': PRIVATE_COLLABORATION, 'messageId': message_id, 'originTaskId': origin_task_id}
+        key, fingerprint = 'collaboration:' + message_id, digest(value)
+        with self.db.write():
+            old = self.db.old(conn, self.commands, owner, key, fingerprint)
+            if old is not None:
+                return self._row(conn, self.events, old['id'])
+            identifier = str(uuid4())
+            conn.execute(self.events.insert().values(id=identifier, owner_id=owner, body=value,
+                root_id=identifier, depth=0, deadline=0, scanned=False, attempted_at=0))
+            self.db.record(conn, self.commands, owner, key, fingerprint, 'collaboration.emit', {'id': identifier})
+            return self._row(conn, self.events, identifier)
+
+    def _collaboration(self, conn, event):
+        value = event['body']
+        if value.get('kind') != PRIVATE_COLLABORATION:
+            raise HTTPException(409, 'ASSISTANT_COLLABORATION_BINDING_MISMATCH')
+        message = self.messages._row(conn, value['messageId'])
+        if event['owner_id'] != message['sender_id']:
+            raise HTTPException(409, 'ASSISTANT_COLLABORATION_BINDING_MISMATCH')
+        origin = self.store.task(value['originTaskId'], message['sender_id'])
+        return message, origin
+
+    def validate_private_admission(self, conn, owner, event_id, request_id, plan):
+        if self.admission_stopping is not None and self.admission_stopping.is_set():
+            raise HTTPException(409, 'ASSISTANT_DELIVERY_STOPPING')
+        event = self._row(conn, self.events, event_id)
+        message, origin = self._collaboration(conn, event)
+        if plan['ownerId'] != owner:
+            raise HTTPException(409, 'ASSISTANT_COLLABORATION_BINDING_MISMATCH')
+        if (owner == message['recipient_id']
+                and request_id == 'application-start:' + self.messages._request_id(message)):
+            return
+        if owner != message['sender_id']:
+            raise HTTPException(409, 'ASSISTANT_COLLABORATION_BINDING_MISMATCH')
+        runtime = self.store.application_runtime
+        hook = runtime.control(origin, 'validate_collaboration_admission') if runtime else None
+        if hook is None:
+            raise HTTPException(409, 'ASSISTANT_COLLABORATION_OWNER_UNAVAILABLE')
+        hook(self.store, origin, event_id, request_id, plan)
+
     def prepare(self, event_id, endpoint_id):
         with self.store.transaction() as conn:
             self.scopes.admission_lock(conn)
@@ -206,6 +258,8 @@ class AssistantEvents:
                     return dict(existing)
                 event = self._row(conn, self.events, event_id)
                 value = event['body']
+                if value.get('kind') == PRIVATE_COLLABORATION:
+                    raise HTTPException(409, 'ASSISTANT_COLLABORATION_BINDING_MISMATCH')
                 if endpoint_id not in value['candidates']:
                     raise HTTPException(404, 'ASSISTANT_EVENT_CANDIDATE_NOT_FOUND')
                 subscription = conn.execute(select(self.subscriptions).where(self.subscriptions.c.endpoint_id == endpoint_id,
@@ -317,6 +371,32 @@ class AssistantEvents:
                 conn.execute(self.deliveries.update().where(self.deliveries.c.id == delivery['id']).values(
                     state=state, error=error_code(error) if error else None, attempted_at=time.time()))
 
+    def _finish_collaboration(self, event_id, done, error):
+        with self.db.write() as conn:
+            conn.execute(self.events.update().where(self.events.c.id == event_id,
+                self.events.c.scanned.is_(False)).values(scanned=done,
+                attempted_at=time.time(), error=error_code(error) if error else None))
+
+    async def _deliver_collaboration(self, event):
+        failure, done = None, False
+        try:
+            with self.db.read() as conn:
+                message, origin = self._collaboration(conn, event)
+            try:
+                await self.messages.recover(message['recipient_id'], message['id'], private_event_id=event['id'])
+            except Exception as error:
+                failure = error
+            await asyncio.to_thread(self._finish_collaboration, event['id'], False, failure)
+            if failure is not None or self.admission_stopping is not None and self.admission_stopping.is_set():
+                return
+            runtime = self.store.application_runtime
+            hook = runtime.control(origin, 'deliver_collaboration') if runtime else None
+            if hook is not None:
+                done = await hook(self.store, origin, event['id'], message['id']) is True
+        except Exception as error:
+            failure = error
+        await asyncio.to_thread(self._finish_collaboration, event['id'], done, failure)
+
     async def deliver_batch(self, limit=20, *, stopping=None):
         if not 1 <= limit <= 100:
             raise ValueError('Event batch must be between 1 and 100')
@@ -327,6 +407,10 @@ class AssistantEvents:
         for event in events:
             if stopping is not None and stopping.is_set():
                 return completed_events, attempted_deliveries
+            if event['body'].get('kind') == PRIVATE_COLLABORATION:
+                await self._deliver_collaboration(event)
+                completed_events += 1
+                continue
             retry, error_kind = False, None
             for endpoint_id in event['body']['candidates']:
                 if stopping is not None and stopping.is_set():

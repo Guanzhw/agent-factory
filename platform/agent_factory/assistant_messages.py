@@ -102,7 +102,7 @@ class AssistantMessages:
             await self.runs.start(message['recipient_id'], self._start_body(message, endpoint), **options)
         return await asyncio.to_thread(self.read, sender, message['id'])
 
-    async def recover(self, recipient, identifier, *, allocation_id=None, delivery_id=None):
+    async def recover(self, recipient, identifier, *, allocation_id=None, delivery_id=None, private_event_id=None):
         """Trusted admission reentry; the original reservation owns the fresh gate."""
         if self.db.store._connection.get() is not None:
             raise RuntimeError('Assistant recovery requires a committed message transaction')
@@ -121,6 +121,8 @@ class AssistantMessages:
             options = {'allocation_id': allocation_id} if allocation_id is not None else {}
             if delivery_id is not None:
                 options['delivery_id'] = delivery_id
+            if private_event_id is not None:
+                options['private_event_id'] = private_event_id
             await self.runs.start(recipient, self._start_body(message, endpoint), **options)
         return await asyncio.to_thread(self.read, recipient, identifier)
 
