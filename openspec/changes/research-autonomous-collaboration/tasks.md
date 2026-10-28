@@ -10,8 +10,8 @@
 
 ## 3. 私人返回与继续
 
-- [ ] 3.1 Core 作者为既有 event body/批处理补唯一私人回复类型和原运行 owner hook，Research QA 同事务记录原回复及事件；真实 PG 验证零 content publication、无第三人通知、重复回执/worker重启不丢事件、不换原预算，旧内容事件全回归。
-- [ ] 3.2 Research 会话作者在原安全点核权、核容量并采用待回复，安全终态时以原意图最多创建一次下一轮；验证真实并发人工继续/停止、maxTurns/预算耗尽、摘要前后撤权、工具进行中保持待纳入、原 UNKNOWN 不重放，沿 admission→session 锁序且网络在事务外；使用文档说明自动继续不等于复活旧 run。
+- [ ] 3.1 Core 作者为既有 event body/批处理补唯一私人协作类型和原运行 owner hook，原问题/origin/意图同事务创建事件；同worker补齐缺少的B原任务、等待原回复、触发A原hook，不为回复另建总线。真实 PG 验证消息提交但recover前退出、零 content publication、无第三人通知、重复/worker重启不丢事件、不换原预算、事件选出后shutdown阻止真正新准入，旧内容事件全回归。
+- [ ] 3.2 Research 会话作者在原安全点核权、核容量并采用有序去重回复集合，兼容既有manual单值；安全终态时以原意图至多创建一次下一轮。验证多回复/人工引用并存、活跃但未再调用模型即结束、并发人工继续/停止、maxTurns/预算耗尽、摘要前后撤权、工具进行中保持待纳入、原 UNKNOWN 不重放，沿 admission→session 锁序且网络在事务外；文档说明自动继续不等于复活旧 run。
 
 ## 4. 可见体验与纵向验收
 

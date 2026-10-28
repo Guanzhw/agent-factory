@@ -27,17 +27,25 @@
 
 查询目录只返回当前成员可见、已开放的助手信息。发问 prompt 说明只发送必要文本；工具不隐式拼接私有历史或读取凭据。这不等同证明模型永不在自行生成的文本中泄露敏感语义，真实模型案例需核对实际发出内容。
 
-### 2. 在既有事件生命周期中增加一个私人回复类型
+### 2. 同一私人协作事件覆盖发问和返回
 
-沿 `AssistantEvents.events` 的 JSON body 增加显式的私人回复 discriminator，正文只保存 messageId 与经应用核验的原发起 taskId，不伪造 contentId 或 endpoint。仍由已有 `deliver_batch` / lifespan 处理、限量、退出与重试；普通内容事件及 deliveries 保持原路径，无第二个 worker 或 delivery 表。
+沿 `AssistantEvents.events` 的 JSON body 增加显式的私人协作 discriminator，正文只保存 messageId 与经应用核验的原发起 taskId，不伪造 contentId 或 endpoint。工具在原消息/origin/预算/继续意图提交的同一事务中创建唯一事件，不等 B 回复后才建事件。仍由已有 `deliver_batch` / lifespan 处理、限量、退出与重试；普通内容事件及 deliveries 保持原路径，无第二个 worker、scanner 或 delivery 表。
 
-Research QA 记录回复时，在已有 metadata transaction 中一并生成唯一回复事件。应用从原问题关联核实 A 原发起 task 与自主意图；core 复核消息与 task 的 owner，并沿既有 `ApplicationRuntimeRegistry` 的原任务 owner 调用一个窄私人回复 hook。core 不查询 Research 表或导入其模块。旧人工问答没有自主意图，因此不自动生成唤醒授权；重复 reply 复用同事件。
+worker 从原消息/任务/回复与应用意图推导阶段：真正无原 task 时沿原预授权 `messages.recover` 准入 B；已有 task 则只读等待原回复，RESERVED/UNKNOWN 不重放。B QA 继续既有 `reply_for_task` 写入，无额外发布或消息回调。回复可用后沿 `ApplicationRuntimeRegistry` 原 A task 的 owner 调用一个窄协作 hook；应用再次核原问题/意图，core 复核消息与 task owner，不查询 Research 表或导入应用。旧人工问答没有自主意图，不生成此事件；不为每条回复建新事件链。
+
+只有实际纳入或明确停止/永久受阻才完成事件。A 活跃但尚无安全点时保持 pending 并更新已有 attempted_at，公平轮转；如果 A 随后结束且没有下一次模型调用，仍由同事件观察终态并按一次意图继续，不能提前 scanned 后丢失唤醒。
 
 私人事件不走内容事件的订阅 endpoint/预算分配，也不借用 content publication 权限。event owner/读取投影须保持私人收件者边界；记录与通知不能把正文暴露在全员内容列表。暂时缺少原 app handler 时保持待核对，不能错误置为已采用。
+
+private 分支必须在内容路径读取 candidates/contentId 前判别，所有 listing/detail 均按类型及原 owner 投影。现有停止栅栏只在 content delivery_id 的准入接线中生效；本片须把可信原 private event 的停止检查带到 B 新任务及 A 自动轮的真正 reservation 事务边界，重核同一个 `admission_stopping`，不能只检查 batch 顶部。退出胜出时不新建任务、事件保留 pending；已有任务仍可只读核对。该引用只能由可信 worker/原意图派生，不接收客户端 event 或 owner 参数。
+
+工具 effect 结果未知时只允许原 request/owner/助手/正文完全匹配的持久消息证明“问题已保存”，据此核对原工具回执；这不能把 B 的任务 UNKNOWN 标成成功，也不重发问题。原消息不存在或读取出错则保留 unknown，不能绕过通用 mutating effect 守卫或以 404 当首次执行许可。原消息已保存但 recover 前退出的窗口，由上述同事务事件负责接续 B，不依赖模型重调工具或人工代替自主路径。
 
 ### 3. 采用与再次执行是两个安全点
 
 持久原问题意图记录 received/pending/consumed 或 stopped/blocked 的实际关联，不复制一套消息执行状态。活跃 turn 在 `before_model` 的短事务内核源、核原操作、核容量并将不可变回复放入保护区；只有实际进入原主请求时才标纳入。摘要前后沿已有守卫重核；工具执行中不修改其原参数或假称即时干预。
+
+采用集合保留旧 `body.assistantReply` 的人工单值读取，并增加有限的自动回复集合，按 questionId 去重、原问题创建顺序稳定排序。保护区、容量、摘要及撤权守卫检查全部元素，不覆盖旧单值；人工已采用同一问题时标原意图已消费，不再为它另开轮。一次安全点或自动新轮 reservation 批纳入届时可用的集合，不按每条回复强制各建一轮；后到回复沿同事件的 active/idle 规则处理。有限性来自现有工具/轮数与真实上下文容量，不添加第二种摘要或无限附件。
 
 原 turn 已安全结束时，投递 hook 以原 messageId 派生唯一 next-turn request，检查 session stopped、maxTurns、模型资源、原任务/effect 和容量。复用原 `_reserve` 的准入主体，但自动路径不得清 stopped；人工新轮和自动轮通过同一 admission→session 锁序竞争。已出现活动轮时把回答留给该轮安全点，不开并行研究。一次意图只允许一个后续轮；继续轮仍有原工具和机器限制，不表示 token/费用计量。
 
