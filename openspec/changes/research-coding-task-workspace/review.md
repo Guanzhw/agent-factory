@@ -43,3 +43,5 @@
 在产品 `afee072af2a8f163795972c33d5a9e7063fd93d7` 上，非作者 `coding_minimal_design_check` 核读 13 次真实 DeepSeek 失败及四稿增量，aggregate `8ce6c338ce76cb0c8cd3b0dcd88ea86c71e1ad3efe96e34a86cffbee290fe550`，独立 strict validate PASS：**方案 PASS**。
 
 仅在 Research 工具层支持 file/dir search 和明确无副作用的可读失败结果；不修改 core protected_boundary。保留 guard 与原 UNKNOWN 核对，不能以宽泛 OSError catch 吞掉其子类 PermissionError；授权/共享来源撤销、取消、写入后错误和回执保存失败保持阻断。CLI 只采用现有 failed 且 stopped 契约（构造器保证未派发），不能仅凭 stopped。失败事件保留，由模型在原预算内自行修正，不自动重试。需要同轮 native/PG 恢复及反例；无新框架必要，不代表产品或发布验收通过。
+
+实现窄复审进一步澄清：平台授权 guard 位于局部文件操作 catch 之外；纯 OS 文件目标错误不应仅因 PermissionError 类名便被伪装成 UNKNOWN，写后错误仍阻断。独立累计测试还发现 4 项旧协作断言未同步；reviewer 核实提问 HTTP 失败在同一事务回滚、未派发后，支持统一可纠正行为，并要求更新失败回执不重派/合法新 call/schema 拒绝/当前授权测试。不为旧测试新增 ask 特例或兼容层；测试整改前不能宣布代码通过。

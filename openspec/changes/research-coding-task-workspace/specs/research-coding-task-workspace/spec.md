@@ -74,6 +74,10 @@
 - **WHEN** 权限撤回、用户停止、原结果 UNKNOWN 或可能已经执行的操作缺少回执
 - **THEN** 原阻断保持，不把它转换为普通可恢复参数错误，不盲目重复操作
 
+#### Scenario: Correct a question rejected before commit
+- **WHEN** 同事提问在共享事务提交前被明确拒绝且新增记录回滚，没有派发外部操作
+- **THEN** 助手收到已知失败并可在原预算内选择合法新目标；同 call ID 只返回原失败、不重发，错误 schema 不调用协作服务，当前身份/来源撤销与 UNKNOWN 仍阻断
+
 ### Requirement: Correct and stop the real task
 
 系统 SHALL 保存中途纠正并在下一次模型请求纳入，显示真实生效时点；停止 SHALL 作用于原运行及受管父子进程，区分已请求、确认停止与未知，不自动复活任务。

@@ -42,6 +42,8 @@
 5. **同一 run 的应用工具串行。** 仅在 `ResearchSessionTools` 用 `(owner, task, run)` 的 `asyncio.Lock` 包住原 invoke，获锁后才执行已有 guard、原 effect 检查及 reserve/execute/complete。各 Function 闭包强持相同锁，应用实例用 `WeakValueDictionary` 复用它，函数释放后自然清理；不建永久锁表、持久队列或通用调度器。不同 run 不共锁；旧/异 run UNKNOWN 仍由原持久 effect 拒绝，不因服务重启或本地锁消失而重放。等待期间 stop/撤权时，获锁后的原 guard 拒绝启动；执行中的命令继续走现有取消和父子进程控制。先用真实双工具响应做零 Go 回归重现，再独审此局部变更，不修改 provider 提示来躲过问题。
 6. **搜索文件与可纠正错误。** `research_search.path` 接受 workspace 内相对文件或目录，省略时仍查当前目录；复用安全目录/文件打开和现有匹配截断，不新增搜索框架。Research 层将 schema 校验、只读文件目标错误及现有明确未派发的失败回执返回为可读失败结果，记录失败事件但不抛出触发 core `tool_failed` 的普通异常；助手可在原轮剩余额度内自行改参数。现有 `CLIProcessError` 只有 `dispatched=False` 且已结束才为 failed，不能把 stopped 等同无副作用。授权/来源撤销、用户停止、未知/未保存回执及可能已经写入或派发的错误保持原阻断。保留原调用/失败回执，不自动重试，不新增全局错误分类或放宽 core 生命周期。
 
+此失败回执行为也影响现有同事提问工具：已核 `_ask`、`_reserve`、消息/event/intent 共用同一事务，向外抛 HTTP 错误时先回滚，再返回 failed；其中没有外部模型调用。此类已知提交前拒绝同样可纠正，不增加 ask 特例以维持旧的“全部失败即终止”断言。同 call ID 只读取原失败，不重新发送；合法新参数使用新 call，仍受原预算和当前权限控制。当前成员/已用来源撤销、原消息结果未知不属于此分支。局部文件打开/读取阶段的 OS 目标拒绝与平台授权 guard 分开；写入/truncate/fsync 后错误仍为 UNKNOWN。
+
 ## Acceptance sequence
 
 1. 正常服务入口加载上述配置；真实登录进入独立 Auto Research 个人会话，目标含公共仓库/commit、缺陷及“保留测试、通过后停止”。本环境先由操作方提供已核官方副本，助手核实际目录、origin、HEAD/源码 SHA，再由操作方准备隔离 venv 的标准项目源路径并核主/子进程导入与 pytest 发现；同一 session 显式继续后，助手先复现官方回归，再自主读搜改源码，目标与完整测试均须真实 exit 0。不改官方测试、原仓库，不接触参考答案；研究命令公网 clone 未通过，不用本地准备抵扣。
