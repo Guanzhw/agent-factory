@@ -28,4 +28,4 @@
 
 优先修改 Research 工具/会话接线，复用原生 `PostgresDb` / `UserMemory`、平台 `DelegationService` / `DelegatedOperations` / `ControlCommands`。仅在现有通用委派接口确实缺输入传递时补窄接口；core 不导入 Research。复用当前模型连接和凭据引用，不引入辅助模型、默认 provider、向量库或新持久服务。
 
-本轮只准备设计和独立审查。每片后续需实际 PG、模型、浏览器和准确 head CI 分别验收；当前没有长期记忆/subagent 产品通过证据，也没有新的发布许可。
+2026-10-28：规划 `04cef0d` 独立审查通过后，已获准开始记忆实施及独立子助手探针。每片需实际 PG、模型、浏览器和准确 head CI 分别验收；当前没有长期记忆/subagent 产品通过证据，也没有新的发布许可。
