@@ -148,6 +148,35 @@ it.each(['2026-10-28T08:01:00Z', session.updatedAt])('keeps a freshly read runni
   expect(api.turn).not.toHaveBeenCalled();
 });
 
+it('keeps a newly read list when an older in-flight detail succeeds later with the same timestamp', async () => {
+  vi.mocked(api.list).mockResolvedValue({ items: [current], nextCursor: null });
+  await mount(session.id);
+  const oldDetail = structuredClone(current);
+  vi.mocked(api.list).mockResolvedValue({ items: [{ ...current, state: 'running' }], nextCursor: null });
+  let resolveDetail!: (value: ResearchSession) => void;
+  vi.mocked(api.get).mockImplementation(() => new Promise(resolve => { resolveDetail = resolve; }));
+  await act(async () => button('刷新会话').click());
+  expect(host.querySelector('.rs-session-list')?.textContent).toContain('执行中');
+  await act(async () => resolveDetail(oldDetail));
+  expect(host.querySelector('.rs-session-list')?.textContent).toContain('执行中');
+  expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('keeps a new detail observation when an older in-flight list succeeds later with the same timestamp', async () => {
+  current = { ...current, state: 'running', allowedActions: ['correct', 'stop'] };
+  vi.mocked(api.list).mockResolvedValue({ items: [current], nextCursor: null });
+  await mount(session.id);
+  const oldList = { items: [current], nextCursor: null };
+  let resolveList!: (value: typeof oldList) => void;
+  vi.mocked(api.list).mockImplementation(() => new Promise(resolve => { resolveList = resolve; }));
+  current = { ...current, state: 'idle', allowedActions: ['start'] };
+  await act(async () => button('刷新会话').click());
+  await act(async () => resolveList(oldList));
+  expect(host.querySelector('.rs-session-list')?.textContent).toContain('就绪');
+  expect(host.querySelector('.rs-session-list')?.textContent).not.toContain('执行中');
+  expect(api.turn).not.toHaveBeenCalled();
+});
+
 it('shows stop pending separately from confirmation and keeps UNKNOWN original operation visible', async () => {
   current = { ...current, state: 'running', allowedActions: ['correct', 'stop'] };
   vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopping', allowedActions: [] }; return current; });

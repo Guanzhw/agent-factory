@@ -148,11 +148,22 @@ export function ResearchSessions({ ownerId, selectedId = '', onSelect, onModels,
     return Array.isArray(stored) ? stored.filter((item): item is PendingSessionRequest => !!item && typeof item.requestId === 'string' && Object.hasOwn(actions, item.action) && (item.sessionId === null || typeof item.sessionId === 'string')) : [];
   });
   const requestRef = useRef(requests); const lock = useRef(false); const active = useRef(true); const readVersion = useRef(0); const selected = useRef(selectedId); selected.current = selectedId;
+  const listRead = useRef(0);
+  const detailRead = useRef<{ revision: number; value: ResearchSession | null }>({ revision: 0, value: null });
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
+    const detailRevision = detailRead.current.revision;
     const controller = new AbortController(); setReadError(''); setPage(null);
     void Promise.all([api.options(ownerId, controller.signal), api.list(ownerId, after, controller.signal)])
-      .then(([nextOptions, nextPage]) => { if (!controller.signal.aborted) { setOptions(nextOptions); setPage(nextPage); } })
+      .then(([nextOptions, nextPage]) => {
+        if (controller.signal.aborted) return;
+        listRead.current++;
+        // A list reply cannot erase a detail observation made after this list
+        // request began. These counters order reads, not backend task versions.
+        const newer = detailRead.current.revision > detailRevision ? detailRead.current.value : null;
+        setOptions(nextOptions);
+        setPage(newer ? { ...nextPage, items: nextPage.items.map(item => item.id === newer.id ? { ...item, state: newer.state, updatedAt: newer.updatedAt } : item) } : nextPage);
+      })
       .catch(reason => { if (!controller.signal.aborted) setReadError(describe(reason)); });
     return () => controller.abort();
   }, [ownerId, after, refresh]);
@@ -161,14 +172,17 @@ export function ResearchSessions({ ownerId, selectedId = '', onSelect, onModels,
     const controller = new AbortController();
     let reading = false;
     const read = async () => {
-      if (reading) return; reading = true; const version = readVersion.current;
+      if (reading) return; reading = true; const version = readVersion.current; const listRevision = listRead.current;
       try {
         const value = await api.get(ownerId, selectedId, controller.signal);
         if (!controller.signal.aborted && version === readVersion.current) {
           setDetail(value); setDetailError('');
-          // Only a successful current read updates the list. Retained detail
-          // must not overwrite a newer list while its own refresh is pending.
-          setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === value.id ? { ...item, state: value.state, updatedAt: value.updatedAt } : item) } : previous);
+          // If a list succeeded while this GET was in flight, keep that list.
+          // The next detail poll can synchronize it without replaying anything.
+          if (listRevision === listRead.current) {
+            detailRead.current = { revision: detailRead.current.revision + 1, value };
+            setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === value.id ? { ...item, state: value.state, updatedAt: value.updatedAt } : item) } : previous);
+          }
         }
       }
       catch (reason) { if (!controller.signal.aborted && version === readVersion.current) { setDetail(null); setDetailError(describe(reason)); } }
