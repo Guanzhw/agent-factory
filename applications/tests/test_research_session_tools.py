@@ -270,6 +270,86 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(changed['beforeSha256'], changed['afterSha256'])
         self.assertEqual(changed['bytes'], source.stat().st_size)
 
+    async def test_single_file_search_matches_directory_search_and_reports_truncation(self):
+        folder = self.workspace() / 'project/pytest_asyncio'
+        folder.mkdir(parents=True)
+        source = folder / 'plugin.py'
+        source.write_text('# ordinary source\n' * 1400 + 'loop.shutdown_asyncgens()\n')
+        file_result = await self.invoke('research_search', {'path': 'project/pytest_asyncio/plugin.py',
+            'query': 'shutdown_asyncgens'})
+        directory_result = await self.invoke('research_search', {'path': 'project/pytest_asyncio',
+            'query': 'shutdown_asyncgens'})
+        self.assertEqual(file_result, directory_result)
+        self.assertEqual(file_result['matches'], [{'path': 'project/pytest_asyncio/plugin.py',
+            'line': 1401, 'text': 'loop.shutdown_asyncgens()'}])
+        self.assertEqual(file_result['entriesScanned'], 1)
+        source.write_text('match\n' * 31)
+        bounded = await self.invoke('research_search', {'path': 'project/pytest_asyncio/plugin.py', 'query': 'match'})
+        self.assertEqual(len(bounded['matches']), 30)
+        self.assertTrue(bounded['truncated'])
+
+    async def test_native_agent_corrects_target_and_schema_errors_in_same_run(self):
+        (self.workspace() / 'source.py').write_text('answer = 42\n')
+
+        class CorrectingModel(RepairModel):
+            def invoke(self, messages, **kwargs):
+                step = self.calls
+                self.calls += 1
+                if step:
+                    result = ast.literal_eval(next(message.content for message in reversed(messages)
+                        if message.role == 'tool'))
+                    if step < 3:
+                        assert result['outcome'] == 'failed' and result['message']
+                        assert result['code'] == ('RESEARCH_FILE_TARGET_INVALID' if step == 1
+                            else 'PERSONAL_TOOL_INPUT_INVALID')
+                    else:
+                        assert result['matches'][0]['text'] == 'answer = 42'
+                        return ModelResponse(role='assistant', content='Corrected the search after reading both errors.')
+                arguments = ({'path': 'missing.py', 'query': 'answer'}, {'path': 'source.py'},
+                    {'path': 'source.py', 'query': 'answer'})[step]
+                return ModelResponse(role='assistant', tool_calls=[{'id': 'correcting-' + str(step),
+                    'type': 'function', 'function': {'name': 'research_search', 'arguments': json.dumps(arguments)}}])
+
+        def selected_tools(run_context: RunContext):
+            binding = BindingContext(None, self.store, {'budget': {}}, run_context, {})
+            return [registration.factory(binding) for registration in self.tools.tool_registrations]
+
+        model = CorrectingModel('', '')
+        agent = Agent(id='scripted-error-correction', model=model, tools=selected_tools, telemetry=False, tool_call_limit=4)
+        result = await agent.arun('Scripted correction protocol.', user_id='alice',
+            session_id='task-alice', run_id='run-alice')
+        self.assertEqual(model.calls, 4)
+        self.assertIn('Corrected the search', result.content)
+        self.assertEqual([event['data']['outcome'] for event in self.store.events
+            if event['type'] == 'research_tool_finished'], ['failed', 'failed', 'completed'])
+        self.assertEqual(self.store.receipts, {})
+
+    async def test_failed_edit_receipt_is_returned_without_repeating_operation(self):
+        source = self.workspace() / 'source.py'
+        source.write_text('original\n')
+        arguments = {'path': 'source.py', 'old': 'missing', 'new': 'replacement'}
+        first = await self.invoke('research_edit_file', arguments, call_id='failed-edit')
+        self.assertEqual(first['outcome'], 'failed')
+        self.assertEqual(source.read_text(), 'original\n')
+        source.write_text('missing\n')
+        second = await self.invoke('research_edit_file', arguments, call_id='failed-edit')
+        self.assertEqual(first, second)
+        self.assertEqual(source.read_text(), 'missing\n')
+        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'DONE')
+        unavailable = await self.invoke('research_run', {'argv': ['nonexistent-research-test-command']})
+        self.assertEqual(unavailable['outcome'], 'failed')
+        self.assertEqual(unavailable['code'], 'RESEARCH_COMMAND_UNAVAILABLE')
+
+    async def test_local_file_access_error_is_recoverable_but_owner_revocation_blocks_invalid_arguments(self):
+        with patch('research.session_tools._read', side_effect=PermissionError('synthetic OS file access denied')):
+            result = await self.invoke('research_read_file', {'path': 'source.py'})
+        self.assertEqual(result['outcome'], 'failed')
+        self.assertEqual(result['code'], 'RESEARCH_FILE_TARGET_INVALID')
+        self.sessions.active = False
+        call = self.call('research_search', {'path': 'source.py'})
+        self.assertEqual((await call.aexecute()).status, 'failure')
+        self.assertIsNone(call.result)
+
     async def test_native_agent_completes_both_commands_from_one_model_response(self):
         class ParallelResponse(RepairModel):
             def invoke(self, messages, **kwargs):
@@ -319,8 +399,9 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         source.write_text(original)
         call = self.call('research_read_file', {'path': 'oversized-result.py'})
         result = await call.aexecute()
-        self.assertEqual(result.status, 'failure')
-        self.assertIn('RESEARCH_TOOL_OUTPUT_TOO_LARGE', result.error)
+        self.assertEqual(result.status, 'success')
+        self.assertEqual(call.result['outcome'], 'failed')
+        self.assertEqual(call.result['code'], 'RESEARCH_TOOL_OUTPUT_TOO_LARGE')
         self.assertEqual(source.read_text(), original)
         self.assertEqual(self.store.effects('task-alice'), [])
         self.assertEqual(self.store.events[-1]['data']['code'], 'RESEARCH_TOOL_OUTPUT_TOO_LARGE')
@@ -328,7 +409,8 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_owner_paths_symlinks_traversal_and_exact_edit_failure(self):
         await self.invoke('research_edit_file', {'path': 'private.txt', 'old': '', 'new': 'alice-private'})
         bob = self.call('research_read_file', {'path': 'private.txt'}, owner='bob')
-        self.assertEqual((await bob.aexecute()).status, 'failure')
+        self.assertEqual((await bob.aexecute()).status, 'success')
+        self.assertEqual(bob.result['outcome'], 'failed')
         outside = self.root / 'outside.txt'
         outside.write_text('outside-private')
         (self.workspace() / 'link').symlink_to(outside)
@@ -336,10 +418,12 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         for path in ('../outside.txt', '/etc/passwd', 'link', 'directory-link/outside.txt'):
             with self.subTest(path=path):
                 call = self.call('research_read_file', {'path': path})
-                self.assertEqual((await call.aexecute()).status, 'failure')
+                self.assertEqual((await call.aexecute()).status, 'success')
+                self.assertEqual(call.result['outcome'], 'failed')
                 self.assertNotIn('outside-private', str(call.result))
         bad_edit = self.call('research_edit_file', {'path': 'private.txt', 'old': 'missing', 'new': 'wrong'})
-        self.assertEqual((await bad_edit.aexecute()).status, 'failure')
+        self.assertEqual((await bad_edit.aexecute()).status, 'success')
+        self.assertEqual(bad_edit.result['outcome'], 'failed')
         self.assertEqual(self.store.effects('task-alice')[-1]['status'], 'DONE')
         self.assertEqual((self.workspace() / 'private.txt').read_text(), 'alice-private')
         await self.invoke('research_edit_file', {'path': 'private.txt', 'old': 'alice-private', 'new': 'corrected'})
@@ -400,7 +484,13 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
             'from pathlib import Path;Path("replayed").write_text("bad")']}, run_id='run-after-reopen')
         with self.assertRaises(StopAgentRun):
             await new.aexecute()
+        invalid = self.call('research_search', {'path': 'missing.py'}, run_id='run-after-reopen')
+        with self.assertRaises(StopAgentRun):
+            await invalid.aexecute()
         self.assertFalse((self.workspace() / 'replayed').exists())
+        same_call = self.call('research_run', {}, call_id=call.call_id)
+        with self.assertRaises(StopAgentRun):
+            await same_call.aexecute()
         self.assertEqual(len(self.store.receipts), 1)
         self.assertEqual(self.store.events[-1]['data']['outcome'], 'unknown')
         self.assertTrue(self.store.events[-1]['data']['stopped'])
