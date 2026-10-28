@@ -7,8 +7,9 @@ import os
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from agno.agent import Agent
 from agno.exceptions import RunCancelledException, StopAgentRun
@@ -20,10 +21,39 @@ from fastapi import HTTPException
 
 from agent_factory.execution_bindings import BindingContext
 from agent_factory.store import digest
-from research.session_tools import EFFECT_PREFIX, ResearchSessionTools
+from research.session_tools import EFFECT_PREFIX, ResearchSessionTools, _directory
 
 
 CONTENT_ID = 'abcdefab-1111-2222-3333-abcdefabcdef'
+
+
+class ResearchSessionConfigurationTests(unittest.TestCase):
+    def test_default_and_disabled_search_path_leave_only_shared_evidence_available(self):
+        self.assertEqual(ResearchSessionTools().available_tools, ['research_read_shared_evidence'])
+        self.assertEqual(ResearchSessionTools(command_path='.').available_tools, ['research_read_shared_evidence'])
+
+    def test_enabled_commands_still_require_absolute_search_path_and_strict_types(self):
+        for options in ({'host_commands': True, 'command_path': '.'}, {'command_path': None},
+                {'host_commands': 0}):
+            with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'RESEARCH_COMMAND_CONFIGURATION_INVALID'):
+                ResearchSessionTools(**options)
+
+    def test_non_posix_workspace_is_rejected_before_open(self):
+        unavailable = SimpleNamespace(name='nt', open=Mock())
+        with patch('research.session_tools.os', unavailable):
+            with self.assertRaisesRegex(ValueError, 'RESEARCH_WORKSPACE_CONFIGURATION_INVALID'):
+                ResearchSessionTools(workspace_root=Path.cwd())
+            with self.assertRaisesRegex(ValueError, 'RESEARCH_WORKSPACE_CONFIGURATION_INVALID'):
+                with _directory(Path.cwd()):
+                    self.fail('Unsupported directory was opened')
+        unavailable.open.assert_not_called()
+
+    def test_missing_required_posix_flags_never_fall_back_to_unprotected_open(self):
+        unavailable = SimpleNamespace(name='posix', O_RDONLY=os.O_RDONLY, open=Mock())
+        with patch('research.session_tools.os', unavailable), self.assertRaises(AttributeError):
+            with _directory(Path.cwd()):
+                self.fail('Directory opened without required flags')
+        unavailable.open.assert_not_called()
 
 
 class Store:

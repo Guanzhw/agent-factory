@@ -74,7 +74,9 @@ def _parts(value, *, directory=False):
 
 @contextmanager
 def _directory(root, parts=(), *, create=False):
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    if os.name != 'posix':
+        raise ValueError('RESEARCH_WORKSPACE_CONFIGURATION_INVALID')
+    flags = os.O_RDONLY | getattr(os, 'O_DIRECTORY') | getattr(os, 'O_NOFOLLOW')
     descriptor = os.open('/', flags)
     try:
         for part in (*Path(root).parts[1:], *parts):
@@ -103,7 +105,7 @@ def _read_opened(handle):
 
 
 def _read(descriptor, name):
-    handle = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+    handle = os.open(name, os.O_RDONLY | getattr(os, 'O_NOFOLLOW') | getattr(os, 'O_NONBLOCK'), dir_fd=descriptor)
     try:
         return _read_opened(handle)
     finally:
@@ -118,7 +120,7 @@ class ResearchSessionTools:
         self.sessions: Any = None
         self.content: Any = None
         if (type(host_commands) is not bool or not isinstance(command_path, str)
-                or any(not Path(part).is_absolute() for part in command_path.split(os.pathsep))):
+                or host_commands and any(not Path(part).is_absolute() for part in command_path.split(os.pathsep))):
             raise ValueError('RESEARCH_COMMAND_CONFIGURATION_INVALID')
         if self.workspace_root is not None:
             if not self.workspace_root.is_absolute() or os.name != 'posix':
@@ -293,7 +295,7 @@ class ResearchSessionTools:
                         info = os.stat(filename, dir_fd=parent, follow_symlinks=False)
                         relative = '/'.join((*prefix, filename))
                         if stat.S_ISDIR(info.st_mode):
-                            child = os.open(filename, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+                            child = os.open(filename, os.O_RDONLY | getattr(os, 'O_DIRECTORY') | getattr(os, 'O_NOFOLLOW'), dir_fd=parent)
                             try:
                                 search(child, (*prefix, filename), depth + 1)
                             finally:
@@ -327,7 +329,7 @@ class ResearchSessionTools:
         except (ValueError, OSError):
             raise _rejected('RESEARCH_EDIT_PATH_OR_SIZE_INVALID') from None
         try:
-            flags = os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK
+            flags = os.O_RDWR | getattr(os, 'O_NOFOLLOW') | getattr(os, 'O_NONBLOCK')
             if not old:
                 flags |= os.O_CREAT | os.O_EXCL
             try:
