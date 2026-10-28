@@ -183,9 +183,9 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.tools.bind(self.sessions, self.content)
         self.sequence = 0
 
-    def call(self, name, arguments, *, owner='alice', call_id=None):
+    def call(self, name, arguments, *, owner='alice', call_id=None, run_id=None):
         self.sequence += 1
-        ctx = RunContext(user_id=owner, session_id='task-' + owner, run_id='run-' + owner, session_state={})
+        ctx = RunContext(user_id=owner, session_id='task-' + owner, run_id=run_id or 'run-' + owner, session_state={})
         binding = BindingContext(None, self.store, {'budget': {'operationSeconds': 3, 'outputBytes': 65536}},
             ctx, {})
         registration = next(item for item in self.tools.tool_registrations if item.tool_name == name)
@@ -270,6 +270,49 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(changed['beforeSha256'], changed['afterSha256'])
         self.assertEqual(changed['bytes'], source.stat().st_size)
 
+    async def test_native_agent_completes_both_commands_from_one_model_response(self):
+        class ParallelResponse(RepairModel):
+            def invoke(self, messages, **kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return ModelResponse(role='assistant', tool_calls=[
+                        {'id': 'parallel-' + str(index), 'type': 'function', 'function': {
+                            'name': 'research_run', 'arguments': json.dumps({'argv': argv})}}
+                        for index, argv in enumerate((['pwd'], ['ls', '-la']))])
+                return ModelResponse(role='assistant', content='Scripted model received both tool results.')
+
+        def selected_tools(run_context: RunContext):
+            binding = BindingContext(None, self.store, {'budget': {}}, run_context, {})
+            return [registration.factory(binding) for registration in self.tools.tool_registrations]
+
+        model = ParallelResponse('', '')
+        agent = Agent(id='scripted-parallel-tools', model=model, tools=selected_tools, telemetry=False)
+        await agent.arun('Scripted replay: inspect this temporary directory.', user_id='alice',
+                         session_id='task-alice', run_id='run-alice')
+        self.assertEqual(model.calls, 2)
+        effects = self.store.effects('task-alice')
+        self.assertEqual([item['status'] for item in effects], ['DONE', 'DONE'])
+        self.assertEqual([item['result']['output']['argv'] for item in effects], [['pwd'], ['ls', '-la']])
+        self.assertTrue(all(item['result']['output']['exitCode'] == 0 for item in effects))
+
+    async def test_different_runs_start_processes_without_waiting_for_each_other(self):
+        release = self.root / 'release-synthetic-processes'
+        script = ('from pathlib import Path;import time;Path("started").write_text("ready");'
+                  f'\nwhile not Path({str(release)!r}).exists(): time.sleep(.01)')
+        calls = [self.call('research_run', {'argv': [Path(sys.executable).name, '-c', script]}, owner=owner)
+                 for owner in ('alice', 'bob')]
+        pending = [asyncio.create_task(call.aexecute()) for call in calls]
+        try:
+            for _ in range(100):
+                if all((self.workspace(owner) / 'started').exists() for owner in ('alice', 'bob')):
+                    break
+                await asyncio.sleep(.02)
+            self.assertTrue(all((self.workspace(owner) / 'started').exists() for owner in ('alice', 'bob')))
+        finally:
+            release.touch()
+            results = await asyncio.gather(*pending, return_exceptions=True)
+        self.assertEqual([result.status for result in results], ['success', 'success'])
+
     async def test_read_above_return_budget_reports_reason_without_changing_file(self):
         original = '# unchanged source\n' * 4000
         source = self.workspace() / 'oversized-result.py'
@@ -350,8 +393,11 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         effect = self.store.effects('task-alice')[0]
         self.assertEqual(effect['status'], 'UNKNOWN')
         self.assertEqual((self.workspace() / 'effect').read_text(), 'once')
+        self.tools = ResearchSessionTools(workspace_root=self.root, host_commands=True,
+            command_path=str(Path(sys.executable).parent) + os.pathsep + os.defpath)
+        self.tools.bind(self.sessions, self.content)
         new = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
-            'from pathlib import Path;Path("replayed").write_text("bad")']})
+            'from pathlib import Path;Path("replayed").write_text("bad")']}, run_id='run-after-reopen')
         with self.assertRaises(StopAgentRun):
             await new.aexecute()
         self.assertFalse((self.workspace() / 'replayed').exists())
@@ -372,9 +418,16 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(.02)
         self.assertTrue(marker.exists(), 'actual parent never started')
         pids = [int(value) for value in marker.read_text().split(',')]
+        waiting = self.call('research_edit_file', {'path': 'after-stop', 'old': '', 'new': 'must not run'})
+        waiter = asyncio.create_task(waiting.aexecute())
+        await asyncio.sleep(0)
+        self.assertFalse(waiter.done())
         self.sessions.cancelled = True
         with self.assertRaises(RunCancelledException):
             await asyncio.wait_for(pending, 4)
+        with self.assertRaises(RunCancelledException):
+            await asyncio.wait_for(waiter, 4)
+        self.assertFalse((marker.parent / 'after-stop').exists())
         for pid in pids:
             proc = Path('/proc') / str(pid) / 'stat'
             if proc.exists():
@@ -382,6 +435,31 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         effect = self.store.effects('task-alice')[0]
         self.assertEqual(effect['status'], 'CANCELLED')
         self.assertEqual(effect['result']['stopped'], True)
+
+    async def test_revocation_stops_running_command_and_rejects_waiting_tool(self):
+        workspace = self.workspace()
+        call = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
+            'from pathlib import Path;import os,time;Path("started").write_text(str(os.getpid()));time.sleep(30)']})
+        pending = asyncio.create_task(call.aexecute())
+        marker = workspace / 'started'
+        for _ in range(100):
+            if marker.exists():
+                break
+            await asyncio.sleep(.02)
+        self.assertTrue(marker.exists())
+        waiting = self.call('research_edit_file', {'path': 'after-revocation', 'old': '', 'new': 'must not run'})
+        waiter = asyncio.create_task(waiting.aexecute())
+        await asyncio.sleep(0)
+        self.assertFalse(waiter.done())
+        self.sessions.active = False
+        with self.assertRaises(StopAgentRun):
+            await asyncio.wait_for(pending, 4)
+        self.assertEqual((await asyncio.wait_for(waiter, 4)).status, 'failure')
+        self.assertFalse((workspace / 'after-revocation').exists())
+        self.assertEqual(len(self.store.effects('task-alice')), 1)
+        proc = Path('/proc') / marker.read_text() / 'stat'
+        if proc.exists():
+            self.assertIn(proc.read_text().split(') ')[1].split()[0], {'Z', 'X'})
 
     async def test_shared_evidence_always_rechecks_and_records_source(self):
         result = await self.invoke('research_read_shared_evidence', {'content_id': CONTENT_ID}, call_id='shared-read')

@@ -11,6 +11,7 @@ import shutil
 import stat
 import tempfile
 from typing import Any
+import weakref
 
 from agno.exceptions import RunCancelledException, StopAgentRun
 from agno.tools.function import Function, FunctionCall
@@ -128,6 +129,7 @@ class ResearchSessionTools:
         self.command_path = command_path
         self.sessions: Any = None
         self.content: Any = None
+        self._run_locks: weakref.WeakValueDictionary[tuple, asyncio.Lock] = weakref.WeakValueDictionary()
         if (type(host_commands) is not bool or not isinstance(command_path, str)
                 or host_commands and any(not Path(part).is_absolute() for part in command_path.split(os.pathsep))):
             raise ValueError('RESEARCH_COMMAND_CONFIGURATION_INVALID')
@@ -177,6 +179,7 @@ class ResearchSessionTools:
         store = binding.store
         expected = binding.run_context
         identity = (expected.user_id, expected.session_id, expected.run_id)
+        run_lock = self._run_locks.setdefault(identity, asyncio.Lock())
 
         async def invoke(*, run_context, fc, **arguments):
             if (self.sessions is None or not isinstance(fc, FunctionCall) or not isinstance(fc.call_id, str)
@@ -292,8 +295,12 @@ class ResearchSessionTools:
             guard()
             return self._receipt(receipt)
 
+        async def serialized(*, run_context, fc, **arguments):
+            async with run_lock:
+                return await invoke(run_context=run_context, fc=fc, **arguments)
+
         return Function(name=name, description=TOOLS[name][0], parameters=TOOLS[name][1],
-            entrypoint=invoke, skip_entrypoint_processing=True)
+            entrypoint=serialized, skip_entrypoint_processing=True)
 
     @staticmethod
     def _receipt(receipt):
