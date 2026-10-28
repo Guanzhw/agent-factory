@@ -24,7 +24,7 @@ Go 首两次整链各 6 个已确认响应：终答 `tool_calls:null` 被原项�
 
 非作者 `/root/compare_review` 审查完整累计 diff 与简洁性。方案初审 B1–B3 已整改复审。代码审查推动修复同步停止检查、共享来源字段、下一轮入口、纠正状态、材料重复生成、StrictMode 草稿及手机导航。最终审查发现旧停止与终态刷新两个竞态，修复在 `50fce79f76e4752aad2662bc712cbb41f145c052` 经完整累计复审 PASS（33 文件）和独立 16 项 PG 回归。之后的 `e92393bdc944f68f173e66192a9f1d3de7d127b3` 修复手机错误定位、状态反馈及 HTTPS factory 工具环境接线；其后独立反例又发现旧详情（失败或成功晚到）覆盖新列表；`20b9145fcc205213706b7dda26f908a4c50ca599` 用界面局部读取代际修复双向返回顺序，22 产品检查加 2 独立反例通过。完整非作者结论见 [review.md](review.md)。未据旧 CI 或实模成功提前合并。
 
-最终代码基线：`3ec76ad34a97c3803933df646fd30966d4019024`；产品代码头：`20b9145fcc205213706b7dda26f908a4c50ca599`。验证文档后续提交不改变这些源码。精确交付 head、CI 和合并结果以 [PR #151](https://github.com/Guanzhw/agent-factory/pull/151) 的提交与检查为准，不把待运行检查写成通过。
+最终代码基线：`3ec76ad34a97c3803933df646fd30966d4019024`；产品代码头：`5c110376cb26b2c84b01cecf78de82d44ca7e802`。验证文档后续提交不改变这些源码。精确交付 head、CI 和合并结果以 [PR #151](https://github.com/Guanzhw/agent-factory/pull/151) 的提交与检查为准，不把待运行检查写成通过。
 
 ## Reproducible checks and evidence index
 
@@ -56,3 +56,11 @@ Go 首两次整链各 6 个已确认响应：终答 `tool_calls:null` 被原项�
 最终截图校验 `qa/final-candidate-map.json`：构建产物及相关源码 SHA 与 20b9145 一致；运行前后无变化。完整浏览器流程在 50fce79 上验证，最后 UI 改动在 20b9145 定点复验。
 
 `qa/browser-refresh-race-1793158864743519531/result.json` 真实 HTTP 延迟/故障验证：列表的新 running 状态不会被旧详情的 503 或晚到 200 覆盖，DOM 观察没有短暂回退。故障撤除后手动刷新恢复；正常完成由自动轮询同步另已验证。列表与详情仍是独立快照，故意延迟旧 200 时可短暂看到“列表执行中、详情旧可继续”；本片不宣称线性一致，后端单活动轮次权限不由这些文字决定。
+
+## Full CI portability correction
+
+[首次 full 40636456570](https://github.com/Guanzhw/agent-factory/actions/runs/40636456570) 对应 `e0f767225c163e82848daae7abd91f2420e9b892`。Windows Python 静态检查发现 8 个 POSIX `os` 标志类型错误，不能用已通过的 fast 或前端 job 代替本次失败。
+
+修复产品头 `5c110376cb26b2c84b01cecf78de82d44ca7e802`：必需的 POSIX 标志使用无默认值的读取，缺失时仍报错；非 POSIX 目录访问在打开前拒绝。命令关闭时不再用 Windows 默认搜索路径的相对段阻断共享证据功能和默认装配；命令启用仍要求绝对路径，参数类型始终严格检查。没有 `getattr(..., 0)`、检查豁免、依赖升级或 Windows 本地命令支持声明。
+
+17 项工具/装配回归通过，包括真实 Linux 临时文件、父子进程和 4 项可移植配置检查；普通与 Windows 目标的 Pyright 均 0 errors（Linux 环境中 14 条原有 win32 缺模块 warnings）。Windows 目标静态检查不冒充真实 Windows 执行，仍须新的精确 head full。UI 文件和截图未变，原实际浏览器版本继续按前文标注；本次不重复模型调用。非作者增量复审见 [review.md](review.md)，最终 CI 结果记录在 PR。
