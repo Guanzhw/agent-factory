@@ -12,6 +12,7 @@ from typing import Any
 
 from agno.exceptions import InputCheckError, RunCancelledException, ModelProviderError
 from agno.models.base import Model
+from agno.models.message import Message
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 
@@ -73,6 +74,7 @@ class DelegatingModel(Model):
         # state is unchanged, and every provider retry/tool-loop call rechecks.
         self._guard_provider_calls(model, current, local_current=local_current,
             ledger=ledger_for_plan(store, plan), plan=plan, context=context,
+            before_model=lambda args, kwargs: self._before_model(context, args, kwargs),
             on_recovered=lambda: self._model_recovered(context),
             on_protocol_rejected=lambda: store.reject_model_protocol(context))
         response.model = model.id
@@ -89,12 +91,31 @@ class DelegatingModel(Model):
         prepared = await asyncio.to_thread(self._prepare_selection, arguments, kwargs, streaming=streaming)
         return self._complete_selection(prepared)
 
+    def _before_model(self, context, arguments, kwargs):
+        """Let the exact application owner amend this provider request in place."""
+        store = self.bindings.store
+        runtime = getattr(store, "application_runtime", None)
+        if not runtime:
+            return
+        task = store.task(context.session_id, context.user_id)
+        callback = runtime.control(task, "before_model")
+        if callback is None:
+            return
+        messages = kwargs.get("messages") if "messages" in kwargs else arguments[0] if arguments else None
+        if not isinstance(messages, list) or not all(isinstance(message, Message) for message in messages):
+            raise InputCheckError("Application model control requires the native request message list")
+        callback(context, messages)
+
     @staticmethod
-    def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None, local_current=None, on_recovered=None, on_protocol_rejected=None):
+    def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None, local_current=None, before_model=None, on_recovered=None, on_protocol_rejected=None):
         invoke, ainvoke, invoke_stream, ainvoke_stream = model.invoke, model.ainvoke, model.invoke_stream, model.ainvoke_stream
 
         def reserve(args, kwargs, *, streaming=False):
             current()
+            if before_model is not None:
+                before_model(args, kwargs)
+            if local_current is not None:
+                local_current()
             return ledger.begin_attempt(context, plan, model, streaming=streaming or getattr(model, "factory_wire_stream", False) is True,
                 arguments=args, keyword_arguments=kwargs) if ledger is not None else None
 
@@ -129,6 +150,8 @@ class DelegatingModel(Model):
 
         async def aguard(*args, **kwargs):
             await asyncio.to_thread(current)
+            if before_model is not None:
+                await asyncio.to_thread(before_model, args, kwargs)
             if local_current is not None:
                 local_current()
             identity = ledger.begin_attempt(context, plan, model, streaming=getattr(model, "factory_wire_stream", False) is True, arguments=args, keyword_arguments=kwargs) if ledger is not None else None
@@ -183,6 +206,8 @@ class DelegatingModel(Model):
 
         async def astream(*args, **kwargs):
             await asyncio.to_thread(current)
+            if before_model is not None:
+                await asyncio.to_thread(before_model, args, kwargs)
             if local_current is not None:
                 local_current()
             identity = ledger.begin_attempt(context, plan, model, streaming=True, arguments=args, keyword_arguments=kwargs) if ledger is not None else None

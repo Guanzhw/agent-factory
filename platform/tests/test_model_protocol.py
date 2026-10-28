@@ -32,6 +32,23 @@ def responses(output=None, **options):
 
 
 class ModelProtocolTests(unittest.TestCase):
+    def test_cc_final_text_accepts_null_optional_tools_without_relaxing_tool_turns(self):
+        raw = {'choices': [{'finish_reason': 'stop', 'message': {
+            'role': 'assistant', 'content': 'Tests passed.', 'tool_calls': None,
+            'reasoning_content': 'Synthetic provider continuation'}}]}
+        original = deepcopy(raw)
+        decoded, continuation = decode_response('chat-completions', raw)
+        message = decoded['choices'][0]['message']
+        self.assertEqual(message, {'role': 'assistant', 'content': 'Tests passed.'})
+        self.assertEqual(continuation['message'], message)
+        self.assertEqual(raw, original)
+        for reason, calls in [('tool_calls', None), ('stop', {}), ('stop', 'none')]:
+            malformed = deepcopy(raw)
+            malformed['choices'][0]['finish_reason'] = reason
+            malformed['choices'][0]['message']['tool_calls'] = calls
+            with self.subTest(reason=reason, calls=calls), self.assertRaises(ValueError):
+                decode_response('chat-completions', malformed)
+
     def test_protocol_default_and_explicit_null_are_distinct(self):
         self.assertEqual(protocol_name({}), 'chat-completions')
         for protocol, path in [('chat-completions', '/chat/completions'), ('responses', '/responses')]:

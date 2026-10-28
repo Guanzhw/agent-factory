@@ -391,16 +391,59 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
         changed_manifest = copy.deepcopy(row["body"]["manifest"])
         changed_manifest["plan"]["materials"][0]["content"] = "Altered material content"
         self.denied(409, self.receiver.prepare, "bob", self.body(row).model_copy(update={"manifest": changed_manifest}))
-        before = self.ticket_count(self.remote, prepared["remoteTaskId"])
-        self.remote_settings.max_tool_calls = 4
+        self.call(self.origin["lifecycle_observer"].stop)
+        self.call_remote(self.remote["lifecycle_observer"].stop)
+        original_limit = self.remote_settings.max_tool_calls
         try:
+            before = self.ticket_count(self.remote, prepared["remoteTaskId"])
+            self.remote_settings.max_tool_calls = 4
             with self.assertRaises(HTTPException) as caught:
                 self.call_remote(self.receiver.dispatch, "bob", prepared["id"])
             self.assertEqual(caught.exception.status_code, 403)
+            self.assertEqual(self.ticket_count(self.remote, prepared["remoteTaskId"]), before)
+            self.assertEqual(self.receiver._row(prepared["id"], "bob")["state"], "PREPARED")
         finally:
-            self.remote_settings.max_tool_calls = 8
-        self.assertEqual(self.ticket_count(self.remote, prepared["remoteTaskId"]), before)
-        self.assertEqual(self.receiver._row(prepared["id"], "bob")["state"], "PREPARED")
+            self.remote_settings.max_tool_calls = original_limit
+            self.call(self.origin["lifecycle_observer"].start)
+            self.call_remote(self.remote["lifecycle_observer"].start)
+
+    def test_05_budget_revocation_observer_cancels_prepared_without_dispatch(self):
+        self.call(self.origin["lifecycle_observer"].stop)
+        self.call_remote(self.remote["lifecycle_observer"].stop)
+        original_limit = self.remote_settings.max_tool_calls
+        try:
+            row = self.reserve()
+            prepared = self.call(self.handoff.prepare, "alice", row["task_id"])
+            self.remote_settings.max_tool_calls = 4
+            with self.assertRaises(HTTPException) as denied:
+                self.call_remote(self.receiver.dispatch, "bob", prepared["id"])
+            self.assertEqual(denied.exception.status_code, 403)
+            self.assertEqual(self.receiver._row(prepared["id"], "bob")["state"], "PREPARED")
+            self.assertFalse(self.remote["store"].task(prepared["remoteTaskId"], "bob")["cancel_requested"])
+
+            observed = self.call_remote(self.remote["lifecycle_observer"].observe_root, prepared["remoteTaskId"])
+            self.assertEqual(observed["errors"], [], observed)
+            self.assertTrue(self.remote["store"].task(prepared["remoteTaskId"], "bob")["cancel_requested"])
+            settled = self.call_remote(self.receiver.reconcile, "bob", prepared["id"])
+            self.assertEqual(settled["state"], "CANCELLED_NO_DISPATCH")
+            self.assertTrue(settled["allStopped"])
+            for key in ("id", "originTaskId", "requestId", "remoteTaskId", "remotePlanId", "manifestHash"):
+                self.assertEqual(settled[key], prepared[key])
+
+            self.remote_settings.max_tool_calls = original_limit
+            with self.assertRaises(HTTPException) as canceled:
+                self.call_remote(self.receiver.dispatch, "bob", prepared["id"])
+            self.assertEqual(canceled.exception.status_code, 409)
+            retained = self.call_remote(self.receiver.reconcile, "bob", prepared["id"])
+            self.assertEqual(retained["state"], "CANCELLED_NO_DISPATCH")
+            self.assertTrue(retained["allStopped"])
+            self.assertIsNone(retained["remoteRunId"])
+            self.assertEqual(self.ticket_count(self.remote, prepared["remoteTaskId"]), 0)
+            self.assertEqual(self.ticket_count(self.origin), 0)
+        finally:
+            self.remote_settings.max_tool_calls = original_limit
+            self.call(self.origin["lifecycle_observer"].start)
+            self.call_remote(self.remote["lifecycle_observer"].start)
 
     def test_06_current_origin_and_remote_revocation_block_native_and_direct_effects(self):
         self.call(self.origin["lifecycle_observer"].stop)

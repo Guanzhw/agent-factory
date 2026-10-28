@@ -6,7 +6,7 @@ from unittest.mock import patch
 import httpx
 
 from agent_factory.model_endpoint_policy import (
-    GO_BASE, GO_CURRENT_BASE, base_url, chat_headers, generation_options,
+    GO_BASE, GO_CURRENT_BASE, GO_OPENAI_BASE, base_url, chat_headers, generation_options,
 )
 from agent_factory.model_transport import PinnedChatTransport, read_response_json
 from agent_factory.personal_remote_provider import SecretLease
@@ -14,7 +14,7 @@ from agent_factory.personal_remote_provider import SecretLease
 
 class ModelEndpointPolicyTests(unittest.TestCase):
     def test_member_endpoint_addresses_and_custom_paths_are_normalized(self):
-        for value in ('https://models.example.com/v1', GO_BASE, GO_CURRENT_BASE,
+        for value in ('https://models.example.com/v1', GO_BASE, GO_CURRENT_BASE, GO_OPENAI_BASE,
                 'https://opencode.ai.evil.example/inference/go/v1',
                 'https://other.example/inference/go/v1', 'https://opencode.ai/inference/other/v1',
                 'https://127.0.0.1/v1', 'https://[::1]/v1', 'http://models.example/v1',
@@ -36,7 +36,7 @@ class ModelEndpointPolicyTests(unittest.TestCase):
 
     def test_headers_are_exact_provider_policy_independent_of_protocol(self):
         lease = SecretLease('api-key', 'synthetic-policy-secret')
-        for base in (GO_BASE, GO_CURRENT_BASE):
+        for base in (GO_BASE, GO_CURRENT_BASE, GO_OPENAI_BASE):
             headers = chat_headers(base, lease, 'fixture-session')
             self.assertEqual(headers['x-opencode-session'], 'fixture-session')
             self.assertTrue(headers['User-Agent'].startswith('agent-factory/'))

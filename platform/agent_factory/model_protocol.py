@@ -414,7 +414,10 @@ def decode_response(protocol, raw):
             _fail('RESPONSE')
         if source.get('refusal') is not None:
             _fail('REFUSAL')
-        message = _message({key: source[key] for key in ('role', 'content', 'tool_calls') if key in source})
+        fields = {key: source[key] for key in ('role', 'content', 'tool_calls') if key in source}
+        if fields.get('tool_calls') is None:
+            fields.pop('tool_calls', None)
+        message = _message(fields)
         if (reason == 'tool_calls') != bool(message.get('tool_calls')):
             _fail('RESPONSE')
         reasoning = source.get('reasoning_content')

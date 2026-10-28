@@ -9,7 +9,7 @@ Agent Factory aims to provide reusable identity, tool and workflow execution fou
 | Adapter | A concrete provider, protocol or execution environment behind a trusted contract | Core contracts; application-specific integration belongs with that application |
 | Composition root | Selecting installed applications and wiring trusted registrations at startup | Explicit app entrypoints and core; reusable core/apps must not import it |
 
-The agreed directory contract is encoded in the [Python ownership map](scripts/architecture-python.json) and [frontend ownership map](scripts/architecture-web.json); these are the authoritative paths and exact composition exceptions. The default deployment and browser composition register no applications. The former Research source, pages and seeds are removed; core `create_app` and the standalone wheel remain independent of application code. Members explicitly publish application/material definitions, while new trusted adapters require deployment registration. No cross-application API is currently declared.
+The agreed directory contract is encoded in the [Python ownership map](scripts/architecture-python.json) and [frontend ownership map](scripts/architecture-web.json); these are the authoritative paths and exact composition exceptions. The default deployment and browser composition register no applications. Research is an explicit composition: `agent-factory-research` installs `applications/research`, and `npm run build:research` selects its browser entry. Core `create_app` and the standalone core wheel remain independent of application code. Members explicitly publish application/material definitions, while new trusted adapters require deployment registration. No cross-application API is currently declared.
 
 Keep genuinely shared helpers shared. A directory move does not establish these responsibilities. Composition exceptions name individual files, never whole directories. They permit wiring, not a second place for application behavior or a route around core isolation.
 
@@ -30,7 +30,7 @@ identity providers are removed. An unconfigured public identity boundary rejects
 authentication; test-only OIDC peers do not prove organization identity-provider
 compatibility. Core-only acceptance is recorded in
 [the exact-revision verification](openspec/changes/remove-research-verify-core/verification.md);
-historical Research evidence remains historical.
+historical Research evidence does not establish acceptance of the current explicit research composition.
 
 Application retirement does not remove old database records, credentials, vault
 keys, artifacts or backups. Old application tasks require their original code to

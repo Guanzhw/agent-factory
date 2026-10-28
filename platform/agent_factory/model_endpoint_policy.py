@@ -11,7 +11,8 @@ from .personal_remote_provider import origin
 # Retained verbatim for stored configurations and scoped legacy proxy grants.
 GO_BASE = 'https://opencode.ai/zen/go/v1'
 GO_CURRENT_BASE = 'https://opencode.ai/inference/go/v1'
-ADDITIONAL_BASE_URLS = (GO_CURRENT_BASE, GO_BASE)
+GO_OPENAI_BASE = 'https://opencode.ai/inference/go/openai/v1'
+ADDITIONAL_BASE_URLS = (GO_OPENAI_BASE, GO_CURRENT_BASE, GO_BASE)
 CLIENT_USER_AGENT = 'agent-factory/0.2 (+https://github.com/Guanzhw/agent-factory)'
 
 
