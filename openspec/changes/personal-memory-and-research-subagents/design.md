@@ -64,6 +64,8 @@
 
 验收先在现有解释器预检小仓库和测试，再让真实 Go 自主分头调查、采用结果并完成修复；另一个明确文件分工任务由 child 实际编辑/运行。独立 OS 探针验证原 parent 已持久 PAUSED、child 结果持久后退出真实服务 PID，同 PG 新 PID 续原 parent/run，重复观察无替代 child；child 操作 UNKNOWN 时不得重放。该项不阻塞源码实施，但阻塞完整验收与发布。桌面手机验证派发/等待/失败/停止及原任务入口，协议与实模、浏览器证据分别报告。
 
+浏览器停止验收发现：正常执行中的命令在收到回执前也持有 UNKNOWN effect，新子助手卡片把这个 custody 标记当成显示状态，误标原生 running 为未知。复用既有生命周期事实的 displayStatus 区分运行/停止中与未确认结果；不改变 allStopped、unknown、原等待或副作用恢复门禁。
+
 ## Risks / Trade-offs
 
 - 原生 API 名称不代表正确接线 → 实测 owner、原 ID、DB 失败、写后退出；不把文本审查当通过。
