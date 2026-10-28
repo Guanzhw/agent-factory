@@ -28,6 +28,37 @@ const describe = (error: unknown) => error instanceof Error ? error.message : '�
 const time = (value: string) => new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 const unresolved = (error: unknown) => !(error instanceof ApiError) || ![400, 401, 403, 404, 422].includes(error.status) || error.code === 'INVALID_RESPONSE';
 const initialDraft: SessionDraft = { title: '', goal: '', boundaries: '', modelConnectionRef: '', limits: { maxTurns: 8, toolCallsPerTurn: 8, operationSeconds: 8 } };
+const memoryTools: Record<string, { operation: string; title: string; completed: string }> = {
+  research_find_memories: { operation: 'find', title: '查找个人记忆', completed: '查找完成' },
+  research_remember: { operation: 'remember', title: '记住个人偏好', completed: '已记住' },
+  research_update_memory: { operation: 'update', title: '纠正个人记忆', completed: '已修改' },
+  research_forget_memory: { operation: 'forget', title: '忘记个人记忆', completed: '已忘记' },
+};
+
+function MemoryEventResult({ data }: { data: Record<string, unknown> }) {
+  const tool = memoryTools[String(data.toolName)];
+  const output = data.output && typeof data.output === 'object' ? data.output as Record<string, unknown> : null;
+  const entry = (value: unknown): value is { id: string; text: string } => !!value && typeof value === 'object'
+    && typeof (value as { id?: unknown }).id === 'string' && typeof (value as { text?: unknown }).text === 'string';
+  const memories = tool.operation === 'find' ? output?.memories : output ? [output.memory] : null;
+  const verified = data.outcome === 'completed' && output?.operation === tool.operation && Array.isArray(memories) && memories.every(entry)
+    && (tool.operation !== 'find' || typeof output.page === 'number' && typeof output.total === 'number');
+  const reason = data.code === 'RESEARCH_MEMORY_NOT_FOUND' ? '未找到你可操作的这条记忆。'
+    : data.code === 'RESEARCH_MEMORY_UNAVAILABLE' ? '记忆存储暂时不可用。'
+      : data.code === 'RESEARCH_TOOL_OUTPUT_TOO_LARGE' && tool.operation === 'find' ? '结果超过当前输出范围，可在下一条指令中缩小查找范围。' : '';
+  if (!verified) return <div role={['failed', 'unknown'].includes(String(data.outcome)) ? 'alert' : 'status'}>
+    <p>{data.outcome === 'failed' ? '本次操作未完成。' : data.outcome === 'cancelled' ? '本次工具调用已停止。' : '本次操作结果尚未确认。'} 请核对原工具记录；刷新不会重发操作。</p>
+    {reason && <p>{reason}</p>}
+    {typeof data.code === 'string' && <p>原因：<code>{data.code}</code></p>}
+  </div>;
+  return <div><p><strong>{tool.completed}</strong></p>
+    {data.reconciled === true && <p>已核对原操作，未重新执行。</p>}
+    {tool.operation === 'find' && <><p>{memories.length ? '以下个人记忆已返回本轮研究；是否采用请结合助手回复和后续执行记录核对。' : '本页没有匹配的个人记忆。'}</p>{typeof output.page === 'number' && typeof output.total === 'number' && <p>第 {output.page} 页 · 共 {output.total} 条匹配{typeof output.nextPage === 'number' ? ` · 还有第 ${output.nextPage} 页` : ''}</p>}</>}
+    {tool.operation === 'update' && typeof output.previousText === 'string' && <><p>修改前</p><p className="rw-answer">{output.previousText}</p><p>修改后</p></>}
+    {memories.map(memory => <div key={memory.id}><p className="rw-answer">{memory.text}</p><p className="rw-id">记忆条目：{memory.id}</p></div>)}
+    {tool.operation === 'forget' && <p>{typeof output.notice === 'string' ? output.notice : '此条不再出现在个人记忆查询中；旧对话、摘要和已经发送的内容仍然保留。'}</p>}
+  </div>;
+}
 
 function useDraft<T>(key: string, fallback: T) {
   const [value, setValue] = useState<T>(() => readStored(key, fallback));
@@ -104,7 +135,7 @@ function TurnRecord({ turn, onTask, onQuestion }: { turn: SessionTurn; onTask: (
     {!!replies.length && <section className="rs-adopted-reply" aria-label={`第 ${turn.sequence} 轮引用的同事回复`}><h4>本轮引用的同事回复</h4>{replies.map(reply => <div key={reply.questionId}><button className="rs-text-button" onClick={() => onQuestion(reply.questionId)}>核对原问题 {reply.questionId}</button>{reply.state === 'available' ? <><p>{reply.questionText}</p><p>{reply.reply.text}</p><p className="rw-muted">作为引用证据，不代表实验已验证。输入依据：{reply.reply.contentIds.length ? reply.reply.contentIds.join('、') : '无可用团队依据'}</p></> : <p role="status">引用的回复当前不可用，正文与来源已隐藏；后续研究需先核对权限。</p>}</div>)}</section>}
     {turn.failure && <p className="rw-error" role="alert">本轮未完成：{turn.failure}</p>}
     {!!turn.toolResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{turn.toolResults.map(item => <details key={item.effectKey} open={item.status.toUpperCase() === 'UNKNOWN'}><summary><span>{item.status.toUpperCase() === 'UNKNOWN' ? '结果未知，需核对原操作' : `工具回执：${item.status}`}</span><code>{item.effectKey}</code></summary>{item.result ? <ToolOutput result={item.result}/> : <p>还没有已确认的结果。</p>}</details>)}</section>}
-    <details className="rs-events" open={turn.events.some(event => event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required')}><summary>执行事件 · {turn.events.length} 条</summary><p className="rw-muted">以下是已保存的任务事件，不是模型全文流。</p>{turn.events.length ? <ol>{turn.events.map(event => <li key={event.id}><time>{time(event.createdAt)}</time><strong>{event.type}</strong><p>{event.message}</p>{Object.keys(event.data).length > 0 && <details><summary>事件详情</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details>}</li>)}</ol> : <p>还没有任务事件。</p>}</details>
+    <details className="rs-events" open={turn.events.some(event => Object.hasOwn(memoryTools, String(event.data.toolName)) || event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required')}><summary>执行事件 · {turn.events.length} 条</summary><p className="rw-muted">以下是已保存的任务事件，不是模型全文流。</p>{turn.events.length ? <ol>{turn.events.map(event => <li key={event.id}><time>{time(event.createdAt)}</time><strong>{memoryTools[String(event.data.toolName)]?.title ?? event.type}</strong>{event.type === 'research_tool_finished' && Object.hasOwn(memoryTools, String(event.data.toolName)) ? <MemoryEventResult data={event.data}/> : <p>{event.message}</p>}{Object.keys(event.data).length > 0 && <details><summary>事件详情</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details>}</li>)}</ol> : <p>还没有任务事件。</p>}</details>
     {turn.taskId && <button className="rs-text-button" onClick={() => onTask(turn.taskId!)}>查看原任务记录</button>}
   </article>;
 }
@@ -153,6 +184,7 @@ function SessionDetail({ ownerId, value, busy, blocked, questionId, onQuestion, 
   return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`}>{stateLabel}</span></div>{value.allowedActions.includes('stop') && <button disabled={busy} onClick={onStop}>请求停止</button>}</header>
     {value.state === 'stopping' && <p className="rs-warning" role="status">已记录停止请求，仍在等待执行边界和本地进程的停止回执；目前不能确认已停止。</p>}
     {value.collaboration?.enabled ? <p className="rs-collaboration-note">{value.state === 'stopped' ? '会话已停止，之后到达的同事回复不会自动继续研究。原问题仍可核对；停止本会话不会停止同事的任务。' : '此会话可自主询问同事助手，收到回复后按原限制继续。请求停止会取消尚未采用的自动继续安排，不会停止同事的任务。'}</p> : <p className="rw-muted">此会话沿用原配置，仅支持手动向同事助手提问；自主协作仅用于具备该能力的新会话。</p>}
+    {value.capabilities?.memory === false && <p className="rw-muted">此会话的原工具配置不包含个人记忆。可使用上方“新建会话”，再直接告诉助手要记住、查找、纠正或忘记的偏好。</p>}
     {value.state === 'blocked' && <p className="rw-error" role="alert">本会话不能开始新一轮：{reasons[value.blockReason ?? ''] ?? '原操作需要核对。'} 历史和原任务记录仍可查看，不会自动重放。<code>{value.blockReason}</code></p>}
     <details className="rs-agreement"><summary>目标、停止边界与模型</summary><h3>研究目标</h3><p>{value.goal}</p><h3>停止边界</h3><p>{value.boundaries}</p><p>{value.model.provider} · {value.model.model}</p><p>最多 {value.limits.maxTurns} 轮 · 每轮最多 {value.limits.toolCallsPerTurn} 次工具调用 · 单次操作 {value.limits.operationSeconds} 秒</p><p>当前会话上下文 {value.context.characters} / {value.context.maximumCharacters} 字符。{value.context.rawCharacters !== undefined && <>原始上下文 {value.context.rawCharacters} 字符。</>}可整理早期回复；必须保留的内容仍有容量限制。</p></details>
     <div className="rs-conversation">{value.turns.length ? value.turns.map(turn => <TurnRecord key={turn.id} turn={turn} onTask={onTask} onQuestion={onQuestion}/>) : <div className="rs-empty"><h3>会话已创建，尚无执行轮次</h3><p>写下第一轮指令后明确开始。打开或刷新不会自动执行。</p></div>}</div>

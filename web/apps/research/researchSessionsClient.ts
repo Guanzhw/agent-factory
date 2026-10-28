@@ -30,6 +30,7 @@ export interface SessionSummary {
   id: string; assistantId: string; title: string; goal: string; boundaries: string; createdAt: string; updatedAt: string;
   state: 'idle' | 'running' | 'stopping' | 'stopped' | 'blocked';
   collaboration?: { enabled: boolean };
+  capabilities?: { memory: boolean };
   model: { connectionRef: string; provider: string; model: string }; limits: SessionLimits;
   context: {
     characters: number; maximumCharacters: number; rawCharacters?: number;
