@@ -31,7 +31,7 @@
 
 ## Impact
 
-规划暂基线为上下文续片候选 `9566a94f5df36e2f2dae2e724b82ddb5f4aef3e5`，尚不代表已合入。独立工作区 `/workspace/agent-factory-assistant-collaboration`、分支 `feat/research-assistant-collaboration-20261028`；实施前须核验前片最终 main 并整合必要差异，不改冻结候选工作区。
+实现依赖冻结的 PR #152 head `9566a94f5df36e2f2dae2e724b82ddb5f4aef3e5`，尚未合入 main。该候选已通过独立审查和 full CI，Ready 转换被自动审批拒绝，等待用户明确确认。本片获准在独立工作区 `/workspace/agent-factory-assistant-collaboration`、分支 `feat/research-assistant-collaboration-20261028` 继续代码与测试，不改冻结候选或绕过其发布门禁；合并前须核验依赖最终 main 并整合必要差异。
 
 影响 Research 会话关联/上下文、现有 AssistantMessages 的有界列表与接收者恢复入口，以及研究会话与原问题页面。Agno 3.1.0、现有 QA 模式、PostgreSQL、登录、资源与凭据边界不变。仅增加必要关联记录和请求字段，不迁移或删除旧消息、会话及任务。
 
