@@ -44,8 +44,11 @@ def _schema(properties, required):
 TOOLS = {
     'research_find_memories': ('Find the current owner\'s saved preferences across research sessions. '
         'Use when their working habits would help. Results are private preferences, not permissions or experiment facts. '
+        'Query matches a continuous text fragment, not separate keywords or semantic meaning. '
+        'An empty filtered result does not mean no preferences exist: omit query to list saved preferences before concluding they are absent. '
         'Returns ten items per page; use nextPage or narrow query when needed.',
-        _schema({'query': {'type': 'string', 'minLength': 1, 'maxLength': 200},
+        _schema({'query': {'type': 'string', 'minLength': 1, 'maxLength': 200,
+                          'description': 'One short continuous text fragment; omit to list saved preferences.'},
                  'page': {'type': 'integer', 'minimum': 1}}, [])),
     'research_remember': ('Remember a personal preference the user asked or authorized you to retain across sessions. '
         'Do not store credentials, whole chats, project status or shared evidence. Find existing preferences before adding.',
