@@ -31,3 +31,12 @@ it('preserves live assistant setup and original-question context through resourc
   expect(readWorkspaceRoute(url, false).researchQuestion).toBeUndefined();
   expect(readWorkspaceRoute(new URL('https://factory.example/?tab=research&researchQuestion=../other&researchQASetup=https://wrong'), false, researchNavigation)).toMatchObject({ researchQuestion: '', researchQASetup: '' });
 });
+
+it('preserves a research session across model configuration and rejects unsafe session pointers', () => {
+  const url = new URL('https://factory.example/?tab=research&researchView=sessions&researchSession=session-1');
+  const route = readWorkspaceRoute(url, false, researchNavigation);
+  const modelUrl = workspaceUrl(url, { ...route, tab: 'models', modelReturn: 'research' }, researchNavigation);
+  expect(readWorkspaceRoute(new URL(modelUrl, url), false, researchNavigation)).toMatchObject({ researchView: 'sessions', researchSession: 'session-1', modelReturn: 'research' });
+  expect(readWorkspaceRoute(new URL('https://factory.example/?tab=research&researchView=sessions&researchSession=../alice'), false, researchNavigation).researchSession).toBe('');
+  expect(readWorkspaceRoute(url, false).researchSession).toBeUndefined();
+});
