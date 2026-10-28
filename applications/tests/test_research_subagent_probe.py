@@ -23,6 +23,7 @@ import httpx
 from sqlalchemy import Column, JSON, MetaData, String, Table, create_engine
 
 from agent_factory.delegation import DelegationService
+from agent_factory.lifecycle_observer import FactoryLifecycleObserver
 from agent_factory.byok_model import OwnerChatModel
 from agent_factory.runtime import CONTEXT_MARKER
 from agent_factory_server.main import factory_state
@@ -121,6 +122,60 @@ class ResearchChildCancellationContracts(unittest.TestCase):
         row, turn, task = self.service._execution(self.conn, self.context)
         self.assertEqual((row['id'], turn['id'], task['id'], task['run_id']),
             ('session', 'turn', 'child', 'child-run'))
+
+
+class ResearchSubagentProjectionContracts(unittest.TestCase):
+    """Real lifecycle projection logic with scripted bound native ticket/effects."""
+
+    def project(self, status, *, effect='UNKNOWN', cancel=False, persisted='completed'):
+        child = {'id': 'child', 'run_id': 'child-run', 'owner_id': 'alice', 'plan_id': 'child-plan',
+                 'admission': 'accepted', 'cancel_requested': cancel, 'body': {}}
+        store = SimpleNamespace(effects=lambda _: [{'status': effect}], has_failures=lambda _: False,
+            plan=lambda *_: {'normalizedGoal': 'Original subtask'})
+        observer = object.__new__(FactoryLifecycleObserver)
+        observer.store = store
+        observer._binding = lambda *_args, **_kwargs: {'status': status, 'persistedRunStatus': persisted,
+                                                     'content': 'Original child result'}
+        facts = observer._facts(child, include_content=True)
+        group = {'parent': facts, 'unknown': facts['unknown'], 'allStopped': facts['stopped']}
+        service = object.__new__(ResearchSubagents)
+        service.store = store
+        projection = service._projection(child, group)
+        self.assertEqual(store.effects('child'), [{'status': effect}], 'Display must not change the effect receipt')
+        return projection, group
+
+    def test_running_with_inflight_effect_uses_verified_lifecycle_display(self):
+        result, group = self.project('running', persisted='running')
+        self.assertTrue(group['unknown'])
+        self.assertFalse(group['allStopped'])
+        self.assertEqual(result['status'], 'running')
+        self.assertIsNone(result['result'])
+
+    def test_paused_or_ended_unresolved_work_stays_unknown(self):
+        for status in ('paused', 'completed', 'cancelled'):
+            with self.subTest(status=status):
+                result, group = self.project(status)
+                self.assertTrue(group['unknown'])
+                self.assertEqual(result['status'], 'unknown')
+                self.assertIsNone(result['result'])
+
+    def test_stop_requested_while_running_does_not_claim_stopped(self):
+        result, group = self.project('running', cancel=True, persisted='running')
+        self.assertEqual(result['status'], 'canceling')
+        self.assertFalse(group['allStopped'])
+        self.assertIsNone(result['result'])
+
+    def test_original_completed_answer_requires_confirmed_custody_and_native_result(self):
+        result, group = self.project('completed', effect='DONE')
+        self.assertTrue(group['allStopped'])
+        self.assertFalse(group['unknown'])
+        self.assertEqual((result['status'], result['result']), ('completed', 'Original child result'))
+        result, _ = self.project('completed', effect='DONE', persisted=None)
+        self.assertIsNone(result['result'])
+        result, group = self.project('cancelled', effect='CANCELLED', persisted='cancelled')
+        self.assertTrue(group['allStopped'])
+        self.assertEqual(result['status'], 'cancelled')
+        self.assertIsNone(result['result'])
 
 
 class ResearchSubagentRetryContracts(unittest.TestCase):

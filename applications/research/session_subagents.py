@@ -46,8 +46,9 @@ class ResearchSubagents:
 
     def _projection(self, child, group):
         facts = group['parent']
-        status = ('unknown' if group['unknown'] else 'canceling' if child['cancel_requested'] and not group['allStopped']
-                  else 'failed' if facts['failed'] else facts['nativeStatus'] or 'unknown')
+        status = facts.get('displayStatus', 'unknown')
+        if status not in {'running', 'canceling'}:
+            status = 'unknown' if group['unknown'] else 'failed' if facts['failed'] else facts['nativeStatus'] or 'unknown'
         result = (facts.get('content') if group['allStopped'] and status == 'completed'
                   and facts.get('persistedRunStatus') == 'completed' else None)
         if result is not None and not isinstance(result, str):
