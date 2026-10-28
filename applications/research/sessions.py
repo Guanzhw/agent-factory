@@ -151,37 +151,45 @@ class ResearchSessions:
             status, snapshot = detail['job']['status'], detail['snapshot']
             run = snapshot.get('run', snapshot)
             result = None
+            observed_terminal = bool(task['terminal'] and status in {'completed', 'failed', 'canceled'})
             # Ticket fallbacks may contain error text. Only exact persisted run
             # messages accompanying an actually completed task are an answer.
-            if (status == 'completed' and task['terminal'] and run.get('run_id') == task['run_id']
+            if (status == 'completed' and observed_terminal and run.get('run_id') == task['run_id']
                     and run.get('session_id') == task['id'] and run.get('user_id') == owner
+                    and str(run.get('status', '')).lower() == 'completed'
                     and isinstance(run.get('messages'), list)
                     and any(item.get('role') == 'assistant' for item in run['messages'] if isinstance(item, dict))
                     and isinstance(run.get('content'), str)):
                 result = run['content']
+            if status == 'completed' and result is None:
+                # A later task-row completion cannot upgrade a stale or missing
+                # native observation. The next ordinary read can obtain it.
+                observed_terminal, status = False, 'finalizing'
             with self.db.write() as conn:
                 current = conn.execute(select(self.turns).where(self.turns.c.id == turn['id'])).mappings().one()
+                if current['body'].get('terminal'):
+                    continue  # A concurrent confirmed final result wins over this older observation.
                 body = deepcopy(current['body'])
                 body.update(taskId=task['id'], runId=task.get('run_id'), status=status,
-                            terminal=bool(task['terminal']), events=detail['events'],
+                            terminal=observed_terminal, events=detail['events'],
                             toolResults=[{'effectKey': item['effect_key'], 'status': item['status'], 'result': item['result']}
                                          for item in snapshot.get('effects', [])])
-                if task['terminal']:
+                if observed_terminal:
                     body['completedAt'] = body.get('completedAt') or now()
                     body['result'] = result
-                    if status == 'completed' and result is None:
-                        body['failure'] = '未取得可核实的原始回复内容。'
+                    if status == 'completed':
+                        body['failure'] = None
                     elif status == 'failed':
                         body['failure'] = body.get('failure') or '本轮执行失败，请查看原任务与工具记录。'
                 self._save_turn(conn, current, body)
 
     def _safe(self, owner, turn):
         body = turn['body']
-        if body.get('blockReason'):
+        if body.get('blockReason') or not body['terminal']:
             return False
-        if body.get('neverDispatched'):
-            return body['terminal']
         task = self._task(owner, turn)
+        if task is None:
+            return bool(body.get('neverDispatched') and body['terminal'])
         return bool(task and task['terminal'] and not runtime_custody_held(self.store, task['id'])
                     and not any(effect_unresolved(item, self.store) for item in self.store.effects(task['id'])))
 
@@ -227,7 +235,8 @@ class ResearchSessions:
             with self.db.write() as conn:
                 row = self._row(conn, owner, identifier)
                 turn = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
-                if row['body']['stopped']:
+                if (row['body']['stopped'] or turn['body'].get('stopRequestId')
+                        or self._turns(conn, identifier)[-1]['id'] != turn_id):
                     self._save_turn(conn, turn, {**turn['body'], 'status': 'canceled', 'terminal': True,
                         'completedAt': now(), 'neverDispatched': True})
                     start = None
@@ -240,12 +249,13 @@ class ResearchSessions:
                 except Exception:
                     with self.db.write() as conn:
                         current = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
-                        self._save_turn(conn, current, {**current['body'], 'status': 'unknown',
-                            'failure': '尚未确认原提交结果；请读取原请求，勿重复启动。'})
+                        if not current['body'].get('terminal'):
+                            self._save_turn(conn, current, {**current['body'], 'status': 'unknown',
+                                'failure': '尚未确认原提交结果；请读取原请求，勿重复启动。'})
                 with self.db.read() as conn:
-                    row = self._row(conn, owner, identifier)
-                if row['body']['stopped']:
-                    await self._cancel_original(owner, identifier, row['body']['stopRequestId'])
+                    original = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
+                if original['body'].get('stopRequestId'):
+                    await self._cancel_original(owner, identifier, original['body']['stopRequestId'])
         return await self.read(owner, identifier)
 
     def correct(self, owner, identifier, request):
@@ -276,21 +286,31 @@ class ResearchSessions:
             if old is None:
                 self._save_session(conn, row, {**row['body'], 'stopped': True, 'stopRequestId': request.requestId})
                 turns = self._turns(conn, identifier)
-                if turns and not turns[-1]['body']['dispatchStarted']:
+                turn_id = turns[-1]['id'] if turns else None
+                if turns:
                     turn = turns[-1]
-                    self._save_turn(conn, turn, {**turn['body'], 'status': 'canceled', 'terminal': True,
-                        'completedAt': now(), 'neverDispatched': True})
-                self._command(conn, owner, request.requestId, fingerprint, 'stop', identifier)
+                    body = {**turn['body'], 'stopRequestId': request.requestId}
+                    if not body['dispatchStarted']:
+                        body.update(status='canceled', terminal=True, completedAt=now(), neverDispatched=True)
+                    self._save_turn(conn, turn, body)
+                self._command(conn, owner, request.requestId, fingerprint, 'stop', identifier, turn_id)
         if old is None:
             await self._cancel_original(owner, identifier, request.requestId)
         return await self.read(owner, identifier)
 
     async def _cancel_original(self, owner, identifier, request_id):
         with self.db.read() as conn:
-            turns = self._turns(conn, identifier)
-        if not turns:
+            command = conn.execute(select(self.commands).where(self.commands.c.actor_id == owner,
+                self.commands.c.request_id == request_id, self.commands.c.action == 'stop')).mappings().first()
+            if command is None or command['result']['sessionId'] != identifier or not command['result']['turnId']:
+                return
+            turn = conn.execute(select(self.turns).where(self.turns.c.id == command['result']['turnId'],
+                self.turns.c.session_id == identifier, self.turns.c.owner_id == owner)).mappings().first()
+        if turn is None:
             return
-        task = await asyncio.to_thread(self._task, owner, turns[-1])
+        # The immutable turn/request link resolves an admission that may have
+        # completed after stop was received. Never select a later active turn.
+        task = await asyncio.to_thread(self._task, owner, turn)
         if task is not None and not task['terminal']:
             await asyncio.to_thread(self.store.request_cancel, task['id'])
             try:
@@ -401,7 +421,8 @@ class ResearchSessions:
                 self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).mappings().first()
             if turn is not None:
                 row = self._row(conn, task['owner_id'], turn['session_id'])
-                self._save_session(conn, row, {**row['body'], 'stopped': True})
+                if self._turns(conn, row['id'])[-1]['id'] == turn['id']:
+                    self._save_session(conn, row, {**row['body'], 'stopped': True})
 
     def task_held(self, store, task):
         with self.db.read() as conn:

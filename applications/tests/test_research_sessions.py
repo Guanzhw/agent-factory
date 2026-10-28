@@ -9,8 +9,8 @@ from copy import deepcopy
 import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from threading import Barrier
-from unittest.mock import patch
+from threading import Barrier, Event
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 import unittest
 
@@ -73,6 +73,8 @@ class ResearchSessionContracts(unittest.TestCase):
         task, _ = self.store.reserve_task(plan, key)
         run_id = str(uuid4())
         self.store.accept(task['id'], run_id)
+        with self.service.db.write() as conn:
+            self.service._save_turn(conn, turn, {**turn['body'], 'dispatchStarted': True})
         self.context = RunContext(run_id=run_id, session_id=task['id'], user_id='alice', session_state={})
         self.ticket = {'id': run_id, 'session_id': task['id'], 'user_id': 'alice', 'attempt': 1, 'status': 'running'}
         return turn_id, task
@@ -171,6 +173,190 @@ class ResearchSessionContracts(unittest.TestCase):
         self.assertEqual(repeated['turns'][0]['id'], turn_id)
         self.assertEqual(original['turnId'], turn_id)
         self.assertIn('start', stopped['allowedActions'])
+
+    def finish_original(self, task, turn_id):
+        self.store.sql('UPDATE af_tasks SET terminal=TRUE WHERE id=:id', id=task['id'])
+        with self.service.db.write() as conn:
+            turn = conn.execute(select(self.service.turns).where(self.service.turns.c.id == turn_id)).mappings().one()
+            self.service._save_turn(conn, turn, {**turn['body'], 'terminal': True, 'status': 'completed',
+                'result': 'Original completed result', 'completedAt': 'synthetic-final'})
+
+    def test_delayed_stop_keeps_original_turn_binding_after_explicit_new_turn(self):
+        old_turn, old_task = self.reserved()
+        self.finish_original(old_task, old_turn)
+        original_cancel = self.service._cancel_original
+
+        async def scenario():
+            entered, release = asyncio.Event(), asyncio.Event()
+            async def delayed(*args):
+                entered.set()
+                await release.wait()
+                await original_cancel(*args)
+            with patch.object(self.service, '_cancel_original', side_effect=delayed), \
+                    patch.object(self.service.runs.factory.commands, 'submit', new_callable=AsyncMock) as submit:
+                pending = asyncio.create_task(self.service.stop('alice', self.identifier,
+                    SessionCommand(requestId='old-stop-delayed')))
+                await asyncio.wait_for(entered.wait(), 5)
+                new_turn, new_task = self.reserved('new-turn-after-old-stop', 'Explicitly continue')
+                release.set()
+                await asyncio.wait_for(pending, 5)
+                self.assertEqual(submit.await_count, 0, 'Old completed stop must never cancel the new task')
+                self.assertFalse(self.store.task(new_task['id'])['cancel_requested'])
+                with self.service.db.read() as conn:
+                    command = conn.execute(select(self.service.commands.c.result).where(
+                        self.service.commands.c.request_id == 'old-stop-delayed')).scalar_one()
+                    row = self.service._row(conn, 'alice', self.identifier)
+                self.assertEqual(command['turnId'], old_turn)
+                self.assertNotEqual(command['turnId'], new_turn)
+                self.assertFalse(row['body']['stopped'])
+                # Re-reading or repeating the old command cannot retarget it.
+                await self.service.stop('alice', self.identifier, SessionCommand(requestId='old-stop-delayed'))
+                self.assertFalse(self.store.task(new_task['id'])['cancel_requested'])
+        asyncio.run(scenario())
+
+    def test_late_old_task_cancel_does_not_stop_new_turn_but_current_cancel_does(self):
+        old_turn, old_task = self.reserved()
+        self.finish_original(old_task, old_turn)
+        _, new_task = self.reserved('new-turn-before-late-hook', 'Continue after completed result')
+        self.store.request_cancel(old_task['id'])
+        with self.service.db.read() as conn:
+            self.assertFalse(self.service._row(conn, 'alice', self.identifier)['body']['stopped'])
+        self.assertFalse(self.store.task(new_task['id'])['cancel_requested'])
+        self.before([Message(role='user', content='Current turn remains usable')])
+        self.store.request_cancel(new_task['id'])
+        with self.service.db.read() as conn:
+            self.assertTrue(self.service._row(conn, 'alice', self.identifier)['body']['stopped'])
+        with self.assertRaises(RunCancelledException):
+            self.before([Message(role='user', content='Current turn must stop')])
+        with self.assertRaises(RunCancelledException):
+            self.service.authorize_tool(self.context, 'research_run')
+
+    def test_old_creator_cannot_dispatch_after_stop_and_new_reservation(self):
+        reserved, release = Event(), Event()
+        reserve_original = self.service._reserve
+        def delayed_reserve(*args):
+            value = reserve_original(*args)
+            reserved.set()
+            if not release.wait(5):
+                raise AssertionError('The synthetic delayed creator was not released')
+            return value
+
+        async def scenario():
+            with patch.object(self.service, '_reserve', side_effect=delayed_reserve), \
+                    patch.object(self.service.runs, 'start', new_callable=AsyncMock) as start:
+                pending = asyncio.create_task(self.service.turn('alice', self.identifier,
+                    SessionText(requestId='old-delayed-creator', text='Old instruction')))
+                try:
+                    self.assertTrue(await asyncio.to_thread(reserved.wait, 5))
+                    await self.service.stop('alice', self.identifier, SessionCommand(requestId='stop-old-reservation'))
+                    new_id, fresh = reserve_original('alice', self.identifier,
+                        SessionText(requestId='new-explicit-reservation', text='New instruction'))
+                    self.assertTrue(fresh)
+                finally:
+                    release.set()
+                await asyncio.wait_for(pending, 5)
+                self.assertEqual(start.await_count, 0)
+                with self.service.db.read() as conn:
+                    turns = self.service._turns(conn, self.identifier)
+                    row = self.service._row(conn, 'alice', self.identifier)
+                self.assertTrue(turns[0]['body']['neverDispatched'])
+                self.assertEqual(turns[-1]['id'], new_id)
+                self.assertEqual(turns[-1]['body']['status'], 'reserved')
+                self.assertFalse(row['body']['stopped'])
+        asyncio.run(scenario())
+
+    def observed_detail(self, task, status):
+        return {'job': {'status': status}, 'events': [], 'snapshot': {
+            'run_id': self.context.run_id, 'session_id': task['id'], 'user_id': 'alice', 'effects': [],
+            'status': status.upper(),
+            'messages': [{'role': 'assistant', 'content': 'Observed final reply'}], 'content': 'Observed final reply'}}
+
+    def test_stale_running_observation_cannot_cache_terminal_or_admit_without_result(self):
+        _, task = self.reserved()
+        self.store.sql('UPDATE af_tasks SET terminal=TRUE WHERE id=:id', id=task['id'])
+        with patch.object(self.service.runs.factory, 'detail', new_callable=AsyncMock,
+                side_effect=[self.observed_detail(task, 'running'), self.observed_detail(task, 'completed')]) as detail:
+            asyncio.run(self.service._refresh('alice', self.identifier))
+            with self.service.db.read() as conn:
+                turn = self.service._turns(conn, self.identifier)[0]
+            self.assertFalse(turn['body']['terminal'])
+            self.assertFalse(self.service._safe('alice', turn))
+            self.assertIsNone(turn['body']['result'])
+            asyncio.run(self.service._refresh('alice', self.identifier))
+            self.assertEqual(detail.await_count, 2)
+        with self.service.db.read() as conn:
+            turn = self.service._turns(conn, self.identifier)[0]
+        self.assertTrue(turn['body']['terminal'])
+        self.assertEqual(turn['body']['result'], 'Observed final reply')
+        self.assertTrue(self.service._safe('alice', turn))
+
+    def test_concurrent_stale_refresh_cannot_overwrite_confirmed_final_result(self):
+        _, task = self.reserved()
+        self.store.sql('UPDATE af_tasks SET terminal=TRUE WHERE id=:id', id=task['id'])
+        async def scenario():
+            entered, release = asyncio.Event(), asyncio.Event()
+            calls = 0
+            async def detail(_):
+                nonlocal calls
+                calls += 1
+                if calls == 1:
+                    entered.set()
+                    await release.wait()
+                    return self.observed_detail(task, 'running')
+                return self.observed_detail(task, 'completed')
+            with patch.object(self.service.runs.factory, 'detail', side_effect=detail):
+                old = asyncio.create_task(self.service._refresh('alice', self.identifier))
+                await asyncio.wait_for(entered.wait(), 5)
+                await self.service._refresh('alice', self.identifier)
+                release.set()
+                await asyncio.wait_for(old, 5)
+            self.assertEqual(calls, 2)
+        asyncio.run(scenario())
+        with self.service.db.read() as conn:
+            turn = self.service._turns(conn, self.identifier)[0]
+        self.assertEqual(turn['body']['status'], 'completed')
+        self.assertTrue(turn['body']['terminal'])
+        self.assertEqual(turn['body']['result'], 'Observed final reply')
+
+    def test_confirmed_failure_or_cancel_can_continue_without_fabricated_answer(self):
+        for index, status in enumerate(('failed', 'canceled')):
+            if index:
+                self.identifier = self.service.create('alice', self.create.model_copy(update={'requestId': 'canceled-session'}))
+            _, task = self.reserved(request=f'ended-turn-{index}')
+            self.store.sql('UPDATE af_tasks SET terminal=TRUE WHERE id=:id', id=task['id'])
+            observation = self.observed_detail(task, status)
+            observation['snapshot']['content'] = 'This is an error, not an assistant answer'
+            with patch.object(self.service.runs.factory, 'detail', new_callable=AsyncMock, return_value=observation):
+                asyncio.run(self.service._refresh('alice', self.identifier))
+            with self.service.db.read() as conn:
+                turn = self.service._turns(conn, self.identifier)[0]
+            self.assertTrue(turn['body']['terminal'])
+            self.assertIsNone(turn['body']['result'])
+            self.assertTrue(self.service._safe('alice', turn))
+            _, fresh = self.service._reserve('alice', self.identifier,
+                SessionText(requestId=f'explicit-after-{status}', text='Explicitly continue'))
+            self.assertTrue(fresh)
+
+    def test_lost_late_start_ack_cannot_overwrite_already_observed_final_reply(self):
+        async def accepted_then_lost(owner, start):
+            plan, key = ApplicationRuns._prepare(self.service.runs, owner, start)
+            task, _ = self.store.reserve_task(plan, key)
+            run_id = str(uuid4())
+            self.store.accept(task['id'], run_id)
+            self.context = RunContext(run_id=run_id, session_id=task['id'], user_id=owner, session_state={})
+            self.store.sql('UPDATE af_tasks SET terminal=TRUE WHERE id=:id', id=task['id'])
+            with patch.object(self.service.runs.factory, 'detail', new_callable=AsyncMock,
+                    return_value=self.observed_detail(task, 'completed')):
+                await self.service._refresh(owner, self.identifier)
+            raise RuntimeError('Synthetic late loss of the original submission acknowledgement')
+        with patch.object(self.service.runs, 'start', side_effect=accepted_then_lost) as start:
+            detail = asyncio.run(self.service.turn('alice', self.identifier,
+                SessionText(requestId='late-submission-ack', text='Original instruction')))
+        self.assertEqual(start.await_count, 1)
+        self.assertEqual(detail['state'], 'idle')
+        self.assertEqual(detail['turns'][0]['status'], 'completed')
+        self.assertEqual(detail['turns'][0]['result'], 'Observed final reply')
+        self.assertIsNone(detail['turns'][0]['failure'])
 
     def test_correction_is_persisted_once_included_at_request_and_carries_to_next_turn(self):
         turn_id, task = self.reserved()
