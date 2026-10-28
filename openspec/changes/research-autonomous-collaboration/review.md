@@ -34,6 +34,10 @@
 
 ## 实施门槛与未验证项
 
+### 已保存提问的终态核对补充
+
+**补充方案 PASS，尚非实现验收。** 独立复核 design/spec/tasks 增量，并核实 `ResearchSessions.task_held` → `runtime_custody_held` → `Store._observed_locked`/lifecycle facts 的自环：本应用 block 本身会阻止 metadata terminal，不能把 metadata terminal 当前已成立当作解除它的前提。审定为两阶段：先沿既有严格 native binding 证明原 ticket/run 真实结束，且非空全部 effects 逐项匹配原 owner/session/turn/task/run/call、canonical 参数、消息 endpoint/正文及精确 DONE 保存回执；短事务内仅暂除 `RESEARCH_EFFECT_UNCONFIRMED` 或 `RESEARCH_RESTART_REQUIRES_RECONCILIATION` 后重核全部其他 custody/effects，有其他持有即恢复。无其他持有才提交清本应用阻断，本步不启动新轮；随后由既有 observer 正常结算原 task/turn 终态，后续原 event 经 `_safe`、停止、权限、轮数和容量检查才可建立一次新轮。不得手写旧 status/result/terminal 或派发旧 A/B。任一 DONE 文件/命令 effect、缺证据、原 native 绑定/终态未证实、其他 custody 或其他阻断均不得放行。可复用既有 `inspect_subtree` 的严格绑定观察，不需要新 core 绕过参数。tasks 已要求真实退出正例及混合 DONE 文件 effect 反例；仍待冻结实现后的实际证据。
+
 方案无剩余阻断。Coordinator 先核 PR #153 冻结 head/full 状态；方案独审通过后允许在独立依赖分支实施和测试，不修改前片候选。PR #153 最终合入后再核 main/tree 并整合必要差异；未满足前片及本片发布门槛，不提前发布。此顺序调整不改变行为、权限、验收范围，也不代表本次方案证明了代码可运行。后续须按 tasks 做真实 PG 竞争、至少两个退出窗口、脚本原生链、有限真实 Go 和桌面手机验收；未执行不得标通过。完整实现仍需另一位作者之外 reviewer 审查累计 diff、简洁性及精确 head CI。
 
 ## 历史方案审定产物 SHA256（实施顺序复核快照）

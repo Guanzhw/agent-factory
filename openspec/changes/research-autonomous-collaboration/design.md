@@ -41,6 +41,8 @@ private 分支必须在内容路径读取 candidates/contentId 前判别，所�
 
 工具 effect 结果未知时只允许原 request/owner/助手/正文完全匹配的持久消息证明“问题已保存”，据此核对原工具回执；这不能把 B 的任务 UNKNOWN 标成成功，也不重发问题。原消息不存在或读取出错则保留 unknown，不能绕过通用 mutating effect 守卫或以 404 当首次执行许可。原消息已保存但 recover 前退出的窗口，由上述同事务事件负责接续 B，不依赖模型重调工具或人工代替自主路径。
 
+原 A 的原生队列重试可能在原消息已提交后留下 `RESEARCH_EFFECT_UNCONFIRMED` 或 `RESEARCH_RESTART_REQUIRES_RECONCILIATION`。应用先沿既有严格 native binding 证明原 A ticket/run 已真实结束，逐项证明其非空 effects 全部是本 turn 的原提问：owner/session/turn/task/run/call、canonical 参数、原 endpoint/正文与持久消息一致，且每项都有精确的 DONE“问题已保存”回执，才可核对上述两种阻断。Research 的 blockReason 本身也被视为 custody，不能要求被它阻挡的 metadata terminal 先成立；短事务内仅暂除该应用阻断后重核全部其余 custody/effects，有其他持有则原样恢复。无其他持有才提交解除阻断，随后必须等待既有 observer 正常结算原 task/turn 终态，后续 event 才可通过 `_safe` 新建轮次；解除阻断这一步不启动新轮。不手写旧 task/run 的 status/result/terminal，不派发旧 A/B，也不解除其他阻断。任一文件/命令 effect（即使 DONE）、缺失或不匹配回执均保持阻断；随后仍由原事件核停止、权限、轮数和容量，最多建立一次新轮。这是 Research 对已保存问题的窄核对，不推广为通用 UNKNOWN 自动恢复。
+
 ### 3. 采用与再次执行是两个安全点
 
 持久原问题意图记录 received/pending/consumed 或 stopped/blocked 的实际关联，不复制一套消息执行状态。活跃 turn 在 `before_model` 的短事务内核源、核原操作、核容量并将不可变回复放入保护区；只有实际进入原主请求时才标纳入。摘要前后沿已有守卫重核；工具执行中不修改其原参数或假称即时干预。
