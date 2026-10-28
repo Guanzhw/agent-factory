@@ -8,7 +8,8 @@ import './sessions.css';
 type Props = { ownerId: string; selectedId?: string; onSelect: (id: string) => void; onModels: () => void; onTask: (id: string) => void };
 const states = { idle: '就绪', running: '执行中', stopping: '停止请求已接收', stopped: '已停止', blocked: '需要核对' };
 const reasons: Record<string, string> = {
-  RESEARCH_CONTEXT_LIMIT: '上下文已达到容量上限，不能加入新的模型请求；历史仍保留。',
+  RESEARCH_CONTEXT_LIMIT: '必要上下文超过容量，不能开始新一轮；目标、指令及原操作记录不会被截断，完整历史仍保留。',
+  RESEARCH_SUMMARY_INPUT_LIMIT: '待整理的回复超过单次整理容量，本会话不能开始新一轮；完整历史仍可查看。',
   RESEARCH_SOURCE_UNAVAILABLE: '已引用的共享来源当前不可访问，需要核对发布状态或权限。',
   RESEARCH_RESTART_REQUIRES_RECONCILIATION: '重启前的工具操作需要核对，不能自动重放。',
   RESEARCH_EFFECT_UNCONFIRMED: '原工具操作的结果尚未确认。',
@@ -93,7 +94,7 @@ function ToolOutput({ result }: { result: Record<string, unknown> }) {
 
 function TurnRecord({ turn, onTask }: { turn: SessionTurn; onTask: (id: string) => void }) {
   return <article className="rs-turn"><header><h3>第 {turn.sequence} 轮</h3><span>{turn.status}</span><time>{time(turn.createdAt)}</time></header>
-    {turn.messages.map(message => <div key={message.id} className={`rs-message rs-${message.kind}`}><div className="rs-message-heading"><strong>{message.kind === 'correction' ? '你的纠正' : '你的指令'}</strong><span>{message.state === 'included' ? '已纳入模型请求' : '待纳入模型请求'}</span></div><p>{message.text}</p></div>)}
+    {turn.messages.map(message => <div key={message.id} className={`rs-message rs-${message.kind}`}><div className="rs-message-heading"><strong>{message.kind === 'correction' ? '你的纠正' : '你的指令'}</strong><span>{message.state === 'included' ? '已纳入研究请求' : '待纳入研究请求'}</span></div><p>{message.text}</p></div>)}
     {turn.result !== null && <div className="rs-message rs-reply"><strong>助手回复</strong><p>{turn.result}</p></div>}
     {turn.failure && <p className="rw-error" role="alert">本轮未完成：{turn.failure}</p>}
     {!!turn.toolResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{turn.toolResults.map(item => <details key={item.effectKey} open={item.status.toUpperCase() === 'UNKNOWN'}><summary><span>{item.status.toUpperCase() === 'UNKNOWN' ? '结果未知，需核对原操作' : `工具回执：${item.status}`}</span><code>{item.effectKey}</code></summary>{item.result ? <ToolOutput result={item.result}/> : <p>还没有已确认的结果。</p>}</details>)}</section>}
@@ -116,6 +117,23 @@ function SharedSources({ ownerId, ids }: { ownerId: string; ids: string[] }) {
   return <details className="rs-sources"><summary>已引用的共享来源 · {ids.length}</summary><p>仅包含同事明确发布的研究证据。每次查看都重新核对当前权限。</p>{ids.map(id => <button key={id} disabled={busy} onClick={() => void read(id)}>{id}</button>)}{!ids.length && <p className="rw-muted">尚未引用共享证据。</p>}{busy && <p role="status">正在核对来源…</p>}{error && <p className="rw-error" role="alert">{error} 原来源正文已隐藏。</p>}{source && <article><h3>原共享证据 · {source.verificationStatus}</h3><p>作者 {source.ownerId} · 来源 {source.id}</p><pre>{JSON.stringify(source.source, null, 2)}</pre><pre>{JSON.stringify(source.content, null, 2)}</pre></article>}</details>;
 }
 
+function ContextStatus({ value, blocked }: { value: ResearchSession; blocked: boolean }) {
+  const summary = value.context.compaction;
+  if (!summary) return null;
+  const canStart = value.allowedActions.includes('start') && !blocked;
+  const titles = { needed: '继续前需要整理上下文', preparing: '正在整理上下文', ready: '上下文已整理', failed: '上下文整理未完成', unknown: '整理结果尚未确认' };
+  return <section className={`rs-context-status${['failed', 'unknown'].includes(summary.status) ? ' rs-warning' : ''}`} role="status" aria-live="polite" aria-atomic="true" aria-label="上下文整理状态">
+    <h3>{titles[summary.status]}</h3>
+    {summary.status === 'needed' && <p>{canStart ? '填写下一轮指令并点击“开始这一轮”后，会先整理早期助手回复，再继续研究。打开或刷新不会执行。' : '早期助手回复需要整理；当前不能开始新一轮，请先核对会话状态和原任务记录。'}</p>}
+    {summary.status === 'preparing' && <p>正在为这一轮准备摘要，尚未进入研究请求。整理完成不代表你的纠正已被纳入。</p>}
+    {summary.status === 'ready' && <p>后续研究将使用已确认的摘要；目标、停止边界、你的原始指令和操作状态仍单独保留。</p>}
+    {summary.status === 'failed' && <p>本轮未能保存可用摘要，没有据此继续研究。{canStart ? '你可以填写下一轮指令并明确开始，再尝试整理。' : '当前不能开始新一轮，请先核对会话状态和原任务记录。'}</p>}
+    {summary.status === 'unknown' && <p>上次整理请求没有确认结果，不会自动重发。{canStart ? '填写下一轮指令并明确开始，可能新增一次用于整理的模型请求。' : '当前不能开始新一轮，请先核对会话状态和原任务记录。'}</p>}
+    <p>{summary.throughSequence > 0 ? `${summary.status === 'ready' ? '已确认的摘要覆盖至' : '上次已确认的摘要覆盖至'}第 ${summary.throughSequence} 轮。` : '尚无已确认的摘要。'} 完整研究记录仍保留在上方。</p>
+    {summary.code && <p className="rs-context-code">原因代码：<code>{summary.code}</code></p>}
+  </section>;
+}
+
 function SessionDetail({ ownerId, value, busy, blocked, onSend, onStop, onTask }: { ownerId: string; value: ResearchSession; busy: boolean; blocked: boolean; onSend: (text: string, correction: boolean) => Promise<boolean>; onStop: () => void; onTask: (id: string) => void }) {
   const draft = useDraft(draftKey(ownerId, value.id), ''); const [error, setError] = useState('');
   const correction = value.state === 'running' && value.allowedActions.includes('correct');
@@ -128,10 +146,11 @@ function SessionDetail({ ownerId, value, busy, blocked, onSend, onStop, onTask }
   return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`}>{stateLabel}</span></div>{needsStop && value.allowedActions.includes('stop') && <button disabled={busy} onClick={onStop}>请求停止</button>}</header>
     {value.state === 'stopping' && <p className="rs-warning" role="status">已记录停止请求，仍在等待执行边界和本地进程的停止回执；目前不能确认已停止。</p>}
     {value.state === 'blocked' && <p className="rw-error" role="alert">本会话不能开始新一轮：{reasons[value.blockReason ?? ''] ?? '原操作需要核对。'} 历史和原任务记录仍可查看，不会自动重放。<code>{value.blockReason}</code></p>}
-    <details className="rs-agreement"><summary>目标、停止边界与模型</summary><h3>研究目标</h3><p>{value.goal}</p><h3>停止边界</h3><p>{value.boundaries}</p><p>{value.model.provider} · {value.model.model}</p><p>最多 {value.limits.maxTurns} 轮 · 每轮最多 {value.limits.toolCallsPerTurn} 次工具调用 · 单次操作 {value.limits.operationSeconds} 秒</p><p>上下文 {value.context.characters} / {value.context.maximumCharacters} 字符；达到上限会明确拒绝新一轮。</p></details>
+    <details className="rs-agreement"><summary>目标、停止边界与模型</summary><h3>研究目标</h3><p>{value.goal}</p><h3>停止边界</h3><p>{value.boundaries}</p><p>{value.model.provider} · {value.model.model}</p><p>最多 {value.limits.maxTurns} 轮 · 每轮最多 {value.limits.toolCallsPerTurn} 次工具调用 · 单次操作 {value.limits.operationSeconds} 秒</p><p>当前会话上下文 {value.context.characters} / {value.context.maximumCharacters} 字符。{value.context.rawCharacters !== undefined && <>原始上下文 {value.context.rawCharacters} 字符。</>}可整理早期回复；必须保留的内容仍有容量限制。</p></details>
     <div className="rs-conversation">{value.turns.length ? value.turns.map(turn => <TurnRecord key={turn.id} turn={turn} onTask={onTask}/>) : <div className="rs-empty"><h3>会话已创建，尚无执行轮次</h3><p>写下第一轮指令后明确开始。打开或刷新不会自动执行。</p></div>}</div>
     <SharedSources key={`${value.id}:${value.blockReason ?? ''}:${value.sharedSourceIds.join(',')}`} ownerId={ownerId} ids={value.sharedSourceIds}/>
-    {(value.allowedActions.includes('start') || correction) && <form className="rw-form rs-composer" noValidate onSubmit={event => { event.preventDefault(); void send(); }}><fieldset disabled={busy || blocked}><label>{correction ? '补充或纠正当前研究' : '下一轮指令'}<textarea rows={3} maxLength={2000} value={draft.value} onChange={event => draft.change(event.target.value)} aria-invalid={!!error}/></label><p className="rw-muted">{correction ? '先保存纠正，下一次模型请求才会纳入；不会改变已经开始的调用，也不代表模型已经遵守。' : '沿用此会话的目标和停止边界，只有点击开始才会执行。'}</p>{error && <p role="alert" className="rw-error">{error}</p>}<button className="rw-primary">{busy ? '正在提交…' : correction ? '保存纠正' : '开始这一轮'}</button></fieldset></form>}
+    <ContextStatus value={value} blocked={blocked}/>
+    {(value.allowedActions.includes('start') || correction) && <form className="rw-form rs-composer" noValidate onSubmit={event => { event.preventDefault(); void send(); }}><fieldset disabled={busy || blocked}><label>{correction ? '补充或纠正当前研究' : '下一轮指令'}<textarea rows={3} maxLength={2000} value={draft.value} onChange={event => draft.change(event.target.value)} aria-invalid={!!error}/></label><p className="rw-muted">{correction ? '先保存纠正，下一次研究请求才会纳入；整理摘要不算纳入，也不会改变已经开始的调用或保证模型遵守。' : '沿用此会话的目标和停止边界，只有点击开始才会执行。'}</p>{error && <p role="alert" className="rw-error">{error}</p>}<button className="rw-primary">{busy ? '正在提交…' : correction ? '保存纠正' : '开始这一轮'}</button></fieldset></form>}
     {!draft.saved && <p className="rw-error" role="alert">浏览器无法保存草稿；离开前请复制当前输入。</p>}
   </section>;
 }

@@ -21,7 +21,11 @@ export interface SessionSummary {
   id: string; assistantId: string; title: string; goal: string; boundaries: string; createdAt: string; updatedAt: string;
   state: 'idle' | 'running' | 'stopping' | 'stopped' | 'blocked';
   model: { connectionRef: string; provider: string; model: string }; limits: SessionLimits;
-  context: { characters: number; maximumCharacters: number }; allowedActions: ('start' | 'correct' | 'stop')[];
+  context: {
+    characters: number; maximumCharacters: number; rawCharacters?: number;
+    compaction?: { status: 'needed' | 'preparing' | 'ready' | 'failed' | 'unknown'; throughSequence: number; code?: string };
+  };
+  allowedActions: ('start' | 'correct' | 'stop')[];
   blockReason: string | null; sharedSourceIds: string[];
 }
 export interface ResearchSession extends SessionSummary { turns: SessionTurn[] }

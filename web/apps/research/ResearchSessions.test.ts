@@ -4,11 +4,12 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ApiError } from '../../api.js';
 import { ResearchSessions } from './ResearchSessions.js';
-import { researchSessionsApi as api, type ResearchSession, type SessionOptions } from './researchSessionsClient.js';
+import { researchSessionsApi as api, type ResearchSession, type SessionOptions, type SessionTurn } from './researchSessionsClient.js';
 import { clearSessionDrafts, draftKey, requestKey } from './researchSessionStorage.js';
 
 const options: SessionOptions = { available: true, unavailableCode: null, models: [{ connectionRef: 'model-a', provider: 'configured', model: 'research-model', available: true }], limits: { maxTurns: { min: 1, max: 20, default: 8 }, toolCallsPerTurn: { min: 1, max: 12, default: 8 }, operationSeconds: { min: 1, max: 120, default: 60 }, contextCharacters: 12000 }, workspace: { configured: true, hostCommands: true, isolation: 'host-user-not-os-sandbox' }, accounting: { tokenMetered: false, costMetered: false } };
 const session: ResearchSession = { id: 'session-a', assistantId: 'assistant-a', title: '保留研究目标', goal: '检查测试程序', boundaries: '测试通过后停止', createdAt: '2026-10-28T08:00:00Z', updatedAt: '2026-10-28T08:00:00Z', state: 'idle', model: { connectionRef: 'model-a', provider: 'configured', model: 'research-model' }, limits: { maxTurns: 8, toolCallsPerTurn: 8, operationSeconds: 60 }, context: { characters: 15, maximumCharacters: 12000 }, allowedActions: ['start'], blockReason: null, sharedSourceIds: [], turns: [] };
+const completedTurn: SessionTurn = { id: 'turn-a', sequence: 1, requestId: 'start-id', taskId: 'task-a', runId: 'run-a', status: 'completed', createdAt: session.createdAt, completedAt: session.updatedAt, result: '原始回复和证据仍可查。', failure: null, messages: [], events: [], toolResults: [] };
 let host: HTMLDivElement; let root: Root; let current: ResearchSession;
 const models = vi.fn(); const task = vi.fn();
 function Harness({ owner = 'alice', initial = '' }: { owner?: string; initial?: string }) {
@@ -94,9 +95,82 @@ it('sends a running supplement as a correction and distinguishes stored pending 
   });
   await mount(session.id); await field('补充或纠正当前研究', '不要修改原始数据'); await act(async () => button('保存纠正').click());
   expect(api.correct).toHaveBeenCalledWith('alice', session.id, expect.objectContaining({ text: '不要修改原始数据' })); expect(api.turn).not.toHaveBeenCalled();
-  expect(host.textContent).toContain('待纳入模型请求'); expect(host.textContent).not.toContain('已纳入模型请求');
+  expect(host.textContent).toContain('待纳入研究请求'); expect(host.textContent).not.toContain('已纳入研究请求');
   current = { ...current, turns: [{ ...current.turns[0], messages: [{ ...current.turns[0].messages[0], state: 'included', includedAt: session.createdAt }] }] };
-  await act(async () => button('刷新会话').click()); expect(host.textContent).toContain('已纳入模型请求'); expect(host.textContent).not.toContain('模型已遵守');
+  await act(async () => button('刷新会话').click()); expect(host.textContent).toContain('已纳入研究请求'); expect(host.textContent).not.toContain('模型已遵守');
+});
+
+it('keeps older payloads readable without inventing raw size or a summary', async () => {
+  await mount(session.id);
+  expect(host.querySelector('.rs-context-status')).toBeNull();
+  expect(host.querySelector('.rs-agreement')?.textContent).toContain('当前会话上下文 15 / 12000');
+  expect(host.textContent).not.toContain('当前模型上下文');
+  expect(host.textContent).not.toContain('undefined'); expect(host.textContent).not.toContain('原始上下文');
+  expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('continues an over-limit history only on explicit submission and retains all original records', async () => {
+  current = { ...current, turns: [completedTurn], context: { characters: 14000, rawCharacters: 14000, maximumCharacters: 12000, compaction: { status: 'needed', throughSequence: 0 } } };
+  let resolveTurn!: (value: ResearchSession) => void;
+  vi.mocked(api.turn).mockImplementation(() => new Promise(resolve => { resolveTurn = resolve; }));
+  await mount(session.id); await act(async () => button('刷新会话').click());
+  expect(host.textContent).toContain('继续前需要整理上下文'); expect(host.textContent).toContain('尚无已确认的摘要');
+  expect(host.textContent).toContain(completedTurn.result); expect(button('开始这一轮').closest('fieldset')?.disabled).toBe(false);
+  expect(api.turn).not.toHaveBeenCalled();
+  await field('下一轮指令', '沿用目标和边界继续');
+  const start = button('开始这一轮'); await act(async () => { start.click(); start.click(); });
+  expect(api.turn).toHaveBeenCalledOnce(); expect(api.turn).toHaveBeenCalledWith('alice', session.id, expect.objectContaining({ text: '沿用目标和边界继续' }));
+  current = { ...current, state: 'running', allowedActions: ['correct', 'stop'], context: { ...current.context, compaction: { status: 'preparing', throughSequence: 0 } } };
+  await act(async () => resolveTurn(current));
+  expect(host.textContent).toContain('正在整理上下文'); expect(host.textContent).toContain(completedTurn.result);
+});
+
+it('keeps corrections pending through summary preparation and completion until a research request includes them', async () => {
+  current = { ...current, state: 'running', allowedActions: ['correct', 'stop'], turns: [{ ...completedTurn, status: 'running', completedAt: null, result: null, messages: [{ id: 'correction-a', kind: 'correction', text: '保留原始数据', state: 'pending', createdAt: session.createdAt, includedAt: null }] }], context: { characters: 4000, rawCharacters: 14000, maximumCharacters: 12000, compaction: { status: 'preparing', throughSequence: 0 } } };
+  await mount(session.id);
+  expect(host.querySelector('.rs-context-status')?.getAttribute('aria-live')).toBe('polite');
+  expect(host.textContent).toContain('待纳入研究请求'); expect(host.textContent).not.toContain('已纳入研究请求');
+  current = { ...current, context: { ...current.context, compaction: { status: 'ready', throughSequence: 1 } } };
+  await act(async () => button('刷新会话').click());
+  expect(host.textContent).toContain('已确认的摘要覆盖至第 1 轮'); expect(host.textContent).toContain('待纳入研究请求');
+  expect(host.textContent).not.toContain('已纳入研究请求'); expect(host.textContent).not.toContain('研究成功');
+  current = { ...current, turns: [{ ...current.turns[0], messages: [{ ...current.turns[0].messages[0], state: 'included', includedAt: session.updatedAt }] }] };
+  await act(async () => button('刷新会话').click());
+  expect(host.textContent).toContain('已纳入研究请求'); expect(api.turn).not.toHaveBeenCalled();
+});
+
+it.each(['failed', 'unknown'] as const)('preserves the last confirmed range after %s and explains explicit continuation', async status => {
+  current = { ...current, turns: [completedTurn], context: { characters: 4000, rawCharacters: 14000, maximumCharacters: 12000, compaction: { status, throughSequence: 1, code: 'RESEARCH_SUMMARY_UNCONFIRMED' } } };
+  await mount(session.id);
+  expect(host.textContent).toContain('上次已确认的摘要覆盖至第 1 轮'); expect(host.textContent).toContain(completedTurn.result);
+  expect(host.textContent).toContain(status === 'unknown' ? '可能新增一次用于整理的模型请求' : '再尝试整理');
+  expect(button('开始这一轮')).toBeDefined(); expect(api.turn).not.toHaveBeenCalled();
+  await act(async () => button('查看原任务记录').click()); expect(task).toHaveBeenCalledWith('task-a');
+});
+
+it.each(['needed', 'unknown'] as const)('does not offer a retry for %s when the original business effect is blocked', async status => {
+  current = { ...current, state: 'blocked', blockReason: 'RESEARCH_EFFECT_UNCONFIRMED', allowedActions: ['stop'], turns: [{ ...completedTurn, status: 'unknown', completedAt: null, toolResults: [{ effectKey: 'original-operation', status: 'UNKNOWN', result: null }] }], context: { characters: 14000, rawCharacters: 14000, maximumCharacters: 12000, compaction: { status, throughSequence: 1 } } };
+  await mount(session.id); await act(async () => button('刷新会话').click());
+  expect(button('开始这一轮')).toBeUndefined(); expect(host.textContent).toContain('结果未知，需核对原操作');
+  expect(host.textContent).not.toContain('可能新增一次'); expect(host.textContent).toContain('当前不能开始新一轮');
+  expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('does not suggest another summary request while a previous submission still needs reconciliation', async () => {
+  current = { ...current, context: { ...current.context, compaction: { status: 'unknown', throughSequence: 0 } } };
+  window.sessionStorage.setItem(requestKey('alice'), JSON.stringify([{ requestId: 'original-id', action: 'turn', sessionId: session.id }]));
+  await mount(session.id);
+  expect(button('开始这一轮').closest('fieldset')?.disabled).toBe(true); expect(host.textContent).not.toContain('可能新增一次');
+  expect(host.textContent).toContain('原请求仍需核对'); expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('explains the summary input capacity refusal without inventing an unknown business operation', async () => {
+  current = { ...current, state: 'blocked', blockReason: 'RESEARCH_SUMMARY_INPUT_LIMIT', allowedActions: ['stop'], turns: [completedTurn], context: { characters: 50000, rawCharacters: 50000, maximumCharacters: 12000 } };
+  await mount(session.id);
+  expect(host.textContent).toContain('待整理的回复超过单次整理容量'); expect(host.textContent).toContain(completedTurn.result);
+  expect(host.textContent).not.toContain('原操作需要核对'); expect(button('开始这一轮')).toBeUndefined();
+  await act(async () => button('查看原任务记录').click()); expect(task).toHaveBeenCalledWith('task-a');
+  expect(api.turn).not.toHaveBeenCalled(); expect(api.stop).not.toHaveBeenCalled();
 });
 
 it('starts a new turn after completion even when the service also permits stored corrections', async () => {
