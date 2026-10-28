@@ -3,7 +3,7 @@
 ## 1. Planning and independent review
 
 - [x] 1.1 核对 dff7b96 / Agno 3.1.0 的记忆与委派接线，形成两条真实用户旅程、spec 和阶段边界；以固定源码定位及 `openspec validate --strict` 检查。
-- [ ] 1.2 非作者审查完整规划 diff、生命周期/权限与简洁性，修正实际缺口；记录精确 base/head、问题及复审结论，不把 Go 文本意见算功能验收。
+- [x] 1.2 非作者审查完整规划 diff、生命周期/权限与简洁性，修正实际缺口；记录精确 base/head、问题及复审结论，不把 Go 文本意见算功能验收。见 review.md，结论仅规划通过。
 
 ## 2. Personal memory slice
 
