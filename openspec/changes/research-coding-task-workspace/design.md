@@ -35,7 +35,7 @@
 
 ## Decisions
 
-1. **仓库与环境明确接入。** 操作方先将既有 `FACTORY_RESEARCH_COMMAND_PATH` 配为预定隔离 venv/bin 与系统 PATH，再正常启动服务。成员目标给公共 URL/commit；本环境由操作方把已核官方来源与版本的公共仓库副本提供到该会话目录。助手仍通过真实 `research_run` 输出 `pwd`、`git remote get-url origin`、`git rev-parse HEAD` 和目标源码 SHA，核对原 manifest；现有相对 cwd 回执不能单独代替实际目录。副本核对后，操作方在该 venv 安装官方固定依赖，并通过标准项目源路径配置指向本次副本（本案例使用 venv 内只含源目录路径的 `.pth`，不执行自定义 finder），核实际导入和 pytest 测试发现后，在同一 session 显式继续。主进程和 pytest 子进程的 `pytest_asyncio.__file__` 均须指向该副本，不依赖 PYTHONPATH、代理或测试 transport 的额外环境注入；不能再把仅 editable 安装记为环境已通过。既有命令工具仍可承载 git clone/checkout，但研究净化路径本轮未通过；不自动切换副本或网络配置。官方回归测试是公开验收输入、保持原字节；原仓库和参考修复副本不在执行范围。这是明确的环境准备，不宣称任意 URL 自动可用或助手自动安装依赖，不新增 repo 表、选择器、fallback 或环境管理器。
+1. **仓库与环境明确接入。** 操作方先将既有 `FACTORY_RESEARCH_COMMAND_PATH` 配为预定隔离 venv/bin 与系统 PATH，再正常启动服务。成员目标给公共 URL/commit；本环境由操作方把已核官方来源与版本的公共仓库副本提供到该会话目录。助手仍通过真实 `research_run` 输出 `pwd`、`git remote get-url origin`、`git rev-parse HEAD` 和目标源码 SHA，核对原 manifest；现有相对 cwd 回执不能单独代替实际目录。操作方在首次模型调用前于该 venv 安装官方固定依赖，并通过标准项目源路径配置指向本次副本（本案例使用 venv 内只含源目录路径的 `.pth`，不执行自定义 finder），核实际导入和 pytest 测试发现后，助手核上述来源，在同一 session 执行与显式继续。主进程和 pytest 子进程的 `pytest_asyncio.__file__` 均须指向该副本，不依赖 PYTHONPATH、代理或测试 transport 的额外环境注入；不能再把仅 editable 安装记为环境已通过。既有命令工具仍可承载 git clone/checkout，但研究净化路径本轮未通过；不自动切换副本或网络配置。官方回归测试是公开验收输入、保持原字节；原仓库和参考修复副本不在执行范围。这是明确的环境准备，不宣称任意 URL 自动可用或助手自动安装依赖，不新增 repo 表、选择器、fallback 或环境管理器。
 2. **整文件与返回预算分开。** `applications/research/session_tools.py` 去除读取和精确编辑对整文件 12KB 的绑定；保留现有最终工具返回预算、路径检查、唯一匹配和前后 SHA。搜索逐行覆盖正常 UTF-8 文件，不按 12KB 大小静默跳过，沿既有匹配/扫描截断反馈。不新增 offset/next/schema 或无实际资源依据的文件魔数；命令输出上限和会话投影不提高。若实模确因返回量/上下文失败，先记录再在同 spec 说明最小修复；不能静默截断并宣称已读完。
 3. **只接通已有时间预算。** `platform/agent_factory/config.py::Settings.from_env` 将 `FACTORY_OPERATION_TIMEOUT_SECONDS`、`FACTORY_NATIVE_TIMEOUT_SECONDS` 接到现有两个 Settings 字段，保留 core 的 8/60 默认；操作值遵循平台 Budget 的 1–600 秒边界，原生时限沿既有 60–3600 秒校验，不加配置体系。`platform/agent_factory/execution_bindings.py::EnvironmentLimits` 的超时描述范围上限对齐已有 600 秒预算，保留其默认和其他 adapter 自己的实际时限；回归验证不能因共享描述范围改变而隐式增大其他执行时限。`session_routes.py` 采用同一 600 秒 schema 边界；`session_setup.py` 与 `session_tools.py` 去掉重复 30 秒夹断，服从持久化原计划和部署预算。新会话默认使用部署已配置操作时限，成员不用每次展开高级输入；旧会话不改预算或重启操作。验收启动配置为操作 60 秒、原生一轮 300 秒，覆盖已测 35 秒完整测试及本任务模型/工具开销，是此部署配置而非容量保证。通过正常 `agent-factory-research` 启动路径验证，不能只改测试 Settings。
 4. **复用反馈与控制。** `ResearchSessions.tsx::ToolOutput` 已显示命令、cwd、退出、stdout/stderr 和文件 SHA；仅在真实浏览器发现必要状态缺口时修此处，不新造结果组件。沿用 corrections/stop/turns/request 与 effect；纠正在下一模型请求生效，不改写在途命令。GET 不执行，显式继续先核原操作；超时 UNKNOWN 不因进程消失就变成成功或自动重跑。ui-ux-pro-max 的就地错误/异步反馈、impeccable clarify/distill 的“发生什么/下一步”与默认值原则用于任务状态，内部回执保留折叠。
@@ -46,7 +46,7 @@
 
 ## Acceptance sequence
 
-1. 正常服务入口加载上述配置；真实登录进入独立 Auto Research 个人会话，目标含公共仓库/commit、缺陷及“保留测试、通过后停止”。本环境先由操作方提供已核官方副本，助手核实际目录、origin、HEAD/源码 SHA，再由操作方准备隔离 venv 的标准项目源路径并核主/子进程导入与 pytest 发现；同一 session 显式继续后，助手先复现官方回归，再自主读搜改源码，目标与完整测试均须真实 exit 0。不改官方测试、原仓库，不接触参考答案；研究命令公网 clone 未通过，不用本地准备抵扣。
+1. 正常服务入口加载上述配置；真实登录进入独立 Auto Research 个人会话，目标含公共仓库/commit、缺陷及“保留测试、通过后停止”。本环境先由操作方提供已核官方副本，准备隔离 venv 的标准项目源路径并核主/子进程导入与 pytest 发现；助手核实际目录、origin、HEAD/源码 SHA 后，在同一 session 执行与显式继续，先复现官方回归，再自主读搜改源码，目标与完整测试均须真实 exit 0。不改官方测试、原仓库，不接触参考答案；研究命令公网 clone 未通过，不用本地准备抵扣。
 2. 在同一任务真实测试期间提交纠正，核保存及下一模型请求纳入时点；请求停止并记录实际测试父子 PID/进程组及终止结果。未确认时保留未知，不以 UI 代替进程证据。
 3. 实际服务退出后重启，返回原 session、仓库和文件变更；GET 不执行，核原请求后显式下一轮继续。重复提交只产生一次执行；未知原操作不得换 ID 重放。桌面/手机能看懂失败、文件变化和下一步。
 

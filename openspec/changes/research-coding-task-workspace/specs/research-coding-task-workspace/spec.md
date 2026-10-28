@@ -12,7 +12,7 @@
 
 #### Scenario: Start a real repository task
 - **WHEN** 成员提供公共 URL/commit 与代码问题，本环境公网 Git 连接失败，操作方提供已核官方副本到会话目录
-- **THEN** 助手用现有命令实际核 pwd、origin、HEAD 和源码 SHA；操作方随后准备隔离 venv 的标准项目源路径（可用只含路径的 .pth），主/测试子进程导入与 pytest 发现均核为该副本，再在同一 session 显式继续；不靠 PYTHONPATH/代理注入，不将仅 editable 安装或本地准备分别算环境/公网通过，不声称自动配环境
+- **THEN** 操作方先准备隔离 venv 的标准项目源路径（可用只含路径的 .pth），主/测试子进程导入与 pytest 发现均核为该副本；助手用现有命令实际核 pwd、origin、HEAD 和源码 SHA 后，在同一 session 执行与显式继续；不靠 PYTHONPATH/代理注入，不将仅 editable 安装或本地准备分别算环境/公网通过，不声称自动配环境
 
 ### Requirement: Complete ordinary source changes and project tests
 
