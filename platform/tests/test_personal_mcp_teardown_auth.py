@@ -1,8 +1,11 @@
 """Late DELETE credential outcomes cannot turn uncertain custody into success."""
 import asyncio
 from dataclasses import replace
+import json
+from pathlib import Path
 import threading
 import unittest
+from unittest.mock import patch
 
 import httpx2
 
@@ -17,16 +20,29 @@ class LateTeardownCredentialTests(unittest.IsolatedAsyncioTestCase):
     async def check_late_resolution(self, outcome):
         loop = asyncio.get_running_loop()
         entered, finished, closed = asyncio.Event(), asyncio.Event(), asyncio.Event()
+        tool_finished = asyncio.Event()
         release = threading.Event()
         late_calls = []
         completed = []
+        transport_requests = []
+        started = loop.time()
 
         class ObservedTransport(httpx2.AsyncHTTPTransport):
+            async def handle_async_request(self, request):
+                transport_requests.append(request.method)
+                return await super().handle_async_request(request)
+
             async def aclose(self):
                 try:
                     await super().aclose()
                 finally:
                     closed.set()
+
+        class ObservedAdapter(MCPToolAdapter):
+            async def _call(self, session, state, arguments):
+                result = await super()._call(session, state, arguments)
+                tool_finished.set()
+                return result
 
         async with MCPProtocolServer(stateless=False) as server:
             authority = Authority()
@@ -53,21 +69,38 @@ class LateTeardownCredentialTests(unittest.IsolatedAsyncioTestCase):
                 finally:
                     loop.call_soon_threadsafe(finished.set)
 
-            adapter = MCPToolAdapter(descriptor(), url=server.url,
+            adapter = ObservedAdapter(descriptor(), url=server.url,
                 teardown_timeout_seconds=0.1, http_transport_factory=ObservedTransport)
             pending = asyncio.create_task(adapter.invoke(replace(invocation, resolve_credential=resolve)))
+            tool_ready = asyncio.create_task(tool_finished.wait())
             ready = asyncio.create_task(entered.wait())
+
+            def diagnostic(phase):
+                return str({'phase': phase, 'elapsed': round(loop.time() - started, 3),
+                    'toolCalls': len(server.calls),
+                    'deleteRequests': sum(request.method == 'DELETE' for request in server.requests),
+                    'transportClosed': closed.is_set(), 'lateCalls': len(late_calls),
+                    'transportMethods': transport_requests, 'serverMethods': [r.method for r in server.requests],
+                    'authorityChecks': authority.checks, 'credentialResolutions': authority.resolutions,
+                    'pendingFrames': [(Path(f.f_code.co_filename).name, f.f_code.co_name, f.f_lineno)
+                                      for f in pending.get_stack()]})
+
             try:
+                # Establish the tool-result phase within the operation's existing
+                # budget before observing the separately bounded DELETE teardown.
+                await asyncio.wait({tool_ready, pending}, timeout=adapter.descriptor.timeout_seconds,
+                                   return_when=asyncio.FIRST_COMPLETED)
+                if not tool_finished.is_set():
+                    if pending.done():
+                        await pending
+                    self.fail('MCP tool-result phase did not finish: ' + diagnostic('tool-result'))
+                await tool_ready
                 await asyncio.wait({ready, pending}, timeout=2, return_when=asyncio.FIRST_COMPLETED)
                 if not entered.is_set():
                     if pending.done():
                         await pending
                         self.fail('MCP invocation ended before the late credential callback entered')
-                    self.fail('MCP late credential callback did not enter: ' + str({
-                        'toolCalls': len(server.calls),
-                        'deleteRequests': sum(request.method == 'DELETE' for request in server.requests),
-                        'transportClosed': closed.is_set(), 'lateCalls': len(late_calls),
-                    }))
+                    self.fail('MCP late credential callback did not enter: ' + diagnostic('delete-credential'))
                 await ready
                 # The callback remains gated until actual transport closure:
                 # only the original DELETE deadline can advance teardown here.
@@ -91,10 +124,29 @@ class LateTeardownCredentialTests(unittest.IsolatedAsyncioTestCase):
                     if entered.is_set():
                         await asyncio.wait_for(finished.wait(), 2)
                 finally:
-                    for task in (ready, pending):
+                    for task in (tool_ready, ready, pending):
                         if not task.done():
                             task.cancel()
-                    await asyncio.wait_for(asyncio.gather(ready, pending, return_exceptions=True), 2)
+                    await asyncio.wait_for(asyncio.gather(tool_ready, ready, pending, return_exceptions=True), 2)
+
+    async def test_initialize_delay_within_operation_budget_does_not_consume_teardown_observation(self):
+        original = httpx2.AsyncHTTPTransport.handle_async_request
+        initialized = asyncio.Event()
+
+        async def delayed(transport, request):
+            if request.method == 'POST' and json.loads(request.content).get('method') == 'initialize':
+                release = asyncio.Event()
+                timer = asyncio.get_running_loop().call_later(2.15, release.set)
+                try:
+                    await release.wait()
+                    initialized.set()
+                finally:
+                    timer.cancel()
+            return await original(transport, request)
+
+        with patch.object(httpx2.AsyncHTTPTransport, 'handle_async_request', delayed):
+            await self.check_late_resolution('changed')
+        self.assertTrue(initialized.is_set())
 
     async def test_late_same_credential_cannot_clear_unknown_or_retry(self):
         await self.check_late_resolution('unchanged')

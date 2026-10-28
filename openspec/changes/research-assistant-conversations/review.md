@@ -48,3 +48,13 @@
 - 两次实际 OS 退出分别位于消息/关联已提交但未准入，以及原 task 已 RESERVED 但未 enqueue。重启后读/重复 POST 不执行；前者仅 B 明确接续创建一个原任务并产生一次脚本调用，后者保持原 task、null runId，连 B 的接续也不重放。没有 SQL 写终态。**RESERVED 与 UNKNOWN 不混称**；UNKNOWN/丢 ACK 由前述独立 PG 专项覆盖。这两次 OS 退出由 QA 执行，本 reviewer 审查脚本、退出 PID/代码和原始 before/after 结果，未额外复跑。
 - 对应证据：`qa/browser-1793191981388782114/` 与 `qa/restart-conversations-1793192070698788313/`。源码/构建前后稳定；已实际查看采用回复、手机字段错误、撤权隐藏及手动原请求恢复四张 PNG，明确标记 SYNTHETIC QA，无真实个人资料或秘密，适合随仓库交付。脚本 provider 不是实模研究证明。
 - 本片没有真实模型、GPU/SSH 或部署调用。最终 CI 仍须在准确交付 head 成功；不以本地测试、旧依赖 CI 或本审查替代。自主协作、容量、生产隔离及用户部署仍未覆盖。
+
+## Full CI 后的测试阶段修正独审
+
+原交付 `2f324a80ea72a78951e6ecb50d1ec0c4887b063e` 的 full `40692631856` **FAIL**：2356 项、1 failure、0 errors、15 skips，accepted=false；不能因六个必跑组通过而发布。唯一失败是 MCP late-credential 测试未进入回调，尚无工具调用。原官方日志、断言和分组核验保存在 `ci-40692631856/`，未覆盖或重跑原执行。
+
+增量只改 `platform/tests/test_personal_mcp_teardown_auth.py`，冻结 SHA256 `ef6c73132822b7cb893dfff9a375259a8f6e2cf9d20cc75e3cc8fd12f89a61ae`。独审确认真实 SDK `_call` 返回是前置阶段边界，随后才观察原 late callback；两阶段均处理 pending 提前结束，不吞原异常。生产 adapter、3 秒操作预算、0.1 秒 DELETE 期限、UNKNOWN/不重试/一次回调/零 DELETE 断言均未改变。诊断仅记录方法、计数和代码位置，不记录请求头、凭据或协程局部变量；没有通用诊断框架。
+
+作者之外的真实 loopback 正负配对已完成：原 `2f324a80` 测试在 initialize 加 2.15 秒受控门时重现相同失败；修后四项全部通过。另加 3.15 秒 initialize 门仍在 tool-result 前置阶段被拒绝；仅测试内把 DELETE 期限改成 5 秒，原 transport-close 断言仍失败。负对照的预期失败各自保留，不算作产品测试成功。测试前后冻结 SHA 一致，原 28 个产品/测试交付文件和生产 MCP adapter 字节未变。
+
+**该测试增量与简洁性审查 PASS；原 full 失败仍保留，新准确 head full 尚待。** 受控实验说明原等待混合了初始化和 teardown 阶段，不能证明 hosted CI 的真实延迟来源，也不能将 PR150 的历史同位置失败判作相同根因或已修复。独立证据在 `mcp-teardown-diagnosis/independent-phase-result.json` 及 `independent-delete-deadline-negative.json`；没有调用模型、PG 或用户主机。

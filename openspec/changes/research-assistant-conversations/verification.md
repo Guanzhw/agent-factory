@@ -27,6 +27,16 @@
 - UI 原实例迟到响应可能清除新请求指针；提交前预算关闭也可能遗留不可恢复指针。修复与独立反例记录在 review.md。
 - 网络失败且首次请求未到服务端时，原查询未找到原先会卡住发送。新增明确的同原 ID/助手/原文本手动重发；已有原记录只读，查询本身不执行。正文沿现有草稿的退出登录清理边界保存，退出后缺少原文只允许核对。
 
+## Full CI failure and targeted correction
+
+准确 head `2f324a80ea72a78951e6ecb50d1ec0c4887b063e` 的 [full 40692631856](https://github.com/Guanzhw/agent-factory/actions/runs/40692631856) 失败：7 jobs 中 5 成功，PostgreSQL 和 summary 失败。PG 2356 项，1 failure、0 errors、15 既有 skips，accepted=false；六个必跑组虽全部通过，仍不满足发布门槛。唯一失败是 `LateTeardownCredentialTests.test_late_changed_credential_cannot_clear_unknown_or_retry` 在 2 秒内未进入 late callback，记录 toolCalls=0、deleteRequests=0、transportClosed=false、lateCalls=0。原始失败保留，不用重跑覆盖。
+
+该等待从 invoke 启动开始，包含凭据、传输创建、MCP 初始化、列工具和调用，而被测 DELETE teardown 另有 0.1 秒期限。原三例本地通过；仅对真实 loopback initialize 加 2.15 秒受控延迟，在既有 3 秒 operation 预算内，即能使旧测试得到相同四字段失败。测试修正先观察真实 `_call` 返回，再开始原 2 秒 late-callback 等待；增加阶段、计数及无局部变量的协程栈诊断。生产 adapter、操作预算和 0.1 秒 teardown 期限均未改变。
+
+同一延迟反例修后通过，36 项 MCP 定向回归通过；仅测试内把 DELETE 期限替换为 5 秒的负对照仍被原 transport-close 断言抓住。UNKNOWN、不重试、一次授权回调及无 DELETE 请求断言保留。修复的是已证明的测试阶段混用，**未证明原 CI 当时就是初始化延迟，也未证明历史根因已修复**。
+
+历史 `80ba675df28352b9b928cdef77970ec528a5e969`（2026-10-26 16:38 UTC）只增强同一等待的 pending/计数诊断；PR150 的 full 40351648714 记录过进入等待超时，但缺少阶段证据。两次只能确认同一测试和等待位置，不能断定同一根因。修正后的独立复核见 review.md；新的准确 head full 仍须成功后才可发布。
+
 ## Not verified
 
 本片没有调用真实 Go、外部模型或个人 GPU/SSH；没有新增持续凭据或修改网络安全配置。此前会话/摘要片的真实 Go 证据不能冒充本片的实模闭环。未验证 64GB / 30 活跃会话容量、研究结论质量、完整 OS 隔离、生产可信 TLS 或用户环境部署。浏览器使用隔离数据库、真实临时密码和脚本 provider；临时自签 HTTPS 仅用于本地测试，不是用户服务。
