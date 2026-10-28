@@ -5,6 +5,7 @@ export interface SessionLimits { maxTurns: number; toolCallsPerTurn: number; ope
 type Limit = { min: number; max: number; default: number };
 export interface SessionOptions {
   available: boolean; unavailableCode: string | null;
+  collaboration?: { available: boolean };
   models: { connectionRef: string; provider: string; model: string; available: boolean }[];
   limits: { maxTurns: Limit; toolCallsPerTurn: Limit; operationSeconds: Limit; contextCharacters: number };
   workspace: { configured: boolean; hostCommands: boolean; isolation: 'host-user-not-os-sandbox' };
@@ -12,19 +13,23 @@ export interface SessionOptions {
 }
 export interface SessionMessage { id: string; kind: 'instruction' | 'correction'; text: string; state: 'pending' | 'included'; createdAt: string; includedAt: string | null }
 export interface SessionEvent { id: number; jobId: string; type: string; message: string; data: Record<string, unknown>; createdAt: string }
+export type SessionAssistantReply = { questionId: string; state: 'unavailable'; code: string } | {
+  questionId: string; state: 'available'; senderId: string; recipientId: string; endpointId: string;
+  questionText: string; reply: Extract<ResearchQuestion['reply'], { state: 'available' }>; delivery: ResearchQuestion['delivery'];
+};
 export interface SessionTurn {
   id: string; sequence: number; requestId: string; taskId: string | null; runId: string | null; status: string;
   createdAt: string; completedAt: string | null; result: string | null; failure: string | null;
   messages: SessionMessage[]; events: SessionEvent[];
   toolResults: { effectKey: string; status: string; result: Record<string, unknown> | null }[];
-  assistantReply?: { questionId: string; state: 'unavailable'; code: string } | {
-    questionId: string; state: 'available'; senderId: string; recipientId: string; endpointId: string;
-    questionText: string; reply: Extract<ResearchQuestion['reply'], { state: 'available' }>; delivery: ResearchQuestion['delivery'];
-  };
+  assistantReply?: SessionAssistantReply;
+  assistantReplies?: SessionAssistantReply[];
+  continuation?: { questionIds: string[] };
 }
 export interface SessionSummary {
   id: string; assistantId: string; title: string; goal: string; boundaries: string; createdAt: string; updatedAt: string;
   state: 'idle' | 'running' | 'stopping' | 'stopped' | 'blocked';
+  collaboration?: { enabled: boolean };
   model: { connectionRef: string; provider: string; model: string }; limits: SessionLimits;
   context: {
     characters: number; maximumCharacters: number; rawCharacters?: number;

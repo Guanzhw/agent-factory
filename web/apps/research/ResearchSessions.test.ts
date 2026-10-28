@@ -79,7 +79,7 @@ it('creates once on double click and retains the created session when the first 
   const turnId = vi.mocked(api.turn).mock.calls[0][2].requestId; expect(turnId).not.toBe(createId);
   await act(async () => button('查询原请求').click());
   expect(api.request).toHaveBeenCalledWith('alice', turnId); expect(api.turn).toHaveBeenCalledOnce();
-  expect(host.textContent).toContain('没有重新发送，也没有自动开始下一轮'); expect(button('开始这一轮').closest('fieldset')?.disabled).toBe(false);
+  expect(host.textContent).toContain('本次查询没有重新发送或启动研究'); expect(button('开始这一轮').closest('fieldset')?.disabled).toBe(false);
 });
 
 it('treats a missing original receipt as uncertain and never posts on reopen or refresh', async () => {
@@ -184,11 +184,11 @@ it('starts a new turn after completion even when the service also permits stored
   expect(api.correct).not.toHaveBeenCalled();
 });
 
-it('keeps a new idle session waiting without a stop action even when the API permits a stop marker', async () => {
+it('uses server stop permission even while the session is idle', async () => {
   current = { ...current, allowedActions: ['start', 'stop'] };
   await mount(session.id);
   expect(host.querySelector('.rs-detail-heading .rs-state')?.textContent).toBe('待开始');
-  expect(button('请求停止')).toBeUndefined(); expect(button('开始这一轮')).toBeDefined();
+  expect(button('请求停止')).toBeDefined(); expect(button('开始这一轮')).toBeDefined();
   expect(api.stop).not.toHaveBeenCalled(); expect(api.turn).not.toHaveBeenCalled();
 });
 
@@ -205,7 +205,7 @@ it('updates the list from detail polling and presents a completed session as rea
     expect(host.querySelector('.rs-session-list')?.textContent).not.toContain('执行中');
     expect(host.querySelector('.rs-session-list')?.textContent).toContain(new Date(current.updatedAt).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }));
     expect(host.querySelector('.rs-detail-heading .rs-state')?.textContent).toBe('可继续');
-    expect(button('请求停止')).toBeUndefined(); expect(button('开始这一轮')).toBeDefined(); expect(api.turn).not.toHaveBeenCalled();
+    expect(button('请求停止')).toBeDefined(); expect(button('开始这一轮')).toBeDefined(); expect(api.turn).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
 });
 
@@ -294,4 +294,41 @@ it('keeps a selected reply out of current corrections and hides an adopted copy 
   await act(async () => button('刷新会话').click());
   expect(host.textContent).not.toContain('撤回后不能显示的回复'); expect(host.textContent).not.toContain('source-private'); expect(host.textContent).not.toContain('私密原问题');
   expect(host.textContent).toContain('正文与来源已隐藏'); expect(host.textContent).toContain('question-a');
+});
+
+it('distinguishes new-session collaboration availability from an old fixed session', async () => {
+  vi.mocked(api.options).mockResolvedValue({ ...options, collaboration: { available: true } });
+  await mount(); expect(host.textContent).toContain('助手可按研究目标自主询问');
+  await act(async () => root.unmount()); root = createRoot(host);
+  current = { ...current, collaboration: { enabled: false } };
+  await mount(session.id); expect(host.textContent).toContain('此会话沿用原配置，仅支持手动');
+  expect(host.textContent).not.toContain('此会话可自主询问');
+  expect(api.create).not.toHaveBeenCalled(); expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('shows manual and multiple automatic references with continuation provenance, then hides revoked copies', async () => {
+  const reference = (id: string, text: string) => ({ state: 'available' as const, questionId: id, senderId: 'alice', recipientId: 'bob', endpointId: 'qa-bob', questionText: `原问题 ${id}`, reply: { state: 'available' as const, text, contentIds: [`source-${id}`], createdAt: session.createdAt }, delivery: { state: 'accepted', taskId: 'b-task', runId: 'b-run' } });
+  current = { ...current, collaboration: { enabled: true }, turns: [{ ...completedTurn, continuation: { questionIds: ['auto-a', 'auto-b'] }, assistantReply: reference('manual-a', '手动引用正文'), assistantReplies: [reference('auto-a', '自主回复甲'), reference('auto-b', '自主回复乙')] }] };
+  vi.spyOn(assistantApi, 'question').mockResolvedValue({ id: 'auto-b', senderId: 'alice', recipientId: 'bob', endpointId: 'qa-bob', text: '原问题 auto-b', createdAt: session.createdAt, delivery: { state: 'accepted', taskId: 'b-task', runId: 'b-run' }, reply: null });
+  await mount(session.id);
+  expect(host.textContent).toContain('手动引用正文'); expect(host.textContent).toContain('自主回复甲'); expect(host.textContent).toContain('自主回复乙');
+  expect(host.textContent).toContain('创建轮次不代表回复已纳入模型请求');
+  await act(async () => button('自动继续的原问题 auto-b').click()); expect(assistantApi.question).toHaveBeenCalledWith('alice', 'auto-b', expect.any(AbortSignal));
+  const unavailable = (questionId: string) => ({ state: 'unavailable' as const, questionId, code: 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE' });
+  current = { ...current, turns: [{ ...current.turns[0], assistantReply: unavailable('manual-a'), assistantReplies: [unavailable('auto-a'), unavailable('auto-b')] }] };
+  await act(async () => button('刷新会话').click());
+  expect(host.textContent).not.toContain('手动引用正文'); expect(host.textContent).not.toContain('自主回复甲'); expect(host.textContent).not.toContain('自主回复乙');
+  expect(host.textContent).not.toContain('source-auto'); expect(host.querySelectorAll('.rs-adopted-reply [role="status"]')).toHaveLength(3);
+  expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('permits stopping an idle collaboration and never posts a new turn for a late reply or refresh', async () => {
+  current = { ...current, collaboration: { enabled: true }, turns: [completedTurn], allowedActions: ['stop'] };
+  vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopped', allowedActions: ['start'] }; return current; });
+  await mount(session.id); expect(button('请求停止')).toBeDefined(); expect(button('开始这一轮')).toBeUndefined();
+  await act(async () => button('请求停止').click());
+  expect(host.textContent).toContain('之后到达的同事回复不会自动继续研究');
+  await act(async () => button('刷新会话').click());
+  expect(api.stop).toHaveBeenCalledOnce(); expect(api.turn).not.toHaveBeenCalled(); expect(api.create).not.toHaveBeenCalled();
+  expect(button('请求停止')).toBeUndefined(); expect(button('开始这一轮')).toBeDefined();
 });
