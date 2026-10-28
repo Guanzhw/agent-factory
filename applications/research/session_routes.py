@@ -4,6 +4,7 @@ import asyncio
 from fastapi import APIRouter, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from agent_factory.application_content import ObjectId
 from .projects import Reference, RequestId
 
 
@@ -28,6 +29,10 @@ class SessionText(BaseModel):
     model_config = ConfigDict(extra='forbid')
     requestId: RequestId
     text: str = Field(min_length=1, max_length=2000)
+
+
+class SessionTurn(SessionText):
+    assistantQuestionId: ObjectId | None = None
 
 
 class SessionCommand(BaseModel):
@@ -61,7 +66,7 @@ def session_router(auth, service):
         return await service.read(auth.user(request)['id'], identifier)
 
     @router.post('/{identifier}/turns')
-    async def turn(request: Request, identifier: str, body: SessionText):
+    async def turn(request: Request, identifier: str, body: SessionTurn):
         return await service.turn(auth.user(request)['id'], identifier, body)
 
     @router.post('/{identifier}/corrections')

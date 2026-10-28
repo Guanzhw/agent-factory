@@ -116,7 +116,7 @@ class AssistantMessagesPostgresTests(unittest.TestCase):
     def test_unbudgeted_prepared_request_requires_original_plan_and_full_fingerprint(self):
         fixture = self.fixture
         messages = fixture.state['assistant_messages']
-        message, _ = messages._reserve('alice', self.endpoint_id, SendAssistantMessage.model_validate(self.body))
+        message, _ = messages.reserve('alice', self.endpoint_id, SendAssistantMessage.model_validate(self.body))
         endpoint = messages.endpoints.resolve(self.endpoint_id)
         body = messages._start_body(message, endpoint)
         plan, request_id = messages.runs._prepare('bob', body)

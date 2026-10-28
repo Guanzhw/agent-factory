@@ -30,7 +30,7 @@ class AssistantMessageRecoveryPostgresTests(unittest.TestCase):
             self.scopes.allocate(conn, 'bob', 'recovery-scope', 'recovery-allocation', digest(self.base.body), caps)
 
     def reserve(self):
-        message, fresh = self.messages._reserve('alice', self.base.endpoint_id,
+        message, fresh = self.messages.reserve('alice', self.base.endpoint_id,
                                                SendAssistantMessage.model_validate(self.base.body))
         self.assertTrue(fresh)
         return message
@@ -70,7 +70,7 @@ class AssistantMessageRecoveryPostgresTests(unittest.TestCase):
 
     def test_original_sender_paused_before_start_resumes_without_second_dispatch(self):
         saved, resume = Event(), Event()
-        original = self.messages._reserve
+        original = self.messages.reserve
         captured = []
 
         def reserve(*args):
@@ -81,7 +81,7 @@ class AssistantMessageRecoveryPostgresTests(unittest.TestCase):
                 raise TimeoutError('test sender barrier not released')
             return result
 
-        with patch.object(self.messages, '_reserve', reserve), \
+        with patch.object(self.messages, 'reserve', reserve), \
                 patch.object(self.fixture.state['bridge'], 'submit', AsyncMock(wraps=self.fixture.state['bridge'].submit)) as submit:
             with ThreadPoolExecutor(max_workers=1) as pool:
                 sender = pool.submit(self.fixture.client.post, self.base.path, json=self.base.body)

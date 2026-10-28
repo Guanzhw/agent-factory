@@ -19,6 +19,7 @@ SUMMARY_INPUT_CHARACTERS = 48000
 def prefix(turns, through):
     return [{'id': turn['id'], 'sequence': turn['sequence'],
              'messages': [{key: item[key] for key in ('id', 'kind', 'text')} for item in turn['body']['messages']],
+             **({'assistantReply': turn['body']['assistantReply']} if 'assistantReply' in turn['body'] else {}),
              **{key: turn['body'].get(key) for key in
                 ('status', 'terminal', 'taskId', 'runId', 'result', 'failure', 'toolResults')}}
             for turn in turns if turn['sequence'] <= through]
@@ -41,6 +42,8 @@ def project(row, turns, instruction=None, *, raw=False, protected=False):
                  'messages': [{key: item[key] for key in ('id', 'kind', 'text')} for item in body['messages']],
                  **{key: body.get(key) for key in ('status', 'failure', 'taskId', 'runId')},
                  'effects': [{key: item.get(key) for key in ('effectKey', 'status')} for item in body.get('toolResults', [])]}
+        if 'assistantReply' in body:
+            entry['assistantReply'] = {'nonAuthoritative': True, **deepcopy(body['assistantReply'])}
         confirmed = body.get('terminal') and body['status'] == 'completed' and isinstance(body.get('result'), str)
         if not confirmed or not protected and turn['sequence'] > through:
             entry['result'] = body.get('result')

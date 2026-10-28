@@ -218,7 +218,7 @@ class AssistantEvents:
                 config, owner = subscription['body'], subscription['owner_id']
                 self.scopes.allocate(conn, owner, config['scopeId'], allocation_id,
                     digest({'event': event_id, 'endpoint': endpoint_id}), config['caps'])
-                message, _ = self.messages._reserve(event['owner_id'], endpoint_id, SendAssistantMessage(
+                message, _ = self.messages.reserve(event['owner_id'], endpoint_id, SendAssistantMessage(
                     requestId='event:' + identifier, text='Shared content notification: ' + value['contentId']),
                     allocation_id=allocation_id, delivery_id=identifier)
                 conn.execute(self.deliveries.insert().values(id=identifier, event_id=event_id, endpoint_id=endpoint_id,
