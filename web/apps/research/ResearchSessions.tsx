@@ -41,7 +41,7 @@ const childStates: Record<string, string> = {
   completed: '已完成', failed: '执行失败', cancelled: '已停止', canceled: '已停止', canceling: '停止请求已接收，尚未确认停止', unknown: '结果未知，请核对原子任务',
 };
 const turnStates: Record<string, string> = {
-  reserved: '等待提交', queued: '排队中', running: '执行中', waiting_approval: '等待执行继续',
+  reserved: '等待提交', queued: '排队中', running: '执行中', waiting_approval: '等待执行继续', finalizing: '正在核对最终结果',
   completed: '本轮已完成', failed: '本轮未完成', cancelled: '本轮已停止', canceled: '本轮已停止',
   canceling: '正在停止', unknown: '结果未知，需核对原任务',
 };

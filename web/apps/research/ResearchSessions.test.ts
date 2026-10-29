@@ -343,12 +343,17 @@ it('uses server stop permission even while the session is idle', async () => {
   expect(api.stop).not.toHaveBeenCalled(); expect(api.turn).not.toHaveBeenCalled();
 });
 
-it('updates the list from detail polling and presents a completed session as ready to continue', async () => {
+it('shows finalizing during detail polling before presenting a completed session as ready to continue', async () => {
   vi.useFakeTimers();
   try {
     current = { ...current, state: 'running', allowedActions: ['correct', 'stop'], turns: [{ id: 'turn-a', sequence: 1, requestId: 'start-id', taskId: 'task-a', runId: null, status: 'running', createdAt: session.createdAt, completedAt: null, result: null, failure: null, messages: [], events: [], toolResults: [] }] };
     vi.mocked(api.list).mockResolvedValue({ items: [current], nextCursor: null });
     await mount(session.id); expect(host.querySelector('.rs-session-list')?.textContent).toContain('执行中');
+    current = { ...current, turns: [{ ...current.turns[0], status: 'finalizing' }] };
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(host.querySelector('.rs-turn > header')?.textContent).toContain('正在核对最终结果');
+    expect(host.querySelector('.rs-turn > header')?.textContent).not.toContain('本轮已完成');
+    expect(button('开始这一轮')).toBeUndefined();
     current = { ...current, state: 'idle', updatedAt: '2026-10-28T08:01:00Z', allowedActions: ['start', 'correct', 'stop'], turns: [{ ...current.turns[0], status: 'completed', completedAt: '2026-10-28T08:01:00Z', result: '本轮已完成。' }] };
     await act(async () => vi.advanceTimersByTimeAsync(4000));
     expect(api.list).toHaveBeenCalledOnce();
