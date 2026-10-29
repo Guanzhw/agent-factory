@@ -4,9 +4,9 @@
 
 ## 1. 文件与普通命令闭环
 
-- [ ] 1.1 非作者审查本规范精确提交，核对原生 API、文件边界、唯一 Job 复用和删减机会，留下 PASS 或具体阻塞回执后实施。
-- [ ] 1.2 在 session_tools 增加 Windows 目录/文件句柄分支，保留现有读搜改结果；同步补临时目录的中文空格、单硬链接、精确匹配、大源码、reparse/路径替换测试与 README 支持范围。Linux 现有文件回归通过，Windows 用例明确标记并交实机执行。
-- [ ] 1.3 在既有 WindowsSSHProcess 和 CLI 入口接入可选 stderr、非阻塞三流、明确 argv/cwd/env 与原 Job 停止确认；同步补普通命令/环境测试和启动文档，验证 Linux 原 CLI 回归不变，不复制 SSH 输入上限或非零退出异常语义。
+- [x] 1.1 非作者审查本规范精确提交，核对原生 API、文件边界、唯一 Job 复用和删减机会，留下 PASS 或具体阻塞回执后实施。
+- [x] 1.2 在 session_tools 增加 Windows 目录/文件句柄分支，保留现有读搜改结果；同步补临时目录的中文空格、单硬链接、精确匹配、大源码、reparse/路径替换测试与 README 支持范围。Linux 现有文件回归通过，Windows 用例明确标记并交实机执行。
+- [x] 1.3 在既有 WindowsSSHProcess 和 CLI 入口接入可选 stderr、非阻塞三流、明确 argv/cwd/env 与原 Job 停止确认；同步补普通命令/环境测试和启动文档，验证 Linux 原 CLI 回归不变，不复制 SSH 输入上限或非零退出异常语义。
 - [ ] 1.4 在真实 Windows 临时工作区通过原 Research 工具完成读/搜→失败测试→精确修改→成功测试；核对哈希、真实退出码、stdout/stderr、命令目录选择及超过 30 秒但在配置预算内的测试。记录准确源码/解释器版本，标注无外部模型。
 
 ## 2. 停止与原操作恢复
@@ -16,7 +16,7 @@
 
 ## 3. 集成核验与交接
 
-- [ ] 3.1 运行 Python ruff/pyright、架构边界及相关 Linux 文件/CLI/Research 回归；共享 PG 可用后由协调线程安排既有真实持久化回归。复核累计 diff 和依赖不变，按仓库要求记录适用检查及实际结果。
+- [x] 3.1 运行 Python ruff/pyright、架构边界及相关 Linux 文件/CLI/Research 回归；共享 PG 可用后由协调线程安排既有真实持久化回归。复核累计 diff 和依赖不变，按仓库要求记录适用检查及实际结果。
 - [ ] 3.2 非作者复审准确产品提交，更新 DEVELOPMENT_CHECKS 与本变更验收记录，分别列明 Linux、Windows、隔离 PG、外部模型和浏览器的通过/未验证范围，交协调线程集成与发布。
 
 ## Workflow follow-up
