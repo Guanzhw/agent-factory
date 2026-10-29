@@ -12,7 +12,7 @@
 
 ### Requirement: Resource setup returns to its actual origin
 
-系统 SHALL 保留原研究项目或个人会话位置和已有非秘密草稿；资源操作只有确认保存后才显示成功返回路径，未知或拒绝保留原请求核对。秘密不得保存到URL或浏览器草稿。
+系统 SHALL 保留原研究项目或个人会话位置和非秘密草稿，包括项目准备、执行参数及配置编辑的未保存输入；资源操作只有确认保存后才显示保存成功反馈，未知或拒绝保留原请求核对。普通返回或明确放弃 SHALL 保持可用。秘密不得保存到URL或浏览器草稿。
 
 #### Scenario: Complete a missing model for a new research session
 - **WHEN** 成员填写目标和边界后进入模型配置，修正字段错误并确认保存
@@ -21,6 +21,14 @@
 #### Scenario: A save result is unknown
 - **WHEN** 保存请求已发出但回执未确认
 - **THEN** 不显示保存成功或自动离开，沿原请求查询，不发替代保存
+
+#### Scenario: Return to an unfinished project edit
+- **WHEN** 成员在项目准备、执行参数或配置编辑中填写输入，进入资源后返回，或在往返过程中后退前进与刷新
+- **THEN** 恢复该成员、项目和配置版本/编辑目标对应的原输入及位置，不自动保存、发布、接受提案或执行；不同项目不混用草稿
+
+#### Scenario: Leave or change the authenticated member
+- **WHEN** 确认退出、认证失效或切换成员
+- **THEN** 清理本片项目草稿，下一位成员不能看到它们；凭据值从未写入持久草稿
 
 ### Requirement: Navigation retains meaningful in-progress edits
 
