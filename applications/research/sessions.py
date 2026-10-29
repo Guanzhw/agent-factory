@@ -24,6 +24,7 @@ from .session_setup import CONTEXT_CHARACTERS, MODE, ResearchSessionSetup, rejec
 from .session_memory import ResearchSessionMemory
 from .session_tools import EFFECT_PREFIX
 from . import session_context
+from .session_subagents import ResearchSubagents
 
 
 class ResearchSessions:
@@ -33,6 +34,7 @@ class ResearchSessions:
         self.conversations: Any = None
         self.collaboration: Any = None
         self.memory = ResearchSessionMemory(self)
+        self.subagents = ResearchSubagents(self)
         self.setup = ResearchSessionSetup(store, connections, models, tools)
         self.db = GovernedStorage(store, 'research_sessions_v1')
         metadata = MetaData()
@@ -186,6 +188,7 @@ class ResearchSessions:
                 # A failed observation is not a failed task or a dispatch grant.
                 continue
             task = self.store.task(task['id'], owner)
+            children = await self.subagents.children(task)
             status, snapshot = detail['job']['status'], detail['snapshot']
             run = snapshot.get('run', snapshot)
             result = None
@@ -205,8 +208,8 @@ class ResearchSessions:
                     continue  # A concurrent confirmed final result wins over this older observation.
                 body = deepcopy(current['body'])
                 effects = snapshot.get('effects', [])
-                memory_keys = {operation['runId'] + ':' + EFFECT_PREFIX + call_id
-                    for call_id, operation in body.get('memoryOperations', {}).items()}
+                memory_keys = {operation['runId'] + ':' + EFFECT_PREFIX + operation.get('callId', key)
+                    for key, operation in body.get('memoryOperations', {}).items()}
                 reconciled_memories = {item['effect_key'] for item in effects if item['effect_key'] in memory_keys
                     and (item.get('result') or {}).get('reconciled') is True}
                 ticket = snapshot.get('queue') or {}
@@ -232,7 +235,7 @@ class ResearchSessions:
                     # Terminal metadata cannot upgrade an unconfirmed native answer.
                     observed_terminal, status = False, 'finalizing'
                 body.update(taskId=task['id'], runId=task.get('run_id'), status=status,
-                            terminal=observed_terminal, events=detail['events'],
+                            terminal=observed_terminal, events=detail['events'], children=children,
                             toolResults=[{'effectKey': item['effect_key'], 'status': item['status'], 'result': item['result']}
                                          for item in snapshot.get('effects', [])])
                 if observed_terminal:
@@ -395,28 +398,33 @@ class ResearchSessions:
         task = self.store.task(context.session_id, context.user_id)
         if task['run_id'] != context.run_id:
             raise PermissionError('RESEARCH_SESSION_RUN_MISMATCH')
+        plan = self.store.plan(task['plan_id'], context.user_id)
+        original_task = self.subagents.root_task(context.user_id, task, plan)
         turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == context.user_id,
-            self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).mappings().first()
-        if turn is None or task['request_id'] != factory_request_id(turn['application_request_id']):
+            self.turns.c.application_request_id == original_task['request_id'].removeprefix('application-start:'))).mappings().first()
+        if turn is None or original_task['request_id'] != factory_request_id(turn['application_request_id']):
             raise PermissionError('RESEARCH_SESSION_ORIGINAL_TURN_REQUIRED')
         row = self._row(conn, context.user_id, turn['session_id'])
-        plan = self.store.plan(task['plan_id'], context.user_id)
         expected = row['body']['configuration']
         if plan.get('applicationRef') != expected['applicationRef'] or plan.get('mode') != MODE:
             raise PermissionError('RESEARCH_SESSION_PLAN_MISMATCH')
-        if (plan.get('inputValues') or {}).get('turnId') != turn['id']:
+        if ((plan.get('inputValues') or {}).get('turnId') != turn['id']
+                or (plan.get('inputValues') or {}).get('sessionId') != row['id']):
             raise PermissionError('RESEARCH_SESSION_INPUT_MISMATCH')
         original = self.store.sql('SELECT fingerprint FROM af_plan_requests WHERE owner_id=:owner '
             'AND request_id=:request AND plan_id=:plan', owner=context.user_id,
-            request=task['request_id'], plan=task['plan_id'])
+            request=original_task['request_id'], plan=original_task['plan_id'])
         if len(original) != 1 or original[0]['fingerprint'] != turn['body']['startFingerprint']:
             raise PermissionError('RESEARCH_SESSION_ADMISSION_PAYLOAD_MISMATCH')
         latest = self._turns(conn, row['id'])[-1]
-        if latest['id'] != turn['id'] or row['body']['stopped'] or task['cancel_requested']:
+        if (latest['id'] != turn['id'] or row['body']['stopped']
+                or task['cancel_requested'] or original_task['cancel_requested']):
             raise RunCancelledException('RESEARCH_SESSION_STOP_REQUESTED')
         if turn['body'].get('blockReason'):
             raise StopAgentRun(turn['body']['blockReason'])
-        return row, turn, task
+        if task['id'] != original_task['id']:
+            self.store.delegation.authorize_child(context)
+        return row, turn, {**task, 'researchChild': task['id'] != original_task['id']}
 
     def authorize_tool(self, context, tool_name):
         self.auth.require_member(context.user_id)
@@ -448,18 +456,22 @@ class ResearchSessions:
             blocked = 'RESEARCH_QUEUE_IDENTITY_UNCONFIRMED'
         elif type(ticket.get('attempt')) is not int or ticket['attempt'] < 1:
             blocked = 'RESEARCH_QUEUE_ATTEMPT_UNCONFIRMED'
-        elif ticket['attempt'] > 1 and effects:
+        elif (ticket['attempt'] > 1 and (effects or self.store.sql(
+                'SELECT 1 FROM af_delegation_links WHERE owner_id=:owner AND parent_id=:parent LIMIT 1',
+                owner=context.user_id, parent=task['id'])) and not self.subagents.permits_continuation(task, ticket)):
             blocked = 'RESEARCH_RESTART_REQUIRES_RECONCILIATION'
         elif any(effect_unresolved(item, self.store) for item in effects):
             blocked = 'RESEARCH_EFFECT_UNCONFIRMED'
         if blocked:
+            if task['researchChild']:
+                raise StopAgentRun(blocked)
             body['blockReason'] = blocked
             self.store.event(task['id'], 'research_reconciliation_required', '原执行需要核对，已阻止新的模型调用。', {'code': blocked})
             self._save_turn(conn, turn, body)
         else:
             self._sources(context.user_id, row['body']['sharedSourceIds'])
             self._replies(context.user_id, row['id'], self._turns(conn, row['id']))
-            if self.collaboration is not None:
+            if self.collaboration is not None and not task['researchChild']:
                 turn = self.collaboration.receive(conn, row, turn)
         return row, turn, task, ticket, blocked
 
@@ -541,6 +553,12 @@ class ResearchSessions:
             raise
 
     def before_model(self, context, messages, auxiliary_model):
+        with self.db.read() as conn:
+            _, _, task = self._execution(conn, context)
+        if task['researchChild']:
+            with self.db.read() as conn:
+                self._model_boundary(conn, context)
+            return
         self._compact(context, auxiliary_model)
         with self._write() as conn:
             row, turn, task, ticket, blocked = self._model_boundary(conn, context)
@@ -580,6 +598,18 @@ class ResearchSessions:
                     self.collaboration.included(conn, row, turn)
         if blocked:
             raise StopAgentRun(blocked)
+
+    async def external_result(self, commands, task, requirement, requirements, decision):
+        return await self.subagents.external_result(commands, task, requirement, requirements, decision)
+
+    async def observe_waits(self, observer, task):
+        root = self.subagents.root_task(task['owner_id'], task, self.store.plan(task['plan_id'], task['owner_id']))
+        with self.db.read() as conn:
+            turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
+                self.turns.c.application_request_id == root['request_id'].removeprefix('application-start:'))).mappings().first()
+        if turn is not None and root['request_id'] == factory_request_id(turn['application_request_id']):
+            await asyncio.to_thread(self.memory.observe, task['owner_id'], turn, task, EFFECT_PREFIX)
+        await self.subagents.observe_waits(observer, task)
 
     def mark_cancel(self, store, task_id, *, reason: str):
         task = store.task(task_id)
@@ -679,7 +709,7 @@ class ResearchSessions:
                     **({'continuation': deepcopy(item['body']['continuation'])} if 'continuation' in item['body'] else {}),
                     **{key: deepcopy(item['body'].get(key))
                     for key in ('requestId', 'taskId', 'runId', 'status', 'createdAt', 'completedAt', 'result',
-                                'messages', 'events', 'toolResults', 'failure')}} for item in turns]}
+                                'messages', 'events', 'toolResults', 'children', 'failure')}} for item in turns]}
 
     async def listing(self, owner, after=''):
         self.auth.require_member(owner)

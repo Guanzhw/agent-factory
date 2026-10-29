@@ -48,9 +48,23 @@
 
 先以测试 child 验证 native external-execution 暂停和原 ControlCommand/requirement 回填。当前 `_model_boundary` 对 `attempt > 1 and effects` 阻断，必须仅允许已核对原等待身份的合法 continuation；一般重试和未知命令仍拒绝。不允许 child 冒充 parent、不用清空 effects 通过验收。
 
+完整代码审查又复现：若父助手第一个工具就是派发，持久 delegation link 已建立，但父任务没有 af_effects；普通队列 attempt=2 不能仅因 effects 为空而重新进入模型。恢复守卫同时识别已有委派原操作，合法原 ControlCommand 续入仍沿原证明放行；复用现有 link，不另造 effect 或状态框架。
+
 首样本一个 child + 主助手：保留 `maxChildren=1`、每用户两个活动任务、两个 worker。并行两用户各有 parent+child，证明等待真正释放 worker且原结果可返回；暂停不意味活动任务不计数。若已有原生协议不能满足该反例，停止子助手扩展并报告具体失败，先完成不依赖它的记忆片，不能先抬并发或写新调度器。
 
 验证通过后串起真实任务：child 调查一处、主助手调查另一处→原会话收集→修改测试；再让 child 在明确文件分工下实际编辑/运行。第一样本只读是任务选择，不是全局工具禁令。现有锁是 run 级，不能宣称同文件并发编辑安全；先明确分工与单写者，发现真实冲突再补最小修复，不预造隔离工作树。
+
+### 4. 将已验证探针接入实际个人助手
+
+独立探针 `124e53ee` 已通过 5 项真实 PG 用例和完整累计非作者审查：原父 run 暂停/续入、两成员/两个 worker、同数据库服务生命周期重建、原任务树停止及一般未知结果守卫。停止曾被新 child 授权顺序误归为权限错误；已在原身份/绑定核对后先识别明确停止，再执行活跃授权，未改 CLI 通用错误分类。当前还没有 OS 进程崩溃、真实模型分工或产品 UI 通过证据。
+
+下一实现片以记忆候选 `e023453` 为依赖基线，保留记忆冻结分支；将测试工具注册移入现有 Research 工具注册，复用原委派请求、预算和 external execution 等待。主模型得到简短分工/采用结果说明；现有事件显示子目标、原 child/run 与真实状态，不新增消息总线或执行引擎。新能力只用于新配置，旧 Plan 不静默换绑。
+
+整合先复现一个具体边界：parent/child 共用逻辑 turn、各自 run，却可能使用相同 call ID；记忆原意图与观察须按原 run/call 区分，核对 child 自己的原 effect，不能覆盖主回复/摘要或把 child 当 parent。复用已有记忆与 delegation 记录，不建另一套状态表，也不通过禁止 child 使用全部记忆工具绕开问题。
+
+验收先在现有解释器预检小仓库和测试，再让真实 Go 自主分头调查、采用结果并完成修复；另一个明确文件分工任务由 child 实际编辑/运行。独立 OS 探针验证原 parent 已持久 PAUSED、child 结果持久后退出真实服务 PID，同 PG 新 PID 续原 parent/run，重复观察无替代 child；child 操作 UNKNOWN 时不得重放。该项不阻塞源码实施，但阻塞完整验收与发布。桌面手机验证派发/等待/失败/停止及原任务入口，协议与实模、浏览器证据分别报告。
+
+浏览器停止验收发现：正常执行中的命令在收到回执前也持有 UNKNOWN effect，新子助手卡片把这个 custody 标记当成显示状态，误标原生 running 为未知。复用既有生命周期事实的 displayStatus 区分运行/停止中与未确认结果；不改变 allStopped、unknown、原等待或副作用恢复门禁。
 
 ## Risks / Trade-offs
 

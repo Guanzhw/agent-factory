@@ -125,6 +125,47 @@ class PersonalMemoryToolsTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first, repeated)
         self.assertEqual(write.call_count, 1)
 
+    async def test_parent_and_child_same_call_id_keep_distinct_original_memories(self):
+        def shared_turn(conn, context):
+            self.sessions.authorize_tool(context, 'research_remember')
+            return None, {'id': 'shared-turn', 'body': deepcopy(
+                self.sessions.turns.setdefault('shared-turn', {}))}, None
+        self.sessions._execution = shared_turn
+        with patch.object(self.store.native_db, 'upsert_user_memory', wraps=self.store.native_db.upsert_user_memory) as write:
+            parent = await self.invoke('research_remember', {'memory': 'Parent preference.'}, call_id='same-call')
+            child = await self.invoke('research_remember', {'memory': 'Child preference.'},
+                run_id='run-alice-second', call_id='same-call')
+            self.assertIn('memory', child)
+            self.assertNotEqual(parent['memory']['id'], child['memory']['id'])
+            repeated = await self.invoke('research_remember', {'memory': 'Child preference.'},
+                run_id='run-alice-second', call_id='same-call')
+        self.assertEqual(child, repeated)
+        self.assertEqual(write.call_count, 2)
+
+    async def test_child_lost_receipt_observes_only_its_own_original_effect(self):
+        def shared_turn(conn, context):
+            self.sessions.authorize_tool(context, 'research_remember')
+            return None, {'id': 'turn-alice', 'body': deepcopy(
+                self.sessions.turns.setdefault('turn-alice', {}))}, None
+        self.sessions._execution = shared_turn
+        parent = await self.invoke('research_remember', {'memory': 'Parent original.'}, call_id='same-call')
+        with patch.object(self.store, 'effect_complete', side_effect=ConnectionError('synthetic child receipt loss')):
+            with self.assertRaises(StopAgentRun):
+                await self.invoke('research_remember', {'memory': 'Child original.'},
+                    run_id='run-alice-second', call_id='same-call')
+        body = self.sessions.turns['turn-alice']
+        body.update(result='Root result is not a child result.', blockReason='RESEARCH_RESTART_REQUIRES_RECONCILIATION')
+        with patch.object(self.store.native_db, 'upsert_user_memory', side_effect=AssertionError('No child replay')):
+            self.sessions.memory.observe('alice', {'id': 'turn-alice', 'session_id': 'session-alice', 'body': body},
+                {'id': 'task-alice-second', 'run_id': 'run-alice-second'}, EFFECT_PREFIX)
+        child_effect = self.store.effects('task-alice-second')[0]
+        self.assertEqual(child_effect['status'], 'DONE')
+        self.assertTrue(child_effect['result']['reconciled'])
+        self.assertNotEqual(child_effect['result']['output']['memory']['id'], parent['memory']['id'])
+        self.assertNotIn('reconciled', self.store.effects('task-alice')[0]['result'])
+        self.assertEqual(body['result'], 'Root result is not a child result.')
+        self.assertEqual(body['blockReason'], 'RESEARCH_RESTART_REQUIRES_RECONCILIATION')
+
     async def test_lost_receipt_reconciles_original_id_without_rewriting(self):
         with patch.object(self.store, 'effect_complete', side_effect=ConnectionError('synthetic lost receipt')):
             with self.assertRaises(StopAgentRun):

@@ -18,6 +18,8 @@ from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 
+from .config import Settings
+
 # Re-export the established names for callers while keeping endpoint policy,
 # transport and protocol conversion independent of the Agno execution adapter.
 from .model_endpoint_policy import (
@@ -44,7 +46,8 @@ def rejected(code='PERSONAL_MODEL_RESPONSE_REJECTED'):
 
 
 class OwnerChatModel(Model):
-    def __init__(self, configuration, credential: Callable, *, transport_factory=None, recheck=None, session_id=None, trusted_proxy=None):
+    def __init__(self, configuration, credential: Callable, *, transport_factory=None, recheck=None, session_id=None,
+            trusted_proxy=None, timeout_seconds=Settings.native_timeout_seconds):
         super().__init__(id=model_id(configuration['model']), provider=configuration['provider'],
             name='Owner Model', retries=0)
         self._base = base_url(configuration['baseURL'])
@@ -54,6 +57,7 @@ class OwnerChatModel(Model):
         generation_options(configuration)
         self._thinking_mode = configuration.get('thinkingMode')
         self._credential = credential
+        self._timeout_seconds = timeout_seconds
         self._transport_factory = transport_factory
         if transport_factory is not None and trusted_proxy is not None:
             raise ValueError('TRUSTED_MODEL_PROXY_CONFIGURATION_INVALID')
@@ -132,8 +136,8 @@ class OwnerChatModel(Model):
                 trusted_proxy=self._trusted_proxy, protocol=self._protocol)
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
-            async with asyncio.timeout(30), httpx.AsyncClient(transport=transport, trust_env=False,
-                    follow_redirects=False, timeout=10, auth=None) as client:
+            async with asyncio.timeout(self._timeout_seconds), httpx.AsyncClient(transport=transport, trust_env=False,
+                    follow_redirects=False, timeout=None, auth=None) as client:
                 async with client.stream('POST', self._base + protocol_path(self._protocol), json=body,
                         headers=chat_headers(self._base, lease, self._session_id)) as response:
                     value = await read_response_json(response, lease)

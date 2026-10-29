@@ -41,6 +41,58 @@ async function field(label: string, value: string) {
 }
 async function validDraft() { await field('会话名称', '保留研究目标'); await field('研究目标', '检查测试程序'); await field('停止边界', '测试通过后停止'); }
 
+it('keeps a temporary child result distinct from the main reply and opens only its original task', async () => {
+  const child = { childTaskId: 'child-task-a', runId: 'child-run-a', goal: '检查解析器并报告回归测试', status: 'completed', result: 'parser.ts:24 的测试通过。' };
+  current = { ...current, turns: [{ ...completedTurn, children: [child], events: [{ id: 1, jobId: 'task-a', type: 'research_tool_finished', message: '临时子助手返回结果', data: { toolName: 'research_wait_child', outcome: 'completed', output: child }, createdAt: session.updatedAt }] }] };
+  await mount(session.id);
+  const section = host.querySelector('[aria-label="第 1 轮临时子助手"]')!;
+  expect(section.textContent).toContain(child.goal); expect(section.textContent).toContain('已完成');
+  expect(section.textContent).toContain(child.result); expect(section.textContent).not.toContain(completedTurn.result);
+  expect(section.querySelector('details')?.open).toBe(false);
+  expect(host.querySelector('.rs-events > ol > li > strong')?.textContent).toBe('等待子助手结果');
+  expect(host.querySelector('.rs-events > ol > li > p')?.textContent).toBe('临时子助手返回结果');
+  expect(host.querySelector<HTMLDetailsElement>('.rs-events > ol > li > details')?.open).toBe(false);
+  await act(async () => button('查看原子任务记录').click());
+  expect(task).toHaveBeenCalledExactlyOnceWith('child-task-a');
+  await act(async () => button('刷新会话').click());
+  expect(api.turn).not.toHaveBeenCalled(); expect(api.create).not.toHaveBeenCalled(); expect(api.stop).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['pending', '待执行'], ['queued', '排队中'], ['running', '执行中'], ['paused', '已暂停，等待继续'],
+  ['failed', '执行失败'], ['cancelled', '已停止'], ['canceled', '已停止'], ['canceling', '停止请求已接收，尚未确认停止'],
+  ['unknown', '结果未知，请核对原子任务'], ['unrecognized', '结果未知，请核对原子任务'],
+])('shows child state %s without treating an unconfirmed result as success', async (status, label) => {
+  current = { ...current, turns: [{ ...completedTurn, result: null, children: [{ childTaskId: 'child-task-a', runId: null, goal: '检查原操作', status, result: '不能当作已确认结果' }] }] };
+  await mount(session.id);
+  const section = host.querySelector('[aria-label="第 1 轮临时子助手"]')!;
+  expect(section.querySelector('[role="status"]')?.textContent).toBe(label);
+  expect(section.textContent).not.toContain('不能当作已确认结果'); expect(section.textContent).not.toContain('已完成');
+  expect(section.querySelectorAll('button')).toHaveLength(1);
+  expect(api.turn).not.toHaveBeenCalled(); expect(api.stop).not.toHaveBeenCalled();
+});
+
+it('explains native child waiting without asking for approval and keeps the existing parent stop action', async () => {
+  current = { ...current, state: 'running', allowedActions: ['correct', 'stop'], turns: [{ ...completedTurn, status: 'waiting_approval', result: null, children: [{ childTaskId: 'child-task-a', runId: 'child-run-a', goal: '运行完整测试', status: 'running', result: null }] }] };
+  await mount(session.id);
+  expect(host.querySelector('.rs-turn > header')?.textContent).toContain('等待子助手结果');
+  expect(host.querySelector('.rs-turn > header')?.textContent).not.toContain('waiting_approval');
+  expect(host.textContent).toContain('停止本会话也会请求停止子任务');
+  await act(async () => button('请求停止').click());
+  expect(api.stop).toHaveBeenCalledOnce(); expect(vi.mocked(api.stop).mock.calls[0].slice(0, 2)).toEqual(['alice', session.id]);
+  expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('does not invent children for existing turns or invent a result body for a completed child', async () => {
+  current = { ...current, turns: [completedTurn] };
+  await mount(session.id);
+  expect(host.querySelector('[aria-label="第 1 轮临时子助手"]')).toBeNull();
+  current = { ...current, turns: [{ ...completedTurn, children: [{ childTaskId: 'child-task-a', runId: 'child-run-a', goal: '核对测试', status: 'completed', result: null }] }] };
+  await act(async () => button('刷新会话').click());
+  const section = host.querySelector('[aria-label="第 1 轮临时子助手"]')!;
+  expect(section.textContent).toContain('尚无已确认的结果正文'); expect(section.querySelector('details')).toBeNull();
+});
+
 it.each([
   ['research_remember', { operation: 'remember', memory: { id: 'memory-a', text: '测试使用 pytest', updatedAt: session.updatedAt } }, ['记住个人偏好', '已记住', '测试使用 pytest']],
   ['research_find_memories', { operation: 'find', memories: [{ id: 'memory-a', text: '测试使用 pytest', updatedAt: session.updatedAt }], page: 1, total: 2, nextPage: 2 }, ['查找个人记忆', '第 1 页 · 共 2 条匹配 · 还有第 2 页', '是否采用请结合助手回复和后续执行记录核对']],

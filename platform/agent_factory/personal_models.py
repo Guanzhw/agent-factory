@@ -243,7 +243,8 @@ class PersonalModels:
             if not isinstance(handle, OwnerModelHandle) or handle.actor != context.plan['ownerId']:
                 raise HTTPException(403, 'PERSONAL_MODEL_OWNER_REQUIRED')
             return OwnerChatModel(handle.body, handle.credential, transport_factory=self.transport_factory,
-                recheck=handle.check, session_id='af-plan-' + context.plan['id'], trusted_proxy=handle.trusted_proxy)
+                recheck=handle.check, session_id='af-plan-' + context.plan['id'], trusted_proxy=handle.trusted_proxy,
+                timeout_seconds=context.settings.native_timeout_seconds)
         bindings.register('model', ADAPTER_ID, '1', create, connection_kind='model',
             required_capabilities=(CAPABILITY,), validator=validate)
 

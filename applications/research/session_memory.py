@@ -42,8 +42,11 @@ class ResearchSessionMemory:
             _, turn, _ = sessions._execution(conn, context)
             body = deepcopy(turn['body'])
             operations = body.setdefault('memoryOperations', {})
-            if call_id in operations:
+            key = context.run_id + ':' + call_id
+            original = operations.get(key)
+            if original is None and operations.get(call_id, {}).get('runId') == context.run_id:
                 original = operations[call_id]
+            if original is not None:
                 if original['runId'] != context.run_id or original['toolName'] != name or original['arguments'] != values:
                     raise _rejected('RESEARCH_MEMORY_REQUEST_CONFLICT')
                 return original
@@ -57,9 +60,9 @@ class ResearchSessionMemory:
                     raise _rejected('RESEARCH_MEMORY_UNAVAILABLE') from None
                 if previous is None:
                     raise _rejected('RESEARCH_MEMORY_NOT_FOUND')
-            operation = {'runId': context.run_id, 'toolName': name, 'arguments': deepcopy(values),
+            operation = {'runId': context.run_id, 'callId': call_id, 'toolName': name, 'arguments': deepcopy(values),
                          'memoryId': identifier, 'previous': _item(previous) if previous else None}
-            operations[call_id] = operation
+            operations[key] = operation
             sessions._save_turn(conn, turn, body)
             return operation
 
@@ -102,7 +105,8 @@ class ResearchSessionMemory:
         """Only inspect original memory IDs; never repeat a memory mutation."""
         store = self.sessions.store
         effects = {item['effect_key']: item for item in store.effects(task['id'])}
-        for call_id, operation in turn['body'].get('memoryOperations', {}).items():
+        for operation_key, operation in turn['body'].get('memoryOperations', {}).items():
+            call_id = operation.get('callId', operation_key)
             key = prefix + call_id
             effect = effects.get(operation['runId'] + ':' + key)
             if operation['runId'] != task['run_id'] or effect is None:
