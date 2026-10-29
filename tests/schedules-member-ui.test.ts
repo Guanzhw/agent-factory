@@ -217,6 +217,90 @@ it('ignores a late read for the previous selected schedule after navigation chan
   expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
 });
 
+it.each(['resolved', 'rejected'])('ignores a %s manual history refresh after selecting another schedule', async result => {
+  const first = structuredClone(row), next = { ...first, id: 'schedule-next', name: '另一原计划', cron: '0 9 * * *' };
+  const onSelect = vi.fn();
+  await panel({ selectedId: first.id, onSelect });
+  let resolve!: (value: unknown) => void, reject!: (reason: Error) => void;
+  vi.mocked(client.inspect).mockImplementationOnce(() => new Promise((done, fail) => { resolve = done; reject = fail; }));
+  await click('刷新执行历史');
+  row = next; await panel({ selectedId: next.id, onSelect });
+  await act(async () => { if (result === 'resolved') resolve(first); else reject(new Error('Old read failed')); });
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(next.name);
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).not.toContain(first.name);
+  expect(host.querySelector<HTMLInputElement>('[aria-label="Cron表达式"]')?.value).toBe(next.cron);
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  expect(onSelect).not.toHaveBeenCalled();
+  expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
+});
+
+it('keeps a new selection loading when a previous manual refresh finishes', async () => {
+  const first = structuredClone(row), next = { ...first, id: 'schedule-next', name: '另一原计划' };
+  await panel({ selectedId: first.id, onSelect: vi.fn() });
+  let resolveOld!: (value: unknown) => void, resolveNext!: (value: unknown) => void;
+  vi.mocked(client.inspect).mockImplementationOnce(() => new Promise(done => { resolveOld = done; }));
+  await click('刷新执行历史');
+  row = next;
+  vi.mocked(client.inspect).mockImplementationOnce(() => new Promise(done => { resolveNext = done; }));
+  await panel({ selectedId: next.id, onSelect: vi.fn() });
+  await act(async () => resolveOld(first));
+  expect(host.querySelector('[aria-label="计划执行历史"]')).toBeNull();
+  expect(button('刷新计划任务')?.disabled).toBe(true);
+  await act(async () => resolveNext(next));
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(next.name);
+  expect(button('刷新计划任务')?.disabled).toBe(false);
+});
+
+it('discards an old time preview after selecting another schedule', async () => {
+  const first = structuredClone(row), next = { ...first, id: 'schedule-next', name: '另一原计划' };
+  const preview = await client.preview({ cron: first.cron, timezone: first.timezone });
+  await panel({ selectedId: first.id, onSelect: vi.fn() });
+  let resolve!: (value: unknown) => void;
+  vi.mocked(client.preview).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  await click('预览下次执行时间');
+  row = next; await panel({ selectedId: next.id, onSelect: vi.fn() });
+  await act(async () => resolve(preview));
+  expect(host.querySelector('[aria-label="执行时间预览"]')).toBeNull();
+  expect(button('保存执行时间')?.disabled).toBe(true);
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(next.name);
+});
+
+it.each(['confirmed', 'reconciled', 'unknown', 'retried'])('keeps an in-flight %s mutation tied to its original request after navigation', async result => {
+  const first = structuredClone(row), next = { ...first, id: 'schedule-next', name: '另一原计划', cron: '0 9 * * *' };
+  const onSelect = vi.fn();
+  let resolve!: (value: unknown) => void, reject!: (reason: Error) => void;
+  if (result === 'retried') vi.mocked(client.setEnabled).mockRejectedValueOnce(new Error('Synthetic lost acknowledgement'));
+  vi.mocked(client.setEnabled).mockImplementationOnce(() => new Promise((done, fail) => { resolve = done; reject = fail; }));
+  vi.mocked(client.inspect).mockImplementation(async id => id === first.id ? first : next);
+  await panel({ selectedId: first.id, onSelect });
+  await click('恢复后续计划');
+  await settle(() => expect(client.setEnabled).toHaveBeenCalledTimes(1));
+  const requestId = vi.mocked(client.setEnabled).mock.calls[0][1].requestId;
+  if (result === 'retried') await click('显式重试原变更请求');
+  row = next; await panel({ selectedId: next.id, onSelect });
+  expect(localStorage.getItem(pointerKey)).toContain(requestId);
+  await act(async () => {
+    if (result === 'confirmed' || result === 'retried') resolve({ ...first, enabled: true, lastCommandId: requestId });
+    else if (result === 'reconciled') { first.enabled = true; first.lastCommandId = requestId; reject(new Error('Synthetic lost acknowledgement')); }
+    else reject(new Error('Synthetic lost acknowledgement'));
+  });
+  expect(onSelect).not.toHaveBeenCalled();
+  if (result !== 'unknown') {
+    expect(localStorage.getItem(pointerKey)).toBeNull();
+    expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(next.name);
+    expect(host.querySelector<HTMLInputElement>('[aria-label="Cron表达式"]')?.value).toBe(next.cron);
+  } else {
+    expect(localStorage.getItem(pointerKey)).toContain(requestId);
+    expect(host.textContent).toContain('原变更请求未确认');
+    expect(host.querySelector('[aria-label="计划执行历史"]')).toBeNull();
+    await click('刷新计划任务');
+    expect(localStorage.getItem(pointerKey)).toContain(requestId);
+  }
+  expect(client.setEnabled).toHaveBeenCalledTimes(result === 'retried' ? 2 : 1);
+  expect(vi.mocked(client.setEnabled).mock.calls.every(([id, input]) => id === first.id && input.requestId === requestId)).toBe(true);
+  expect(client.update).not.toHaveBeenCalled(); expect(client.create).not.toHaveBeenCalled();
+});
+
 it('opens a new saved-plan seed rather than a schedule left in the previous URL', async () => {
   window.history.replaceState(null, '', `/?tab=developer&scheduleId=${row.id}`);
   await act(async () => root.render(createElement(Workspace, { user: owner, logout: vi.fn(), sessionBusy: false, sessionError: '' })));

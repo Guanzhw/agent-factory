@@ -22,6 +22,7 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, selected
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   const active = () => mounted.current && guard.current.current(epoch);
   const transport = useRef(api); transport.current = api;
+  const reads = useRef<AbortController | null>(null);
   const [data, setData] = useState<{ epoch: number; metadata: ScheduleMetadata; page: SchedulePage }>();
   const [chosen, setChosen] = useState<{ epoch: number; row: ScheduleSummary }>();
   const [history, setHistory] = useState<{ epoch: number; page: ScheduleOccurrencePage }>();
@@ -43,7 +44,7 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, selected
     const pointer = readPointer(ownerId); setPending(pointer ? { epoch, pointer } : undefined);
   }, [ownerId, epoch]);
   useEffect(() => {
-    const controller = new AbortController(); setBusy(true); setError('');
+    const controller = new AbortController(); reads.current = controller; setBusy(true); setError('');
     if (onSelect) { setChosen(undefined); setHistory(undefined); setPreview(undefined); }
     void Promise.all([transport.current.metadata(controller.signal), transport.current.list(after, controller.signal)]).then(async ([meta, rows]) => {
       const metadata = scheduleMetadata(meta, ownerId), page = schedulePage(rows, ownerId);
@@ -77,46 +78,56 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, selected
   }, [ownerId, epoch, after, refresh, selectedId]);
   async function inspect(id: string, cursor?: string) {
     if (disabled || busy || !guard.current.claim(epoch)) return; setBusy(true); setError('');
+    const signal = reads.current?.signal;
+    const current = () => active() && !signal?.aborted;
     try {
-      const [row, events] = await Promise.all([transport.current.inspect(id), transport.current.occurrences(id, cursor)]);
+      const [row, events] = await Promise.all([transport.current.inspect(id, signal), transport.current.occurrences(id, cursor, signal)]);
       const value = scheduleSummary(row, ownerId, id); const page = occurrencePage(events, ownerId, id);
-      if (!active()) return; setChosen({ epoch, row: value }); setHistory({ epoch, page }); setCron(value.cron); setTimezone(value.timezone); setName(value.name); setPreview(undefined);
+      if (!current()) return; setChosen({ epoch, row: value }); setHistory({ epoch, page }); setCron(value.cron); setTimezone(value.timezone); setName(value.name); setPreview(undefined);
       if (value.lastCommandId === pending?.pointer.requestId) { remember(); intent.current = undefined; }
-    } catch { if (active()) { setChosen(undefined); setHistory(undefined); setError('原计划或执行历史无法核对，未改变任何执行。'); } }
-    finally { guard.current.release(epoch); if (active()) setBusy(false); }
+    } catch { if (current()) { setChosen(undefined); setHistory(undefined); setError('原计划或执行历史无法核对，未改变任何执行。'); } }
+    finally { guard.current.release(epoch); if (current()) setBusy(false); }
   }
   async function previewTime() {
     if (!writable || !cron.trim() || !timezone.trim() || !guard.current.claim(epoch)) return; setBusy(true); setError(''); setPreview(undefined);
+    const signal = reads.current?.signal;
+    const current = () => active() && !signal?.aborted;
     const value = { cron: cron.trim().split(/\s+/).join(' '), timezone: timezone.trim() };
-    try { const result = schedulePreview(await transport.current.preview(value), value.cron, value.timezone); if (active()) setPreview({ epoch, value: result }); }
-    catch { if (active()) setError('Cron 表达式或 IANA 时区无法预览，请检查后重试。未保存任何变更。'); }
-    finally { guard.current.release(epoch); if (active()) setBusy(false); }
+    try { const result = schedulePreview(await transport.current.preview(value, signal), value.cron, value.timezone); if (current()) setPreview({ epoch, value: result }); }
+    catch { if (current()) setError('Cron 表达式或 IANA 时区无法预览，请检查后重试。未保存任何变更。'); }
+    finally { guard.current.release(epoch); if (current()) setBusy(false); }
   }
   async function mutate(kind: 'create' | 'edit' | 'enabled', enabled?: boolean) {
     if (!writable || kind !== 'create' && !selected || kind !== 'enabled' && !checkedPreview || kind === 'create' && (!seed || !name.trim()) || !guard.current.claim(epoch)) return;
     setBusy(true); setError('');
+    const signal = reads.current?.signal;
+    const current = () => active() && !signal?.aborted;
     try {
       const payload = kind === 'create' ? { kind, planId: seed!.planId, planFingerprint: seed!.planFingerprint, name: name.trim(), cron: cron.trim().split(/\s+/).join(' '), timezone: timezone.trim() }
         : kind === 'edit' ? { kind, scheduleId: selected!.id, expectedDefinitionFingerprint: selected!.definitionFingerprint, cron: cron.trim().split(/\s+/).join(' '), timezone: timezone.trim() }
         : { kind, scheduleId: selected!.id, expectedDefinitionFingerprint: selected!.definitionFingerprint, enabled: enabled === true };
-      const key = await keys('schedule-management', payload); if (!active()) return;
+      const key = await keys('schedule-management', payload); if (!current()) return;
       const value = { ...payload, requestId: key.requestId } as ScheduleMutation;
       intent.current = { epoch, value }; remember({ requestId: value.requestId, scheduleId: value.kind === 'create' ? null : value.scheduleId });
       const row = await sendScheduleOnce(transport.current, ownerId, value); if (!active()) return;
-      remember(); intent.current = undefined; key.acknowledged(); setChosen({ epoch, row }); setHistory(undefined); setPreview(undefined); setAfter(undefined); onSelect?.(row.id); setRefresh(n => n + 1);
+      remember(); intent.current = undefined; key.acknowledged();
+      if (current()) { setChosen({ epoch, row }); setHistory(undefined); setPreview(undefined); setAfter(undefined); onSelect?.(row.id); }
+      setRefresh(n => n + 1);
     } catch (cause) { if (active()) {
-      if (cause instanceof ApiError && ['SCHEDULE_NAME_EXISTS', 'SCHEDULE_EDITOR_STALE', 'SCHEDULE_CLOCK_INVALID'].includes(cause.code ?? cause.message)) { remember(); intent.current = undefined; setPreview(undefined); if ((cause.code ?? cause.message) === 'SCHEDULE_EDITOR_STALE') { setChosen(undefined); setHistory(undefined); } setError('服务端已拒绝此次变更：名称重复、定义已变化或时间无效。请重新读取并修改后再提交。'); }
+      if (cause instanceof ApiError && ['SCHEDULE_NAME_EXISTS', 'SCHEDULE_EDITOR_STALE', 'SCHEDULE_CLOCK_INVALID'].includes(cause.code ?? cause.message)) { remember(); intent.current = undefined; if (current()) { setPreview(undefined); if ((cause.code ?? cause.message) === 'SCHEDULE_EDITOR_STALE') { setChosen(undefined); setHistory(undefined); } setError('服务端已拒绝此次变更：名称重复、定义已变化或时间无效。请重新读取并修改后再提交。'); } }
       else setError('变更结果尚未确认。保留原请求并锁定编辑；刷新只读取原记录，不会重放变更。');
       setRefresh(n => n + 1);
     } }
-    finally { guard.current.release(epoch); if (active()) setBusy(false); }
+    finally { guard.current.release(epoch); if (current()) setBusy(false); }
   }
   async function retryOriginal() {
     if (disabled || busy || !manages || !uncertain || intent.current?.epoch !== epoch || !guard.current.claim(epoch)) return;
     setBusy(true); const original = intent.current.value;
-    try { const row = await sendScheduleOnce(transport.current, ownerId, original); if (!active()) return; remember(); intent.current = undefined; setChosen({ epoch, row }); setPreview(undefined); onSelect?.(row.id); setRefresh(n => n + 1); }
+    const signal = reads.current?.signal;
+    const current = () => active() && !signal?.aborted;
+    try { const row = await sendScheduleOnce(transport.current, ownerId, original); if (!active()) return; remember(); intent.current = undefined; if (current()) { setChosen({ epoch, row }); setPreview(undefined); onSelect?.(row.id); } setRefresh(n => n + 1); }
     catch { if (active()) setError('原变更仍未确认；继续保留原标识，不能改成新的请求。'); }
-    finally { guard.current.release(epoch); if (active()) setBusy(false); }
+    finally { guard.current.release(epoch); if (current()) setBusy(false); }
   }
   return <section aria-label="计划任务" className="schedules-panel" style={{ minWidth: 0, overflowWrap: 'anywhere' }}><h1>计划任务</h1>
     <p>复用本人已保存的不可变方案；每次触发仍检查当前权限和预算。计划准入成功不代表研究任务完成。</p>
