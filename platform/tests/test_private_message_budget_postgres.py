@@ -41,7 +41,7 @@ class PrivateMessageBudgetPostgresTests(unittest.TestCase):
         self.body = SendAssistantMessage.model_validate(self.base.body)
 
     def reserve(self):
-        return self.messages._reserve('alice', self.endpoint['id'], self.body)[0]
+        return self.messages.reserve('alice', self.endpoint['id'], self.body)[0]
 
     def count(self, table):
         with self.store.engine.connect() as conn:

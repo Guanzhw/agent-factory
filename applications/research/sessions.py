@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import contextmanager
 from copy import deepcopy
 from typing import Any, cast
 from uuid import uuid4
@@ -27,6 +28,7 @@ class ResearchSessions:
     def __init__(self, store, auth, assistants, runs, *, connections, models, content, tools):
         self.store, self.auth, self.assistants, self.runs = store, auth, assistants, runs
         self.content, self.tools = content, tools
+        self.conversations: Any = None
         self.setup = ResearchSessionSetup(store, connections, models, tools)
         self.db = GovernedStorage(store, 'research_sessions_v1')
         metadata = MetaData()
@@ -44,6 +46,14 @@ class ResearchSessions:
                          *[('tool', entry) for entry in tools.tool_registrations]]
         store.application_runtime.register('research-session', self,
             bindings=tuple((kind, entry.adapter_id, entry.revision) for kind, entry in registrations))
+
+    @contextmanager
+    def _write(self):
+        with self.store.transaction() as conn:
+            if self.store.engine.dialect.name == 'postgresql':
+                self.store.local_budget_scopes.admission_lock(conn)
+            with self.db.write():
+                yield conn
 
     def options(self, owner):
         self.auth.require_member(owner)
@@ -104,11 +114,31 @@ class ResearchSessions:
             except (HTTPException, ValueError):
                 raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '既有上下文的共享来源已不可读，请核对原会话；未继续执行。') from None
 
+    def _reply(self, owner, identifier, snapshot):
+        try:
+            self.conversations.validate_reply(owner, identifier, snapshot)
+        except HTTPException:
+            raise rejected('RESEARCH_ASSISTANT_REPLY_UNAVAILABLE',
+                '已采用的助手回答当前不可用，请核对原问题与共享权限；未继续执行。') from None
+
+    def _replies(self, owner, identifier, turns):
+        for turn in turns:
+            if 'assistantReply' in turn['body']:
+                self._reply(owner, identifier, turn['body']['assistantReply'])
+
+    def _reply_projection(self, owner, identifier, snapshot):
+        try:
+            self._reply(owner, identifier, snapshot)
+        except HTTPException:
+            return {'state': 'unavailable', 'questionId': snapshot['questionId'],
+                    'code': 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'}
+        return {'state': 'available', **deepcopy(snapshot)}
+
     def create(self, owner, request):
         self.auth.require_member(owner)
         value = request.model_dump(exclude={'requestId'})
         fingerprint = digest({'action': 'create', **value})
-        with self.db.write() as conn:
+        with self._write() as conn:
             old = self.db.old(conn, self.commands, owner, request.requestId, fingerprint)
             if old is not None:
                 return old['sessionId']
@@ -162,7 +192,7 @@ class ResearchSessions:
                     and any(item.get('role') == 'assistant' for item in run['messages'] if isinstance(item, dict))
                     and isinstance(run.get('content'), str)):
                 result = run['content']
-            with self.db.write() as conn:
+            with self._write() as conn:
                 current = conn.execute(select(self.turns).where(self.turns.c.id == turn['id'])).mappings().one()
                 if current['body'].get('terminal'):
                     continue  # A concurrent confirmed final result wins over this older observation.
@@ -208,8 +238,10 @@ class ResearchSessions:
             inputValues={'sessionId': row['id'], 'turnId': turn['id'], 'sessionContext': turn['body']['context']})
 
     def _reserve(self, owner, identifier, request):
-        fingerprint = digest({'action': 'turn', 'sessionId': identifier, 'text': request.text})
-        with self.db.write() as conn:
+        question_id = request.model_dump().get('assistantQuestionId')
+        fingerprint = digest({'action': 'turn', 'sessionId': identifier, 'text': request.text,
+            **({'assistantQuestionId': question_id} if question_id is not None else {})})
+        with self._write() as conn:
             old = self.db.old(conn, self.commands, owner, request.requestId, fingerprint)
             if old is not None:
                 return old['turnId'], False
@@ -219,11 +251,14 @@ class ResearchSessions:
             if len(turns) >= row['body']['limits']['maxTurns']:
                 raise rejected('RESEARCH_TURN_LIMIT', '已达到本会话约定轮数，原历史已保留。')
             self._sources(owner, row['body']['sharedSourceIds'])
+            self._replies(owner, identifier, turns)
             turn_id, stamp = str(uuid4()), now()
             body = {'requestId': request.requestId, 'taskId': None, 'runId': None, 'status': 'reserved',
                 'createdAt': stamp, 'completedAt': None, 'result': None, 'failure': None, 'terminal': False,
                 'blockReason': None, 'messages': [self._message('instruction', request.text)],
                 'lastAttempt': 0, 'dispatchStarted': False, 'events': [], 'toolResults': []}
+            if question_id is not None:
+                body['assistantReply'] = self.conversations.adopt(owner, identifier, question_id)
             context, compaction = session_context.prepare(row, turns, prospective={
                 'id': turn_id, 'sequence': len(turns) + 1, 'body': body})
             body['context'] = context
@@ -242,7 +277,7 @@ class ResearchSessions:
         await self._refresh(owner, identifier)
         turn_id, fresh = await asyncio.to_thread(self._reserve, owner, identifier, request)
         if fresh:
-            with self.db.write() as conn:
+            with self._write() as conn:
                 row = self._row(conn, owner, identifier)
                 turn = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
                 if (row['body']['stopped'] or turn['body'].get('stopRequestId')
@@ -257,7 +292,7 @@ class ResearchSessions:
                 try:
                     await self.runs.start(owner, start)
                 except Exception:
-                    with self.db.write() as conn:
+                    with self._write() as conn:
                         current = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
                         if not current['body'].get('terminal'):
                             self._save_turn(conn, current, {**current['body'], 'status': 'unknown',
@@ -271,7 +306,7 @@ class ResearchSessions:
     def correct(self, owner, identifier, request):
         self.auth.require_member(owner)
         fingerprint = digest({'action': 'correct', 'sessionId': identifier, 'text': request.text})
-        with self.db.write() as conn:
+        with self._write() as conn:
             old = self.db.old(conn, self.commands, owner, request.requestId, fingerprint)
             if old is not None:
                 return
@@ -290,7 +325,7 @@ class ResearchSessions:
     async def stop(self, owner, identifier, request):
         self.auth.require_member(owner)
         fingerprint = digest({'action': 'stop', 'sessionId': identifier})
-        with self.db.write() as conn:
+        with self._write() as conn:
             old = self.db.old(conn, self.commands, owner, request.requestId, fingerprint)
             row = self._row(conn, owner, identifier)
             if old is None:
@@ -361,12 +396,13 @@ class ResearchSessions:
         with self.db.read() as conn:
             row, turn, _ = self._execution(conn, context)
             self._sources(context.user_id, row['body']['sharedSourceIds'])
+            self._replies(context.user_id, row['id'], self._turns(conn, row['id']))
             self.store.authorize_tool(context, tool_name)
             return {'id': row['id'], 'ownerId': row['owner_id'], 'turnId': turn['id'],
                     'limits': deepcopy(row['body']['limits']), 'workspaceRef': row['id']}
 
     def record_source(self, context, identifier):
-        with self.db.write() as conn:
+        with self._write() as conn:
             row, _, _ = self._execution(conn, context)
             self._sources(context.user_id, [identifier])
             body = deepcopy(row['body'])
@@ -395,10 +431,11 @@ class ResearchSessions:
             self._save_turn(conn, turn, body)
         else:
             self._sources(context.user_id, row['body']['sharedSourceIds'])
+            self._replies(context.user_id, row['id'], self._turns(conn, row['id']))
         return row, turn, task, ticket, blocked
 
     def _summary_outcome(self, owner, turn_id, claim, status, code):
-        with self.db.write() as conn:
+        with self._write() as conn:
             turn = conn.execute(select(self.turns).where(self.turns.c.id == turn_id,
                 self.turns.c.owner_id == owner)).mappings().one()
             body = deepcopy(turn['body'])
@@ -408,7 +445,7 @@ class ResearchSessions:
 
     def _compact(self, context, auxiliary_model):
         claim, source = None, None
-        with self.db.write() as conn:
+        with self._write() as conn:
             row, turn, task, ticket, blocked = self._model_boundary(conn, context)
             if not blocked:
                 body = deepcopy(turn['body'])
@@ -439,13 +476,14 @@ class ResearchSessions:
             with self.db.read() as conn:
                 current_row, current_turn, current_task = self._execution(conn, context)
                 self._sources(context.user_id, current_row['body']['sharedSourceIds'])
+                self._replies(context.user_id, current_row['id'], self._turns(conn, current_row['id']))
                 if current_task['terminal'] or current_turn['body'].get('compaction') != claim:
                     raise StopAgentRun('RESEARCH_SUMMARY_OUTCOME_UNCONFIRMED')
             return auxiliary_model()
 
         try:
             summary = session_context.summarize(source, context, current_model)
-            with self.db.write() as conn:
+            with self._write() as conn:
                 current_row, current_turn, current_task, current_ticket, blocked = self._model_boundary(conn, context)
                 if not blocked:
                     if current_task['terminal'] or current_ticket['attempt'] != claim['attempt']:
@@ -475,7 +513,7 @@ class ResearchSessions:
 
     def before_model(self, context, messages, auxiliary_model):
         self._compact(context, auxiliary_model)
-        with self.db.write() as conn:
+        with self._write() as conn:
             row, turn, task, ticket, blocked = self._model_boundary(conn, context)
             if not blocked:
                 body = deepcopy(turn['body'])
@@ -514,7 +552,7 @@ class ResearchSessions:
 
     def mark_cancel(self, store, task_id):
         task = store.task(task_id)
-        with self.db.write() as conn:
+        with self._write() as conn:
             turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
                 self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).mappings().first()
             if turn is not None:
@@ -567,6 +605,10 @@ class ResearchSessions:
                 self._sources(owner, body['sharedSourceIds'])
             except HTTPException:
                 block = block or 'RESEARCH_SOURCE_UNAVAILABLE'
+            try:
+                self._replies(owner, identifier, turns)
+            except HTTPException:
+                block = block or 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'
             state = ('blocked' if block else 'stopped' if body['stopped'] and safe else
                      'stopping' if body['stopped'] else 'idle' if safe else 'running')
             actions = []
@@ -581,7 +623,10 @@ class ResearchSessions:
                 'model': deepcopy(body['configuration']['model']), 'state': state, 'allowedActions': actions,
                 'blockReason': block, 'context': {'characters': characters, 'maximumCharacters': CONTEXT_CHARACTERS,
                     'rawCharacters': raw_characters, **({'compaction': compact_view} if compact_view else {})},
-                'turns': [{'id': item['id'], 'sequence': item['sequence'], **{key: deepcopy(item['body'].get(key))
+                'turns': [{'id': item['id'], 'sequence': item['sequence'],
+                    **({'assistantReply': self._reply_projection(owner, identifier, item['body']['assistantReply'])}
+                       if 'assistantReply' in item['body'] else {}),
+                    **{key: deepcopy(item['body'].get(key))
                     for key in ('requestId', 'taskId', 'runId', 'status', 'createdAt', 'completedAt', 'result',
                                 'messages', 'events', 'toolResults', 'failure')}} for item in turns]}
 

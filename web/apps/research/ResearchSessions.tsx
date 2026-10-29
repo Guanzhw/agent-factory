@@ -3,14 +3,16 @@ import { ApiError } from '../../api.js';
 import { assistantApi, type ResearchSource } from './live/assistantClient.js';
 import { researchSessionsApi as api, type CreateSession, type ResearchSession, type SessionAction, type SessionOptions, type SessionPage, type SessionTurn } from './researchSessionsClient.js';
 import { draftKey, readStored, removeStored, requestKey, writeStored, type PendingSessionRequest, type SessionDraft } from './researchSessionStorage.js';
+import { SessionQuestions } from './SessionQuestions.js';
 import './sessions.css';
 
-type Props = { ownerId: string; selectedId?: string; onSelect: (id: string) => void; onModels: () => void; onTask: (id: string) => void };
+type Props = { ownerId: string; selectedId?: string; questionId?: string; onSelect: (id: string) => void; onQuestion: (id: string) => void; onModels: () => void; onTask: (id: string) => void };
 const states = { idle: '就绪', running: '执行中', stopping: '停止请求已接收', stopped: '已停止', blocked: '需要核对' };
 const reasons: Record<string, string> = {
   RESEARCH_CONTEXT_LIMIT: '必要上下文超过容量，不能开始新一轮；目标、指令及原操作记录不会被截断，完整历史仍保留。',
   RESEARCH_SUMMARY_INPUT_LIMIT: '待整理的回复超过单次整理容量，本会话不能开始新一轮；完整历史仍可查看。',
   RESEARCH_SOURCE_UNAVAILABLE: '已引用的共享来源当前不可访问，需要核对发布状态或权限。',
+  RESEARCH_ASSISTANT_REPLY_UNAVAILABLE: '已采用的同事回复或来源当前不可读，正文已隐藏；请核对原问题与共享权限。',
   RESEARCH_RESTART_REQUIRES_RECONCILIATION: '重启前的工具操作需要核对，不能自动重放。',
   RESEARCH_EFFECT_UNCONFIRMED: '原工具操作的结果尚未确认。',
   RESEARCH_ORIGINAL_OUTCOME_UNCONFIRMED: '原执行结果未知，需要核对原任务。',
@@ -92,10 +94,11 @@ function ToolOutput({ result }: { result: Record<string, unknown> }) {
   return <pre>{JSON.stringify(result, null, 2)}</pre>;
 }
 
-function TurnRecord({ turn, onTask }: { turn: SessionTurn; onTask: (id: string) => void }) {
+function TurnRecord({ turn, onTask, onQuestion }: { turn: SessionTurn; onTask: (id: string) => void; onQuestion: (id: string) => void }) {
   return <article className="rs-turn"><header><h3>第 {turn.sequence} 轮</h3><span>{turn.status}</span><time>{time(turn.createdAt)}</time></header>
     {turn.messages.map(message => <div key={message.id} className={`rs-message rs-${message.kind}`}><div className="rs-message-heading"><strong>{message.kind === 'correction' ? '你的纠正' : '你的指令'}</strong><span>{message.state === 'included' ? '已纳入研究请求' : '待纳入研究请求'}</span></div><p>{message.text}</p></div>)}
     {turn.result !== null && <div className="rs-message rs-reply"><strong>助手回复</strong><p>{turn.result}</p></div>}
+    {turn.assistantReply && <section className="rs-adopted-reply" aria-label={`第 ${turn.sequence} 轮引用的同事回复`}><h4>本轮引用的同事回复</h4><button className="rs-text-button" onClick={() => onQuestion(turn.assistantReply!.questionId)}>核对原问题 {turn.assistantReply.questionId}</button>{turn.assistantReply.state === 'available' ? <><p>{turn.assistantReply.questionText}</p><p>{turn.assistantReply.reply.text}</p><p className="rw-muted">作为引用证据，不代表实验已验证。输入依据：{turn.assistantReply.reply.contentIds.length ? turn.assistantReply.reply.contentIds.join('、') : '无可用团队依据'}</p></> : <p role="status">引用的回复当前不可用，正文与来源已隐藏；后续研究需先核对权限。</p>}</section>}
     {turn.failure && <p className="rw-error" role="alert">本轮未完成：{turn.failure}</p>}
     {!!turn.toolResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{turn.toolResults.map(item => <details key={item.effectKey} open={item.status.toUpperCase() === 'UNKNOWN'}><summary><span>{item.status.toUpperCase() === 'UNKNOWN' ? '结果未知，需核对原操作' : `工具回执：${item.status}`}</span><code>{item.effectKey}</code></summary>{item.result ? <ToolOutput result={item.result}/> : <p>还没有已确认的结果。</p>}</details>)}</section>}
     <details className="rs-events" open={turn.events.some(event => event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required')}><summary>执行事件 · {turn.events.length} 条</summary><p className="rw-muted">以下是已保存的任务事件，不是模型全文流。</p>{turn.events.length ? <ol>{turn.events.map(event => <li key={event.id}><time>{time(event.createdAt)}</time><strong>{event.type}</strong><p>{event.message}</p>{Object.keys(event.data).length > 0 && <details><summary>事件详情</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details>}</li>)}</ol> : <p>还没有任务事件。</p>}</details>
@@ -134,28 +137,31 @@ function ContextStatus({ value, blocked }: { value: ResearchSession; blocked: bo
   </section>;
 }
 
-function SessionDetail({ ownerId, value, busy, blocked, onSend, onStop, onTask }: { ownerId: string; value: ResearchSession; busy: boolean; blocked: boolean; onSend: (text: string, correction: boolean) => Promise<boolean>; onStop: () => void; onTask: (id: string) => void }) {
+function SessionDetail({ ownerId, value, busy, blocked, questionId, onQuestion, onSend, onStop, onTask }: { ownerId: string; value: ResearchSession; busy: boolean; blocked: boolean; questionId: string; onQuestion: (id: string) => void; onSend: (text: string, correction: boolean, assistantQuestionId?: string) => Promise<boolean>; onStop: () => void; onTask: (id: string) => void }) {
   const draft = useDraft(draftKey(ownerId, value.id), ''); const [error, setError] = useState('');
+  const selectedReply = useDraft(`${draftKey(ownerId, value.id)}:reply`, '');
+  const composer = useRef<HTMLTextAreaElement | null>(null);
   const correction = value.state === 'running' && value.allowedActions.includes('correct');
   const stateLabel = value.state === 'idle' ? value.turns.length ? value.allowedActions.includes('start') ? '可继续' : '本轮已结束' : '待开始' : states[value.state];
   const needsStop = ['running', 'stopping'].includes(value.state) || value.turns.some(turn => !turn.completedAt || turn.status === 'unknown' || turn.toolResults.some(item => item.status.toUpperCase() === 'UNKNOWN'));
   async function send() {
     if (!draft.value.trim()) { setError('请填写这一轮要做的事，或要补充的限制。'); return; }
-    setError(''); if (await onSend(draft.value.trim(), correction)) draft.change('');
+    setError(''); if (await onSend(draft.value.trim(), correction, !correction && selectedReply.value || undefined)) { draft.change(''); if (!correction) selectedReply.change(''); }
   }
   return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`}>{stateLabel}</span></div>{needsStop && value.allowedActions.includes('stop') && <button disabled={busy} onClick={onStop}>请求停止</button>}</header>
     {value.state === 'stopping' && <p className="rs-warning" role="status">已记录停止请求，仍在等待执行边界和本地进程的停止回执；目前不能确认已停止。</p>}
     {value.state === 'blocked' && <p className="rw-error" role="alert">本会话不能开始新一轮：{reasons[value.blockReason ?? ''] ?? '原操作需要核对。'} 历史和原任务记录仍可查看，不会自动重放。<code>{value.blockReason}</code></p>}
     <details className="rs-agreement"><summary>目标、停止边界与模型</summary><h3>研究目标</h3><p>{value.goal}</p><h3>停止边界</h3><p>{value.boundaries}</p><p>{value.model.provider} · {value.model.model}</p><p>最多 {value.limits.maxTurns} 轮 · 每轮最多 {value.limits.toolCallsPerTurn} 次工具调用 · 单次操作 {value.limits.operationSeconds} 秒</p><p>当前会话上下文 {value.context.characters} / {value.context.maximumCharacters} 字符。{value.context.rawCharacters !== undefined && <>原始上下文 {value.context.rawCharacters} 字符。</>}可整理早期回复；必须保留的内容仍有容量限制。</p></details>
-    <div className="rs-conversation">{value.turns.length ? value.turns.map(turn => <TurnRecord key={turn.id} turn={turn} onTask={onTask}/>) : <div className="rs-empty"><h3>会话已创建，尚无执行轮次</h3><p>写下第一轮指令后明确开始。打开或刷新不会自动执行。</p></div>}</div>
+    <div className="rs-conversation">{value.turns.length ? value.turns.map(turn => <TurnRecord key={turn.id} turn={turn} onTask={onTask} onQuestion={onQuestion}/>) : <div className="rs-empty"><h3>会话已创建，尚无执行轮次</h3><p>写下第一轮指令后明确开始。打开或刷新不会自动执行。</p></div>}</div>
     <SharedSources key={`${value.id}:${value.blockReason ?? ''}:${value.sharedSourceIds.join(',')}`} ownerId={ownerId} ids={value.sharedSourceIds}/>
+    <SessionQuestions key={`${ownerId}:${value.id}:${value.blockReason ?? ''}`} ownerId={ownerId} sessionId={value.id} questionId={questionId} onQuestion={onQuestion} onUse={value.allowedActions.includes('start') && !blocked && !busy ? id => { selectedReply.change(id); onQuestion(''); composer.current?.focus(); composer.current?.scrollIntoView?.({ block: 'center' }); } : undefined}/>
     <ContextStatus value={value} blocked={blocked}/>
-    {(value.allowedActions.includes('start') || correction) && <form className="rw-form rs-composer" noValidate onSubmit={event => { event.preventDefault(); void send(); }}><fieldset disabled={busy || blocked}><label>{correction ? '补充或纠正当前研究' : '下一轮指令'}<textarea rows={3} maxLength={2000} value={draft.value} onChange={event => draft.change(event.target.value)} aria-invalid={!!error}/></label><p className="rw-muted">{correction ? '先保存纠正，下一次研究请求才会纳入；整理摘要不算纳入，也不会改变已经开始的调用或保证模型遵守。' : '沿用此会话的目标和停止边界，只有点击开始才会执行。'}</p>{error && <p role="alert" className="rw-error">{error}</p>}<button className="rw-primary">{busy ? '正在提交…' : correction ? '保存纠正' : '开始这一轮'}</button></fieldset></form>}
+    {(value.allowedActions.includes('start') || correction) && <form className="rw-form rs-composer" noValidate onSubmit={event => { event.preventDefault(); void send(); }}><fieldset disabled={busy || blocked}>{selectedReply.value && <div className="rs-selected-reply"><p>已选择下一轮引用：<code>{selectedReply.value}</code>。{correction ? '当前纠正不会采用这条回复。' : '提交下一轮时会重新核对回复与来源权限。'}</p><button type="button" onClick={() => selectedReply.change('')}>取消选用回复</button></div>}<label>{correction ? '补充或纠正当前研究' : '下一轮指令'}<textarea ref={composer} rows={3} maxLength={2000} value={draft.value} onChange={event => draft.change(event.target.value)} aria-invalid={!!error}/></label><p className="rw-muted">{correction ? '先保存纠正，下一次研究请求才会纳入；整理摘要不算纳入，也不会改变已经开始的调用或保证模型遵守。' : '沿用此会话的目标和停止边界，只有点击开始才会执行。'}</p>{error && <p role="alert" className="rw-error">{error}</p>}<button className="rw-primary">{busy ? '正在提交…' : correction ? '保存纠正' : '开始这一轮'}</button></fieldset></form>}
     {!draft.saved && <p className="rw-error" role="alert">浏览器无法保存草稿；离开前请复制当前输入。</p>}
   </section>;
 }
 
-export function ResearchSessions({ ownerId, selectedId = '', onSelect, onModels, onTask }: Props) {
+export function ResearchSessions({ ownerId, selectedId = '', questionId = '', onSelect, onQuestion, onModels, onTask }: Props) {
   const [options, setOptions] = useState<SessionOptions | null>(null); const [page, setPage] = useState<SessionPage | null>(null);
   const [detail, setDetail] = useState<ResearchSession | null>(null); const [after, setAfter] = useState('');
   const [readError, setReadError] = useState(''); const [detailError, setDetailError] = useState(''); const [actionError, setActionError] = useState(''); const [notice, setNotice] = useState('');
@@ -261,7 +267,7 @@ export function ResearchSessions({ ownerId, selectedId = '', onSelect, onModels,
     {requests.length > 0 && <section className="rs-recovery" aria-label="待核对的会话请求"><h2>原请求仍需核对</h2><p>不会自动重发；没有查到回执也不代表未发生。</p>{requests.map(pointer => <div key={pointer.requestId}><span>{actions[pointer.action]}<code>{pointer.requestId}</code></span><button disabled={busy} onClick={() => void recover(pointer)}>查询原请求</button></div>)}</section>}
     {(actionError || notice) && <div ref={feedback} tabIndex={-1} className="rs-action-feedback">{actionError && <p className="rw-error" role="alert">{actionError}</p>}{notice && <p role="status">{notice}</p>}</div>}
     <div className="rs-layout"><aside className="rs-session-list" aria-label="我的研究会话"><h2>我的会话</h2>{readError ? <p className="rw-error" role="alert">{readError}</p> : !page ? <p role="status">正在读取会话…</p> : page.items.length ? page.items.map(item => <button key={item.id} aria-current={item.id === selectedId ? 'page' : undefined} onClick={() => onSelect(item.id)}><strong>{item.title}</strong><span>{states[item.state]} · {time(item.updatedAt)}</span></button>) : <p className="rw-muted">{after ? '本页没有会话。' : '还没有会话。提交第一个目标后，记录会保存在这里。'}</p>}<div className="rs-pagination">{after && <button onClick={() => setAfter('')}>第一页</button>}{page?.nextCursor && <button onClick={() => setAfter(page.nextCursor!)}>下一页会话</button>}</div></aside>
-      <div className="rs-content">{selectedId ? detailError ? <p className="rw-error" role="alert">{detailError}</p> : detail ? <SessionDetail key={detail.id} ownerId={ownerId} value={detail} busy={busy} blocked={currentPending} onTask={onTask} onStop={() => void run(async () => { await post('stop', detail.id, requestId => api.stop(ownerId, detail.id, { requestId })); setNotice('停止请求已接收，请核对实际停止状态。'); })} onSend={(text, correction) => run(async () => { await post(correction ? 'correct' : 'turn', detail.id, requestId => correction ? api.correct(ownerId, detail.id, { requestId, text }) : api.turn(ownerId, detail.id, { requestId, text })); setNotice(correction ? '纠正已保存；是否已纳入下一次请求请看消息状态。' : '本轮请求已接收，请查看实际执行记录。'); })}/> : <p role="status">正在读取会话详情…</p> : <CreateSessionForm ownerId={ownerId} options={options} busy={busy} blocked={currentPending} onModels={onModels} onCreate={create}/>}</div>
+      <div className="rs-content">{selectedId ? detailError ? <p className="rw-error" role="alert">{detailError}</p> : detail ? <SessionDetail key={detail.id} ownerId={ownerId} value={detail} busy={busy} blocked={currentPending} questionId={questionId} onQuestion={onQuestion} onTask={onTask} onStop={() => void run(async () => { await post('stop', detail.id, requestId => api.stop(ownerId, detail.id, { requestId })); setNotice('停止请求已接收，请核对实际停止状态。'); })} onSend={(text, correction, assistantQuestionId) => run(async () => { await post(correction ? 'correct' : 'turn', detail.id, requestId => correction ? api.correct(ownerId, detail.id, { requestId, text }) : api.turn(ownerId, detail.id, { requestId, text, ...(assistantQuestionId ? { assistantQuestionId } : {}) })); setNotice(correction ? '纠正已保存；是否已纳入下一次请求请看消息状态。' : '本轮请求已接收，请查看实际执行记录。'); })}/> : <p role="status">正在读取会话详情…</p> : <CreateSessionForm ownerId={ownerId} options={options} busy={busy} blocked={currentPending} onModels={onModels} onCreate={create}/>}</div>
     </div>
   </div>;
 }

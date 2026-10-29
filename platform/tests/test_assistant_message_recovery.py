@@ -13,7 +13,7 @@ class AssistantMessageRecoveryTests(unittest.TestCase):
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         self.service = self.fixture.service
-        self.message, fresh = self.service._reserve('alice', 'bobs-assistant', self.fixture.body)
+        self.message, fresh = self.service.reserve('alice', 'bobs-assistant', self.fixture.body)
         self.assertTrue(fresh)
         self.key = self.service._request_id(self.message)
 

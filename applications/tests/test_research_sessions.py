@@ -41,6 +41,7 @@ class ResearchSessionContracts(unittest.TestCase):
         self.tools = ResearchSessionTools(workspace_root=Path(directory) / 'coding', host_commands=True)
         app = create_app(Settings(db_url=isolated.url, workspace=Path(directory) / 'factory'), session_tools=self.tools)
         state = factory_state(app)
+        self.state = state
         self.store, self.service = state['store'], state['research_sessions']
         self.addCleanup(self.store.native_db.db_engine.dispose)
         self.addCleanup(self.store.engine.dispose)

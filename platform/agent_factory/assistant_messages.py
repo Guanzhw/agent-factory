@@ -48,7 +48,7 @@ class AssistantMessages:
             raise HTTPException(404, 'ASSISTANT_MESSAGE_NOT_FOUND')
         return dict(row)
 
-    def _reserve(self, sender, endpoint_id, body, *, allocation_id=None, delivery_id=None):
+    def reserve(self, sender, endpoint_id, body, *, allocation_id=None, delivery_id=None):
         self.auth.require_member(sender)
         fingerprint = digest({'endpointId': endpoint_id, 'text': body.text})
         store = self.db.store
@@ -91,7 +91,7 @@ class AssistantMessages:
         return ApplicationStart.model_validate(values)
 
     async def send(self, sender, endpoint_id, body: SendAssistantMessage):
-        message, fresh = await asyncio.to_thread(self._reserve, sender, endpoint_id, body)
+        message, fresh = await asyncio.to_thread(self.reserve, sender, endpoint_id, body)
         if fresh:
             self.auth.require_member(sender)
             endpoint = await asyncio.to_thread(self.endpoints.resolve, endpoint_id)
@@ -273,6 +273,43 @@ class AssistantMessages:
             if result is None:
                 raise HTTPException(404, 'ASSISTANT_MESSAGE_NOT_FOUND')
         return self.read(sender, result['id'])
+
+    def received(self, recipient, *, endpoint_ids, after='', limit=50):
+        self.auth.require_member(recipient)
+        with self.db.read() as conn:
+            identifiers = list(conn.execute(select(self.messages.c.id).where(
+                self.messages.c.recipient_id == recipient,
+                self.messages.c.endpoint_id.in_(endpoint_ids), self.messages.c.id > after)
+                .order_by(self.messages.c.id).limit(limit + 1)).scalars())
+        return {'items': [self.read(recipient, identifier) for identifier in identifiers[:limit]],
+            'nextCursor': identifiers[limit - 1] if len(identifiers) > limit else None}
+
+    def recovery_actions(self, actor, identifier):
+        message = self.read(actor, identifier)
+        if actor != message['recipientId']:
+            return {'allowedActions': [], 'recoveryCode': 'ASSISTANT_RECIPIENT_REQUIRED'}
+        if message['delivery']['taskId'] is not None:
+            return {'allowedActions': [], 'recoveryCode': 'ASSISTANT_ORIGINAL_TASK_EXISTS'}
+        with self.db.read() as conn:
+            delivery = self.db.store.local_budget_scopes.request_delivery(conn, actor,
+                'application-start:assistant-message:' + identifier)
+            if delivery is not None:
+                return {'allowedActions': [], 'recoveryCode': 'ASSISTANT_EVENT_RECOVERY_MANAGED'}
+        try:
+            self.auth.require_member(message['senderId'])
+            endpoint = self.endpoints.resolve(message['endpointId'])
+            with self.db.read() as conn:
+                if endpoint.get('automaticBudget'):
+                    self.endpoints.require_budget(conn, actor, endpoint['automaticBudget'])
+                    self._budget_allocation(conn, self._row(conn, identifier), endpoint)
+        except HTTPException as error:
+            if error.status_code not in {403, 404, 409, 422}:
+                raise
+            code = str(error.detail).split(':', 1)[0]
+            if not code.replace('_', '').isalnum() or not code.isupper():
+                code = 'ASSISTANT_RECOVERY_UNAVAILABLE'
+            return {'allowedActions': [], 'recoveryCode': code}
+        return {'allowedActions': ['recover'], 'recoveryCode': None}
 
 
 def assistant_messages_router(auth, service):

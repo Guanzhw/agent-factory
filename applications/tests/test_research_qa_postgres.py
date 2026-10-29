@@ -6,6 +6,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 import httpx
@@ -27,7 +28,17 @@ class ResearchQANativeTests(unittest.TestCase):
     def test_provider_training_tool_call_has_no_tool_dispatch_or_unbounded_retry(self):
         self.run_qa(malicious=True)
 
-    def run_qa(self, *, malicious=False, transient=False):
+    def test_session_origin_offline_reply_and_adoption_recheck_sources(self):
+        self.run_qa(session_origin=True)
+
+    def test_post_admission_sender_disable_preserves_committed_question_identity(self):
+        self.run_qa(session_origin=True, disable_sender_after_admission=True)
+
+    def test_closed_question_budget_returns_structured_precommit_reason(self):
+        self.run_qa(session_origin=True, close_budget_before_question=True)
+
+    def run_qa(self, *, malicious=False, transient=False, session_origin=False,
+               disable_sender_after_admission=False, close_budget_before_question=False):
         isolated = self.enterContext(IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']))
         directory = self.enterContext(TemporaryDirectory())
         calls, train_dispatches = [], []
@@ -57,7 +68,13 @@ class ResearchQANativeTests(unittest.TestCase):
         settings = Settings(db_url=isolated.url, workspace=Path(directory), max_workers=1,
             runtime_adapters=[AdapterRegistration('tool', 'qa-training-trap-v1', '1', train_adapter, tool_name='train')],
             owner_model_transport_factory=lambda: httpx.MockTransport(wire))
-        app = create_app(settings)
+        session_tools = None
+        if session_origin:
+            from research.session_tools import ResearchSessionTools
+            workspace = Path(directory) / 'research-workspace'
+            workspace.mkdir()
+            session_tools = ResearchSessionTools(workspace_root=workspace, host_commands=True)
+        app = create_app(settings, session_tools=session_tools)
         state = factory_state(app)
         from fixture_auth import initialize_members
         initialize_members(state['auth'])
@@ -98,8 +115,52 @@ class ResearchQANativeTests(unittest.TestCase):
                 visibility='personal' if name == 'private-canary' else 'team'), 'qa-source-' + name)
             if name != 'private-canary':
                 source_ids.append(source['id'])
-        question = post('/assistants/' + assistant['id'] + '/questions',
-            {'requestId': 'native-qa-question', 'text': 'measurement'}, owner='bob', expected=202)
+        question_body = {'requestId': 'native-qa-question', 'text': 'measurement'}
+        question_path = '/assistants/' + assistant['id'] + '/questions'
+        session = None
+        if session_origin:
+            sender_model = store.personal_models.configure('bob', {'provider': 'openai-compatible',
+                'baseURL': 'http://localhost:8899/v1', 'model': 'synthetic-research'}, 'native-sender-model')
+            session = post('/sessions', {'requestId': 'native-question-session', 'title': 'Evidence question',
+                'goal': 'sender-private-goal-canary', 'boundaries': 'Do not run training',
+                'modelConnectionRef': sender_model['connectionRef'],
+                'limits': {'maxTurns': 2, 'toolCallsPerTurn': 4, 'operationSeconds': 5}}, owner='bob')
+            question_path = '/sessions/' + session['id'] + '/questions'
+            question_body['assistantId'] = assistant['id']
+        if close_budget_before_question:
+            state['local_budget_scopes'].cancel('alice', configured['qa']['scopeId'])
+            denied = post(question_path, question_body, owner='bob', expected=409)
+            self.assertEqual(denied['code'], 'LOCAL_BUDGET_CLOSED_OR_EXPIRED')
+            self.assertEqual(state['research_conversations'].listing('bob', session['id'])['items'], [])
+            self.assertEqual(state['research_conversations'].inbox('alice')['items'], [])
+            self.assertEqual(store.tasks('alice'), [])
+            self.assertEqual(calls, [])
+            return
+        if disable_sender_after_admission:
+            messages = state['assistant_messages']
+            recover = messages.recover
+            originals = []
+            async def disable_after_recovery(*args):
+                original = await recover(*args)
+                originals.append(original)
+                state['auth'].directory.set_disabled('bob', True)
+                return original
+            with patch.object(messages, 'recover', side_effect=disable_after_recovery):
+                denied = post(question_path, question_body, owner='bob', expected=409)
+            self.assertEqual(denied['code'], 'RESEARCH_QUESTION_ADMISSION_UNCONFIRMED')
+            self.assertIsNotNone(originals[0]['delivery']['taskId'])
+            self.assertEqual(len(store.tasks('alice')), 1)
+            state['auth'].directory.set_disabled('bob', False)
+            receipt = state['research_conversations'].listing('bob', session['id'],
+                request_id=question_body['requestId'])['items'][0]
+            duplicate = post(question_path, question_body, owner='bob', expected=202)
+            self.assertEqual(receipt['id'], originals[0]['id'])
+            self.assertEqual(duplicate['delivery']['taskId'], originals[0]['delivery']['taskId'])
+            self.assertEqual(len(store.tasks('alice')), 1)
+            scope = state['local_budget_scopes'].inspect('alice', configured['qa']['scopeId'])
+            self.assertEqual(scope['allocatedRounds'], 1)
+            return
+        question = post(question_path, question_body, owner='bob', expected=202)
         deadline = time.monotonic() + 30
         result = question
         while time.monotonic() < deadline:
@@ -122,10 +183,33 @@ class ResearchQANativeTests(unittest.TestCase):
         self.assertEqual(store.tasks('bob'), [])
         self.assertEqual(store.sql('SELECT * FROM af_delegation_links'), [])
         self.assertEqual(train_dispatches, [])
+        if session_origin:
+            from research.session_routes import SessionTurn
+            self.assertIsNotNone(session)
+            session_id = session['id']
+            conversation = state['research_conversations']
+            incoming = conversation.inbox('alice')['items'][0]
+            self.assertNotIn('sessionId', incoming)
+            self.assertNotIn('sender-private-goal-canary', json.dumps(calls))
+            selected = state['research_sessions']._reserve('bob', session_id, SessionTurn(
+                requestId='native-adopt-reply', text='Use the returned evidence', assistantQuestionId=question['id']))
+            self.assertTrue(selected[1])
+            # The native receiver has answered; sender adoption does not itself run another model.
+            self.assertEqual(len(calls), 1)
+            with state['research_sessions'].db.read() as conn:
+                turn = state['research_sessions']._turns(conn, session_id)[0]
+                self.assertEqual(turn['body']['assistantReply']['reply'], result['reply'])
         if not malicious:
             content.set_visibility('alice', source_ids[1], 'personal', 'withdraw-uncited-qa-source')
             hidden = state['assistant_messages'].read('bob', question['id'])
             self.assertEqual(hidden['reply'], {'state': 'source_unavailable'})
+            if session_origin:
+                from functools import partial
+                detail = client.portal.call(partial(state['research_sessions'].read, 'bob', session['id']))
+                self.assertEqual(detail['turns'][0]['assistantReply'], {'state': 'unavailable',
+                    'questionId': question['id'], 'code': 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'})
+                self.assertEqual(detail['blockReason'], 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE')
+                self.assertEqual(len(calls), 1)
         scope = state['local_budget_scopes'].inspect('alice', configured['qa']['scopeId'])
         self.assertEqual(scope['allocatedRounds'], 1)
         self.assertIsNone(scope['usage'])

@@ -6,6 +6,7 @@ import { ApiError } from '../../api.js';
 import { ResearchSessions } from './ResearchSessions.js';
 import { researchSessionsApi as api, type ResearchSession, type SessionOptions, type SessionTurn } from './researchSessionsClient.js';
 import { clearSessionDrafts, draftKey, requestKey } from './researchSessionStorage.js';
+import { assistantApi, type ResearchQuestion } from './live/assistantClient.js';
 
 const options: SessionOptions = { available: true, unavailableCode: null, models: [{ connectionRef: 'model-a', provider: 'configured', model: 'research-model', available: true }], limits: { maxTurns: { min: 1, max: 20, default: 8 }, toolCallsPerTurn: { min: 1, max: 12, default: 8 }, operationSeconds: { min: 1, max: 120, default: 60 }, contextCharacters: 12000 }, workspace: { configured: true, hostCommands: true, isolation: 'host-user-not-os-sandbox' }, accounting: { tokenMetered: false, costMetered: false } };
 const session: ResearchSession = { id: 'session-a', assistantId: 'assistant-a', title: '保留研究目标', goal: '检查测试程序', boundaries: '测试通过后停止', createdAt: '2026-10-28T08:00:00Z', updatedAt: '2026-10-28T08:00:00Z', state: 'idle', model: { connectionRef: 'model-a', provider: 'configured', model: 'research-model' }, limits: { maxTurns: 8, toolCallsPerTurn: 8, operationSeconds: 60 }, context: { characters: 15, maximumCharacters: 12000 }, allowedActions: ['start'], blockReason: null, sharedSourceIds: [], turns: [] };
@@ -14,7 +15,8 @@ let host: HTMLDivElement; let root: Root; let current: ResearchSession;
 const models = vi.fn(); const task = vi.fn();
 function Harness({ owner = 'alice', initial = '' }: { owner?: string; initial?: string }) {
   const [selected, setSelected] = useState(initial);
-  return createElement(ResearchSessions, { ownerId: owner, selectedId: selected, onSelect: setSelected, onModels: models, onTask: task });
+  const [questionId, setQuestionId] = useState('');
+  return createElement(ResearchSessions, { ownerId: owner, selectedId: selected, questionId, onQuestion: setQuestionId, onSelect: setSelected, onModels: models, onTask: task });
 }
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); window.sessionStorage.clear(); current = structuredClone(session);
@@ -25,6 +27,7 @@ beforeEach(() => {
   vi.spyOn(api, 'turn').mockImplementation(async () => current);
   vi.spyOn(api, 'correct').mockImplementation(async () => current);
   vi.spyOn(api, 'stop').mockImplementation(async () => current);
+  vi.spyOn(api, 'questions').mockResolvedValue({ items: [], nextCursor: null });
   vi.spyOn(api, 'request').mockImplementation(async (_owner, requestId) => ({ requestId, action: 'turn', sessionId: current.id, turnId: 'turn-a', session: current, createsExecution: false, automaticReplay: false }));
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -269,4 +272,26 @@ it('shows unavailable configuration honestly and clears private drafts on logout
   await field('研究目标', '私人研究输入');
   window.sessionStorage.setItem(requestKey('alice'), JSON.stringify([{ requestId: 'request-a', action: 'create', sessionId: null }]));
   clearSessionDrafts('alice'); expect(window.sessionStorage.getItem(draftKey('alice'))).toBeNull(); expect(window.sessionStorage.getItem(requestKey('alice'))).toContain('request-a');
+});
+
+it('uses a selected original reply only when submitting the next turn', async () => {
+  const reply: ResearchQuestion = { id: 'question-a', senderId: 'alice', recipientId: 'bob', endpointId: 'qa-bob', text: '原问题', createdAt: session.createdAt, delivery: { state: 'accepted', taskId: 'b-task', runId: 'b-run' }, reply: { state: 'available', text: '同事回答', contentIds: [], createdAt: session.createdAt } };
+  vi.mocked(api.questions).mockResolvedValue({ items: [reply], nextCursor: null }); vi.spyOn(assistantApi, 'question').mockResolvedValue(reply);
+  await mount(session.id); await act(async () => button('原问题').click()); await act(async () => button('用于下一轮').click());
+  expect(api.turn).not.toHaveBeenCalled(); expect(api.correct).not.toHaveBeenCalled(); expect(host.textContent).toContain('已选择下一轮引用');
+  await field('下一轮指令', '结合该回复核对边界'); await act(async () => button('开始这一轮').click());
+  expect(api.turn).toHaveBeenCalledWith('alice', session.id, expect.objectContaining({ assistantQuestionId: 'question-a', text: '结合该回复核对边界' }));
+  expect(host.textContent).not.toContain('已选择下一轮引用');
+});
+
+it('keeps a selected reply out of current corrections and hides an adopted copy on revoked authority', async () => {
+  sessionStorage.setItem(`${draftKey('alice', session.id)}:reply`, JSON.stringify('question-a'));
+  current = { ...current, state: 'running', allowedActions: ['correct', 'stop'], turns: [{ ...completedTurn, assistantReply: { state: 'available', questionId: 'question-a', senderId: 'alice', recipientId: 'bob', endpointId: 'qa-bob', questionText: '私密原问题', reply: { state: 'available', text: '撤回后不能显示的回复', contentIds: ['source-private'], createdAt: session.createdAt }, delivery: { state: 'accepted', taskId: 'b-task', runId: 'b-run' } } }] };
+  await mount(session.id); await field('补充或纠正当前研究', '只检查数据'); await act(async () => button('保存纠正').click());
+  expect(vi.mocked(api.correct).mock.calls[0][2]).toEqual({ requestId: expect.any(String), text: '只检查数据' }); expect(api.turn).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('撤回后不能显示的回复');
+  current = { ...current, turns: [{ ...current.turns[0], assistantReply: { state: 'unavailable', questionId: 'question-a', code: 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE' } }] };
+  await act(async () => button('刷新会话').click());
+  expect(host.textContent).not.toContain('撤回后不能显示的回复'); expect(host.textContent).not.toContain('source-private'); expect(host.textContent).not.toContain('私密原问题');
+  expect(host.textContent).toContain('正文与来源已隐藏'); expect(host.textContent).toContain('question-a');
 });

@@ -261,7 +261,7 @@ class ResearchAssistants:
                     'qaAvailable': self._availability(row)['available']})
             return {'items': items, 'nextCursor': rows[limit - 1]['id'] if len(rows) > limit else None}
 
-    async def question(self, sender, identifier, body: SendAssistantMessage):
+    def question_target(self, sender, identifier, body: SendAssistantMessage):
         self.auth.require_member(sender)
         try:
             original = self.messages.request(sender, body.requestId)
@@ -273,13 +273,25 @@ class ResearchAssistants:
                 configuration = self._historical_configuration(conn, original['recipientId'], original['endpointId'])
             if original['text'] != body.text or configuration['id'] != identifier:
                 raise HTTPException(409, 'RESEARCH_QUESTION_REQUEST_CONFLICT')
-            return original
+            return original['endpointId'], original
         with self.db.read() as conn:
             row = self._identity(conn, identifier)
             endpoint_id = row['qa_endpoint_id']
             if endpoint_id is None:
                 raise HTTPException(409, 'RESEARCH_ASSISTANT_UNCONFIGURED')
+        return endpoint_id, None
+
+    async def question(self, sender, identifier, body: SendAssistantMessage):
+        endpoint_id, original = self.question_target(sender, identifier, body)
+        if original is not None:
+            return original
         return await self.messages.send(sender, endpoint_id, body)
+
+    def read_question(self, actor, identifier):
+        message = self.messages.read(actor, identifier)
+        with self.db.read() as conn:
+            self._historical_configuration(conn, message['recipientId'], message['endpointId'])
+        return {**message, **self.messages.recovery_actions(actor, identifier)}
 
 
 def assistants_router(auth, service):
@@ -307,6 +319,6 @@ def assistants_router(auth, service):
 
     @router.get('/assistant-questions/{identifier}')
     def read_question(identifier: str, request: Request):
-        return service.messages.read(auth.user(request)['id'], identifier)
+        return service.read_question(auth.user(request)['id'], identifier)
 
     return router

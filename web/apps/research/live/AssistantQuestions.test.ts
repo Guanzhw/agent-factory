@@ -20,7 +20,7 @@ it('shows actual peers and directs a question only to the selected available ide
   vi.spyOn(assistantApi, 'directory').mockResolvedValue({ items: [{ id: 'peer', ownerId: 'bob', displayName: 'Bob', qaAvailable: true }, { id: 'disabled', ownerId: 'carol', displayName: 'Carol', qaAvailable: false }], nextCursor: null });
   const onAsk = vi.fn(); await act(async () => root.render(createElement(AssistantDirectory, { ownerId: 'alice', onAsk })));
   expect(button('向 Carol 的助手提问').disabled).toBe(true);
-  await act(async () => button('向 Bob 的助手提问').click()); expect(onAsk).toHaveBeenCalledExactlyOnceWith('peer');
+  await act(async () => button('向 Bob 的助手提问').click()); expect(onAsk).toHaveBeenCalledExactlyOnceWith('peer', 'Bob');
 });
 it('recovers a 408 with the original key and body after remount, never admitting a replacement', async () => {
   const ask = vi.spyOn(assistantApi, 'ask').mockRejectedValueOnce(new ApiError('未知应答', 408, 'TIMEOUT')).mockResolvedValue(question);
@@ -66,4 +66,27 @@ it('clears cached text on focus revalidation and a denied source read', async ()
   vi.spyOn(assistantApi, 'question').mockResolvedValue(question); vi.spyOn(assistantApi, 'source').mockRejectedValue(new ApiError('来源不可读', 403, 'FORBIDDEN'));
   await readMount(); await act(async () => button('source-a').click()); expect(host.textContent).not.toContain('仅对已记录条件适用。'); expect(host.textContent).toContain('来源不可读');
   await act(async () => window.dispatchEvent(new Event('focus'))); expect(assistantApi.question).toHaveBeenCalledTimes(3);
+});
+
+it('lets only the recipient recover when explicitly allowed and keeps repeated clicks on the same original message', async () => {
+  const awaiting: ResearchQuestion = { ...question, delivery: { state: 'unconfirmed', taskId: null, runId: null }, reply: null, allowedActions: ['recover'], recoveryCode: null };
+  vi.spyOn(assistantApi, 'question').mockResolvedValue(awaiting);
+  const finish = deferred<ResearchQuestion>(); const recover = vi.spyOn(assistantApi, 'recover').mockReturnValue(finish.promise);
+  await readMount(question.id, 'alice'); expect(button('接续原问题')).toBeUndefined();
+  const task = vi.fn(); await act(async () => root.render(createElement(OriginalQuestion, { key: 'bob', ownerId: 'bob', questionId: question.id, onTask: task })));
+  const resume = button('接续原问题'); await act(async () => { resume.click(); resume.click(); });
+  expect(recover).toHaveBeenCalledExactlyOnceWith('bob', question.id);
+  vi.mocked(assistantApi.question).mockResolvedValue({ ...question, allowedActions: [], recoveryCode: 'ASSISTANT_ORIGINAL_TASK_EXISTS' });
+  await act(async () => finish.resolve(question));
+  expect(button('接续原问题')).toBeUndefined(); await act(async () => button('查看我的原任务').click()); expect(task).toHaveBeenCalledWith('original-task');
+});
+
+it('does not derive recovery permission from a missing task and keeps an unknown recovery result read-only', async () => {
+  vi.spyOn(assistantApi, 'question').mockResolvedValue({ ...question, delivery: { state: 'unconfirmed', taskId: null, runId: null }, allowedActions: [], recoveryCode: 'ASSISTANT_ENDPOINT_DISABLED' });
+  const recover = vi.spyOn(assistantApi, 'recover').mockRejectedValue(new ApiError('响应丢失', 408));
+  await readMount(question.id, 'bob'); expect(button('接续原问题')).toBeUndefined(); expect(recover).not.toHaveBeenCalled();
+  vi.mocked(assistantApi.question).mockResolvedValue({ ...question, allowedActions: ['recover'] });
+  await act(async () => button('核对原问题').click()); await act(async () => button('接续原问题').click());
+  expect(host.textContent).toContain('接续结果未确认'); expect(button('接续原问题')).toBeUndefined();
+  expect(recover).toHaveBeenCalledOnce();
 });

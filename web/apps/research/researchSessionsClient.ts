@@ -1,4 +1,5 @@
 import { ApiError, factoryRequest } from '../../api.js';
+import type { ResearchQuestion } from './live/assistantClient.js';
 
 export interface SessionLimits { maxTurns: number; toolCallsPerTurn: number; operationSeconds: number }
 type Limit = { min: number; max: number; default: number };
@@ -16,6 +17,10 @@ export interface SessionTurn {
   createdAt: string; completedAt: string | null; result: string | null; failure: string | null;
   messages: SessionMessage[]; events: SessionEvent[];
   toolResults: { effectKey: string; status: string; result: Record<string, unknown> | null }[];
+  assistantReply?: { questionId: string; state: 'unavailable'; code: string } | {
+    questionId: string; state: 'available'; senderId: string; recipientId: string; endpointId: string;
+    questionText: string; reply: Extract<ResearchQuestion['reply'], { state: 'available' }>; delivery: ResearchQuestion['delivery'];
+  };
 }
 export interface SessionSummary {
   id: string; assistantId: string; title: string; goal: string; boundaries: string; createdAt: string; updatedAt: string;
@@ -51,7 +56,9 @@ export const researchSessionsApi = {
   list: (owner: string, after = '', signal?: AbortSignal) => factoryRequest<SessionPage>(`${base}${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal, owner),
   get: async (owner: string, id: string, signal?: AbortSignal) => detail(await factoryRequest<ResearchSession>(path(id), 'GET', undefined, signal, owner), id),
   create: async (owner: string, body: CreateSession) => detail(await factoryRequest<ResearchSession>(base, 'POST', body, undefined, owner)),
-  turn: async (owner: string, id: string, body: { requestId: string; text: string }) => detail(await factoryRequest<ResearchSession>(`${path(id)}/turns`, 'POST', body, undefined, owner), id),
+  turn: async (owner: string, id: string, body: { requestId: string; text: string; assistantQuestionId?: string }) => detail(await factoryRequest<ResearchSession>(`${path(id)}/turns`, 'POST', body, undefined, owner), id),
+  questions: (owner: string, id: string, after = '', requestId = '', signal?: AbortSignal) => factoryRequest<{ items: ResearchQuestion[]; nextCursor: string | null }>(`${path(id)}/questions?limit=20&after=${encodeURIComponent(after)}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}`, 'GET', undefined, signal, owner),
+  ask: (owner: string, id: string, body: { requestId: string; assistantId: string; text: string }) => factoryRequest<ResearchQuestion>(`${path(id)}/questions`, 'POST', body, undefined, owner),
   correct: async (owner: string, id: string, body: { requestId: string; text: string }) => detail(await factoryRequest<ResearchSession>(`${path(id)}/corrections`, 'POST', body, undefined, owner), id),
   stop: async (owner: string, id: string, body: { requestId: string }) => detail(await factoryRequest<ResearchSession>(`${path(id)}/stop`, 'POST', body, undefined, owner), id),
   request: async (owner: string, requestId: string, signal?: AbortSignal): Promise<SessionRequest> => {
