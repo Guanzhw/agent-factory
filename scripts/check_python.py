@@ -80,6 +80,14 @@ def discover_tests(test_directories=None, *, loader=None):
     return discovered
 
 
+def report_test_failures(result):
+    if os.environ.get('GITHUB_ACTIONS') == 'true':
+        for case, traceback in [*result.failures, *result.errors]:
+            message = f'{case.id()}\n{traceback}'
+            message = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+            print(f'::error::{message}')
+
+
 def main():
     configure_imports()
     try:
@@ -90,13 +98,7 @@ def main():
     suite = unittest.TestSuite(discovered.values())
     discovered.clear()
     result = unittest.TextTestRunner(verbosity=2).run(suite)
-    if os.environ.get('GITHUB_ACTIONS') == 'true':
-        # Keep failure details available through the checks API as well as the
-        # full job log, including when its separate storage endpoint is blocked.
-        for case, traceback in [*result.failures, *result.errors]:
-            message = f'{case.id()}\n{traceback}'
-            message = message.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
-            print(f'::error::{message}')
+    report_test_failures(result)
     return 0 if result.wasSuccessful() else 1
 
 
