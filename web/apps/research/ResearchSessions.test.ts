@@ -41,6 +41,63 @@ async function field(label: string, value: string) {
 }
 async function validDraft() { await field('会话名称', '保留研究目标'); await field('研究目标', '检查测试程序'); await field('停止边界', '测试通过后停止'); }
 
+it.each([
+  ['research_remember', { operation: 'remember', memory: { id: 'memory-a', text: '测试使用 pytest', updatedAt: session.updatedAt } }, ['记住个人偏好', '已记住', '测试使用 pytest']],
+  ['research_find_memories', { operation: 'find', memories: [{ id: 'memory-a', text: '测试使用 pytest', updatedAt: session.updatedAt }], page: 1, total: 2, nextPage: 2 }, ['查找个人记忆', '第 1 页 · 共 2 条匹配 · 还有第 2 页', '是否采用请结合助手回复和后续执行记录核对']],
+  ['research_update_memory', { operation: 'update', memory: { id: 'memory-a', text: '测试使用 python -m pytest -q', updatedAt: session.updatedAt }, previousText: '测试使用 pytest' }, ['纠正个人记忆', '已修改', '修改前', '测试使用 pytest', '修改后', '测试使用 python -m pytest -q']],
+  ['research_forget_memory', { operation: 'forget', memory: { id: 'memory-a', text: '测试使用 python -m pytest -q', updatedAt: session.updatedAt }, notice: '仅移除个人记忆；旧会话和摘要保留。' }, ['忘记个人记忆', '已忘记', '测试使用 python -m pytest -q', '旧会话和摘要保留']],
+] as const)('shows the real %s memory result inside existing expanded tool events without executing on refresh', async (toolName, output, expected) => {
+  current = { ...current, capabilities: { memory: true }, turns: [{ ...completedTurn, events: [{ id: 1, jobId: 'task-a', type: 'research_tool_finished', message: '研究工具返回结果', data: { toolName, outcome: 'completed', output }, createdAt: session.updatedAt }] }] };
+  await mount(session.id);
+  const events = host.querySelector<HTMLDetailsElement>('.rs-events')!;
+  expect(events.open).toBe(true);
+  for (const text of expected) expect(events.textContent).toContain(text);
+  expect(events.textContent).toContain('记忆条目：memory-a');
+  expect(events.querySelector('details')?.open).toBe(false);
+  await act(async () => button('刷新会话').click());
+  expect(api.create).not.toHaveBeenCalled(); expect(api.turn).not.toHaveBeenCalled(); expect(api.correct).not.toHaveBeenCalled(); expect(api.stop).not.toHaveBeenCalled();
+});
+
+it.each([
+  ['failed', 'RESEARCH_MEMORY_UNAVAILABLE', '本次操作未完成'],
+  ['unknown', 'RESEARCH_TOOL_RECEIPT_UNCONFIRMED', '本次操作结果尚未确认'],
+] as const)('does not present a %s memory write as saved or offer replay', async (outcome, code, expected) => {
+  current = { ...current, turns: [{ ...completedTurn, events: [{ id: 1, jobId: 'task-a', type: 'research_tool_finished', message: '原操作需核对', data: { toolName: 'research_remember', outcome, code }, createdAt: session.updatedAt }] }] };
+  await mount(session.id);
+  const events = host.querySelector<HTMLDetailsElement>('.rs-events')!;
+  expect(events.open).toBe(true); expect(events.querySelector('[role="alert"]')?.textContent).toContain(expected);
+  expect(events.textContent).toContain(code); expect(events.textContent).not.toContain('已记住');
+  expect(events.querySelector('button')).toBeNull(); expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('distinguishes a later memory receipt reconciliation from another write and explains oversized searches', async () => {
+  current = { ...current, turns: [{ ...completedTurn, events: [
+    { id: 1, jobId: 'task-a', type: 'research_tool_finished', message: '已核对原记忆操作，未重新执行', data: { toolName: 'research_remember', outcome: 'completed', reconciled: true, output: { operation: 'remember', memory: { id: 'memory-a', text: '回答先给结论' } } }, createdAt: session.updatedAt },
+    { id: 2, jobId: 'task-a', type: 'research_tool_finished', message: '结果过大', data: { toolName: 'research_find_memories', outcome: 'failed', code: 'RESEARCH_TOOL_OUTPUT_TOO_LARGE' }, createdAt: session.updatedAt },
+  ] }] };
+  await mount(session.id);
+  const events = host.querySelector('.rs-events')!;
+  expect(events.textContent).toContain('已核对原操作，未重新执行');
+  expect(events.textContent).toContain('结果超过当前输出范围，可在下一条指令中缩小查找范围');
+  expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('does not invent a confirmed memory body from a malformed success and explains an old fixed binding', async () => {
+  current = { ...current, capabilities: { memory: false }, turns: [{ ...completedTurn, events: [{ id: 1, jobId: 'task-a', type: 'research_tool_finished', message: '研究工具返回结果', data: { toolName: 'research_remember', outcome: 'completed', output: { operation: 'remember', memory: { id: 'memory-a' } } }, createdAt: session.updatedAt }] }] };
+  await mount(session.id);
+  const events = host.querySelector('.rs-events')!;
+  expect(events.textContent).toContain('本次操作结果尚未确认'); expect(events.textContent).not.toContain('已记住');
+  expect(host.textContent).toContain('此会话的原工具配置不包含个人记忆');
+  expect(button('新建会话')).toBeDefined(); expect(api.create).not.toHaveBeenCalled();
+});
+
+it('does not turn a memory search response without paging evidence into an empty result', async () => {
+  current = { ...current, turns: [{ ...completedTurn, events: [{ id: 1, jobId: 'task-a', type: 'research_tool_finished', message: '研究工具返回结果', data: { toolName: 'research_find_memories', outcome: 'completed', output: { operation: 'find', memories: [] } }, createdAt: session.updatedAt }] }] };
+  await mount(session.id);
+  const events = host.querySelector('.rs-events')!;
+  expect(events.textContent).toContain('本次操作结果尚未确认'); expect(events.textContent).not.toContain('本页没有匹配的个人记忆');
+});
+
 it('validates beside fields and keeps drafts through resource navigation and remount without creating a session', async () => {
   await mount(); await act(async () => button('创建并开始研究').click());
   expect(host.querySelectorAll('label [role="alert"]')).toHaveLength(3); expect(api.create).not.toHaveBeenCalled();

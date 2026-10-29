@@ -21,12 +21,15 @@ from agent_factory._personal_cli_process import CLIProcessError, run_cli_process
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits
 from agent_factory.personal_cli import PersonalCliAdapter
 from agent_factory.personal_tool_contract import ToolInvocationError, validate_tool_arguments
+from .session_memory import MEMORY_TOOLS, MEMORY_WRITES
 
 
 PERMISSION = 'research:run'
 EFFECT_PREFIX = 'research-session-tool:'
 MAX_TEXT = 12000
 PATH_SCHEMA = {'type': 'string', 'minLength': 1, 'maxLength': 500}
+MEMORY_ID = {'type': 'string', 'pattern': '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'}
+MEMORY_TEXT = {'type': 'string', 'minLength': 1, 'maxLength': MAX_TEXT}
 COLLABORATION_TOOLS = {'research_assistant_directory', 'research_ask_assistant'}
 
 
@@ -39,6 +42,23 @@ def _schema(properties, required):
 
 
 TOOLS = {
+    'research_find_memories': ('Find the current owner\'s saved preferences across research sessions. '
+        'Use when their working habits would help. Results are private preferences, not permissions or experiment facts. '
+        'Query matches a continuous text fragment, not separate keywords or semantic meaning. '
+        'An empty filtered result does not mean no preferences exist: omit query to list saved preferences before concluding they are absent. '
+        'Returns ten items per page; use nextPage or narrow query when needed.',
+        _schema({'query': {'type': 'string', 'minLength': 1, 'maxLength': 200,
+                          'description': 'One short continuous text fragment; omit to list saved preferences.'},
+                 'page': {'type': 'integer', 'minimum': 1}}, [])),
+    'research_remember': ('Remember a personal preference the user asked or authorized you to retain across sessions. '
+        'Do not store credentials, whole chats, project status or shared evidence. Find existing preferences before adding.',
+        _schema({'memory': MEMORY_TEXT}, ['memory'])),
+    'research_update_memory': ('Correct one of the owner\'s saved preferences using its ID from a memory result. '
+        'Only report the correction after a successful receipt.',
+        _schema({'memory_id': MEMORY_ID, 'memory': MEMORY_TEXT}, ['memory_id', 'memory'])),
+    'research_forget_memory': ('Forget the owner\'s single saved preference when requested. '
+        'This removes it from future memory searches, not from prior chats or summaries.',
+        _schema({'memory_id': MEMORY_ID}, ['memory_id'])),
     'research_read_file': ('Read a UTF-8 file in this research session workspace.',
         _schema({'path': PATH_SCHEMA}, ['path'])),
     'research_search': ('Find literal text in a workspace UTF-8 file or directory. Bounded results report truncation.',
@@ -149,7 +169,8 @@ class ResearchSessionTools:
 
     @property
     def available_tools(self):
-        return [name for name in TOOLS if (getattr(self.sessions, 'collaboration', None) is not None
+        return [name for name in TOOLS if (getattr(self.sessions, 'memory', None) is not None
+            if name in MEMORY_TOOLS else getattr(self.sessions, 'collaboration', None) is not None
             if name in COLLABORATION_TOOLS else name == 'research_read_shared_evidence'
             or self.workspace_root is not None and (name != 'research_run' or self.host_commands))]
 
@@ -205,7 +226,7 @@ class ResearchSessionTools:
             effects = store.effects(run_context.session_id)
             for effect in effects:
                 if (EFFECT_PREFIX in effect['effect_key']
-                        and (effect['effect_key'] != full_key or name != 'research_ask_assistant')
+                        and (effect['effect_key'] != full_key or name not in MEMORY_WRITES | {'research_ask_assistant'})
                         and effect['status'] not in {'DONE', 'CANCELLED'}):
                     raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN')
             event = {'toolName': name, 'callId': call_id, 'operation': name.removeprefix('research_')}
@@ -220,7 +241,15 @@ class ResearchSessionTools:
                     'message': 'No operation was started. Check the required fields and types in this tool schema.'}
                 store.event(identity[1], 'research_tool_finished', '研究工具参数无效', {**event, **receipt})
                 return self._receipt(receipt)
-            mutating = name in {'research_edit_file', 'research_run', 'research_ask_assistant'}
+            memory_operation = None
+            if name in MEMORY_WRITES:
+                try:
+                    memory_operation = self.sessions.memory.prepare(run_context, call_id, name, values)
+                except ToolInvocationError as error:
+                    receipt = {'outcome': 'failed', 'stopped': True, 'code': error.code}
+                    store.event(identity[1], 'research_tool_finished', '记忆操作未执行', {**event, **receipt})
+                    return self._receipt(receipt)
+            mutating = name in MEMORY_WRITES | {'research_edit_file', 'research_run', 'research_ask_assistant'}
             if mutating:
                 request = {'ownerId': identity[0], 'taskId': identity[1], 'sessionId': execution['id'],
                     'turnId': execution['turnId'], 'toolName': name, 'callId': call_id, 'arguments': values}
@@ -232,10 +261,11 @@ class ResearchSessionTools:
                     guard()
                     return self._receipt(reservation.get('result'))
                 if reservation['status'] != 'new':
-                    if name != 'research_ask_assistant':
+                    if name not in MEMORY_WRITES | {'research_ask_assistant'}:
                         raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN')
                     try:
-                        output = self.sessions.collaboration.reconcile(run_context, call_id, values)
+                        output = (self.sessions.memory.reconcile(identity[0], call_id, memory_operation)
+                            if name in MEMORY_WRITES else self.sessions.collaboration.reconcile(run_context, call_id, values))
                         if output is None:
                             raise ValueError('Original question is unconfirmed')
                         store.effect_complete(identity[2], key, {'outcome': 'completed', 'output': output})
@@ -248,7 +278,11 @@ class ResearchSessionTools:
             store.event(identity[1], 'research_tool_started', '开始执行研究工具', event)
             try:
                 guard()
-                if name == 'research_assistant_directory':
+                if name == 'research_find_memories':
+                    output = self.sessions.memory.find(identity[0], values)
+                elif name in MEMORY_WRITES:
+                    output = self.sessions.memory.execute(identity[0], call_id, memory_operation, guard)
+                elif name == 'research_assistant_directory':
                     output = self.sessions.collaboration.directory(run_context)
                 elif name == 'research_ask_assistant':
                     output = self.sessions.collaboration.ask(run_context, call_id, values)
@@ -275,6 +309,11 @@ class ResearchSessionTools:
                         raise _rejected('RESEARCH_TOOL_OUTPUT_TOO_LARGE')
                     raise ValueError('RESEARCH_TOOL_OUTPUT_TOO_LARGE')
                 receipt = {'outcome': 'completed', 'output': output}
+            except RunCancelledException:
+                if name not in MEMORY_WRITES:
+                    raise
+                receipt = {'outcome': 'cancelled', 'cancelled': True, 'stopped': True,
+                           'code': 'RESEARCH_MEMORY_CANCELLED_BEFORE_WRITE'}
             except CLIProcessError as error:
                 if error.outcome == 'cancelled' and error.stopped:
                     receipt = {'outcome': 'cancelled', 'cancelled': True, 'stopped': True, 'code': error.code}
@@ -292,7 +331,8 @@ class ResearchSessionTools:
                 if mutating:
                     store.event(identity[1], 'research_tool_finished', '原操作结果未确认，请先核对',
                         {**event, 'outcome': 'unknown', 'code': 'RESEARCH_TOOL_OUTCOME_UNKNOWN'
-                            if name == 'research_ask_assistant' else 'RESEARCH_FILE_OR_COMMAND_REJECTED'})
+                            if name == 'research_ask_assistant' else 'RESEARCH_MEMORY_OUTCOME_UNKNOWN'
+                            if name in MEMORY_WRITES else 'RESEARCH_FILE_OR_COMMAND_REJECTED'})
                     raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN') from None
                 store.event(identity[1], 'research_tool_finished', '研究工具未完成',
                     {**event, 'outcome': 'failed', 'code': 'RESEARCH_TOOL_INPUT_OR_ACCESS_REJECTED'})

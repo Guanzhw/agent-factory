@@ -21,6 +21,8 @@ from agent_factory.runtime_hooks import effect_unresolved, runtime_custody_held
 from agent_factory.store import digest, now
 from .assistants import CreateAssistant
 from .session_setup import CONTEXT_CHARACTERS, MODE, ResearchSessionSetup, rejected
+from .session_memory import ResearchSessionMemory
+from .session_tools import EFFECT_PREFIX
 from . import session_context
 
 
@@ -30,6 +32,7 @@ class ResearchSessions:
         self.content, self.tools = content, tools
         self.conversations: Any = None
         self.collaboration: Any = None
+        self.memory = ResearchSessionMemory(self)
         self.setup = ResearchSessionSetup(store, connections, models, tools)
         self.db = GovernedStorage(store, 'research_sessions_v1')
         metadata = MetaData()
@@ -176,6 +179,7 @@ class ResearchSessions:
             task = await asyncio.to_thread(self._task, owner, turn)
             if task is None:
                 continue
+            await asyncio.to_thread(self.memory.observe, owner, turn, task, EFFECT_PREFIX)
             try:
                 detail = await self.runs.factory.detail(task)
             except HTTPException:
@@ -200,6 +204,24 @@ class ResearchSessions:
                 if current['body'].get('terminal'):
                     continue  # A concurrent confirmed final result wins over this older observation.
                 body = deepcopy(current['body'])
+                effects = snapshot.get('effects', [])
+                memory_keys = {operation['runId'] + ':' + EFFECT_PREFIX + call_id
+                    for call_id, operation in body.get('memoryOperations', {}).items()}
+                reconciled_memories = {item['effect_key'] for item in effects if item['effect_key'] in memory_keys
+                    and (item.get('result') or {}).get('reconciled') is True}
+                ticket = snapshot.get('queue') or {}
+                native_ended = (ticket.get('id') == task['run_id'] and ticket.get('session_id') == task['id']
+                    and ticket.get('user_id') == owner and ticket.get('status') in {'completed', 'failed', 'cancelled'}
+                    and run.get('run_id') == task['run_id'] and run.get('session_id') == task['id']
+                    and run.get('user_id') == owner
+                    and str(run.get('status', '')).lower() in {'completed', 'error', 'cancelled'})
+                if (body.get('blockReason') in {'RESEARCH_EFFECT_UNCONFIRMED', 'RESEARCH_RESTART_REQUIRES_RECONCILIATION'}
+                        and reconciled_memories and native_ended
+                        and all(item['effect_key'] in reconciled_memories for item in effects)
+                        and not any(effect_unresolved(item, self.store) for item in effects)):
+                    # Release this metadata hold only. The lifecycle observer still
+                    # proves process custody/terminal state before a new turn.
+                    body['blockReason'] = None
                 compaction = body.get('compaction')
                 summary_ended = bool(observed_terminal and compaction and compaction['status'] in {'started', 'failed', 'unknown'})
                 if summary_ended:
@@ -645,6 +667,7 @@ class ResearchSessions:
             return {'id': row['id'], 'assistantId': row['assistant_id'],
                 **{key: deepcopy(body[key]) for key in ('title', 'goal', 'boundaries', 'createdAt', 'updatedAt', 'limits', 'sharedSourceIds')},
                 'model': deepcopy(body['configuration']['model']), 'state': state, 'allowedActions': actions,
+                'capabilities': {'memory': body['configuration'].get('personalMemory') is True},
                 'collaboration': {'enabled': body['configuration'].get('autonomousCollaboration') is True},
                 'blockReason': block, 'context': {'characters': characters, 'maximumCharacters': CONTEXT_CHARACTERS,
                     'rawCharacters': raw_characters, **({'compaction': compact_view} if compact_view else {})},
