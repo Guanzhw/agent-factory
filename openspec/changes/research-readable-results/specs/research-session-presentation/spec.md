@@ -8,7 +8,7 @@
 
 #### Scenario: Read a completed coding task
 - **WHEN** 回复包含段落、列表、粗体及代码围栏，工具回执包含真实命令输出
-- **THEN** 桌面和手机可辨认结论与代码，代码选择复制后保留原字符，命令输出与模型解释分开
+- **THEN** 桌面和手机可辨认结论与代码，代码内容、内部换行和缩进保留；浏览器原生选择复制行为与同浏览器标准pre/code控件一致，命令输出与模型解释分开
 
 ### Requirement: Detail disclosure preserves execution facts
 
