@@ -4,9 +4,9 @@
 
 ## Full CI failure and diagnostics
 
-`455506f4110d53d130772a800552b59f7480d9b8` 的 [full40806050019](https://github.com/Guanzhw/agent-factory/actions/runs/40806050019) 失败：PostgreSQL 全量执行、完成核验和汇总失败，其余五个 job 成功。普通 Checks API 未给出失败测试 ID；十条源码错误注解与此前成功的8ff full完全一致，不能据这些负向fixture注解判断本次根因，也不因此记作偶发通过。原候选独立本地完整复现进行中，发布暂停；未读取被拒的原始日志/产物。
+`455506f4110d53d130772a800552b59f7480d9b8` 的 [full40806050019](https://github.com/Guanzhw/agent-factory/actions/runs/40806050019) 失败：PostgreSQL 全量执行、完成核验和汇总失败，其余五个 job 成功。普通 Checks API 未给出失败测试 ID；十条源码错误注解与此前成功的8ff full完全一致，不能据这些负向fixture注解判断本次根因。原候选在独立目录进行一次本地完整复现尝试：2481 tests、0 failures/errors、15 skips、六个必跑组全过、accepted=true；临时库已清理。本地未复现，远端原失败根因仍未知，不称已修复或改记为通过。准确新候选 full 前仍暂停发布；未读取被拒的原始日志/产物。
 
-诊断补丁仅把 `check_python` 既有用例ID/转义traceback注解复用到 `check_postgres`；没有 unittest failure/error 但 required acceptance 未通过时显示既有摘要。测试集合、期限、accepted、退出码和产物语义保持，后续新运行的诊断不回写旧失败。33项无数据库 runner/CI/profiler回归通过，包含两入口的合成失败/错误、非Actions不输出、required skip仍失败；测试捕获这些合成错误注解，不让它们泄漏到正常CI。诊断补丁仍须独立审查与准确新head full；不能称旧根因已修。
+诊断补丁仅把 `check_python` 既有用例ID/转义traceback注解复用到 `check_postgres`；没有 unittest failure/error 但 required acceptance 未通过时显示既有摘要。测试集合、期限、accepted、退出码和产物语义保持，后续新运行的诊断不回写旧失败。33项无数据库 runner/CI/profiler回归由非作者在 GITHUB_ACTIONS=true 下独立通过，包含两入口的合成失败/错误、非Actions不输出、required skip仍失败；合成错误注解泄漏为0。`3fd1d8d` 增量及累计差异独审通过；准确最终head full仍待，不能称旧根因已修。
 
 ## Behavior
 
