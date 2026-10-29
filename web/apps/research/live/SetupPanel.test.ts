@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ApiError } from '../../../api.js';
 import { SetupPanel } from './SetupPanel.js';
 import { setupApi, type ResearchSetup, type SetupCandidates } from './setupClient.js';
+import { clearSessionDrafts } from '../researchSessionStorage.js';
 let host: HTMLDivElement; let root: Root;
 const onSetup = vi.fn(); const onPublished = vi.fn();
 const pin = { id: 'tool-experiment', version: 1, sha256: 'a'.repeat(64) };
@@ -17,7 +18,7 @@ beforeEach(() => {
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 const button = (name: string) => [...host.querySelectorAll('button')].find(item => item.textContent === name)!;
-async function mount(setupId?: string, ownerId = 'alice') { await act(async () => root.render(createElement(SetupPanel, { key: `${ownerId}:${setupId ?? 'new'}`, ownerId, setupId, onSetup, onPublished, onResources: vi.fn(), onMaterials: vi.fn() }))); }
+async function mount(setupId?: string, ownerId = 'alice', projectId = 'project-a', goalVersion = 1) { await act(async () => root.render(createElement(SetupPanel, { key: `${ownerId}:${projectId}:${goalVersion}:${setupId ?? 'new'}`, ownerId, projectId, goalVersion, setupId, onSetup, onPublished, onResources: vi.fn(), onMaterials: vi.fn() }))); }
 async function field(label: string, value: string) {
   const input = [...host.querySelectorAll('label')].find(item => item.firstChild?.textContent === label)!.querySelector('input,select')!;
   const prototype = input.tagName === 'SELECT' ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
@@ -38,4 +39,19 @@ it('retains the same publication key after an unknown reply and owner-isolated r
   vi.mocked(setupApi.publish).mockRejectedValueOnce(new ApiError('应答丢失', 408)); await mount('setup-1'); await act(async () => button('发布研究执行配置').click()); const first = vi.mocked(setupApi.publish).mock.calls[0];
   await mount('setup-1', 'bob'); expect(button('重试原操作')).toBeUndefined();
   await mount('setup-1'); await act(async () => button('重试原操作').click()); expect(vi.mocked(setupApi.publish).mock.calls[1]).toEqual(first);
+});
+
+it('keeps unfinished setup inputs on return and isolates the owner, project and goal version', async () => {
+  await mount(); await field('配置名称', '尚未保存的配置'); await field('已保存模型连接', 'actual-model-connection'); await field('运行环境', 'registered-environment:1'); await field('工具调用次数', '17');
+  await act(async () => (host.querySelector('input[type=checkbox]') as HTMLInputElement).click());
+  await act(async () => root.render(null)); await mount();
+  const name = () => (host.querySelector('input[maxlength="120"]') as HTMLInputElement).value;
+  expect(name()).toBe('尚未保存的配置'); expect((host.querySelector('input[type=checkbox]') as HTMLInputElement).checked).toBe(true);
+  expect([...host.querySelectorAll('input')].map(input => input.value)).toContain('17');
+  expect(setupApi.draft).not.toHaveBeenCalled(); expect(setupApi.publish).not.toHaveBeenCalled(); expect(onPublished).not.toHaveBeenCalled();
+  await mount(undefined, 'bob'); expect(name()).toBe('');
+  await mount(undefined, 'alice', 'project-b'); expect(name()).toBe('');
+  await mount(undefined, 'alice', 'project-a', 2); expect(name()).toBe('');
+  await mount(); expect(name()).toBe('尚未保存的配置');
+  clearSessionDrafts('alice'); await act(async () => root.render(null)); await mount(); expect(name()).toBe('');
 });

@@ -1,9 +1,11 @@
 /** Generic workspace views; unknown retired application URLs return to the catalog. */
 export const workspaceTabs = {
-  catalog: '应用目录', resources: '我的资源', models: '我的模型/API', developer: '开发者装配', tasks: '任务与证据',
+  catalog: '应用', resources: '我的资源', models: '我的模型/API', developer: '高级装配', tasks: '我的任务',
   connections: '我的凭据与连接', schedules: '计划任务', storage: '存储与回收',
-  materials: '共享材料管理', applications: '应用管理', reviews: '历史方案审查', accounts: '账号管理',
+  materials: '共享材料', applications: '应用模板', reviews: '历史方案记录', accounts: '账号管理',
 } as const;
+export const connectionResources = ['servers', 'tools', 'remotes', 'credentials', 'records'] as const;
+export type ConnectionResource = typeof connectionResources[number];
 export type WorkspaceTab = string;
 export type WorkspaceRoute = { tab: WorkspaceTab; task: string; modelReturn?: string; [key: string]: string | undefined };
 export interface WorkspaceNavigation {
@@ -24,12 +26,13 @@ export function readWorkspaceRoute(url: URL, administrator: boolean, navigation 
   const modelReturns = navigation.modelReturns ?? ['catalog', 'resources', 'connections'];
   return { ...navigation.readQuery?.(url), tab,
     task: routePointer(url.searchParams.get('task')),
+    ...(connectionResources.includes(url.searchParams.get('resource') as ConnectionResource) ? { resource: url.searchParams.get('resource')! } : {}),
     ...(modelReturn && modelReturns.includes(modelReturn) ? { modelReturn } : {}) };
 }
 export function workspaceUrl(current: URL, route: WorkspaceRoute, navigation = defaultNavigation): string {
   const url = new URL(current);
   url.searchParams.set('tab', route.tab);
-  for (const key of ['task', 'modelReturn', ...navigation.queryKeys ?? []]) {
+  for (const key of ['task', 'modelReturn', 'resource', ...navigation.queryKeys ?? []]) {
     if (route[key]) url.searchParams.set(key, route[key]); else url.searchParams.delete(key);
   }
   return `${url.pathname}${url.search}${url.hash}`;

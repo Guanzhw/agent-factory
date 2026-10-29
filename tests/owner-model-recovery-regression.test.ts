@@ -30,7 +30,7 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true);
   vi.stubGlobal('crypto', webcrypto);
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Network forbidden in recovery regression'); }));
-  localStorage.clear();
+  localStorage.clear(); sessionStorage.clear();
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   vi.spyOn(api, 'session').mockResolvedValue({ id: owner, name: 'Synthetic fixture', role: 'user' });
   vi.spyOn(ownerModelApi, 'capabilities').mockResolvedValue({ enabled: true, providers: ['openai', 'openai-compatible'], liveCompatibilityVerified: false });

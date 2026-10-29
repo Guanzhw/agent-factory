@@ -7,8 +7,13 @@ import type { PersonalCredential } from './personalRemoteApi.js';
 import { useCommandKeys } from './commandKeys.js';
 import { modelEndpoint, readModelSetup, readModelSetups, setupCredential, setupDispatched, setupMetadata, type ModelSetup } from './ownerModelSetup.js';
 import { MODEL_PROVIDER_PRESETS } from './modelProviderConfig.js';
+import { authEpoch } from './browserAuth.js';
+import { clearModelSettingsDraft, readModelSettingsDraft, saveModelSettingsDraft } from './modelSettingsDraft.js';
 
-export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: string; onBack: () => void; onCredentials?: () => void }) {
+export function ModelSettings({ ownerId, onBack, onCredentials, returnLabel = '返回工作区', continueLabel }: { ownerId: string; onBack: () => void; onCredentials?: () => void; returnLabel?: string; continueLabel?: string }) {
+  const [draft] = useState(() => readModelSettingsDraft(ownerId));
+  const [draftRestored, setDraftRestored] = useState(false);
+  const epoch = useRef(authEpoch());
   const storage = `factory-model-setup:${encodeURIComponent(ownerId)}`;
   const [pending, setPending] = useState<ModelSetup | null>(() => { try { return readModelSetup(localStorage.getItem(storage), ownerId); } catch { return null; } });
   const unresolvedStorage = `${storage}:unresolved`;
@@ -17,19 +22,21 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
   const [records, setRecords] = useState<OwnerModel[]>([]);
   const [credentials, setCredentials] = useState<PersonalCredential[]>([]);
   const [capability, setCapability] = useState<ModelCapabilities>();
-  const [provider, setProvider] = useState<OwnerModel['provider']>('openai');
-  const [protocol, setProtocol] = useState<OwnerModel['protocol']>();
-  const [endpoint, setEndpoint] = useState('https://api.openai.com/v1');
-  const [model, setModel] = useState(''); const [key, setKey] = useState('');
-  const [credentialSource, setCredentialSource] = useState<'new' | 'saved' | 'none'>('new');
-  const [savedReference, setSavedReference] = useState('');
+  const [provider, setProvider] = useState<OwnerModel['provider']>(draft?.provider ?? 'openai');
+  const [protocol, setProtocol] = useState<OwnerModel['protocol']>(draft?.protocol);
+  const [endpoint, setEndpoint] = useState(draft?.endpoint ?? 'https://api.openai.com/v1');
+  const [model, setModel] = useState(draft?.model ?? ''); const [key, setKey] = useState('');
+  const [credentialSource, setCredentialSource] = useState<'new' | 'saved' | 'none'>(draft?.credentialSource ?? 'new');
+  const [savedReference, setSavedReference] = useState(draft?.savedReference ?? '');
   const [editing, setEditing] = useState<Extract<OwnerModel, { isOwner: true }> & { credentialRef: string; credentialRevision: string }>(); const [confirmRevoke, setConfirmRevoke] = useState('');
   const [outputEditing, setOutputEditing] = useState<Extract<OwnerModel, { isOwner: true }>>();
-  const [outputTokens, setOutputTokens] = useState('');
+  const [outputTokens, setOutputTokens] = useState(draft?.outputTokens ?? '');
   const outputLimit = outputTokens.trim() ? Number(outputTokens) : undefined;
   const invalidOutput = outputLimit !== undefined && !validOutputTokens(outputLimit);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [refresh, setRefresh] = useState(0); const [ready, setReady] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [savedForReturn, setSavedForReturn] = useState(false);
   const sharingStorage = `factory-model-sharing:${encodeURIComponent(ownerId)}`;
   const [pendingSharing, setPendingSharing] = useState<{ requestId: string; reference: string; visibility: 'personal' | 'team' } | null>(() => {
     try { return JSON.parse(localStorage.getItem(sharingStorage) ?? 'null'); } catch { return null; }
@@ -46,6 +53,19 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
       .catch(() => { if (!controller.signal.aborted) setError('暂时无法读取模型设置。请重新连接；未确认的保存请求会保留。'); });
     return () => controller.abort();
   }, [ownerId, refresh]);
+  useEffect(() => {
+    if (!ready || draftRestored) return;
+    const rotating = records.find(record => record.reference === draft?.editing);
+    if (rotating?.isOwner && rotating.credentialRef && rotating.credentialRevision) setEditing({ ...rotating, credentialRef: rotating.credentialRef, credentialRevision: rotating.credentialRevision });
+    const output = records.find(record => record.reference === draft?.outputEditing);
+    if (output?.isOwner) setOutputEditing(output);
+    setDraftRestored(true);
+  }, [ready, draftRestored, records, draft]);
+  useEffect(() => {
+    if (!draftRestored || authEpoch() !== epoch.current) return;
+    saveModelSettingsDraft(ownerId, { provider, protocol, endpoint, model, credentialSource, savedReference, outputTokens,
+      editing: editing?.reference, outputEditing: outputEditing?.reference });
+  }, [ownerId, draftRestored, provider, protocol, endpoint, model, credentialSource, savedReference, outputTokens, editing, outputEditing]);
   function retain(value: ModelSetup, { begin = false }: { begin?: boolean } = {}) {
     const safe = setupMetadata(value);
     const previous = readModelSetup(localStorage.getItem(storage), ownerId);
@@ -62,11 +82,14 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
     setPending(readModelSetup(localStorage.getItem(storage), ownerId));
     return owned;
   }
-  function finished(s: ModelSetup) {
+  function finished(s: ModelSetup, submittedEditor: boolean) {
     if (!releaseActive(s)) return false;
-    setConfirmStopWaiting(false); setEditing(undefined); setOutputEditing(undefined); setOutputTokens(''); setKey(''); setRefresh(n => n + 1); return true;
+    setConfirmStopWaiting(false);
+    if (submittedEditor) { setEditing(undefined); setOutputEditing(undefined); setOutputTokens(''); setKey(''); setModel(''); setSubmitted(false); }
+    setSavedForReturn(true); setRefresh(n => n + 1); return true;
   }
   function accountChanged() {
+    clearModelSettingsDraft(ownerId); setDraftRestored(false);
     setKey(''); setModel(''); setEditing(undefined); setOutputEditing(undefined); setOutputTokens(''); setConfirmRevoke(''); setRecords([]); setPending(null); setReady(false);
     setCredentials([]); setUnresolved([]); setConfirmStopWaiting(false); setError('当前登录账户已改变。已清除输入，请刷新页面后重新进入自己的模型设置。');
   }
@@ -95,6 +118,7 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
     // errors, including 403/404, never prove an earlier request did not commit.
     if (!(failure instanceof ModelRequestError) || ![403, 422].includes(failure.status)) return;
     if (!releaseActive(s)) return;
+    if (s.stage === 'default' && !setupDispatched(s, 'model')) return;
     setEditing(undefined); setOutputEditing(undefined); setKey('');
     if (s.credential) {
       setCredentials(values => [...values.filter(c => c.credentialRef !== s.credential!.credentialRef), s.credential!]);
@@ -102,6 +126,7 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
     }
   }
   async function continueSetup(value: ModelSetup, recovering = false) {
+    const submittedEditor = value.stage !== 'default' || setupDispatched(value, 'model');
     let s = value;
     let checkedOriginal = recovering;
     if (s.stage === 'credential') {
@@ -141,8 +166,8 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
       matchDefault(selected, s);
     }
     if (!alive.current) return;
-    if (!finished(s)) return false;
-    setNotice(checkedOriginal ? '原保存已核对完成。当前默认模型以最新列表为准。' : s.rotating ? '密钥已更新。旧任务绑定会按服务端规则重新检查。' : s.chooseDefault ? '模型已保存并设为默认。可以返回工作区。' : '模型已保存。可以返回工作区。');
+    if (!finished(s, submittedEditor)) return false;
+    setNotice(!submittedEditor ? '默认模型已确认。当前表单中的未提交输入仍未保存。' : checkedOriginal ? '原保存已核对完成。当前默认模型以最新列表为准。' : s.rotating ? '密钥已更新。旧任务绑定会按服务端规则重新检查。' : s.chooseDefault ? '模型已保存并设为默认。可以返回工作区。' : '模型已保存。可以返回工作区。');
     return true;
   }
   function stopWaiting() {
@@ -152,7 +177,9 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
       if (previous.length >= 100) throw new Error('未确认记录已满。');
       const next = [...previous.filter(s => s.modelRequest !== pending.modelRequest), setupMetadata(pending)];
       localStorage.setItem(unresolvedStorage, JSON.stringify(next)); releaseActive(pending);
-      setUnresolved(next); setConfirmStopWaiting(false); setEditing(undefined); setOutputEditing(undefined); setOutputTokens(''); setKey(''); setRefresh(n => n + 1);
+      setUnresolved(next); setConfirmStopWaiting(false);
+      if (pending.stage !== 'default' || setupDispatched(pending, 'model')) { setEditing(undefined); setOutputEditing(undefined); setOutputTokens(''); setKey(''); }
+      setRefresh(n => n + 1);
       setNotice('已停止等待，原请求仍保留。原操作可能已完成；核对记录不会重放写入或执行尚未发送的后续设置。');
     } catch { setError('暂时无法保留原请求，请继续等待或稍后重试。'); }
   }
@@ -165,18 +192,18 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
     setNotice('原阶段已核对。尚未发送的后续设置不会自动执行；当前模型以最新列表为准。');
   }
   async function run(work: () => Promise<unknown>) {
-    if (lock.current) return; lock.current = true; setBusy(true); setError(''); setNotice('');
+    if (lock.current) return; lock.current = true; setBusy(true); setError(''); setNotice(''); setSavedForReturn(false);
     try { await verifyOwner(); await work(); }
     catch (e) { if (alive.current && (e instanceof ModelRequestError || e instanceof RemoteRequestError) && e.code === 'EXPECTED_OWNER_MISMATCH') accountChanged(); else if (alive.current) setError(e instanceof ModelRequestError || e instanceof RemoteRequestError ? e.message : '设置尚未确认，请核对原请求或重新读取设置。'); }
     finally { lock.current = false; if (alive.current) setBusy(false); }
   }
   function save() {
-    if (pending || !ready || !capability?.enabled || invalidOutput || !model.trim() || (editing || credentialSource === 'new' ? !key.trim() : credentialSource === 'saved' && !selectedCredential)) return;
+    setSubmitted(true);
+    if (pending || !ready || !capability?.enabled || invalidOutput || Object.keys(fieldErrors).length) return;
     let baseURL: string;
     try { baseURL = modelEndpoint(endpoint); }
-    catch { setError('请输入有效的 HTTP 或 HTTPS API 地址。'); return; }
+    catch { return; }
     const selectedModel = model.trim();
-    if (!/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}$/.test(selectedModel) || selectedModel === key.trim()) { setError('请核对模型名称；密钥只能填入 API 密钥字段。'); return; }
     void run(async () => {
       const s = retain({ owner: ownerId, provider, baseURL, model: selectedModel,
         ...(protocol ? { protocol } : {}), dispatched: {},
@@ -211,7 +238,7 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
           ...(record.maxOutputTokens !== undefined ? { maxOutputTokens: record.maxOutputTokens } : {}),
           credentialRequest: crypto.randomUUID(), modelRequest: crypto.randomUUID(), defaultRequest: crypto.randomUUID(),
           stage: 'default', reference: record.reference, chooseDefault: true, dispatched: {} }, { begin: true }));
-        if (completed) setNotice('默认模型已更新。'); return;
+        if (completed) setNotice(model || outputEditing ? '默认模型已更新。当前表单中的未提交输入仍未保存。' : '默认模型已更新。'); return;
       }
       const scope = `${action}:${record.reference}:${record.revision}`;
       const key = await commandKeys(scope, { reference: record.reference, revision: record.revision });
@@ -291,16 +318,23 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
     catch { return false; }
   });
   const selectedCredential = matchingCredentials.find(c => c.credentialRef === savedReference);
+  const fieldErrors: Record<string, string> = {};
+  if (!model.trim()) fieldErrors.model = '填写账户可用的模型名称。';
+  else if (!/^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}$/.test(model.trim()) || model.trim() === key.trim()) fieldErrors.model = '请核对模型名称；密钥只能填入 API 密钥字段。';
+  try { modelEndpoint(endpoint); } catch { fieldErrors.endpoint = '填写有效的 HTTP 或 HTTPS API 地址。'; }
+  if ((editing || credentialSource === 'new') && !key.trim()) fieldErrors.key = '填写 API 密钥，或选择无需认证 / 已保存的凭据。';
+  if (!editing && credentialSource === 'saved' && !selectedCredential) fieldErrors.credential = '选择匹配此模型端点的有效凭据。';
   const outputField = <div><label>单次输出上限（token）<input aria-label="单次输出上限（token）" type="number" inputMode="numeric" min={1} step={1}
     aria-invalid={invalidOutput} aria-describedby={`model-output-help${invalidOutput ? ' model-output-error' : ''}`}
     value={outputTokens} onChange={e => setOutputTokens(e.target.value)} placeholder="默认 4096"/></label>
     <p id="model-output-help" className="quiet">留空使用 4096。推理也可能占用输出额度；实际支持范围由模型提供方决定。这不是费用上限。</p>
     {invalidOutput && <p id="model-output-error" className="error-message" role="alert">请输入正整数；数值不能超过浏览器可准确表示的整数范围。</p>}</div>;
   return <section className="model-settings" aria-labelledby="model-settings-title">
-    <div className="page-heading"><div><p className="quiet">个人设置 · 我的默认模型</p><h1 id="model-settings-title">我的模型/API</h1><p>保存一次自己的模型，原生任务使用默认设置。</p></div><button className="secondary" onClick={onBack} disabled={busy}>返回工作区</button></div>
+    <div className="page-heading"><div><p className="quiet">我的资源 · 模型</p><h1 id="model-settings-title">我的模型/API</h1><p>保存模型后，在研究中选择它；保存设置不会发起模型调用。</p></div><button className="secondary" onClick={onBack}>{returnLabel}</button></div>
     <p className="model-purpose">研究内容会发送给所选模型提供方，费用由你的提供方账户承担。密钥加密保存，不回显。</p>
     {onCredentials && <button className="secondary" disabled={busy} onClick={onCredentials}>管理我的凭据与连接</button>}
     {error && <div className="error-message" role="alert">{error}</div>}{notice && <div className="success-message" role="status">{notice}</div>}
+    {savedForReturn && continueLabel && <div className="state-note"><p>设置已确认。返回后核对模型选择再开始，已有会话的模型绑定不会自动改变。</p><button className="primary" onClick={onBack}>{continueLabel}</button></div>}
     {pendingSharing && <p role="alert">共享请求尚未确认。<button disabled={busy} onClick={() => void recoverSharing()}>核对原共享请求</button></p>}
     {!ready && !error && <p role="status">正在读取模型设置…</p>}
     <button className="text-button" disabled={busy} onClick={() => { setError(''); setRefresh(n => n + 1); }}>重新读取设置</button>
@@ -315,20 +349,22 @@ export function ModelSettings({ ownerId, onBack, onCredentials }: { ownerId: str
       <div className="button-row"><button className="primary" disabled={busy || invalidOutput}>{busy ? '正在保存…' : '保存输出额度'}</button>
         <button type="button" disabled={busy} onClick={() => { setOutputEditing(undefined); setOutputTokens(''); }}>取消调整</button></div>
     </form>}
-    {ready && capability?.enabled && !pending && !outputEditing && <form className="model-form" onSubmit={event => { event.preventDefault(); save(); }}>
+    {ready && capability?.enabled && !pending && !outputEditing && <form className="model-form" noValidate onSubmit={event => { event.preventDefault(); save(); }}>
       <h2>{editing ? `更新 ${editing.model} 的密钥` : availableDefault ? '添加另一个模型' : '设置默认模型'}</h2>
+      <p className="quiet">未提交的模型名称和设置保留在此浏览器标签页。API 密钥只留在当前表单，离开或刷新后需重新输入。</p>
       {!editing && <label>快捷配置<select aria-label="模型快捷配置" value="" disabled={busy} onChange={e => {
         const preset = MODEL_PROVIDER_PRESETS.find(p => p.id === e.target.value); if (!preset) return;
         setProvider(preset.provider); setEndpoint(preset.baseURL); setModel(preset.model); setProtocol(preset.protocol); setKey(''); setSavedReference('');
       }}><option value="">手动配置，或选择一个预设</option>{MODEL_PROVIDER_PRESETS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}</select></label>}
       <fieldset disabled={busy}><label>提供方<select aria-label="模型提供方" disabled={!!editing} value={provider} onChange={e => { setProvider(e.target.value as OwnerModel['provider']); setEndpoint(e.target.value === 'openai' ? 'https://api.openai.com/v1' : ''); }}><option value="openai">OpenAI</option><option value="openai-compatible">兼容 OpenAI 的服务</option></select></label>
       <label>API 协议<select aria-label="模型 API 协议" disabled={!!editing} value={protocol ?? 'chat-completions'} onChange={e => setProtocol(e.target.value as OwnerModel['protocol'])}><option value="chat-completions">Chat Completions</option><option value="responses">Responses</option></select></label>
-      <label>模型名称<input aria-label="模型名称" autoComplete="off" required maxLength={120} disabled={!!editing} value={model} onChange={e => setModel(e.target.value)} placeholder="填写账户可用的模型名称"/></label>
-      {provider === 'openai-compatible' && <label>API 端点<input aria-label="API 端点" autoComplete="off" required disabled={!!editing} value={endpoint} onChange={e => setEndpoint(e.target.value)} placeholder="https://你的模型服务/v1"/></label>}
+      <label>模型名称<input aria-label="模型名称" aria-invalid={submitted && !!fieldErrors.model} aria-describedby={submitted && fieldErrors.model ? 'model-name-error' : undefined} autoComplete="off" required maxLength={120} disabled={!!editing} value={model} onChange={e => setModel(e.target.value)} placeholder="填写账户可用的模型名称"/></label>
+      {submitted && fieldErrors.model && <p id="model-name-error" className="error-message" role="alert">{fieldErrors.model}</p>}
+      {provider === 'openai-compatible' && <><label>API 端点<input aria-label="API 端点" aria-invalid={submitted && !!fieldErrors.endpoint} aria-describedby={submitted && fieldErrors.endpoint ? 'model-endpoint-error' : undefined} autoComplete="off" required disabled={!!editing} value={endpoint} onChange={e => setEndpoint(e.target.value)} placeholder="https://你的模型服务/v1"/></label>{submitted && fieldErrors.endpoint && <p id="model-endpoint-error" className="error-message" role="alert">{fieldErrors.endpoint}</p>}</>}
       <details><summary>输出设置（可选）</summary>{outputField}</details>
       {!editing && <label>凭据来源<select aria-label="模型凭据来源" value={credentialSource} onChange={e => { setCredentialSource(e.target.value as 'new' | 'saved' | 'none'); setKey(''); setSavedReference(''); }}><option value="none">无需认证</option><option value="new">直接输入新密钥</option><option value="saved">选择我的已保存凭据</option></select></label>}
-      {!editing && credentialSource === 'saved' ? <><label>已保存的模型凭据<select aria-label="已保存的模型凭据" value={selectedCredential ? savedReference : ''} onChange={e => setSavedReference(e.target.value)}><option value="">选择匹配此模型端点的凭据</option>{matchingCredentials.map(c => <option key={c.credentialRef} value={c.credentialRef}>{c.destination} · {c.credentialRef}</option>)}</select></label><p className="quiet">只绑定当前用户的已保存凭据引用，不重新保存密钥。保存时仍由服务端核对归属、授权、目标和版本。{!matchingCredentials.length && '当前没有匹配的有效凭据；可更改端点、重新读取设置或直接输入新密钥。'}</p></> : credentialSource !== 'none' || editing ? <label>API 密钥<input aria-label="API 密钥" type="password" autoComplete="new-password" required maxLength={4096} value={key} onChange={e => setKey(e.target.value)} placeholder={editing ? '输入新的密钥' : '输入自己的 API 密钥'}/></label> : <p>此模型服务无需认证；不会发送 API 密钥。</p>}</fieldset>
-      <div className="button-row"><button className="primary" disabled={busy || invalidOutput || !model.trim() || (editing || credentialSource === 'new' ? !key.trim() : credentialSource === 'saved' && !selectedCredential)}>{busy ? '正在保存…' : editing ? '保存新密钥' : credentialSource === 'saved' ? '保存模型并设为默认' : '保存并设为默认'}</button>{editing && <button type="button" disabled={busy} onClick={() => { setEditing(undefined); setOutputTokens(''); setKey(''); setModel(''); }}>取消更新</button>}</div>
+      {!editing && credentialSource === 'saved' ? <><label>已保存的模型凭据<select aria-label="已保存的模型凭据" aria-invalid={submitted && !!fieldErrors.credential} aria-describedby={submitted && fieldErrors.credential ? 'model-credential-error' : undefined} value={selectedCredential ? savedReference : ''} onChange={e => setSavedReference(e.target.value)}><option value="">选择匹配此模型端点的凭据</option>{matchingCredentials.map(c => <option key={c.credentialRef} value={c.credentialRef}>{c.destination} · {c.credentialRef}</option>)}</select></label>{submitted && fieldErrors.credential && <p id="model-credential-error" className="error-message" role="alert">{fieldErrors.credential}</p>}<p className="quiet">只绑定当前用户的已保存凭据引用，不重新保存密钥。保存时仍由服务端核对归属、授权、目标和版本。{!matchingCredentials.length && '当前没有匹配的有效凭据；可更改端点、重新读取设置或直接输入新密钥。'}</p></> : credentialSource !== 'none' || editing ? <><label>API 密钥<input aria-label="API 密钥" aria-invalid={submitted && !!fieldErrors.key} aria-describedby={submitted && fieldErrors.key ? 'model-key-error' : undefined} type="password" autoComplete="new-password" required maxLength={4096} value={key} onChange={e => setKey(e.target.value)} placeholder={editing ? '输入新的密钥' : '输入自己的 API 密钥'}/></label>{submitted && fieldErrors.key && <p id="model-key-error" className="error-message" role="alert">{fieldErrors.key}</p>}</> : <p>此模型服务无需认证；不会发送 API 密钥。</p>}</fieldset>
+      <div className="button-row"><button className="primary" disabled={busy || invalidOutput}>{busy ? '正在保存…' : editing ? '保存新密钥' : credentialSource === 'saved' ? '保存模型并设为默认' : '保存并设为默认'}</button>{editing && <button type="button" disabled={busy} onClick={() => { setEditing(undefined); setOutputTokens(''); setKey(''); setModel(''); }}>取消更新</button>}</div>
     </form>}
     <details className="technical-detail"><summary>兼容性与设置说明</summary><p>按提供方要求选择 Chat Completions 或 Responses，填写实际 HTTP 或 HTTPS API 地址。保存配置不会发送模型请求，也不证明远端模型兼容。</p><p>此默认模型用于 Agno 原生任务。已有远端服务继续使用其自身配置。</p><p>撤销模型不删除历史记录；密钥轮换后旧任务绑定需重新核对。</p></details>
   </section>;

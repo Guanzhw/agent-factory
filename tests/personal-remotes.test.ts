@@ -47,6 +47,24 @@ it('uses deployment availability and does not imply remote execution readiness',
   await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], onChanged: vi.fn() })));
   expect(host.textContent).toContain('此部署尚未启用'); expect(host.textContent).toContain('绑定只授予服务端声明的能力，不会启动任务。'); expect(host.querySelector('input[type=password]')).toBeNull();
 });
+it('reloads a resource revision immediately without discarding the unfinished remote form', async () => {
+  vi.spyOn(api, 'session').mockResolvedValue(owner);
+  vi.spyOn(personalRemoteApi, 'providers').mockResolvedValue([{ providerId: credential.providerId, kind: 'environment', capabilities: [] }]);
+  const list = vi.spyOn(personalRemoteApi, 'list').mockResolvedValue([]);
+  vi.spyOn(personalRemoteApi, 'credentialAvailability').mockResolvedValue({ enabled: false, providerIds: [] });
+  const configure = vi.spyOn(personalRemoteApi, 'configure');
+  await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], revision: 0, onChanged: saved })));
+  await act(async () => {
+    const field = host.querySelector<HTMLInputElement>('[aria-label="预期项目 ID"]')!;
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(field, 'unfinished-project');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  expect(list).toHaveBeenCalledTimes(1);
+  await act(async () => root.render(createElement(PersonalRemotes, { user: owner, jobs: [], revision: 1, onChanged: saved })));
+  expect(list).toHaveBeenCalledTimes(2);
+  expect(host.querySelector<HTMLInputElement>('[aria-label="预期项目 ID"]')?.value).toBe('unfinished-project');
+  expect(configure).not.toHaveBeenCalled();
+});
 it('expired or revoked metadata cannot bind even with stale available/action flags', () => {
   const remote = { available: true, status: 'verified', allowedActions: ['bind'], expiresAt: new Date(Date.now() + 60_000).toISOString() } as PersonalRemote;
   expect(remoteCanBind(remote)).toBe(true); expect(remoteCanBind({ ...remote, status: 'revoked' })).toBe(false); expect(remoteCanBind({ ...remote, expiresAt: new Date(0).toISOString() })).toBe(false); expect(remoteCanBind({ ...remote, expiresAt: null })).toBe(false);

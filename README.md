@@ -2,9 +2,9 @@
 
 An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Department members create and publish versioned materials and application definitions, compose exact scoped task plans, and inspect native runs. Administrators manage accounts; resource owners control their own sharing, changes, withdrawal and archival. The default deployment contains no installed applications or seeded materials. Members publish explicit application definitions and use the generic composition API and registered executors.
 
-The current core-only change removes the former Research application, its pages and default registrations. Login, the application catalog, tasks and owner-managed resources remain in the shared workspace. A new database starts with an empty application catalog; resources and member publication remain available. Synthetic native fixtures are installed explicitly by tests, never by default startup.
+The default core composition provides login, the application catalog, tasks and owner-managed resources without installing an application. Auto Research is available through the explicit research backend and browser composition described below; it has its own home and research workspace. A new core-only database starts with an empty application catalog. Synthetic native fixtures are installed explicitly by tests, never by default startup.
 
-This change's runtime, browser and CI acceptance must be recorded against its exact revision; earlier Research results do not establish core-only acceptance. Real external identity providers, paid models, remote hosts and scientific workflows are not validated by local synthetic checks. Historical implementation and acceptance records remain linked below.
+Runtime, browser and CI acceptance must be recorded against the exact revision and selected composition; Research results do not establish core-only acceptance. Real external identity providers, paid models, remote hosts and scientific workflows are not validated by local synthetic checks. Historical implementation and acceptance records remain linked below.
 
 ## Build a new application
 
@@ -31,15 +31,18 @@ The default source and deployment boundaries are:
 
 There is no dynamic application discovery. Applications that combine installed
 adapters need published declarations and materials; new trusted code requires
-explicit deployment registration. The former `apps/research` source is removed.
-Removing it does not delete stored applications, task history, credentials, vault
-keys, artifacts or backups. Existing Research tasks cannot resume without their
-application code. Permanent deletion of old data requires a separate exact target
-inventory and confirmation; core-only checks use newly created isolated fixtures.
+explicit deployment registration. The Research application lives in
+`applications/research`, with `deployment/agent_factory_server/research.py` and
+`web/research-composition.tsx` as its explicit composition entrypoints. Selecting
+the core-only composition does not delete stored applications, task history,
+credentials, vault keys, artifacts or backups. Existing Research tasks require
+their original application code to resume. Core-only checks use newly created
+isolated fixtures; they do not remove old data.
 
-The root [`pyproject.toml`](pyproject.toml) builds the core-only
-`department-agent-factory` deployment wheel and retains the `agent-factory`
-command. [`platform/pyproject.toml`](platform/pyproject.toml) builds the standalone
+The root [`pyproject.toml`](pyproject.toml) builds the
+`department-agent-factory` deployment wheel, including the separately selected
+`agent-factory` and `agent-factory-research` entrypoints.
+[`platform/pyproject.toml`](platform/pyproject.toml) builds the standalone
 `department-agent-factory-core` distribution, containing only `agent_factory`.
 These are alternative distribution choices, not packages to overlay in one
 installation. See the [development guide](docs/APPLICATION_DEVELOPMENT.md#源码归属与静态装配)

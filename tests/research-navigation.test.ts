@@ -40,3 +40,13 @@ it('preserves a research session across model configuration and rejects unsafe s
   expect(readWorkspaceRoute(new URL('https://factory.example/?tab=research&researchView=sessions&researchSession=../alice'), false, researchNavigation).researchSession).toBe('');
   expect(readWorkspaceRoute(url, false).researchSession).toBeUndefined();
 });
+
+it('keeps the research origin while choosing a concrete resource category', () => {
+  const url = new URL('https://factory.example/?tab=research&project=project-1&researchSetup=setup-2');
+  const original = readWorkspaceRoute(url, false, researchNavigation);
+  const resources = { ...original, tab: 'connections', resource: 'credentials', modelReturn: 'research' };
+  const restored = readWorkspaceRoute(new URL(workspaceUrl(url, resources, researchNavigation), url), false, researchNavigation);
+  expect(restored).toMatchObject({ tab: 'connections', resource: 'credentials', project: 'project-1', researchSetup: 'setup-2', modelReturn: 'research' });
+  const returned = readWorkspaceRoute(new URL(workspaceUrl(url, { ...restored, tab: 'research', modelReturn: '' }, researchNavigation), url), false, researchNavigation);
+  expect(returned).toMatchObject({ tab: 'research', project: 'project-1', researchSetup: 'setup-2' });
+});
