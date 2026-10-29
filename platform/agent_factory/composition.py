@@ -78,7 +78,8 @@ class CompositionService:
         self.auth.require_member(owner)
         if values["applicationRef"]:
             return self.applications.require_current(values["applicationRef"]), {"method": "explicit-application", "matchedKeywords": []}
-        active = self.applications.list_active(owner)
+        active = (self.applications.list_active(owner) if values["application"]
+                  else self.applications.list_template_candidates(owner))
         latest = {}
         for application in active:
             latest.setdefault(application["id"], application)
@@ -104,6 +105,11 @@ class CompositionService:
                 raise HTTPException(409, "Select an approved application; discovery has no unique operator default")
             chosen, matches = defaults[0], []
         return chosen, {"method": "approved-keyword-selection-v1", "matchedKeywords": matches}
+
+    def match_template(self, owner, goal):
+        values = self._input(goal, None, None, None, None, None)
+        application, _ = self._application(owner, values)
+        return application
 
     def _connections(self, owner, mode, supplied, *, expected=None):
         known = {requirement["name"]: requirement for requirement in mode["connectionRequirements"]}
@@ -397,6 +403,11 @@ class ProposalDecision(BaseModel):
     requestId: str = Field(min_length=1, max_length=200)
 
 
+class TemplateMatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    goal: str = Field(min_length=2, max_length=2000)
+
+
 def composition_router(auth, service):
     from .composition_inbox import CompositionInboxService
     inbox = CompositionInboxService(service)
@@ -411,6 +422,9 @@ def composition_router(auth, service):
     @router.post("", status_code=201)
     def propose(body: ProposalRequest, request: Request):
         return service.propose(auth.user(request)["id"], **kwargs(body))
+    @router.post("/match")
+    def match(body: TemplateMatchRequest, request: Request):
+        return service.match_template(auth.user(request)["id"], body.goal)
     @router.get("")
     def list_proposals(request: Request, after: str | None = None, limit: int = 20):
         return inbox.list(auth.user(request)["id"], after=after, limit=limit)

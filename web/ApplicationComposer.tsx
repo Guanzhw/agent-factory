@@ -54,14 +54,17 @@ export function ComposerProposalScope({ candidate }: { candidate: AssemblyCandid
 
 /** Optional application-owned input for the ordinary declarative composer. */
 export interface ComposerSeed {
-  key: string; applicationId?: string; applicationRef?: MaterialReference; mode?: string;
+  kind?: 'template'; key: string; applicationId?: string; applicationRef?: MaterialReference; mode?: string;
   goal?: string; sourceSnapshotRef?: CompositionInput['sourceSnapshotRef'];
 }
 export interface ApplicationComposerProps {
+  active?: boolean; onConfigureResource?: (kind: UserConnection['kind']) => void;
   modeLabels?: Readonly<Record<string, string>>; seed?: ComposerSeed; onSchedule?: (plan: Plan) => void; user: User; busy: string;
   act: Act; materials: FactoryMaterial[]; targets: ExecutionTarget[]; onCreated: (id: string) => void;
 }
-export function ApplicationComposer({ user, busy, act, materials, targets, onCreated, seed, onSchedule, modeLabels = {} }: ApplicationComposerProps) {
+export function ApplicationComposer({ user, busy, act, materials, targets, onCreated, seed, onSchedule, onConfigureResource, active = true, modeLabels = {} }: ApplicationComposerProps) {
+  const template = seed?.kind === 'template';
+  const [entryAvailable, setEntryAvailable] = useState(true);
   const [applications, setApplications] = useState<FactoryApplication[]>([]);
   const [connections, setConnections] = useState<UserConnection[]>([]);
   const [applicationId, setApplicationId] = useState(seed?.applicationRef?.id ?? seed?.applicationId ?? '');
@@ -93,12 +96,23 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
   const inputError = selectedMode?.inputSchema ? inputValuesError(selectedMode.inputSchema, inputValues) : '';
   const accepted = !!plan || proposal?.state === 'accepted';
   const pending = proposal?.state === 'pending';
+  const needsMatch = template && !pinnedApplication && !proposal;
   useEffect(() => {
+    if (!active) return;
+    setReady(false);
     const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
     async function poll() {
       try {
         // Saved records are resumed explicitly, so a historical proposal cannot replace a fresh task.
-        const [session, apps, refs, loaded] = await Promise.all([api.session(controller.signal), api.applications(controller.signal), api.userConnections(controller.signal), proposal?.id ? api.recoverProposal(proposal.id, controller.signal) : Promise.resolve(undefined)]);
+        const [session, apps, refs, loaded] = await Promise.all([api.session(controller.signal), (async () => {
+          if (!template) return api.applications(controller.signal);
+          const ref = proposal?.candidate.applicationRef ?? pinnedApplication;
+          if (!ref) return (await api.templateCatalog(undefined, controller.signal)).items;
+          const value = await api.inspectApplication(ref.id, ref.version, controller.signal);
+          if (value.application.sha256 !== ref.sha256) throw new Error('所选模板的固定版本无法核对。');
+          if (!controller.signal.aborted) setEntryAvailable(value.governance.state === 'published' && value.governance.entry_kind === 'template' && !value.governance.bootstrap);
+          return [value.application];
+        })(), api.userConnections(controller.signal), proposal?.id ? api.recoverProposal(proposal.id, controller.signal) : Promise.resolve(undefined)]);
         const current = loaded?.proposal;
         const historicalPlan = loaded?.plan;
         if (session.id !== user.id || refs.some(item => item.ownerId !== user.id) || current && current.ownerId !== user.id) throw new Error('当前身份或提案归属无法核对；暂时禁用装配。');
@@ -110,7 +124,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
       if (!controller.signal.aborted) timer = setTimeout(() => void poll(), 5000);
     }
     void poll(); return () => { controller.abort(); clearTimeout(timer); };
-  }, [user.id, proposal?.id, refresh]);
+  }, [user.id, proposal?.id, proposal?.candidate.applicationRef.id, proposal?.candidate.applicationRef.version, proposal?.candidate.applicationRef.sha256, pinnedApplication, template, active, refresh]);
   async function restoreProposal(id: string) {
     if (busy || uncertainRevision.current) return;
     await act('recover-proposal', async () => {
@@ -131,7 +145,16 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
     return { goal: goal.trim(), ...(sourceRef ? { sourceSnapshotRef: sourceRef } : {}), ...(application ? { application: application.id, applicationRef: { id: application.id, version: application.version, sha256: application.sha256 }, mode: mode || application.defaultMode } : {}), materialChoices: choices, connectionRefs, ...(selectedMode?.inputSchema ? { inputValues: applicationInputValues(selectedMode.inputSchema, inputValues) } : {}) };
   }
   async function createOrRevise() {
-    if (!ready || (!applications.length && !uncertainRevision.current) || applicationStale || inputError || !goal.trim() || accepted || proposal && !uncertainRevision.current && (!pending || !proposal.allowedActions.includes('revise'))) return;
+    if (!ready || template && !entryAvailable && !proposal && !uncertainRevision.current || (!applications.length && !uncertainRevision.current) || applicationStale || inputError || !goal.trim() || accepted || proposal && !uncertainRevision.current && (!pending || !proposal.allowedActions.includes('revise'))) return;
+    if (needsMatch) {
+      await act('match-template', async () => {
+        const matched = await api.matchTemplate(goal.trim());
+        setApplications([matched]); setApplicationId(matched.id); setMode(matched.defaultMode);
+        setPinnedApplication({ id: matched.id, version: matched.version, sha256: matched.sha256 });
+        setEntryAvailable(true);
+      });
+      return;
+    }
     const values = uncertainRevision.current?.input ?? input(); const parentId = uncertainRevision.current?.id ?? proposal?.id;
     await act(parentId ? 'revise-proposal' : 'propose', async () => {
       const key = await keys(parentId ? 'revise-proposal' : 'propose', { ...values, ...(parentId ? { parentId } : {}) });
@@ -170,7 +193,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
     if (!ready || !plan || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || !targetSupported || plan.usageBudget !== undefined && !usageCommitment(plan.usageBudget)) return;
     await act('instantiate', async () => { const key = await keys('instantiate', { planId: plan.id, executionTargetRef: target || null }); try { const job = await api.instantiate(plan.id, key.requestId, target || undefined); onCreated(job.id); } catch (e) { setRefresh(n => n + 1); throw e; } });
   }
-  function startAgain() { if (busy || uncertainRevision.current) return; setPinnedApplication(undefined); rememberProposal(); setProposal(undefined); setPlan(undefined); setExecutionAllowed(false); setGoal(''); setSourceRef(undefined); setChoices({}); setConnectionRefs({}); setInputValues({}); uncertainRevision.current = undefined; }
+  function startAgain() { if (busy || uncertainRevision.current) return; setPinnedApplication(template ? seed?.applicationRef : undefined); setApplicationId(template ? seed?.applicationRef?.id ?? '' : applicationId); setMode(template ? seed?.mode ?? '' : mode); rememberProposal(); setProposal(undefined); setPlan(undefined); setExecutionAllowed(false); setGoal(''); setSourceRef(undefined); setChoices({}); setConnectionRefs({}); setInputValues({}); uncertainRevision.current = undefined; }
   const candidate = proposal?.candidate;
   const usageVerified = plan?.usageBudget === undefined || !!usageCommitment(plan.usageBudget);
   const bound = plan?.bindingManifest?.connections;
@@ -179,29 +202,36 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
   const connectionSignature = (value: Record<string, string>) => Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([slot, ref]) => `${slot}:${ref}`).join('|');
   const dirty = !!candidate && (!sameApplicationInputs(selectedMode?.inputSchema ? inputValues : undefined, proposal?.input.inputValues) || !sameSourceSnapshot(sourceRef, candidate.sourceSnapshotRef) || goal.trim() !== candidate.normalizedGoal || application && refKey(application) !== refKey(candidate.applicationRef) || mode && mode !== candidate.mode
     || choiceSignature(choices) !== choiceSignature(proposal?.input.materialChoices ?? {}) || connectionSignature(connectionRefs) !== connectionSignature(proposal?.input.connectionRefs ?? {}));
+  useEffect(() => {
+    if (!template || !(goal.trim() || Object.keys(inputValues).length || Object.keys(connectionRefs).length) || proposal && !dirty && !uncertainRevision.current) return;
+    const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [template, goal, inputValues, connectionRefs, proposal, dirty]);
   const currentStep = plan ? 4 : proposal ? 3 : applicationId || goal.trim() ? 2 : 1;
   const historyDisabled = !!busy || !!uncertainRevision.current;
   return <>
     <section className="composer" aria-labelledby="composer-title">
       <div className="section-heading"><h2 id="composer-title">新的应用任务</h2><span className="quiet">先预览，再开始</span></div>
-      <ol className="composer-steps" aria-label="新建任务步骤">{['选择应用', '描述任务', '核对方案', '开始任务'].map((label, index) => <li key={label} aria-current={currentStep === index + 1 ? 'step' : undefined}><span aria-hidden="true">{index + 1}</span>{label}</li>)}</ol>
+      <ol className="composer-steps" aria-label="新建任务步骤">{[template ? '选择模板' : '选择应用', '描述任务', '核对方案', '开始任务'].map((label, index) => <li key={label} aria-current={currentStep === index + 1 ? 'step' : undefined}><span aria-hidden="true">{index + 1}</span>{label}</li>)}</ol>
       {error && <div role="alert" className="error-message">{error}<button className="text-button" onClick={() => setRefresh(n => n + 1)}>重新核对装配</button></div>}
       {!ready && !error && <p className="quiet" role="status">正在读取可用应用与资源连接…</p>}
       {ready && applications.length === 0 && !proposal && <p className="state-note" role="status">当前没有可用的已发布应用。可先在应用管理中发布应用，再新建任务。<button type="button" className="text-button" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>重新读取应用</button></p>}
-      {pinnedApplication && <p className="state-note">此方案固定已选应用版本与任务输入。{applicationStale && ' 当前应用版本不可用，请返回应用重新核对。'}</p>}
+      {pinnedApplication && <p className="state-note">{template ? '已固定所选模板版本，请填写本次任务目标。' : '此方案固定已选应用版本与任务输入。'}{applicationStale && ' 当前应用版本不可用，请返回应用重新核对。'}</p>}
+      {template && !entryAvailable && !proposal && <p role="status" className="state-note">这个版本当前不提供普通模板入口。请返回模板列表重新选择。</p>}
       {sourceRef && <div className="state-note source-plan-note"><p>已固定来源快照。任务输入须与快照一致；请选择已发布的应用和自己的连接。</p><details className="technical-detail"><summary>来源快照凭据</summary><span>快照 {sourceRef.id}</span><span>指纹 {sourceRef.fingerprint}</span></details><p>下一步生成提案并确认固定方案。来源变化会阻止执行。</p></div>}
       {uncertainRevision.current && <p className="policy-note">原装配请求未确认，输入已锁定。重试保持同一请求；刷新后请从提案历史核对原记录。</p>}
       <form onSubmit={event => { event.preventDefault(); void createOrRevise(); }}>
-        <label htmlFor="application-selector">1. 选择应用</label>
+        {template ? <p className="state-note">{application ? `使用 ${application.name} · v${application.version}` : '根据目标自动匹配已发布模板；预览后可核对匹配结果。'}</p> : <><label htmlFor="application-selector">1. 选择应用</label>
         <select id="application-selector" value={applicationId} disabled={!!pinnedApplication || !!busy || !!uncertainRevision.current || accepted || !ready || !!proposal && !pending} onChange={event => selectApplication(event.target.value)}><option value="">根据任务自动匹配已发布应用</option>{applications.map(item => <option key={refKey(item)} value={item.id}>{item.name} · v{item.version}</option>)}</select>
-        {application && <p className="quiet">{application.description}</p>}
+        {application && <p className="quiet">{application.description}</p>}</>}
         <label htmlFor="task-goal">2. 描述任务</label>
-        <textarea id="task-goal" rows={4} value={goal} disabled={!!pinnedApplication || !!sourceRef || !!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => setGoal(event.target.value)} placeholder="例如：比较两种方法的公开证据，列出差异、来源和待验证的问题。" required maxLength={2000}/>
-        {application && <label>任务方式<select aria-label="应用执行方式" value={mode || application.defaultMode} disabled={!!pinnedApplication || !!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => { setMode(event.target.value); setChoices({}); setConnectionRefs({}); setInputValues({}); }}>{Object.keys(application.modes).map(value => <option key={value} value={value}>{(modeLabels[value] ?? value)}</option>)}</select></label>}
+        <textarea id="task-goal" rows={4} value={goal} disabled={!!pinnedApplication && !template || !!sourceRef || !!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => setGoal(event.target.value)} placeholder="例如：比较两种方法的公开证据，列出差异、来源和待验证的问题。" required maxLength={2000}/>
+        {application && (template && Object.keys(application.modes).length === 1 ? <p className="quiet">任务方式：{modeLabels[application.defaultMode] ?? application.defaultMode}</p> : <label>任务方式<select aria-label="应用执行方式" value={mode || application.defaultMode} disabled={!!pinnedApplication && !template || !!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => { setMode(event.target.value); setChoices({}); setConnectionRefs({}); setInputValues({}); }}>{Object.keys(application.modes).map(value => <option key={value} value={value}>{(modeLabels[value] ?? value)}</option>)}</select></label>)}
         {selectedMode?.inputSchema && <ApplicationInputs schema={selectedMode.inputSchema} values={inputValues} onChange={setInputValues} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending || !ready}/>}
-        {selectedMode?.connectionRequirements.map(requirement => <label key={requirement.name}>资源连接 · {requirement.name}{requirement.required ? '（必需）' : '（可选）'}<select aria-label={`资源连接 ${requirement.name}`} value={connectionRefs[requirement.name] ?? ''} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending || !ready} onChange={event => setConnectionRefs(current => { const next = { ...current }; if (event.target.value) next[requirement.name] = event.target.value; else delete next[requirement.name]; return next; })}><option value="">未选择连接</option>{connections.filter(item => item.available && !item.taskId && item.kind === requirement.kind && requirement.requiredCapabilities.every(capability => item.capabilities.includes(capability))).map(item => <option key={item.ref} value={item.ref}>{item.registrationRef} · {item.ref.slice(0, 8)}</option>)}</select><small className="quiet">只可选自己的可用连接；配置可用不等于真实提供商已验证。{requirement.requiredCapabilities.length > 0 && `需要能力：${requirement.requiredCapabilities.join('、')}。`}</small></label>)}
+        {selectedMode?.connectionRequirements.map(requirement => <label key={requirement.name}>资源连接 · {requirement.name}{requirement.required ? '（必需）' : '（可选）'}<select aria-label={`资源连接 ${requirement.name}`} value={connectionRefs[requirement.name] ?? ''} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending || !ready} onChange={event => setConnectionRefs(current => { const next = { ...current }; if (event.target.value) next[requirement.name] = event.target.value; else delete next[requirement.name]; return next; })}><option value="">未选择连接</option>{connections.filter(item => item.available && !item.taskId && item.kind === requirement.kind && requirement.requiredCapabilities.every(capability => item.capabilities.includes(capability))).map(item => <option key={item.ref} value={item.ref}>{item.registrationRef} · {item.ref.slice(0, 8)}</option>)}</select><small className="quiet">只可选自己的可用连接；配置可用不等于真实提供商已验证。{requirement.requiredCapabilities.length > 0 && `需要能力：${requirement.requiredCapabilities.join('、')}。`}</small>{onConfigureResource && <button type="button" className="text-button" disabled={!!busy || !!uncertainRevision.current} onClick={() => onConfigureResource(requirement.kind)}>配置{requirement.kind === 'model' ? '模型' : '资源'}并返回</button>}</label>)}
         {selectedMode && Object.keys(selectedMode.materialChoices).length > 0 && <details className="technical-detail composer-advanced"><summary>高级选项：调整已发布材料</summary><p className="quiet">默认使用应用的已发布材料；需要时可在允许范围内调整。</p>{Object.entries(selectedMode.materialChoices).map(([slot, choice]) => <label key={slot}>{kindNames[choice.kind]}选择 · {slot}<select aria-label={`材料选择 ${slot}`} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending || !ready} value={refKey(choices[slot] ?? choice.defaultRef)} onChange={event => { const ref = choice.allowedRefs.find(item => refKey(item) === event.target.value); if (ref) setChoices(current => ({ ...current, [slot]: ref })); }}>{choice.allowedRefs.map(ref => <option key={refKey(ref)} value={refKey(ref)}>{materials.find(item => refKey(item) === refKey(ref))?.name ?? ref.id} · v{ref.version}</option>)}</select></label>)}</details>}
-        {!accepted && (!proposal || pending || uncertainRevision.current) && <><p className="quiet">下一步只预览任务范围、所需权限和预算，不会开始执行。</p><button className="primary wide" type="submit" disabled={applicationStale || !!inputError || !!busy || !ready || (!applications.length && !uncertainRevision.current) || !goal.trim() || !!proposal && !uncertainRevision.current && !proposal.allowedActions.includes('revise')}>{busy === 'propose' || busy === 'revise-proposal' ? '正在准备方案…' : uncertainRevision.current ? '核对原装配请求' : proposal ? '更新任务方案' : '预览任务方案'}</button></>}
+        {!accepted && (!proposal || pending || uncertainRevision.current) && <><p className="quiet">{needsMatch ? '先匹配任务模板，再填写它需要的输入；此步不会创建提案或任务。' : '下一步只预览任务范围、所需权限和预算，不会开始执行。'}</p><button className="primary wide" type="submit" disabled={template && !entryAvailable && !proposal && !uncertainRevision.current || applicationStale || !!inputError || !!busy || !ready || (!applications.length && !uncertainRevision.current) || !goal.trim() || !!proposal && !uncertainRevision.current && !proposal.allowedActions.includes('revise')}>{busy === 'match-template' ? '正在匹配模板…' : needsMatch ? '匹配任务模板' : busy === 'propose' || busy === 'revise-proposal' ? '正在准备方案…' : uncertainRevision.current ? '核对原装配请求' : proposal ? '更新任务方案' : '预览任务方案'}</button></>}
       </form>
       {candidate && <div className="preflight"><div className="section-heading"><h3>3. 核对任务方案</h3><span className={`badge ${candidate.status === 'ready' ? 'status-ready' : 'status-blocked'}`}>{candidate.status === 'ready' ? '预检通过' : '预检存在缺项'}</span></div><p className="normalized-goal">{candidate.normalizedGoal}</p><p className="quiet">应用 {applications.find(item => item.id === candidate.application)?.name ?? candidate.application} · v{candidate.applicationRef.version} · {(modeLabels[candidate.mode] ?? candidate.mode)} · {({ pending: '等待你的决定', revised: '已被新提案修订', rejected: '已拒绝', accepted: '已固定为方案' })[proposal!.state]}</p>
         <ComposerProposalScope candidate={candidate}/>

@@ -61,6 +61,11 @@ class ResearchSessionSetup:
             Column('owner_id', String, primary_key=True), Column('fingerprint', String, primary_key=True),
             Column('body', JSON, nullable=False))
         metadata.create_all(store.engine)
+        with self.db.read() as conn:
+            references = [body['applicationRef'] for body in conn.execute(select(self.configurations.c.body)).scalars()
+                          if body.get('applicationRef') is not None]
+        for ref in references:
+            self.apps.mark_application_entry(ref)
 
     def ceilings(self):
         caps = budget_limits(self.store.settings, 2)
@@ -154,7 +159,8 @@ class ResearchSessionSetup:
             app = self.apps.create_draft(owner, {'contractVersion': 2, 'name': '个人研究会话',
                 'defaultMode': MODE, 'modes': {MODE: {'materialRefs': [self.apps.pin(item) for item in materials],
                     'capabilities': capabilities, 'connectionRequirements': [requirement], 'budget': budget,
-                    'inputSchema': INPUT_SCHEMA, 'toolOrder': [entry.tool_name for entry in self.tools.tool_registrations]}}}, str(uuid4()))
+                    'inputSchema': INPUT_SCHEMA, 'toolOrder': [entry.tool_name for entry in self.tools.tool_registrations]}}},
+                str(uuid4()), entry_kind='application')
             self.apps.publish(owner, app['id'], app['version'], str(uuid4()))
             result = {'applicationRef': self.apps.pin(app), 'budget': budget,
                       'autonomousCollaboration': options['collaboration']['available'],

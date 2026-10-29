@@ -73,3 +73,16 @@ it('requires an exact schedule pointer for a schedule return and does not use pl
   url.searchParams.set('scheduleId', '../another-owner');
   expect(readWorkspaceRoute(url, false).taskReturn).toBeUndefined();
 });
+
+
+it('keeps an explicit template resource return without borrowing an old research task source', () => {
+  const url = new URL('https://factory.example/?tab=models&templateId=template-a&templateVersion=2&templateStart=1&templateReturn=1&researchView=sessions&researchSession=session-1&task=task-1&taskReturn=research&taskReturnTask=task-1');
+  const route = readWorkspaceRoute(url, false, researchNavigation);
+  expect(route).toMatchObject({ tab: 'models', templateId: 'template-a', templateVersion: '2', templateStart: '1', templateReturn: '1', researchSession: 'session-1' });
+  expect(route.taskReturn).toBeUndefined(); expect(route.taskReturnTask).toBeUndefined(); expect(route.modelReturn).toBeUndefined();
+  const restored = readWorkspaceRoute(new URL(workspaceUrl(url, route, researchNavigation), url), false, researchNavigation);
+  expect(restored).toEqual(route);
+  const returned = readWorkspaceRoute(new URL(workspaceUrl(url, { ...restored, tab: 'templates', templateReturn: undefined }, researchNavigation), url), false, researchNavigation);
+  expect(returned).toMatchObject({ tab: 'templates', templateId: 'template-a', templateVersion: '2', templateStart: '1' });
+  expect(returned.taskReturn).toBeUndefined(); expect(returned.templateReturn).toBeUndefined();
+});

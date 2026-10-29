@@ -422,7 +422,16 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
             manager = {"Authorization": "Bearer " + self.auth._issue_native_token("manager")}
             path = "/api/factory/compositions/proposals"
             self.assertEqual(client.get("/api/factory/applications").status_code, 401)
+            self.assertEqual(client.get("/api/factory/applications/templates").status_code, 401)
+            templates = client.get("/api/factory/applications/templates?limit=1", headers=alice)
+            self.assertEqual(templates.status_code, 200, templates.text)
+            self.assertEqual(set(templates.json()), {"items", "nextCursor"})
+            self.assertLessEqual(len(templates.json()["items"]), 1)
+            self.assertEqual(client.get("/api/factory/applications/templates?limit=101", headers=alice).status_code, 422)
+            self.assertEqual(client.get("/api/factory/applications/templates?after=invalid!", headers=alice).status_code, 422)
             self.assertEqual(client.post("/api/factory/applications/drafts", headers=alice, json={"definition": app_definition(self.store), "requestId": "user-draft"}).status_code, 201)
+            self.assertEqual(client.post("/api/factory/applications/drafts", headers=alice, json={
+                "definition": app_definition(self.store), "requestId": "cannot-declare-internal", "entryKind": "application"}).status_code, 422)
             for forbidden in ({"ownerId": "manager"}, {"capabilities": ["agent_os:admin"]}, {"budget": {"toolCalls": 128}}):
                 response = client.post(path, headers=alice, json={"goal": "Checksum fixture", "requestId": str(uuid4()), **forbidden})
                 self.assertEqual(response.status_code, 422, response.text)

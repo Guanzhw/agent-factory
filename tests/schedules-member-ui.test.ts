@@ -301,9 +301,11 @@ it.each(['confirmed', 'reconciled', 'unknown', 'retried'])('keeps an in-flight %
   expect(client.update).not.toHaveBeenCalled(); expect(client.create).not.toHaveBeenCalled();
 });
 
-it('opens a new saved-plan seed rather than a schedule left in the previous URL', async () => {
-  window.history.replaceState(null, '', `/?tab=developer&scheduleId=${row.id}`);
+it.each(['developer', 'templates'])('opens a new saved-plan seed from %s rather than a schedule left in the previous URL', async tab => {
+  vi.spyOn(api, 'templateCatalog').mockResolvedValue({ items: [], nextCursor: null });
+  window.history.replaceState(null, '', `/?tab=${tab}&templateStart=1&scheduleId=${row.id}`);
   await act(async () => root.render(createElement(Workspace, { user: owner, logout: vi.fn(), sessionBusy: false, sessionError: '' })));
+  await settle(() => expect(button('合成装配出口：设置新计划')).toBeDefined());
   await click('合成装配出口：设置新计划');
   expect(new URL(window.location.href).searchParams.get('scheduleId')).toBeNull();
   expect(host.textContent).toContain('新的已保存方案');
