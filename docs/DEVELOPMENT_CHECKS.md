@@ -182,19 +182,26 @@ Windows CLI execution support.
 
 ## Native Windows research verification
 
-The native Windows file/CLI path is implemented as a candidate; **actual Windows
-Research execution remains unverified until the commands and restart scenario
-below run on that OS**. The existing SSH tests, Linux protocol fixtures and skipped
-Windows cases do not establish acceptance. Agno stays pinned to 3.1.0, with the
-locked pywin32 dependency and Python 3.12+ pipe APIs. Use an isolated temporary
-workspace and the prepared interpreter/tools, without changing existing user data
-or installing dependencies from a Research command.
+The native Windows file/CLI path is a candidate. Record the exact commit, OS,
+interpreter and executed/skipped cases in the Draft PR and linked CI records;
+a pass in one row does not establish another row:
+
+| Evidence | What it establishes |
+| --- | --- |
+| Cloud Linux | Existing behavior, static/boundary checks, portable protocol fixtures and isolated PostgreSQL restart on Linux |
+| Windows CI | Native file/pipe/Job behavior actually executed on the CI Windows host; skipped database tests remain unverified |
+| Local Windows and isolated PostgreSQL | Prepared user environment, original Job stop, and actual service hard-exit/restart with the same session/task/effect |
+| Browser and real model | Normal login, resource configuration and a real coding task through the selected provider |
+
+Agno stays pinned to 3.1.0, with locked pywin32 and Python 3.12+ pipe APIs. Use an
+isolated temporary workspace and prepared interpreter/tools, without changing
+existing user data or installing dependencies from a Research command.
 
 From a configured Windows checkout with its locked environment, run:
 
 ```powershell
 $env:PYTHONPATH = 'platform;deployment;platform/tests;applications;applications/tests'
-uv run python -m unittest test_research_session_tools test_personal_cli_process test_windows_ssh_process -v
+.\.venv\Scripts\python.exe -m unittest test_research_session_tools test_personal_cli_process test_windows_ssh_process -v
 ```
 
 The Research tool cases perform real create/read/search/edit and failed→passing
@@ -211,10 +218,22 @@ system Windows directory, invocation-owned TEMP/TMP/user/config paths and Python
 UTF-8 mode; configured PATH remains explicit. Ordinary nonzero exits return their
 exit code and separate stdout/stderr. Closing a Job after service failure can
 terminate local children but cannot establish that an earlier operation had no
-effect. A separate real Windows/isolated PostgreSQL hard-exit/restart case must
-retain the original session/task/effect and UNKNOWN without replay before claiming
-recovery acceptance. Browser login and a real-model coding task are further,
-separate checks; these deterministic fixtures make no provider usability claim.
+effect. With an authorized disposable `FACTORY_TEST_DATABASE_URL`, run the same
+portable restart entrypoint on Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest test_research_windows_restart -v
+```
+
+Its three cases use an actual service process, local command and PostgreSQL with
+explicit fixture identity and a scripted provider: crash after the command but
+before the durable receipt (UNKNOWN), crash after DONE but before tool return,
+and restart a completed session before an explicit next turn. They assert the
+original session/task/run/effect identities and one actual write. These windows
+do not test a service crash while its Job is still active; process stopping uses
+the native Job tests above. No configured test database means three skips,
+not recovery acceptance. Normal browser login and a real-model coding task remain
+separate checks; the fixtures make no provider usability claim.
 
 Test counts are diagnostic, not fixed acceptance targets. Record actual results
 in the PR and distinguish local process/protocol, native PostgreSQL and browser

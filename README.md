@@ -98,10 +98,11 @@ contains `.` and is intentionally not accepted for enabled commands. Tools use
 spaces; junction/reparse targets, hard-linked files and device/stream aliases are
 rejected. Commands run directly without shell expansion or automatic dependency
 installation. Windows uses the existing Job Object owner for process-tree cleanup.
-The native Windows path is a candidate; real Windows Research acceptance has not
-yet passed.
+The native Windows path is a candidate. Track Linux, Windows CI, local Windows
+with PostgreSQL, and browser/model acceptance separately for the exact revision
+in the Draft PR and linked CI records.
 See [development checks](docs/DEVELOPMENT_CHECKS.md#native-windows-research-verification)
-for the separate native Windows checks and their current evidence status.
+for each verification entrypoint and its limits.
 
 `npm start`, `npm run dev` and `npm run start:configured` retain the plain HTTP
 server entrypoint; use the HTTPS command above or an already configured HTTPS

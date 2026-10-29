@@ -4,7 +4,7 @@
 
 个人 Research 已能读、搜、精确修改源码并运行普通测试，但主线明确拒绝原生 Windows 工作区和 CLI；不用 WSL 的用户无法完成编码任务。复用已有 Windows Job Object 与原 Research 工具/效果记录，补通一个真实文件修改和测试闭环。
 
-基线：`b6c383a5c5543fd0cf7d8c08c043ee8ad0f69abe`。代码当前为已实施候选；真实 Windows、服务重启和外部模型均未验收，不能据 Linux 回归宣称支持已通过。
+基线：`b6c383a5c5543fd0cf7d8c08c043ee8ad0f69abe`。代码为已实施候选；准确提交的验收结果记录在 Draft PR 与关联 CI 中，分开标明云端 Linux、Windows CI、本机 Windows/隔离 PG 重启、浏览器/真实模型。不能据 Linux 回归或通用 CI 汇总宣称其余层已通过。
 
 ## What Changes
 
