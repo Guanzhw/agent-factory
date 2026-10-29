@@ -13,10 +13,10 @@ export FACTORY_RESEARCH_WORKSPACE_ROOT=/absolute/owned/research-workspaces
 export FACTORY_RESEARCH_HOST_COMMANDS=1
 # 可选：仅覆盖可执行文件查找路径；默认使用 OS 标准路径，不继承服务 PATH。
 export FACTORY_RESEARCH_COMMAND_PATH=/usr/bin:/bin
-# 例如：项目完整测试需要约 35 秒时，给单次操作 60 秒、原生一轮 300 秒。
-export FACTORY_OPERATION_TIMEOUT_SECONDS=60
+# 以下是已有默认值，只有需要覆盖时才设置。公开仓库完整测试曾实测约 74 秒。
+export FACTORY_OPERATION_TIMEOUT_SECONDS=120
 export FACTORY_NATIVE_TIMEOUT_SECONDS=300
-# 全局工具上限；32 已完成一个真实代码样本，不是任意任务的完成保证。
+# 全局工具上限；不是任意任务的完成保证或费用预算。
 export FACTORY_MAX_TOOL_CALLS=32
 npm run build:research
 export FACTORY_LOCAL_LOGIN_ORIGIN=https://127.0.0.1:3100
@@ -27,9 +27,9 @@ uv run python -m uvicorn agent_factory_server.research:create_app --factory \
 
 打开 `https://127.0.0.1:3100`。证书路径、数据库和签名配置沿用现有安全配置，不能直接把 HTTP 测试服务当作用户部署。`agent-factory-research` 的 HTTP 入口只适用于已经配置 HTTPS 终止代理的环境；上面的 Uvicorn factory 同样读取研究工具配置。
 
-操作时限可配置为 1–600 秒，原生一轮时限为 60–3600 秒；未配置时仍为 8/60 秒。新会话默认使用部署操作时限，旧会话预算不被回写。以上示例不代表任意项目都能在该时间内完成。
+操作时限可配置为 1–600 秒，原生一轮时限为 60–3600 秒；未配置时分别为120/300秒，显式配置仍优先。新会话默认使用部署操作时限，旧会话预算不被回写。原生运行和个人模型请求使用当前 worker 的时限，它不是旧 Plan 中保存的期限；更新默认值后，旧任务的等待时间也可能改变。以上示例不代表任意项目都能在该时间内完成。
 
-工具上限 `FACTORY_MAX_TOOL_CALLS` 为 1–128 的整数，未配置仍为 8。它是全局部署上限；新 Research 会话默认跟随，成员仍可选较低额度，已保存会话、Plan 和其他应用的显式预算不被回写。提高部署上限后，旧低额度任务可能由持久预算检查停止而没有模型总结；原结果和拒绝事件保留，核对安全后可显式继续。该配置也会影响其他应用的原生工具调用上限，不承诺其收尾形式不变。
+工具上限 `FACTORY_MAX_TOOL_CALLS` 为 1–128 的整数，未配置时为32，显式配置仍优先。它是全局部署上限；新 Research 会话默认跟随，成员仍可选较低额度，已保存会话、Plan 和其他应用的显式预算不被回写。提高部署上限后，旧低额度任务仍由持久预算检查拒绝越限副作用，但可能没有模型总结；原结果和拒绝事件保留，核对安全后可显式继续。该配置也会影响其他应用的原生工具调用上限，不承诺其收尾形式不变。
 
 模型设置中的“单次输出上限”控制一次模型响应的 token 数，推理内容也可能占用额度。未填写时仍为 4096；可按提供方实际支持情况选择其他正整数。本轮 DeepSeek 代码样本配置 16384 后完成；这不是任意任务的完成保证或费用预算。调整该设置沿用已有凭据，不要求轮换密钥；保存后产生新模型配置版本，旧研究会话不会自动改用新版本，应先核对原任务，再用所需配置新建会话。截断响应仍会失败，不执行其中未完成的工具调用，也不自动升额重试。
 

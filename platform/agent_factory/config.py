@@ -24,9 +24,9 @@ class Settings:
     max_user_tasks: int = 2
     max_total_tasks: int = 12
     queue_poll: float = 0.2
-    native_timeout_seconds: int = 60
-    max_tool_calls: int = 8
-    experiment_timeout_seconds: int = 8
+    native_timeout_seconds: int = 300
+    max_tool_calls: int = 32
+    experiment_timeout_seconds: int = 120
     experiment_output_bytes: int = 65536
     workspace: Path = field(default_factory=lambda: Path(".local"))
     web_directory: Path = field(default_factory=lambda: Path("dist").resolve())
@@ -163,8 +163,8 @@ class Settings:
             raise ValueError("Production requires an operator-configured JWT key (at least 32 bytes)")
         policy = os.getenv("FACTORY_TEMPORARY_POLICY", "member-self-service")
         return cls(db_url=url, jwt_key=key,
-                   experiment_timeout_seconds=int(os.getenv('FACTORY_OPERATION_TIMEOUT_SECONDS', '8')),
-                   native_timeout_seconds=int(os.getenv('FACTORY_NATIVE_TIMEOUT_SECONDS', '60')),
+                   experiment_timeout_seconds=int(os.getenv('FACTORY_OPERATION_TIMEOUT_SECONDS', '120')),
+                   native_timeout_seconds=int(os.getenv('FACTORY_NATIVE_TIMEOUT_SECONDS', '300')),
                    local_login_origin=os.getenv('FACTORY_LOCAL_LOGIN_ORIGIN') or None,
                    workspace=Path(os.getenv("FACTORY_WORKSPACE", ".local")).resolve(),
                    temporary_policy=policy, policy_revision=os.getenv("FACTORY_POLICY_REVISION", "department-member-v1"),
@@ -177,5 +177,5 @@ class Settings:
                    storage_retention_grace_seconds=int(os.getenv("FACTORY_STORAGE_RETENTION_GRACE_SECONDS", "86400")),
                    storage_allow_purge=os.getenv("FACTORY_STORAGE_ALLOW_PURGE", "false") == "true",
                    max_workers=int(os.getenv("FACTORY_MAX_WORKERS", "2")),
-                   max_tool_calls=int(os.getenv("FACTORY_MAX_TOOL_CALLS", "8")),
+                   max_tool_calls=int(os.getenv("FACTORY_MAX_TOOL_CALLS", "32")),
                    port=int(os.getenv("FACTORY_PORT", "3100")))

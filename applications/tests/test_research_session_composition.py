@@ -39,18 +39,16 @@ class ResearchSessionCompositionTests(unittest.TestCase):
             self.assertIsNone(tools.workspace_root)
             self.assertNotIn('research_run', tools.available_tools)
 
-    def test_normal_factory_loads_configured_timeouts_without_changing_defaults(self):
+    def test_normal_factory_uses_coding_defaults_without_environment_overrides(self):
         environment = {'FACTORY_DATABASE_URL': 'postgresql://unused',
             'FACTORY_JWT_KEY': 'synthetic-signing-key-at-least-32bytes'}
-        with patch.dict(os.environ, environment, clear=True):
-            defaults = Settings.from_env()
-        self.assertEqual((defaults.experiment_timeout_seconds, defaults.native_timeout_seconds), (8, 60))
-        with patch.dict(os.environ, {**environment, 'FACTORY_OPERATION_TIMEOUT_SECONDS': '60',
-                'FACTORY_NATIVE_TIMEOUT_SECONDS': '300'}, clear=True), \
+        with patch.dict(os.environ, environment, clear=True), \
                 patch.object(research, 'create_deployment') as deployment:
+            defaults = Settings.from_env()
             research.create_app()
-        configured = deployment.call_args.args[0]
-        self.assertEqual((configured.experiment_timeout_seconds, configured.native_timeout_seconds), (60, 300))
+        for settings in (self.settings(), defaults, deployment.call_args.args[0]):
+            self.assertEqual((settings.max_tool_calls, settings.experiment_timeout_seconds,
+                              settings.native_timeout_seconds), (32, 120, 300))
 
     def test_invalid_operation_timeout_is_rejected_at_startup(self):
         for value in ('0', '601', 'not-seconds'):
@@ -60,15 +58,17 @@ class ResearchSessionCompositionTests(unittest.TestCase):
                     'FACTORY_OPERATION_TIMEOUT_SECONDS': value}, clear=True), self.assertRaises(ValueError):
                 research.create_app()
 
-    def test_normal_factory_loads_tool_limit_without_changing_default(self):
+    def test_normal_factory_preserves_explicit_lower_execution_limits(self):
         environment = {'FACTORY_DATABASE_URL': 'postgresql://unused',
-            'FACTORY_JWT_KEY': 'synthetic-signing-key-at-least-32bytes'}
-        with patch.dict(os.environ, environment, clear=True):
-            self.assertEqual(Settings.from_env().max_tool_calls, 8)
-        with patch.dict(os.environ, {**environment, 'FACTORY_MAX_TOOL_CALLS': '32'}, clear=True), \
+            'FACTORY_JWT_KEY': 'synthetic-signing-key-at-least-32bytes',
+            'FACTORY_MAX_TOOL_CALLS': '8', 'FACTORY_OPERATION_TIMEOUT_SECONDS': '8',
+            'FACTORY_NATIVE_TIMEOUT_SECONDS': '60'}
+        with patch.dict(os.environ, environment, clear=True), \
                 patch.object(research, 'create_deployment') as deployment:
             research.create_app()
-        self.assertEqual(deployment.call_args.args[0].max_tool_calls, 32)
+        configured = deployment.call_args.args[0]
+        self.assertEqual((configured.max_tool_calls, configured.experiment_timeout_seconds,
+                          configured.native_timeout_seconds), (8, 8, 60))
 
     def test_invalid_tool_limit_is_rejected_at_startup(self):
         for value in ('0', '129', 'not-calls'):
