@@ -96,8 +96,9 @@ CLI tests launch real local synthetic processes. Member commands run once with
 their selected arguments, workdir, environment and input/output contract.
 Specialized installed adapters retain their integration-specific probes. Tests
 distinguish business dispatch from local stop and retained-directory state.
-Execution requires POSIX process groups and is verified on Linux; a Windows skip
-does not establish Windows CLI support. Debug event loops are intentionally
+Execution uses POSIX process groups on Linux and the existing Job Object owner
+on Windows. Linux evidence does not establish Windows CLI support; native
+Windows verification is listed below. Debug event loops are intentionally
 rejected by the adapter, not silently reconfigured. MCP tests run a local protocol
 server and cover stateful/stateless sessions, exact schema/authentication,
 revocation, response/log leak rejection, no call replay and bounded session DELETE
@@ -178,6 +179,42 @@ console errors; deliberately aborted synthetic acknowledgements are recorded
 separately. Requests outside the static app and explicitly intercepted APIs,
 including WebSockets, are rejected. Browser access from Windows does not imply
 Windows CLI execution support.
+
+## Native Windows research verification
+
+The native Windows file/CLI path is implemented as a candidate; **actual Windows
+Research execution remains unverified until the commands and restart scenario
+below run on that OS**. The existing SSH tests, Linux protocol fixtures and skipped
+Windows cases do not establish acceptance. Agno stays pinned to 3.1.0, with the
+locked pywin32 dependency and Python 3.12+ pipe APIs. Use an isolated temporary
+workspace and the prepared interpreter/tools, without changing existing user data
+or installing dependencies from a Research command.
+
+From a configured Windows checkout with its locked environment, run:
+
+```powershell
+$env:PYTHONPATH = 'platform;deployment;platform/tests;applications;applications/tests'
+uv run python -m unittest test_research_session_tools test_personal_cli_process test_windows_ssh_process -v
+```
+
+The Research tool cases perform real create/read/search/edit and failed→passing
+tests, including UTF-8 text and Chinese/space paths. Windows-only cases cover
+junctions, hard links, directory replacement, explicit executable lookup and a
+test longer than 30 seconds within its selected budget. Pipe/process cases must
+confirm the original Job is empty, including when the root exits before a child
+holding inherited pipes, during spawn cancellation, repeated stop, authority loss
+or output/timeout failure. Inspect actual skip reasons; symlink privilege or OS
+requirements must not be recorded as passed checks.
+
+The command environment does not copy the service environment. Windows adds the
+system Windows directory, invocation-owned TEMP/TMP/user/config paths and Python
+UTF-8 mode; configured PATH remains explicit. Ordinary nonzero exits return their
+exit code and separate stdout/stderr. Closing a Job after service failure can
+terminate local children but cannot establish that an earlier operation had no
+effect. A separate real Windows/isolated PostgreSQL hard-exit/restart case must
+retain the original session/task/effect and UNKNOWN without replay before claiming
+recovery acceptance. Browser login and a real-model coding task are further,
+separate checks; these deterministic fixtures make no provider usability claim.
 
 Test counts are diagnostic, not fixed acceptance targets. Record actual results
 in the PR and distinguish local process/protocol, native PostgreSQL and browser

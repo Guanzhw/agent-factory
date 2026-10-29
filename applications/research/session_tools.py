@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import asyncio
-from contextlib import contextmanager
+from contextlib import contextmanager, ExitStack
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 import shutil
 import stat
+import sys
 import tempfile
-from typing import Any
+from typing import Any, cast
 import weakref
 
 from agno.exceptions import RunCancelledException, StopAgentRun
@@ -111,11 +112,49 @@ def _parts(value, *, directory=False):
     parts = value.split('/')
     if any(part == '.' for part in parts) and not (directory and value == '.'):
         raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
+    if sys.platform == 'win32' and value != '.' and any(
+            PureWindowsPath(part).is_reserved() or part.endswith((' ', '.'))
+            or any(char in '<>:"|?*' or ord(char) < 32 for char in part) for part in parts):
+        raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
     return [] if value == '.' else parts
 
 
 @contextmanager
+def _windows_directory(root, parts=(), *, create=False):
+    # Keep every ancestor open without write/delete sharing. Checking a path
+    # and then closing it before opening its child would permit junction swaps.
+    if sys.platform != 'win32':
+        raise ValueError('RESEARCH_WORKSPACE_CONFIGURATION_INVALID')
+    import pywintypes
+    import win32con
+    import win32file
+    path = Path(root)
+    with ExitStack() as held:
+        current = Path(path.anchor)
+        for index, part in enumerate((path.anchor, *path.parts[1:], *parts)):
+            if index:
+                current /= part
+                if create:
+                    try:
+                        current.mkdir(mode=0o700)
+                    except FileExistsError:
+                        pass
+            handle = cast('pywintypes.HANDLEType', win32file.CreateFile(str(current), win32con.GENERIC_READ,
+                win32con.FILE_SHARE_READ, None, win32con.OPEN_EXISTING,
+                win32file.FILE_FLAG_OPEN_REPARSE_POINT | win32con.FILE_FLAG_BACKUP_SEMANTICS, None))
+            held.callback(handle.Close)
+            attributes = win32file.GetFileInformationByHandle(int(handle))[0]
+            if not attributes & win32con.FILE_ATTRIBUTE_DIRECTORY or attributes & win32con.FILE_ATTRIBUTE_REPARSE_POINT:
+                raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
+        yield current
+
+
+@contextmanager
 def _directory(root, parts=(), *, create=False):
+    if sys.platform == 'win32':
+        with _windows_directory(root, parts, create=create) as directory:
+            yield directory
+        return
     if os.name != 'posix':
         raise ValueError('RESEARCH_WORKSPACE_CONFIGURATION_INVALID')
     flags = os.O_RDONLY | getattr(os, 'O_DIRECTORY') | getattr(os, 'O_NOFOLLOW')
@@ -135,6 +174,52 @@ def _directory(root, parts=(), *, create=False):
         os.close(descriptor)
 
 
+def _open_file(parent, name, *, edit=False, create=False):
+    if sys.platform == 'win32':
+        import msvcrt
+        import pywintypes
+        import win32con
+        import win32file
+        _parts(name)
+        handle = cast('pywintypes.HANDLEType', win32file.CreateFile(str(parent / name),
+            win32con.GENERIC_READ | (win32con.GENERIC_WRITE if edit else 0),
+            win32con.FILE_SHARE_READ, None, win32con.CREATE_NEW if create else win32con.OPEN_EXISTING,
+            win32file.FILE_FLAG_OPEN_REPARSE_POINT, None))
+        try:
+            info = win32file.GetFileInformationByHandle(int(handle))
+            if (info[0] & (win32con.FILE_ATTRIBUTE_REPARSE_POINT | win32con.FILE_ATTRIBUTE_DIRECTORY)
+                    or info[7] != 1 or win32file.GetFileType(int(handle)) != win32con.FILE_TYPE_DISK):
+                raise ValueError('RESEARCH_FILE_UNSUPPORTED')
+            descriptor = msvcrt.open_osfhandle(int(handle), (os.O_RDWR if edit else os.O_RDONLY) | os.O_BINARY)
+            handle.Detach()  # The CRT descriptor now owns this exact file handle.
+            return descriptor
+        finally:
+            handle.Close()
+    flags = (os.O_RDWR if edit else os.O_RDONLY) | getattr(os, 'O_NOFOLLOW') | getattr(os, 'O_NONBLOCK')
+    if create:
+        flags |= os.O_CREAT | os.O_EXCL
+    return os.open(name, flags, 0o600, dir_fd=parent)
+
+
+def _entry_stat(parent, name):
+    return os.stat(parent / name, follow_symlinks=False) if sys.platform == 'win32' else os.stat(
+        name, dir_fd=parent, follow_symlinks=False)
+
+
+@contextmanager
+def _child_directory(parent, name):
+    if sys.platform == 'win32':
+        _parts(name)
+        with _directory(parent, (name,)) as child:
+            yield child
+    else:
+        child = os.open(name, os.O_RDONLY | getattr(os, 'O_DIRECTORY') | getattr(os, 'O_NOFOLLOW'), dir_fd=parent)
+        try:
+            yield child
+        finally:
+            os.close(child)
+
+
 def _read_opened(handle):
     info = os.fstat(handle)
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
@@ -145,7 +230,7 @@ def _read_opened(handle):
 
 
 def _read(descriptor, name):
-    handle = os.open(name, os.O_RDONLY | getattr(os, 'O_NOFOLLOW') | getattr(os, 'O_NONBLOCK'), dir_fd=descriptor)
+    handle = _open_file(descriptor, name)
     try:
         return _read_opened(handle)
     finally:
@@ -164,7 +249,7 @@ class ResearchSessionTools:
                 or host_commands and any(not Path(part).is_absolute() for part in command_path.split(os.pathsep))):
             raise ValueError('RESEARCH_COMMAND_CONFIGURATION_INVALID')
         if self.workspace_root is not None:
-            if not self.workspace_root.is_absolute() or os.name != 'posix':
+            if not self.workspace_root.is_absolute() or os.name not in {'posix', 'nt'}:
                 raise ValueError('RESEARCH_WORKSPACE_CONFIGURATION_INVALID')
             # An explicit existing root is required. Startup does not adopt or
             # create arbitrary deployment paths, including symlink ancestors.
@@ -390,8 +475,7 @@ class ResearchSessionTools:
         if name == 'research_search':
             parts = _parts(values.get('path', '.'), directory=True)
             with _directory(workspace, parts[:-1]) as parent:
-                single_file = bool(parts) and not stat.S_ISDIR(os.stat(parts[-1], dir_fd=parent,
-                    follow_symlinks=False).st_mode)
+                single_file = bool(parts) and not stat.S_ISDIR(_entry_stat(parent, parts[-1]).st_mode)
                 if single_file:
                     content = _read(parent, parts[-1])
                     matches = []
@@ -411,14 +495,11 @@ class ResearchSessionTools:
                             truncated = True
                             return
                         scanned += 1
-                        info = os.stat(filename, dir_fd=parent, follow_symlinks=False)
+                        info = _entry_stat(parent, filename)
                         relative = '/'.join((*prefix, filename))
                         if stat.S_ISDIR(info.st_mode):
-                            child = os.open(filename, os.O_RDONLY | getattr(os, 'O_DIRECTORY') | getattr(os, 'O_NOFOLLOW'), dir_fd=parent)
-                            try:
+                            with _child_directory(parent, filename) as child:
                                 search(child, (*prefix, filename), depth + 1)
-                            finally:
-                                os.close(child)
                         elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
                             try:
                                 content = _read(parent, filename)
@@ -448,12 +529,9 @@ class ResearchSessionTools:
         except (ValueError, OSError):
             raise _rejected('RESEARCH_EDIT_PATH_OR_SIZE_INVALID') from None
         try:
-            flags = os.O_RDWR | getattr(os, 'O_NOFOLLOW') | getattr(os, 'O_NONBLOCK')
-            if not old:
-                flags |= os.O_CREAT | os.O_EXCL
             try:
-                descriptor = os.open(parts[-1], flags, 0o600, dir_fd=parent)
-            except OSError:
+                descriptor = _open_file(parent, parts[-1], edit=True, create=not old)
+            except (ValueError, OSError):
                 raise _rejected('RESEARCH_EDIT_FILE_UNAVAILABLE_OR_EXISTS') from None
             with os.fdopen(descriptor, 'r+b') as output:
                 try:
@@ -478,16 +556,23 @@ class ResearchSessionTools:
         argv = values['argv']
         if not argv[0] or '/' in argv[0] or '\\' in argv[0] or any('\0' in arg for arg in argv):
             raise _rejected('RESEARCH_COMMAND_INVALID')
-        executable = shutil.which(argv[0], path=self.command_path)
+        if sys.platform == 'win32':
+            try:
+                _parts(argv[0])
+            except ValueError:
+                raise _rejected('RESEARCH_COMMAND_INVALID') from None
+        executable = (next((found for part in self.command_path.split(os.pathsep)
+            if (found := shutil.which(str(Path(part) / argv[0])))), None) if sys.platform == 'win32'
+            else shutil.which(argv[0], path=self.command_path))
         if executable is None:
             raise _rejected('RESEARCH_COMMAND_UNAVAILABLE')
         try:
             cwd_parts = _parts(values.get('cwd', '.'), directory=True)
-            with _directory(workspace, cwd_parts):
-                pass
+            manager = _directory(workspace, cwd_parts)
+            manager.__enter__()
         except (ValueError, OSError):
             raise _rejected('RESEARCH_COMMAND_DIRECTORY_INVALID') from None
-        root = Path(tempfile.mkdtemp(prefix='research-command-'))
+        root = None
         stopped = False
 
         def check():
@@ -497,6 +582,7 @@ class ResearchSessionTools:
                 raise asyncio.CancelledError() from None
 
         try:
+            root = Path(tempfile.mkdtemp(prefix='research-command-'))
             environment = PersonalCliAdapter._environment(root)
             environment['PATH'] = self.command_path
             try:
@@ -512,5 +598,6 @@ class ResearchSessionTools:
                 'stdout': result.stdout.decode(errors='replace'), 'stderr': result.stderr.decode(errors='replace'),
                 'stopped': result.stopped}
         finally:
-            if stopped:
+            manager.__exit__(None, None, None)
+            if stopped and root is not None:
                 shutil.rmtree(root)
