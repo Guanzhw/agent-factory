@@ -12,7 +12,7 @@
 
 ### Requirement: Resource setup returns to its actual origin
 
-系统 SHALL 保留原研究项目或个人会话位置和非秘密草稿，包括项目准备、执行参数及配置编辑的未保存输入；资源操作只有确认保存后才显示保存成功反馈，未知或拒绝保留原请求核对。普通返回或明确放弃 SHALL 保持可用。秘密不得保存到URL或浏览器草稿。
+系统 SHALL 保留原研究项目或个人会话位置和非秘密草稿，包括项目准备、执行参数及配置编辑的未保存输入；资源操作只有确认保存后才显示保存成功反馈。未知结果 SHALL 保留原请求核对；首次提交当前阶段被明确拒绝时显示拒绝、不自动离开，允许修正后由成员重新提交，不能宣称先前已确认阶段未发生。查询原请求失败不得推断原操作未执行。普通返回或明确放弃 SHALL 保持可用。秘密不得保存到URL或浏览器草稿。
 
 #### Scenario: Complete a missing model for a new research session
 - **WHEN** 成员填写目标和边界后进入模型配置，修正字段错误并确认保存
@@ -21,6 +21,14 @@
 #### Scenario: A save result is unknown
 - **WHEN** 保存请求已发出但回执未确认
 - **THEN** 不显示保存成功或自动离开，沿原请求查询，不发替代保存
+
+#### Scenario: A save stage is explicitly rejected
+- **WHEN** 当前模型配置或设默认阶段的首次POST收到明确403或422拒绝
+- **THEN** 显示该阶段未接受、保留可修正输入，不自动离开；此前已确认的凭据或模型配置不被宣称未发生
+
+#### Scenario: Looking up the original receipt fails
+- **WHEN** 已发送请求的回执GET返回403或404，或仍无法确认结果
+- **THEN** 保留原标识待核对，不以查询失败释放原请求或创建替代POST
 
 #### Scenario: Return to an unfinished project edit
 - **WHEN** 成员在项目准备、执行参数或配置编辑中填写输入，进入资源后返回，或在往返过程中后退前进与刷新
