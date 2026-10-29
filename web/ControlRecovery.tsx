@@ -13,10 +13,15 @@ export function commandNotice(receipt: ControlReceipt): string {
 }
 const actionName = (action: string) => ({ answer: '回答', approve: '审批决定', cancel: '取消', resume_approved: '恢复已记录审批' })[action] ?? '任务操作';
 
-export function ControlRecovery({ ownerId, onSelect, busy, act }: {
+interface ControlRecoveryProps {
   ownerId: string; onSelect: (task: string) => void; busy: string;
+  taskId?: string;
   act: (name: string, work: () => Promise<void>) => Promise<void>;
-}) {
+}
+export function ControlRecovery(props: ControlRecoveryProps) {
+  return <ControlRecoveryScope key={JSON.stringify([props.ownerId, props.taskId])} {...props}/>;
+}
+function ControlRecoveryScope({ ownerId, taskId, onSelect, busy, act }: ControlRecoveryProps) {
   const [receipts, setReceipts] = useState<ControlReceipt[]>([]);
   const [missing, setMissing] = useState<CommandPointer[]>([]);
   const [error, setError] = useState('');
@@ -38,7 +43,7 @@ export function ControlRecovery({ ownerId, onSelect, busy, act }: {
         const values = new Map<string, ControlReceipt>();
         let nextCursor: string | null = null;
         for (let page = 0; page < pages; page++) {
-          const result = await api.controlCommands(ownerId, undefined, next, controller.signal);
+          const result = await api.controlCommands(ownerId, taskId, next, controller.signal);
           for (const value of result.items) values.set(value.commandId, value);
           nextCursor = result.nextCursor;
           if (!nextCursor) break;
@@ -47,7 +52,7 @@ export function ControlRecovery({ ownerId, onSelect, busy, act }: {
         let pointers: CommandPointer[] = [];
         try {
           for (const value of values.values()) adoptCommandPointer(value);
-          pointers = pendingCommandPointers(ownerId);
+          pointers = pendingCommandPointers(ownerId).filter(pointer => !taskId || pointer.taskId === taskId);
         } catch { /* Server receipts remain recoverable when local storage is unavailable. */ }
         const absent: CommandPointer[] = [];
         for (const pointer of pointers) {
@@ -70,10 +75,10 @@ export function ControlRecovery({ ownerId, onSelect, busy, act }: {
     }
     void poll();
     return () => { controller.abort(); clearTimeout(timer); };
-  }, [ownerId, pages, refresh]);
+  }, [ownerId, taskId, pages, refresh]);
   if (!receipts.length && !missing.length && !error) return null;
   return <section className="control-recovery" aria-label="待核对的任务操作">
-    <div className="section-heading"><h2>待核对的任务操作</h2><button className="text-button" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>核对回执</button></div>
+    <div className="section-heading"><h2>{taskId ? '本任务待核对操作' : '待核对的任务操作'}</h2><button className="text-button" disabled={!!busy} onClick={() => setRefresh(n => n + 1)}>核对回执</button></div>
     <p className="quiet">重启浏览器后仍可核对原操作。决定已记录、执行继续和停止确认分别显示；不会因网络中断自动重发。</p>
     {error && <p role="alert">{error}</p>}
     <ul>{receipts.map(receipt => <li key={receipt.commandId} data-command-id={receipt.commandId}>

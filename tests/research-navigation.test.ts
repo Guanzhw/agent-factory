@@ -50,3 +50,26 @@ it('keeps the research origin while choosing a concrete resource category', () =
   const returned = readWorkspaceRoute(new URL(workspaceUrl(url, { ...restored, tab: 'research', modelReturn: '' }, researchNavigation), url), false, researchNavigation);
   expect(returned).toMatchObject({ tab: 'research', project: 'project-1', researchSetup: 'setup-2' });
 });
+
+it('restores only an explicit installed source bound to the selected task', () => {
+  const url = new URL('https://factory.example/?tab=tasks&task=task-1&taskReturn=research&taskReturnTask=task-1&researchView=sessions&researchSession=session-1');
+  const route = readWorkspaceRoute(url, false, researchNavigation);
+  expect(route).toMatchObject({ task: 'task-1', taskReturn: 'research', taskReturnTask: 'task-1', researchSession: 'session-1' });
+  expect(readWorkspaceRoute(new URL(workspaceUrl(url, route, researchNavigation), url), false, researchNavigation)).toEqual(route);
+  expect(readWorkspaceRoute(url, false).taskReturn).toBeUndefined();
+  for (const query of ['tab=tasks&task=task-1&researchSession=session-1',
+    'tab=tasks&task=task-1&taskReturn=research&taskReturnTask=other',
+    'tab=tasks&task=task-1&taskReturn=uninstalled&taskReturnTask=task-1',
+    'tab=resources&task=task-1&taskReturn=research&taskReturnTask=task-1']) {
+    expect(readWorkspaceRoute(new URL(`https://factory.example/?${query}`), false, researchNavigation).taskReturn).toBeUndefined();
+  }
+});
+
+it('requires an exact schedule pointer for a schedule return and does not use plan IDs', () => {
+  const url = new URL('https://factory.example/?tab=tasks&task=task-1&taskReturn=schedules&taskReturnTask=task-1&scheduleId=schedule-2');
+  expect(readWorkspaceRoute(url, false)).toMatchObject({ taskReturn: 'schedules', scheduleId: 'schedule-2' });
+  url.searchParams.delete('scheduleId'); url.searchParams.set('planId', 'plan-2');
+  expect(readWorkspaceRoute(url, false).taskReturn).toBeUndefined();
+  url.searchParams.set('scheduleId', '../another-owner');
+  expect(readWorkspaceRoute(url, false).taskReturn).toBeUndefined();
+});

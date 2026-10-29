@@ -107,6 +107,9 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
   const routeRef = useRef(route);
   const navigate = (patch: Partial<WorkspaceRoute>) => {
     const next = { ...routeRef.current, ...patch };
+    if (patch.tab && patch.tab !== 'tasks' || patch.task !== undefined && patch.task !== routeRef.current.task && patch.taskReturnTask !== patch.task) {
+      next.taskReturn = undefined; next.taskReturnTask = undefined;
+    }
     if (sameWorkspaceRoute(next, routeRef.current)) return;
     window.history.pushState(null, '', workspaceUrl(new URL(window.location.href), next, navigation));
     routeRef.current = next; setRoute(next);
@@ -114,8 +117,8 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
   };
   const tab = route.tab;
   const selected = route.task;
-  const setTab = (tab: WorkspaceTab) => navigate({ tab, modelReturn: undefined, resource: undefined });
-  const setSelected = (task: string) => { navigate({ tab: 'tasks', task }); setActionError(''); };
+  const setTab = (tab: WorkspaceTab) => navigate({ tab, modelReturn: undefined, resource: undefined, taskReturn: undefined, taskReturnTask: undefined, scheduleId: undefined });
+  const setSelected = (task: string) => { navigate({ tab: 'tasks', task, taskReturn: undefined, taskReturnTask: undefined }); setActionError(''); };
   useEffect(() => {
     const restore = () => {
       const next = readWorkspaceRoute(new URL(window.location.href), user.role === 'manager', navigation);
@@ -239,7 +242,7 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
       <div id="secondary-navigation" className={`secondary-navigation ${navigationOpen ? 'expanded' : ''}`}><span className="nav-group-label">应用创作</span><button aria-current={tab === 'applications' ? 'page' : undefined} onClick={() => setTab('applications')}>应用模板</button><button aria-current={tab === 'materials' ? 'page' : undefined} onClick={() => setTab('materials')}>共享材料</button><button aria-current={tab === 'developer' ? 'page' : undefined} onClick={() => setTab('developer')}>高级装配</button><span className="nav-group-label">运行与维护</span>{(navigation.advancedTabs ?? ['schedules', 'storage']).map(value => <button key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>{tabs[value]}</button>)}<button aria-current={tab === 'reviews' ? 'page' : undefined} onClick={() => setTab('reviews')}>历史方案记录</button>{user.role === 'manager' && <button aria-current={tab === 'accounts' ? 'page' : undefined} onClick={() => setTab('accounts')}>账号管理</button>}</div>
     </nav><div className="sidebar-context"><span className="sidebar-line"/><p>先选应用开始工作。<br/>任务与个人资源随时可查。</p></div><div className="identity"><div className="avatar" aria-hidden="true">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><small>{user.role === 'manager' ? '账号管理员' : '成员'}</small></div><button className="logout" disabled={sessionBusy || !!busy} onClick={logout}>退出</button></div></aside>
     <main className="workspace"><header className="workspace-header"><div><span className="quiet">工作区 / </span><strong>{tabs[tab]}</strong></div><div className="sync-state"><span className={`connection-dot ${syncError ? 'disconnected' : ''}`} aria-hidden="true"/>{syncError ? '部分区域更新失败' : syncedAt ? '页面已同步' : '页面同步中'}<button className="text-button" onClick={retry} disabled={!!busy}>刷新</button></div></header>
-    <div className="workspace-body"><div className="runtime-strip"><div><strong>{status ? '运行状态' : '运行状态待确认'}</strong><span>{status ? '实际执行与证据状态以任务记录为准' : '等待服务端确认，尚未创建任务'}</span></div><span className="integration">{status?.integration ?? '集成状态未知'}</span></div>
+    <div className="workspace-body">
       <ErrorMessage message={sessionError}/><ErrorMessage message={readErrors.status && `运行状态更新失败：${readErrors.status}`} retry={retry}/>{['catalog', 'developer', 'materials', 'applications'].includes(tab) && <ErrorMessage message={readErrors.materials && `材料目录更新失败：${readErrors.materials}`} retry={retry}/>}<ErrorMessage message={readErrors.targets && `执行目标更新失败：${readErrors.targets}`} retry={retry}/><ErrorMessage message={actionError}/>{notice && <div className="success-message" role="status">{notice}</div>}
       {children?.(context)}<footer className="workspace-footer"><span>最近成功读取 {time(syncedAt)}</span><span>任务执行与结果验证分别记录</span></footer>
     </div></main></div></FeeVisibility>;
