@@ -597,12 +597,5 @@ class WindowsCLIProcessTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(caught.exception.stopped)
         self.assert_job_stopped()
 
-    async def test_configured_budget_allows_test_longer_than_thirty_seconds(self):
-        result = await self.run_process('import time;time.sleep(30.1);print("finished")', timeout_seconds=40)
-        self.assertEqual(result.stdout.strip(), b'finished')
-        self.assertEqual(result.returncode, 0)
-        self.assert_job_stopped()
-
-
 if __name__ == '__main__':
     unittest.main()

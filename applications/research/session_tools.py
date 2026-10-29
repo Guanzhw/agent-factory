@@ -139,11 +139,16 @@ def _windows_directory(root, parts=(), *, create=False):
                         current.mkdir(mode=0o700)
                     except FileExistsError:
                         pass
-            handle = cast('pywintypes.HANDLEType', win32file.CreateFile(str(current), win32con.GENERIC_READ,
-                win32con.FILE_SHARE_READ, None, win32con.OPEN_EXISTING,
-                win32file.FILE_FLAG_OPEN_REPARSE_POINT | win32con.FILE_FLAG_BACKUP_SEMANTICS, None))
-            held.callback(handle.Close)
-            attributes = win32file.GetFileInformationByHandle(int(handle))[0]
+            try:
+                handle = cast('pywintypes.HANDLEType', win32file.CreateFile(str(current), win32con.GENERIC_READ,
+                    win32con.FILE_SHARE_READ, None, win32con.OPEN_EXISTING,
+                    win32file.FILE_FLAG_OPEN_REPARSE_POINT | win32con.FILE_FLAG_BACKUP_SEMANTICS, None))
+                held.callback(handle.Close)
+                attributes = win32file.GetFileInformationByHandle(int(handle))[0]
+            except pywintypes.error:
+                # pywin32.error derives from Exception, not OSError. No user
+                # file has been opened or written at this directory boundary.
+                raise OSError('RESEARCH_WORKSPACE_PATH_INVALID') from None
             if not attributes & win32con.FILE_ATTRIBUTE_DIRECTORY or attributes & win32con.FILE_ATTRIBUTE_REPARSE_POINT:
                 raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
         yield current
@@ -181,10 +186,13 @@ def _open_file(parent, name, *, edit=False, create=False):
         import win32con
         import win32file
         _parts(name)
-        handle = cast('pywintypes.HANDLEType', win32file.CreateFile(str(parent / name),
-            win32con.GENERIC_READ | (win32con.GENERIC_WRITE if edit else 0),
-            win32con.FILE_SHARE_READ, None, win32con.CREATE_NEW if create else win32con.OPEN_EXISTING,
-            win32file.FILE_FLAG_OPEN_REPARSE_POINT, None))
+        try:
+            handle = cast('pywintypes.HANDLEType', win32file.CreateFile(str(parent / name),
+                win32con.GENERIC_READ | (win32con.GENERIC_WRITE if edit else 0),
+                win32con.FILE_SHARE_READ, None, win32con.CREATE_NEW if create else win32con.OPEN_EXISTING,
+                win32file.FILE_FLAG_OPEN_REPARSE_POINT, None))
+        except pywintypes.error:
+            raise OSError('RESEARCH_FILE_UNAVAILABLE') from None
         try:
             info = win32file.GetFileInformationByHandle(int(handle))
             if (info[0] & (win32con.FILE_ATTRIBUTE_REPARSE_POINT | win32con.FILE_ATTRIBUTE_DIRECTORY)
@@ -193,6 +201,12 @@ def _open_file(parent, name, *, edit=False, create=False):
             descriptor = msvcrt.open_osfhandle(int(handle), (os.O_RDWR if edit else os.O_RDONLY) | os.O_BINARY)
             handle.Detach()  # The CRT descriptor now owns this exact file handle.
             return descriptor
+        except (pywintypes.error, OSError, ValueError):
+            if create:
+                # CREATE_NEW already changed the directory. Do not settle an
+                # unconfirmed new file as a harmless pre-write rejection.
+                raise ToolInvocationError('RESEARCH_TOOL_OUTCOME_UNKNOWN', outcome='unknown', stopped=True) from None
+            raise OSError('RESEARCH_FILE_UNSUPPORTED') from None
         finally:
             handle.Close()
     flags = (os.O_RDWR if edit else os.O_RDONLY) | getattr(os, 'O_NOFOLLOW') | getattr(os, 'O_NONBLOCK')
@@ -411,7 +425,7 @@ class ResearchSessionTools:
                     raise
                 receipt = {'outcome': 'cancelled', 'cancelled': True, 'stopped': True,
                            'code': 'RESEARCH_MEMORY_CANCELLED_BEFORE_WRITE'}
-            except CLIProcessError as error:
+            except ToolInvocationError as error:
                 if error.outcome == 'cancelled' and error.stopped:
                     receipt = {'outcome': 'cancelled', 'cancelled': True, 'stopped': True, 'code': error.code}
                 elif error.outcome == 'failed' and error.stopped:
@@ -420,8 +434,6 @@ class ResearchSessionTools:
                     store.event(identity[1], 'research_tool_finished', '原操作结果未确认，请先核对',
                         {**event, 'outcome': 'unknown', 'stopped': error.stopped, 'code': error.code})
                     raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN') from None
-            except ToolInvocationError as error:
-                receipt = {'outcome': 'failed', 'stopped': True, 'code': error.code}
             except (ValueError, OSError, UnicodeError, PermissionError, HTTPException):
                 # A mutation may have committed before an IO failure. Keep its
                 # effect unresolved; a new model call must not replay it.

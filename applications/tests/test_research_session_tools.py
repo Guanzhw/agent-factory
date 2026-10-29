@@ -13,7 +13,7 @@ import subprocess
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from agno.agent import Agent
 from agno.exceptions import RunCancelledException, StopAgentRun
@@ -25,7 +25,8 @@ from fastapi import HTTPException
 
 from agent_factory.execution_bindings import BindingContext, EnvironmentLimits
 from agent_factory.store import digest
-from research.session_tools import EFFECT_PREFIX, ResearchSessionTools, _directory, _parts
+from agent_factory.personal_tool_contract import ToolInvocationError
+from research.session_tools import EFFECT_PREFIX, ResearchSessionTools, _directory, _open_file, _parts
 
 
 CONTENT_ID = 'abcdefab-1111-2222-3333-abcdefabcdef'
@@ -77,6 +78,42 @@ class ResearchSessionConfigurationTests(unittest.TestCase):
                     'file:stream', 'NUL.txt', 'COM¹', 'LPT1.py', 'trailing.', 'trailing ', 'a*/b', 'a\n'):
                 with self.subTest(path=path), self.assertRaises(ValueError):
                     _parts(path)
+
+
+class WindowsFileErrorProtocolTests(unittest.TestCase):
+    """Portable pywin32 exception-shape fixtures, not native Windows IO evidence."""
+
+    def setUp(self):
+        self.native_error = type('NativeFileError', (Exception,), {})
+        self.handle = MagicMock()
+        self.files = SimpleNamespace(CreateFile=Mock(return_value=self.handle),
+            GetFileInformationByHandle=Mock(side_effect=self.native_error('synthetic native IO error')),
+            FILE_FLAG_OPEN_REPARSE_POINT=0x200000)
+        constants = SimpleNamespace(GENERIC_READ=1, GENERIC_WRITE=2, FILE_SHARE_READ=1,
+            OPEN_EXISTING=3, CREATE_NEW=1, FILE_FLAG_BACKUP_SEMANTICS=0x2000000)
+        self.enterContext(patch.dict(sys.modules, {'pywintypes': SimpleNamespace(error=self.native_error),
+            'win32con': constants, 'win32file': self.files, 'msvcrt': SimpleNamespace()}))
+        self.enterContext(patch('research.session_tools.sys', SimpleNamespace(platform='win32')))
+
+    def test_native_directory_and_preopen_errors_use_existing_recoverable_oserror_contract(self):
+        self.files.CreateFile.side_effect = self.native_error('synthetic missing file')
+        with self.assertRaises(OSError):
+            with _directory(Path.cwd()):
+                self.fail('Failed directory must not open')
+        for create in (False, True):
+            with self.subTest(create=create), self.assertRaises(OSError):
+                _open_file(Path.cwd(), 'source.py', edit=True, create=create)
+        self.handle.Close.assert_not_called()
+
+    def test_metadata_failure_after_create_keeps_unknown_but_unwritten_existing_file_can_fail(self):
+        with self.assertRaises(ToolInvocationError) as caught:
+            _open_file(Path.cwd(), 'new.py', edit=True, create=True)
+        self.assertEqual(caught.exception.outcome, 'unknown')
+        self.handle.Close.assert_called_once()
+        self.handle.Close.reset_mock()
+        with self.assertRaises(OSError):
+            _open_file(Path.cwd(), 'existing.py', edit=True)
+        self.handle.Close.assert_called_once()
 
 
 class Store:
@@ -295,6 +332,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
 
     @unittest.skipUnless(sys.platform == 'win32', 'Requires actual Windows directory sharing modes')
     async def test_windows_ancestor_handles_block_replacement_and_release_after_operation(self):
+        import pywintypes
         import win32con
         import win32file
         workspace = self.workspace()
@@ -305,7 +343,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
                 workspace.rename(workspace.with_name('moved'))
             with self.assertRaises(OSError):
                 nested.rename(workspace / 'replaced')
-            with self.assertRaises(OSError):
+            with self.assertRaises(pywintypes.error):
                 handle = win32file.CreateFile(str(nested), win32con.GENERIC_WRITE,
                     win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
                     None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_BACKUP_SEMANTICS, None)
@@ -315,6 +353,52 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
             self.assertTrue(created['created'])
         nested.rename(workspace / 'released')
         self.assertEqual((workspace / 'released/source.py').read_bytes(), b'value = 1\n')
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Requires native Windows missing/existing/readonly failures')
+    async def test_windows_prewrite_file_failures_can_be_corrected_without_unknown_effect(self):
+        read = await self.invoke('research_read_file', {'path': 'missing.py'})
+        self.assertEqual(read['outcome'], 'failed')
+        bad_parent = await self.invoke('research_edit_file', {'path': 'missing/source.py', 'old': '', 'new': 'no'})
+        self.assertEqual(bad_parent['outcome'], 'failed')
+        bad_cwd = await self.invoke('research_run', {'argv': [Path(sys.executable).name, '-c', 'pass'], 'cwd': 'missing'})
+        self.assertEqual(bad_cwd['outcome'], 'failed')
+        missing = await self.invoke('research_edit_file', {'path': 'missing.py', 'old': 'old', 'new': 'new'})
+        self.assertEqual(missing['outcome'], 'failed')
+        created = await self.invoke('research_edit_file', {'path': 'source.py', 'old': '', 'new': 'old'})
+        self.assertTrue(created['created'])
+        exists = await self.invoke('research_edit_file', {'path': 'source.py', 'old': '', 'new': 'wrong'})
+        self.assertEqual(exists['outcome'], 'failed')
+        source = self.workspace() / 'source.py'
+        source.chmod(0o400)
+        try:
+            readonly = await self.invoke('research_edit_file', {'path': 'source.py', 'old': 'old', 'new': 'wrong'})
+            self.assertEqual(readonly['outcome'], 'failed')
+        finally:
+            source.chmod(0o600)
+        fixed = await self.invoke('research_edit_file', {'path': 'source.py', 'old': 'old', 'new': 'new'})
+        self.assertEqual(source.read_text(), 'new')
+        self.assertNotEqual(created['afterSha256'], fixed['afterSha256'])
+        self.assertTrue(all(effect['status'] == 'DONE' for effect in self.store.effects('task-alice')))
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Native CREATE_NEW plus injected metadata failure')
+    async def test_windows_failure_after_create_keeps_original_effect_unknown(self):
+        import pywintypes
+        import win32con
+        import win32file
+        original = win32file.GetFileInformationByHandle
+        def fail_file(handle):
+            info = original(handle)
+            if not info[0] & win32con.FILE_ATTRIBUTE_DIRECTORY:
+                raise pywintypes.error(5, 'GetFileInformationByHandle', 'synthetic metadata failure')
+            return info
+        with patch.object(win32file, 'GetFileInformationByHandle', side_effect=fail_file):
+            with self.assertRaises(StopAgentRun):
+                await self.call('research_edit_file', {'path': 'created.py', 'old': '', 'new': 'original'}).aexecute()
+        self.assertEqual((self.workspace() / 'created.py').read_bytes(), b'')
+        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'UNKNOWN')
+        with self.assertRaises(StopAgentRun):
+            await self.call('research_edit_file', {'path': 'replay.py', 'old': '', 'new': 'no'}).aexecute()
+        self.assertFalse((self.workspace() / 'replay.py').exists())
 
     @unittest.skipUnless(sys.platform == 'win32', 'Requires actual Windows executable search semantics')
     async def test_windows_command_lookup_does_not_add_service_current_directory(self):
@@ -580,6 +664,19 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         other = self.call('research_edit_file', {'path': 'wrong-owner', 'old': '', 'new': 'no'}, owner='bob')
         other.function._run_context.user_id = 'alice'
         self.assertEqual((await other.aexecute()).status, 'failure')
+        self.assertEqual(len(self.store.receipts), 1)
+
+    async def test_file_error_unknown_preserves_original_effect_and_blocks_next_tool(self):
+        call = self.call('research_edit_file', {'path': 'created', 'old': '', 'new': 'data'})
+        with patch.object(self.tools, '_files', side_effect=ToolInvocationError(
+                'RESEARCH_TOOL_OUTCOME_UNKNOWN', outcome='unknown', stopped=True)):
+            with self.assertRaises(StopAgentRun):
+                await call.aexecute()
+        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'UNKNOWN')
+        self.assertEqual(self.store.events[-1]['data']['outcome'], 'unknown')
+        self.assertTrue(self.store.events[-1]['data']['stopped'])
+        with self.assertRaises(StopAgentRun):
+            await self.call('research_read_file', {'path': 'created'}).aexecute()
         self.assertEqual(len(self.store.receipts), 1)
 
     async def test_unknown_effect_stops_new_call_instead_of_replaying(self):
