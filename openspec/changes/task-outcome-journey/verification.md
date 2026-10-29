@@ -2,6 +2,12 @@
 
 2026-10-29。基线 `8ff92173bc6707cfb0bb7604b759a58d1c3c0eb7`；产品候选 `7023a993f1745f8394fdd8f04cd9818011b93f5c`，tree `776c7572ff222379c48d3dfa1115f32a2ed5053c`。随后仅整理本记录、任务进度与原始截图。代码独审与下述限定用户旅程通过；最终文档 head 的 full CI、发布和主干核验另行完成，不表示已部署。
 
+## Full CI failure and diagnostics
+
+`455506f4110d53d130772a800552b59f7480d9b8` 的 [full40806050019](https://github.com/Guanzhw/agent-factory/actions/runs/40806050019) 失败：PostgreSQL 全量执行、完成核验和汇总失败，其余五个 job 成功。普通 Checks API 未给出失败测试 ID；十条源码错误注解与此前成功的8ff full完全一致，不能据这些负向fixture注解判断本次根因，也不因此记作偶发通过。原候选独立本地完整复现进行中，发布暂停；未读取被拒的原始日志/产物。
+
+诊断补丁仅把 `check_python` 既有用例ID/转义traceback注解复用到 `check_postgres`；没有 unittest failure/error 但 required acceptance 未通过时显示既有摘要。测试集合、期限、accepted、退出码和产物语义保持，后续新运行的诊断不回写旧失败。33项无数据库 runner/CI/profiler回归通过，包含两入口的合成失败/错误、非Actions不输出、required skip仍失败；测试捕获这些合成错误注解，不让它们泄漏到正常CI。诊断补丁仍须独立审查与准确新head full；不能称旧根因已修。
+
 ## Behavior
 
 “我的任务”先显示状态、真实失败、待处理要求与已有产物；当前任务的原回执在操作旁，读取详情失败仍能核对。UNKNOWN 不自动重发。研究和计划的明确入口保存来源，返回只读取原记录；直接链接或不匹配来源提供通用返回。暂停后续计划与停止本次执行保持独立，工作流待输入和后代停止范围没有隐藏。

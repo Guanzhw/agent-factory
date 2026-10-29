@@ -10,7 +10,7 @@ from pathlib import Path
 import sys
 import unittest
 
-from check_python import CollectionError, cases, configure_imports, discover_tests
+from check_python import CollectionError, cases, configure_imports, discover_tests, report_test_failures
 from postgres_requirements import REQUIRED_TESTS
 
 
@@ -87,7 +87,12 @@ def main(argv=None):
     except CollectionError as error:
         print(f'POSTGRES_COLLECTION_FAILED: {error}', file=sys.stderr)
         return 1
-    _, summary = run_checks(discovered, required, subset=bool(args.group))
+    result, summary = run_checks(discovered, required, subset=bool(args.group))
+    report_test_failures(result)
+    if (os.environ.get('GITHUB_ACTIONS') == 'true' and not summary['accepted']
+            and not result.failures and not result.errors):
+        message = json.dumps(summary, sort_keys=True).replace('%', '%25')
+        print(f'::error::PostgreSQL required acceptance did not pass: {message}')
     if args.summary_file is not None:
         args.summary_file.write_text(json.dumps(summary) + '\n', encoding='utf-8')
     print(json.dumps(summary))
