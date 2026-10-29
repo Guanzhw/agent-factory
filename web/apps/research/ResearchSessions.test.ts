@@ -90,7 +90,49 @@ it('does not invent children for existing turns or invent a result body for a co
   current = { ...current, turns: [{ ...completedTurn, children: [{ childTaskId: 'child-task-a', runId: 'child-run-a', goal: '核对测试', status: 'completed', result: null }] }] };
   await act(async () => button('刷新会话').click());
   const section = host.querySelector('[aria-label="第 1 轮临时子助手"]')!;
-  expect(section.textContent).toContain('尚无已确认的结果正文'); expect(section.querySelector('details')).toBeNull();
+  expect(section.textContent).toContain('尚无已确认的结果正文'); expect(section.querySelector('.rs-child-result')).toBeNull();
+});
+
+it('renders main and child Markdown while preserving code and avoiding active HTML or remote images', async () => {
+  const code = 'def result():\n    return "ok"\n';
+  const result = '**修复完成**\n\n- 读过源码\n- 跑过测试\n\n```python\n' + code + '```\n\n![测试图片](https://example.invalid/tracker.png)\n\n<script>alert(1)</script>\n\n[危险链接](javascript:alert(1))';
+  const goal = '检查测试并报告来源。\n保留所有原始文件。';
+  current = { ...current, turns: [{ ...completedTurn, result, children: [{ childTaskId: 'child-task-a', runId: 'child-run-a', goal, status: 'completed', result: '### 子助手结论\n\n`result()` 返回正确。' }] }] };
+  await mount(session.id);
+  const main = host.querySelector('.rs-turn > .rs-reply .rs-markdown')!;
+  expect(main.querySelector('strong')?.textContent).toBe('修复完成'); expect(main.querySelectorAll('li')).toHaveLength(2);
+  expect(main.querySelector('pre code')?.textContent).toBe(code);
+  expect(main.querySelector('img,script')).toBeNull(); expect(main.textContent).toContain('测试图片');
+  expect(main.querySelector('a')?.getAttribute('href')).toBe('');
+  const childGoal = host.querySelector<HTMLDetailsElement>('.rs-child-goal')!;
+  const childResult = host.querySelector<HTMLDetailsElement>('.rs-child-result')!;
+  expect(childGoal.open).toBe(false); expect(childGoal.querySelector('p')?.textContent).toBe(goal);
+  expect(childResult.open).toBe(false); expect(childResult.querySelector('h3')?.textContent).toBe('子助手结论');
+  await act(async () => { childGoal.open = true; childResult.open = true; button('查看原子任务记录').click(); });
+  expect(task).toHaveBeenCalledExactlyOnceWith('child-task-a');
+  expect(api.turn).not.toHaveBeenCalled(); expect(api.create).not.toHaveBeenCalled(); expect(api.stop).not.toHaveBeenCalled();
+});
+
+it('keeps command failure and unknown receipts visible despite a successful-looking assistant reply', async () => {
+  const stdout = '  first\n    second\n';
+  current = { ...current, turns: [{ ...completedTurn, result: '**一切成功**', toolResults: [
+    { effectKey: 'failed-command', status: 'DONE', result: { outcome: 'completed', output: { argv: ['python', '-m', 'pytest'], cwd: 'project', exitCode: 1, stdout, stderr: 'AssertionError\n' } } },
+    { effectKey: 'failed-tool', status: 'DONE', result: { outcome: 'failed', stopped: true, code: 'RESEARCH_COMMAND_UNAVAILABLE' } },
+    { effectKey: 'unknown-command', status: 'UNKNOWN', result: null },
+    { effectKey: 'completed-command', status: 'DONE', result: { outcome: 'completed', output: { argv: ['python', '-V'], cwd: '.', exitCode: 0, stdout: 'Python\n', stderr: '' } } },
+  ] }] };
+  await mount(session.id);
+  const records = [...host.querySelectorAll<HTMLDetailsElement>('.rs-tool-results > details')];
+  expect(records.map(record => record.open)).toEqual([true, true, true, false]);
+  expect(records[0].querySelector('summary')?.textContent).toContain('操作失败 · 退出码 1');
+  expect(records[1].querySelector('summary')?.textContent).toContain('操作失败');
+  expect(records[2].querySelector('summary')?.textContent).toContain('结果未知，需核对原操作');
+  expect(records[3].querySelector('summary')?.textContent).toContain('回执已确认 · 退出码 0');
+  expect(records[0].querySelector('summary')?.textContent).not.toContain('failed-command');
+  expect(records[0].querySelector('.rs-command-output pre')?.textContent).toBe(stdout);
+  expect(records[0].textContent).toContain('failed-command');
+  await act(async () => button('查看原任务记录').click()); expect(task).toHaveBeenCalledWith('task-a');
+  expect(api.turn).not.toHaveBeenCalled();
 });
 
 it.each([
@@ -301,12 +343,17 @@ it('uses server stop permission even while the session is idle', async () => {
   expect(api.stop).not.toHaveBeenCalled(); expect(api.turn).not.toHaveBeenCalled();
 });
 
-it('updates the list from detail polling and presents a completed session as ready to continue', async () => {
+it('shows finalizing during detail polling before presenting a completed session as ready to continue', async () => {
   vi.useFakeTimers();
   try {
     current = { ...current, state: 'running', allowedActions: ['correct', 'stop'], turns: [{ id: 'turn-a', sequence: 1, requestId: 'start-id', taskId: 'task-a', runId: null, status: 'running', createdAt: session.createdAt, completedAt: null, result: null, failure: null, messages: [], events: [], toolResults: [] }] };
     vi.mocked(api.list).mockResolvedValue({ items: [current], nextCursor: null });
     await mount(session.id); expect(host.querySelector('.rs-session-list')?.textContent).toContain('执行中');
+    current = { ...current, turns: [{ ...current.turns[0], status: 'finalizing' }] };
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(host.querySelector('.rs-turn > header')?.textContent).toContain('正在核对最终结果');
+    expect(host.querySelector('.rs-turn > header')?.textContent).not.toContain('本轮已完成');
+    expect(button('开始这一轮')).toBeUndefined();
     current = { ...current, state: 'idle', updatedAt: '2026-10-28T08:01:00Z', allowedActions: ['start', 'correct', 'stop'], turns: [{ ...current.turns[0], status: 'completed', completedAt: '2026-10-28T08:01:00Z', result: '本轮已完成。' }] };
     await act(async () => vi.advanceTimersByTimeAsync(4000));
     expect(api.list).toHaveBeenCalledOnce();
@@ -365,14 +412,33 @@ it('keeps a new detail observation when an older in-flight list succeeds later w
 
 it('shows stop pending separately from confirmation and keeps UNKNOWN original operation visible', async () => {
   current = { ...current, state: 'running', allowedActions: ['correct', 'stop'] };
-  vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopping', allowedActions: [] }; return current; });
+  vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopping', allowedActions: ['stop'] }; return current; });
   await mount(session.id); await act(async () => button('请求停止').click());
   expect(host.textContent).toContain('目前不能确认已停止'); expect(api.stop).toHaveBeenCalledOnce();
   current = { ...current, state: 'blocked', allowedActions: ['stop'], blockReason: 'RESEARCH_EFFECT_UNKNOWN', turns: [{ id: 'turn-a', sequence: 1, requestId: 'start-id', taskId: 'task-a', runId: null, status: 'unknown', createdAt: session.createdAt, completedAt: null, result: null, failure: null, messages: [], events: [], toolResults: [{ effectKey: 'original-operation', status: 'UNKNOWN', result: null }] }] };
   await act(async () => button('刷新会话').click());
   expect(host.textContent).toContain('结果未知，需核对原操作'); expect(host.querySelector('.rs-tool-results details')?.hasAttribute('open')).toBe(true); expect(button('开始这一轮')).toBeUndefined();
-  expect(button('请求停止')).toBeDefined();
+  expect(button('请求停止').disabled).toBe(false);
   await act(async () => button('查看原任务记录').click()); expect(task).toHaveBeenCalledWith('task-a'); expect(api.turn).not.toHaveBeenCalled();
+});
+
+it('prevents repeat stop while pending and replaces feedback when polling confirms the original session stopped', async () => {
+  vi.useFakeTimers();
+  try {
+    current = { ...current, state: 'running', allowedActions: ['correct', 'stop'] };
+    vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopping', allowedActions: ['stop'] }; return current; });
+    await mount(session.id); await act(async () => button('请求停止').click());
+    expect(host.textContent).toContain('目前不能确认已停止');
+    expect(button('请求停止').disabled).toBe(true);
+    await act(async () => button('请求停止').click());
+    expect(api.stop).toHaveBeenCalledOnce();
+    current = { ...current, state: 'stopped', allowedActions: ['start'] };
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(host.querySelector('.rs-detail-heading [role="status"]')?.textContent).toBe('已停止');
+    expect(host.textContent).not.toContain('停止请求已接收'); expect(host.textContent).not.toContain('目前不能确认已停止');
+    expect(button('请求停止')).toBeUndefined(); expect(button('开始这一轮').disabled).toBe(false);
+    expect(api.stop).toHaveBeenCalledOnce(); expect(api.turn).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
 });
 
 it('shows unavailable configuration honestly and clears private drafts on logout while retaining opaque recovery pointers', async () => {
