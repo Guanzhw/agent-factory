@@ -54,6 +54,13 @@ def model_id(value):
     return value
 
 
+def max_output_tokens(configuration):
+    value = configuration.get('maxOutputTokens', 4096)
+    if type(value) is not int or value <= 0:
+        raise ValueError('PERSONAL_MODEL_OUTPUT_LIMIT_INVALID')
+    return value
+
+
 def requires_session(base):
     return base_url(base) in ADDITIONAL_BASE_URLS
 

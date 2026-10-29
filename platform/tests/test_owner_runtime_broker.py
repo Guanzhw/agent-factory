@@ -37,6 +37,27 @@ class _UnixHTTP(HTTPConnection):
 
 
 class OwnerRuntimeBrokerTests(unittest.TestCase):
+    def test_owner_output_limit_is_used_for_both_protocols_instead_of_native_override(self):
+        for protocol, field in (('chat-completions', 'max_tokens'), ('responses', 'max_output_tokens')):
+            for configured, expected in ((None, 4096), (16384, 16384)):
+                with self.subTest(protocol=protocol, configured=configured):
+                    self.handle.body['protocol'] = protocol
+                    if configured is None:
+                        self.handle.body.pop('maxOutputTokens', None)
+                    else:
+                        self.handle.body['maxOutputTokens'] = configured
+                    self.answer = ({'status': 'completed', 'output': [{'type': 'message', 'id': 'msg_fixture',
+                        'role': 'assistant', 'status': 'completed', 'content': [
+                            {'type': 'output_text', 'text': 'Synthetic final', 'annotations': []}]}]}
+                        if protocol == 'responses' else {'choices': [{'finish_reason': 'stop',
+                            'message': {'role': 'assistant', 'content': 'Synthetic final'}}]})
+                    broker = OwnerRuntimeBroker(Path(self.folder.name) / 'unused.sock', self.handle)
+                    asyncio.run(broker.completion({'model': 'owner-model', 'max_tokens': 1,
+                        'max_output_tokens': 2, 'messages': [{'role': 'user', 'content': 'Synthetic goal'}]},
+                        'ses_syntheticoutput123'))
+                    self.assertEqual(json.loads(self.calls[-1].content)[field], expected)
+        self.assertEqual(len(self.calls), 4)
+
     def test_compaction_retained_suffix_distinguishes_identical_final_text_and_keeps_unknown_receipt(self):
         from agent_factory.owner_runtime_broker import OwnerModelCallError
         session = 'ses_syntheticcompaction123'

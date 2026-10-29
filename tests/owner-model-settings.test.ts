@@ -19,7 +19,7 @@ const thinkingRow: OwnerModel = { ...row, provider: 'openai-compatible', baseURL
 it('uses a team model as default while preserving owner-only credential controls', async () => {
   const shared: OwnerModel = { reference: row.reference, revision: row.revision, ownerId: 'bob',
     visibility: 'team', isOwner: false, provider: row.provider, baseURL: row.baseURL, model: row.model,
-    updatedAt: row.updatedAt, status: 'configured', available: true, isDefault: false };
+    updatedAt: row.updatedAt, status: 'configured', available: true, isDefault: false, maxOutputTokens: 16384 };
   expect(ownerModel(shared, 'alice')).toEqual(shared);
   expect(() => ownerModel({ ...shared, credentialRef: 'owner-vault-ref' }, 'alice')).toThrow();
   vi.mocked(ownerModelApi.list).mockResolvedValue([shared]);
@@ -27,6 +27,8 @@ it('uses a team model as default while preserving owner-only credential controls
   await mount();
   expect(button('更新密钥')).toBeUndefined(); expect(button('撤销模型')).toBeUndefined();
   expect(button('共享给团队')).toBeUndefined();
+  expect(button('调整输出额度')).toBeUndefined();
+  expect(host.textContent).toContain('单次输出上限：16384 token');
   await act(async () => button('设为默认').click());
   expect(ownerModelApi.default).toHaveBeenCalledWith('alice', row.reference, expect.any(String));
 });
@@ -301,7 +303,7 @@ it.each(['rotate', 'rebind'] as const)('keeps protocol absent for legacy Go reco
   expect(localStorage.getItem(storage)).toBeNull();
 });
 it('retains Responses protocol through rotation and receipt recovery', async () => {
-  const original = { ...legacyGoRow, protocol: 'responses' as const, isDefault: true };
+  const original = { ...legacyGoRow, protocol: 'responses' as const, isDefault: true, maxOutputTokens: 16384 };
   const updated = { ...original, credentialRevision: 'rotated-r2', revision: 'model-r2', status: 'configured' as const, available: true };
   vi.mocked(ownerModelApi.list).mockResolvedValue([original]);
   vi.mocked(personalRemoteApi.credentials).mockResolvedValue([goCredential]);
@@ -311,18 +313,19 @@ it('retains Responses protocol through rotation and receipt recovery', async () 
   await mount(); await act(async () => button('更新密钥').click()); await fill('API 密钥', secret); await act(async () => button('保存新密钥').click());
   const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
   expect(request.protocol).toBe('responses'); expect(localStorage.getItem(storage)).toContain('"protocol":"responses"');
+  expect(request.maxOutputTokens).toBe(16384); expect(localStorage.getItem(storage)).toContain('"maxOutputTokens":16384');
   vi.mocked(ownerModelApi.recover).mockResolvedValue({ ownerId: 'alice', requestId: request.requestId, action: 'model.configure', result: updated, completedAt: '2026-10-09T00:00:01Z' });
   await act(async () => root.unmount()); root = createRoot(host); await mount(); await act(async () => button('核对并继续原保存').click());
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', request.requestId);
   expect(host.textContent).toContain('原保存已核对完成'); expect(localStorage.getItem(storage)).toBeNull();
 });
 it('retains Responses protocol during credential rebind', async () => {
-  const stale = { ...legacyGoRow, protocol: 'responses' as const, isDefault: false };
+  const stale = { ...legacyGoRow, protocol: 'responses' as const, isDefault: false, maxOutputTokens: 16384 };
   vi.mocked(ownerModelApi.list).mockResolvedValue([stale]);
   vi.mocked(personalRemoteApi.credentials).mockResolvedValue([{ ...goCredential, credentialRevision: 'rotated-r2' }]);
   vi.mocked(ownerModelApi.configure).mockResolvedValue({ ...stale, credentialRevision: 'rotated-r2', status: 'configured', available: true });
   await mount(); await act(async () => button('绑定更新后的凭据').click());
-  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ protocol: 'responses' }), stale.reference);
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ protocol: 'responses', maxOutputTokens: 16384 }), stale.reference);
   expect(localStorage.getItem(storage)).toBeNull();
 });
 it('keeps thinking disabled on credential rebind and refuses a receipt that silently loses it', async () => {
@@ -411,4 +414,89 @@ it('recovers saved-reference configuration acknowledgement without repeating its
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', original, undefined);
   expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', original.requestId);
   expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled(); expect(personalRemoteApi.recoverCredential).not.toHaveBeenCalled();
+});
+
+it('preserves optional output metadata and rejects invalid stored or received limits without backfilling legacy records', () => {
+  const setup: ModelSetup = { owner: 'alice', provider: row.provider, baseURL: row.baseURL, model: row.model,
+    credentialRequest: 'request-key-fixture', modelRequest: 'request-model-fixture', defaultRequest: 'request-default-fixture', stage: 'model', chooseDefault: false };
+  expect(ownerModel(row, 'alice')).not.toHaveProperty('maxOutputTokens');
+  expect(setupMetadata(setup)).not.toHaveProperty('maxOutputTokens');
+  expect(ownerModel({ ...row, maxOutputTokens: 16384 }, 'alice').maxOutputTokens).toBe(16384);
+  expect(readModelSetup(JSON.stringify({ ...setup, maxOutputTokens: 16384 }), 'alice')?.maxOutputTokens).toBe(16384);
+  for (const maxOutputTokens of [null, false, '16384', 0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+    expect(() => ownerModel({ ...row, maxOutputTokens }, 'alice')).toThrow();
+    expect(readModelSetup(JSON.stringify({ ...setup, maxOutputTokens }), 'alice')).toBeNull();
+  }
+});
+
+it('creates a model with its chosen output limit and confirms the same default', async () => {
+  const configured = { ...row, maxOutputTokens: 16384 };
+  vi.mocked(ownerModelApi.configure).mockResolvedValue(configured);
+  vi.mocked(ownerModelApi.default).mockResolvedValue({ ...configured, isDefault: true });
+  await mount(); await fill('单次输出上限（token）', '16384'); await save();
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(ownerModelApi.configure).mock.calls[0][1].maxOutputTokens).toBe(16384);
+  expect(localStorage.getItem(storage)).toBeNull();
+  expect(host.textContent).toContain('模型已保存并设为默认');
+});
+
+it('updates only output configuration once and recovers its lost acknowledgement after remount without credential writes', async () => {
+  const original = { ...row, protocol: 'responses' as const, isDefault: true };
+  const updated = { ...original, revision: 'updated-output-revision', connectionRef: 'updated-output-binding', maxOutputTokens: 16384 };
+  vi.mocked(ownerModelApi.list).mockResolvedValue([original]);
+  vi.mocked(ownerModelApi.configure).mockRejectedValueOnce(new ModelRequestError(0));
+  vi.mocked(ownerModelApi.default).mockResolvedValue(updated);
+  const rotate = vi.spyOn(personalRemoteApi, 'rotateCredential');
+  await mount(); await act(async () => button('调整输出额度').click());
+  expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
+  expect(host.textContent).toContain('已有会话不会自动切换');
+  await fill('单次输出上限（token）', '16384');
+  await act(async () => { button('保存输出额度').click(); button('保存输出额度').click(); });
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
+  const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
+  expect(request).toMatchObject({ maxOutputTokens: 16384, protocol: 'responses', credentialRef: row.credentialRef, credentialRevision: row.credentialRevision });
+  expect(vi.mocked(ownerModelApi.configure).mock.calls[0][2]).toBe(row.reference);
+  expect(localStorage.getItem(storage)).toContain('"maxOutputTokens":16384');
+  vi.mocked(ownerModelApi.recover).mockResolvedValue({ ownerId: 'alice', requestId: request.requestId, action: 'model.configure', result: updated, completedAt: '2026-10-09T00:00:01Z' });
+  await act(async () => root.unmount()); root = createRoot(host); await mount();
+  await act(async () => button('核对并继续原保存').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
+  expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', request.requestId);
+  expect(ownerModelApi.default).toHaveBeenCalledTimes(1);
+  expect(localStorage.getItem(storage)).toBeNull();
+  expect(host.textContent).toContain('原保存已核对完成');
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
+  expect(personalRemoteApi.recoverCredential).not.toHaveBeenCalled();
+  expect(rotate).not.toHaveBeenCalled();
+});
+
+it('shows an invalid output limit at the field and keeps a mismatched saved limit unresolved', async () => {
+  vi.mocked(ownerModelApi.list).mockResolvedValue([row]);
+  await mount(); await act(async () => button('调整输出额度').click());
+  await fill('单次输出上限（token）', '1.5');
+  expect(host.querySelector('[aria-label="单次输出上限（token）"]')?.getAttribute('aria-invalid')).toBe('true');
+  expect(host.querySelector('#model-output-error')?.textContent).toContain('请输入正整数');
+  expect(button('保存输出额度').disabled).toBe(true);
+  expect(ownerModelApi.configure).not.toHaveBeenCalled();
+  await fill('单次输出上限（token）', '16384'); await act(async () => button('保存输出额度').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
+  expect(ownerModelApi.default).not.toHaveBeenCalled();
+  expect(localStorage.getItem(storage)).toContain('"maxOutputTokens":16384');
+  expect(host.textContent).toContain('设置尚未确认');
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
+});
+
+it('can restore the default output limit on a model with no credentials without writing a key or choosing another default', async () => {
+  const original = { ...row, credentialRef: null, credentialRevision: null, maxOutputTokens: 16384 };
+  vi.mocked(ownerModelApi.list).mockResolvedValue([original]);
+  vi.mocked(ownerModelApi.configure).mockResolvedValue({ ...row, credentialRef: null, credentialRevision: null });
+  await mount(); await act(async () => button('调整输出额度').click());
+  await fill('单次输出上限（token）', ''); await act(async () => button('保存输出额度').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
+  const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
+  expect(request).not.toHaveProperty('maxOutputTokens');
+  expect(request).not.toHaveProperty('credentialRef');
+  expect(ownerModelApi.default).not.toHaveBeenCalled();
+  expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
+  expect(localStorage.getItem(storage)).toBeNull();
 });

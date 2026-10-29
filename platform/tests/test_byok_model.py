@@ -7,6 +7,7 @@ from unittest.mock import patch
 from agno.agent import Agent
 from agno.exceptions import ModelProviderError
 from agno.models.message import Message
+from agno.run import RunStatus
 import httpx
 
 from agent_factory.byok_model import OwnerChatModel, PinnedChatTransport, base_url
@@ -14,6 +15,60 @@ from agent_factory.personal_remote_provider import SecretLease
 
 
 class ByokModelTests(unittest.TestCase):
+    def test_owner_output_limit_reaches_both_protocols_without_per_call_override(self):
+        for protocol, field in (('chat-completions', 'max_tokens'), ('responses', 'max_output_tokens')):
+            for options, expected in (({}, 4096), ({'maxOutputTokens': 16384}, 16384)):
+                with self.subTest(protocol=protocol, options=options):
+                    requests = []
+                    def wire(request):
+                        requests.append(json.loads(request.content))
+                        answer = ({'status': 'completed', 'output': [{'type': 'message', 'id': 'msg_fixture',
+                            'role': 'assistant', 'status': 'completed', 'content': [
+                                {'type': 'output_text', 'text': 'Synthetic final', 'annotations': []}]}]}
+                            if protocol == 'responses' else {'choices': [{'finish_reason': 'stop',
+                                'message': {'role': 'assistant', 'content': 'Synthetic final'}}]})
+                        return httpx.Response(200, json=answer)
+                    configuration = {'provider': 'openai-compatible', 'model': 'fixture-model',
+                        'baseURL': 'https://models.example.com/v1', 'protocol': protocol, **options}
+                    model = OwnerChatModel(configuration, lambda: None,
+                        transport_factory=lambda: httpx.MockTransport(wire))
+                    asyncio.run(model.ainvoke([Message(role='user', content='Synthetic goal')], max_tokens=1))
+                    self.assertEqual(requests[0][field], expected)
+                    self.assertEqual(len(requests), 1)
+                    self.assertEqual(configuration.get('maxOutputTokens'), options.get('maxOutputTokens'))
+
+    def test_output_configuration_rejects_non_positive_integers_before_dispatch(self):
+        from agent_factory.personal_models import ConfigureModel
+        configuration = {'provider': 'openai-compatible', 'model': 'fixture-model',
+            'baseURL': 'https://models.example.com/v1'}
+        for value in (None, True, False, 0, -1, 1.5, '16384'):
+            with self.subTest(value=value):
+                values = {**configuration, 'maxOutputTokens': value}
+                with self.assertRaises(ValueError):
+                    ConfigureModel(**values, requestId='synthetic-output-config')
+                with self.assertRaises(ValueError):
+                    OwnerChatModel(values, lambda: self.fail('Invalid config must not resolve credentials'))
+
+    def test_truncated_tool_response_is_not_executed_or_retried_with_larger_output_limit(self):
+        requests, effects = [], []
+        def edit_fixture():
+            effects.append('edited')
+            return 'edited'
+        def wire(request):
+            requests.append(json.loads(request.content))
+            return httpx.Response(200, json={'choices': [{'finish_reason': 'length', 'message': {
+                'role': 'assistant', 'content': None, 'tool_calls': [{'id': 'fixture-cutoff', 'type': 'function',
+                    'function': {'name': 'edit_fixture', 'arguments': '{}'}}]}}]})
+        model = OwnerChatModel({'provider': 'openai-compatible', 'model': 'fixture-model',
+            'baseURL': 'https://models.example.com/v1', 'maxOutputTokens': 16384}, lambda: None,
+            transport_factory=lambda: httpx.MockTransport(wire))
+        result = asyncio.run(Agent(model=model, tools=[edit_fixture]).arun('Synthetic edit'))
+        self.assertEqual(result.status, RunStatus.error)
+        self.assertIn('PERSONAL_MODEL_RESPONSE_REJECTED', str(result.content))
+        self.assertEqual(effects, [])
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]['max_tokens'], 16384)
+
     def test_explicit_original_go_thinking_option_is_scoped_and_keeps_output_bound(self):
         requests = []
         def wire(request):

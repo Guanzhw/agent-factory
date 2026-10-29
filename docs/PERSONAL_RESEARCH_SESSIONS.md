@@ -16,6 +16,8 @@ export FACTORY_RESEARCH_COMMAND_PATH=/usr/bin:/bin
 # 例如：项目完整测试需要约 35 秒时，给单次操作 60 秒、原生一轮 300 秒。
 export FACTORY_OPERATION_TIMEOUT_SECONDS=60
 export FACTORY_NATIVE_TIMEOUT_SECONDS=300
+# 全局工具上限；32 已完成一个真实代码样本，不是任意任务的完成保证。
+export FACTORY_MAX_TOOL_CALLS=32
 npm run build:research
 export FACTORY_LOCAL_LOGIN_ORIGIN=https://127.0.0.1:3100
 uv run python -m uvicorn agent_factory_server.research:create_app --factory \
@@ -26,6 +28,10 @@ uv run python -m uvicorn agent_factory_server.research:create_app --factory \
 打开 `https://127.0.0.1:3100`。证书路径、数据库和签名配置沿用现有安全配置，不能直接把 HTTP 测试服务当作用户部署。`agent-factory-research` 的 HTTP 入口只适用于已经配置 HTTPS 终止代理的环境；上面的 Uvicorn factory 同样读取研究工具配置。
 
 操作时限可配置为 1–600 秒，原生一轮时限为 60–3600 秒；未配置时仍为 8/60 秒。新会话默认使用部署操作时限，旧会话预算不被回写。以上示例不代表任意项目都能在该时间内完成。
+
+工具上限 `FACTORY_MAX_TOOL_CALLS` 为 1–128 的整数，未配置仍为 8。它是全局部署上限；新 Research 会话默认跟随，成员仍可选较低额度，已保存会话、Plan 和其他应用的显式预算不被回写。提高部署上限后，旧低额度任务可能由持久预算检查停止而没有模型总结；原结果和拒绝事件保留，核对安全后可显式继续。该配置也会影响其他应用的原生工具调用上限，不承诺其收尾形式不变。
+
+模型设置中的“单次输出上限”控制一次模型响应的 token 数，推理内容也可能占用额度。未填写时仍为 4096；可按提供方实际支持情况选择其他正整数。本轮 DeepSeek 代码样本配置 16384 后完成；这不是任意任务的完成保证或费用预算。调整该设置沿用已有凭据，不要求轮换密钥；保存后产生新模型配置版本，旧研究会话不会自动改用新版本，应先核对原任务，再用所需配置新建会话。截断响应仍会失败，不执行其中未完成的工具调用，也不自动升额重试。
 
 代码任务先在目标中给出明确的公共仓库 URL 和 commit。操作方可将已核来源与版本的副本准备到会话目录，助手通过 `pwd`、remote、HEAD 和源码 SHA 核对；也可在网络允许时通过现有命令 clone/checkout，但预置副本不证明联网路径可用。项目环境由操作方准备：预先将 `FACTORY_RESEARCH_COMMAND_PATH` 指向隔离 venv 的 bin 与系统路径；取得会话副本后，在该 venv 安装项目固定依赖及包信息，并配置指向此副本的标准源码路径，例如在该 venv 的 site-packages 中写入只含源码绝对路径的一行 `.pth` 文件。核对主进程和 pytest 测试子进程的实际导入路径，以及 pytest 收集结果和目标回归日志，确认没有额外导入或 rewrite 警告，再在原会话显式继续。命令不继承环境中的 `PYTHONPATH`；上述准备由操作方完成，预置副本不证明公网 clone 可用。
 

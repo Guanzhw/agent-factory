@@ -68,7 +68,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             'username': 'api-key', 'password': 'synthetic-test-password'}, expected=201)
         model = self.request('POST', '/personal-models', {'provider': 'openai-compatible',
             'baseURL': 'https://opencode.ai/zen/go/v1', 'model': 'longcat-2.5-preview-free',
-            'thinkingMode': 'disabled',
+            'thinkingMode': 'disabled', 'maxOutputTokens': 16384,
             'credentialRef': credential['credentialRef'], 'credentialRevision': credential['credentialRevision'],
             'requestId': 'fixture-go-agent-model'}, expected=201)
         self.request('POST', '/personal-models/' + model['reference'] + '/default', {'requestId': 'fixture-go-agent-default'})
@@ -87,7 +87,7 @@ class PersonalModelsPostgresTests(unittest.TestCase):
             self.assertEqual(str(request.url), 'https://opencode.ai/zen/go/v1/chat/completions')
             self.assertEqual(json.loads(request.content)['model'], 'longcat-2.5-preview-free')
             self.assertEqual(json.loads(request.content)['thinking'], {'type':'disabled'})
-            self.assertEqual(json.loads(request.content)['max_tokens'], 4096)
+            self.assertEqual(json.loads(request.content)['max_tokens'], 16384)
             self.assertEqual(request.headers['x-opencode-session'], 'af-plan-' + task['plan_id'])
 
     def test_go_metadata_binds_exact_origin_without_invocation_and_rejects_wrong_custody(self):
@@ -126,6 +126,40 @@ class PersonalModelsPostgresTests(unittest.TestCase):
         self.request('POST','/personal-models',values|{'requestId':'thinking-wrong-model','thinkingMode':'disabled','model':'other'},expected=422)
         self.request('POST','/personal-models',values|{'requestId':'thinking-wrong-base','thinkingMode':'disabled','baseURL':'https://other.example.com/v1'},expected=422)
         self.assertEqual(self.calls,[])
+
+    def test_output_only_configuration_preserves_credentials_receipts_and_owner_binding(self):
+        credential, original = self.configured()
+        self.assertNotIn('maxOutputTokens', original)
+        path = '/personal-models/' + original['reference']
+        old_handle = self.store.connections.resolve('alice', original['connectionRef'], 'model')
+        credentials_before = self.request('GET', '/personal-credentials')
+        body = {key: original[key] for key in ('provider', 'baseURL', 'model', 'credentialRef', 'credentialRevision')}
+        body.update(requestId='fixture-output-limit', maxOutputTokens=16384)
+        updated = self.request('POST', path + '/configure', body)
+        self.assertEqual(self.request('POST', path + '/configure', body), updated)
+        receipt = self.request('GET', '/personal-models/requests/' + body['requestId'])
+        self.assertEqual(receipt['result'], updated)
+        self.assertEqual(updated['maxOutputTokens'], 16384)
+        self.assertEqual(updated['credentialRevision'], credential['credentialRevision'])
+        self.assertEqual(updated['credentialRef'], credential['credentialRef'])
+        self.assertEqual(self.request('GET', '/personal-credentials'), credentials_before)
+        self.assertNotEqual(updated['revision'], original['revision'])
+        self.assertNotEqual(updated['connectionRef'], original['connectionRef'])
+        with self.assertRaises(HTTPException):
+            old_handle.check()
+        self.assertNotIn('maxOutputTokens', self.request('GET', '/personal-models/requests/fixture-model-save')['result'])
+        self.request('POST', path + '/sharing', {'visibility': 'team', 'requestId': 'fixture-output-sharing'})
+        shared = self.request('GET', '/personal-models', owner='bob')[0]
+        self.assertEqual(shared['maxOutputTokens'], 16384)
+        self.assertNotIn('credentialRef', shared)
+        self.assertNotIn('credentialRevision', shared)
+        self.request('POST', path + '/configure', body | {'requestId': 'foreign-output-change'}, owner='bob', expected=403)
+        restarted = create_app(self.settings).app.state.factory['store']
+        self.addCleanup(restarted.engine.dispose); self.addCleanup(restarted.native_db.db_engine.dispose)
+        self.assertEqual(restarted.personal_models.default('alice')['maxOutputTokens'], 16384)
+        handle = restarted.connections.resolve('alice', updated['connectionRef'], 'model')
+        self.assertEqual(handle.body['maxOutputTokens'], 16384)
+        self.assertEqual(self.calls, [])
 
     def setUp(self):
         self.database = IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']).__enter__()
