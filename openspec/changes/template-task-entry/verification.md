@@ -7,7 +7,7 @@ Base: `b6c383a5c5543fd0cf7d8c08c043ee8ad0f69abe`; design `a86a5420020350950b1c0e
 - Resource return initially preserved inputs but waited for the next 5-second poll to reveal a new connection. The failing component case is retained; re-entering the task now immediately rereads resources without changing accepted plans. Refresh does not persist unsubmitted template input; the browser warns before loss. Existing proposal records remain recoverable.
 - The first full frontend run exposed a new test asserting completion before the asynchronous command key finished. It now waits for the same exactly-once callback, matching the existing flow tests; no product behavior or timing limit was weakened. Original failed output is retained with the author audit.
 - The existing locked Chromium smoke (`--desktop-only --scenario configured --scenario bind-loss`) passed both cases against the core build. These are explicit API fixtures, not real provider integration. Dependency audit against `https://registry.npmjs.org`: zero vulnerabilities; web ownership checker: zero violations/coverage gaps; OpenSpec strict passed.
-- At the initial author checkpoint, real PostgreSQL/password/browser and independent code review were pending; their later scoped results are recorded below. Inheritance of PR #164's final main, exact-head full CI and main verification remain pending. A does not block the separate Auto Research deployment acceptance. Author editing B and resource-form redesign are later work.
+- At the initial author checkpoint, real PostgreSQL/password/browser and independent code review were pending; their later scoped results are recorded below. Inheritance of PR #164's final main was still pending at that checkpoint; integrated results follow below. Exact-head full CI and main verification remain separate gates. A does not block the separate Auto Research deployment acceptance. Author editing B and resource-form redesign are later work.
 
 ## Independent review corrections
 
@@ -31,4 +31,21 @@ The QA's initial invalid synthetic schema and navigation-wait assumption failure
 | [390px resource return](../../../docs/images/template-task-entry/02-390-required-resource-return.png) | The form after returning from model setup; original goal and required text remain. This is a locator screenshot within the actual 390px viewport. |
 | [Saved plan before start](../../../docs/images/template-task-entry/03-1440-saved-plan-explicit-start.png) | Accepted plan with zero tasks until explicit start; displayed 8-call/8-second limits are synthetic template metadata, not personal-research defaults. |
 
-Remaining gates: integrate the actual final #164 main, check the task/resource/plan navigation delta with independent review and real-browser evidence, then exact-head full CI and main verification. Author editing B and resource-form redesign remain deferred; this slice does not block the separate existing Auto Research deployment acceptance.
+At the 69a806c checkpoint, final #164 integration and its navigation review/browser delta were still pending; those results follow below. Exact-head full CI and main verification remain required. Author editing B and resource-form redesign remain deferred; this slice does not block the separate existing Auto Research deployment acceptance.
+
+
+## Integrated task and template navigation at 469b717
+
+Integrated main `db6d62a4880466f3bf50879809e2339e57cf8a44` into the template branch at `469b7179efed929b5f18da67cafe4de29d09bd9e` (tree `0b546fb90c24cc12a6f1c67f19b827a4a0b7c117`). The three navigation conflicts preserve both template resource return and exact task/application/plan return. Starting schedule setup from a newly saved template plan clears an old selected schedule ID; no router or recovery framework was added. Backend code remains byte-identical to the already reviewed 69a806c candidate.
+
+Non-author complete `db6d62a..469b717` review passed with no findings, including 69 independently run component/navigation tests and both original defect reproductions. Author checks passed: 664 frontend tests with lint/types/core build, 112 focused tests, Research build, both existing Chromium API-fixture smoke scenarios, official dependency audit (zero vulnerabilities), web ownership and strict OpenSpec checks.
+
+The separate actual PostgreSQL/password/Chromium integration campaign passed at the same head, with unchanged source/build hashes before and after. A 1440px member completed template matching, required input and model-setup return, accepted a plan with zero tasks and explicitly started one native task. At 390px, a Research task returned to its exact original session and a scheduled task returned to its original plan; navigation/refresh added no POSTs. Three native tasks and two independently checked checksum artifacts used five **scripted** provider responses, zero external model calls. A separately injected UNKNOWN command GET verified only display and original-ID read behavior with zero POSTs; it does not prove backend UNKNOWN or stop handling.
+
+| Integrated screenshot | What it demonstrates |
+| --- | --- |
+| [Desktop task result](../../../docs/images/template-task-entry/04-integrated-task-result.png) | Actual checksum artifact in the new task detail; completed execution remains distinct from research validity. |
+| [390px original Research session](../../../docs/images/template-task-entry/05-integrated-research-return.png) | Locator capture after returning to the actual original session; the reply is explicitly SCRIPTED. |
+| [390px original plan](../../../docs/images/template-task-entry/06-integrated-plan-return.png) | Locator capture after returning to the actual plan and its existing execution history. |
+
+The integration campaign passed on its first execution. A preceding QA-only database-URL dialect parsing error occurred before connection; it and the proxy's navigation-abort diagnostic are retained in local QA evidence, not hidden as product successes. Owned services/scratch/test databases were cleaned; shared PostgreSQL was preserved. This remains loopback testing, not user deployment, public TLS, real model/GPU/SSH, Windows execution or capacity acceptance. Exact-head full CI and subsequent main verification are still pending; author editing B remains deferred.
