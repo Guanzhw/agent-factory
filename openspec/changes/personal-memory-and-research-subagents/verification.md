@@ -47,7 +47,7 @@
 
 ## Subagent integration acceptance
 
-记忆产品基线 `e023453bb510ecf9d029107ce20c26a47e344dd5` → 子助手冻结 `40985ab837a0c01b35f490482f2c55e9e5b9c1e0`。非作者完整累计 20 文件审查与简洁性通过；固定 Agno 原生 delegation/external execution/原 ControlCommand，无新增调度器。以下是分层证据，不代表任意任务都能完成。
+记忆产品基线 `e023453bb510ecf9d029107ce20c26a47e344dd5` → 子助手冻结 `40985ab837a0c01b35f490482f2c55e9e5b9c1e0`。非作者完整累计 20 文件审查与简洁性通过；复用平台既有 DelegationService/ControlCommand，以及 Agno 原生 external execution 与暂停续入，无新增调度器。以下是分层证据，不代表任意任务都能完成。
 
 | 验证层 | 结果与边界 |
 | --- | --- |
@@ -66,4 +66,4 @@
 
 后续9630候选在公开仓库完成原父子分工、源码修复及206项测试，模型补丁由非作者独立复跑通过；该campaign仍因child执行一次被提示禁止的ls而FAIL。功能目标与指令遵守分列，详见[模型请求期限验收](../research-model-request-lifetime/verification.md)，不声称硬只读子权限。此前3次失败不改写。运行中的派发窗口可暂显待核对并由只读刷新恢复，尚非理想呈现。
 
-待完成：子助手最终准确 head full CI、适用发布/main 门禁。未验证：默认首次启动、真实GPU/SSH、目标64GB/30会话容量、部署、任意同文件并发编辑、一般研究质量。忘记不删除旧聊天/摘要；旧会话更新配置、正常依赖获取、长结果展示与全站易用性继续原 roadmap。
+待完成：子助手最终准确 head full CI、适用发布/main 门禁。未验证：默认首次启动、真实GPU/SSH、目标64GB/30会话容量、部署、任意同文件并发编辑、一般研究质量与任意长期记忆质量。忘记不删除旧聊天/摘要；旧会话更新配置、正常依赖获取、长结果展示与全站易用性继续原 roadmap。
