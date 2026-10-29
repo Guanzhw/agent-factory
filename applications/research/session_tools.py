@@ -11,6 +11,7 @@ import shutil
 import stat
 import tempfile
 from typing import Any
+import weakref
 
 from agno.exceptions import RunCancelledException, StopAgentRun
 from agno.tools.function import Function, FunctionCall
@@ -40,8 +41,9 @@ def _schema(properties, required):
 TOOLS = {
     'research_read_file': ('Read a UTF-8 file in this research session workspace.',
         _schema({'path': PATH_SCHEMA}, ['path'])),
-    'research_search': ('Find literal text in workspace UTF-8 files. Bounded results report truncation.',
-        _schema({'query': {'type': 'string', 'minLength': 1, 'maxLength': 200}, 'path': PATH_SCHEMA}, ['query'])),
+    'research_search': ('Find literal text in a workspace UTF-8 file or directory. Bounded results report truncation.',
+        _schema({'query': {'type': 'string', 'minLength': 1, 'maxLength': 200},
+            'path': {**PATH_SCHEMA, 'description': 'Workspace-relative file or directory; omitted means workspace root.'}}, ['query'])),
     'research_edit_file': ('Replace one exact occurrence in a workspace file. Empty old creates a new file only. '
         'Parent directories must exist. Never use this to overwrite an unread file.',
         _schema({'path': PATH_SCHEMA, 'old': {'type': 'string', 'maxLength': MAX_TEXT},
@@ -106,12 +108,10 @@ def _directory(root, parts=(), *, create=False):
 
 def _read_opened(handle):
     info = os.fstat(handle)
-    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > MAX_TEXT:
-        raise ValueError('RESEARCH_FILE_UNSUPPORTED_OR_TOO_LARGE')
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise ValueError('RESEARCH_FILE_UNSUPPORTED')
     with os.fdopen(handle, 'rb', closefd=False) as stream:
-        raw = stream.read(MAX_TEXT + 1)
-    if len(raw) > MAX_TEXT:
-        raise ValueError('RESEARCH_FILE_TOO_LARGE')
+        raw = stream.read()
     return raw.decode('utf-8')
 
 
@@ -130,6 +130,7 @@ class ResearchSessionTools:
         self.command_path = command_path
         self.sessions: Any = None
         self.content: Any = None
+        self._run_locks: weakref.WeakValueDictionary[tuple, asyncio.Lock] = weakref.WeakValueDictionary()
         if (type(host_commands) is not bool or not isinstance(command_path, str)
                 or host_commands and any(not Path(part).is_absolute() for part in command_path.split(os.pathsep))):
             raise ValueError('RESEARCH_COMMAND_CONFIGURATION_INVALID')
@@ -163,7 +164,7 @@ class ResearchSessionTools:
         # Only time/output are enforced by this host command adapter. The
         # common descriptor's CPU/memory fields are not an OS sandbox claim.
         return EnvironmentLimits(runtime_id='research-session-host-v1',
-            timeout_seconds=min(30, budget.get('operationSeconds', budget.get('experimentSeconds', 30))),
+            timeout_seconds=budget.get('operationSeconds', budget.get('experimentSeconds', 30)),
             output_bytes=min(65536, budget.get('outputBytes', 65536)))
 
     def _workspace(self, execution):
@@ -179,6 +180,7 @@ class ResearchSessionTools:
         store = binding.store
         expected = binding.run_context
         identity = (expected.user_id, expected.session_id, expected.run_id)
+        run_lock = self._run_locks.setdefault(identity, asyncio.Lock())
 
         async def invoke(*, run_context, fc, **arguments):
             if (self.sessions is None or not isinstance(fc, FunctionCall) or not isinstance(fc.call_id, str)
@@ -194,17 +196,30 @@ class ResearchSessionTools:
                 return self.sessions.authorize_tool(run_context, name)
 
             execution = guard()
-            values = validate_tool_arguments(TOOLS[name][1], arguments)
             if name not in self.available_tools:
                 raise ValueError('RESEARCH_COLLABORATION_UNAVAILABLE' if name in COLLABORATION_TOOLS
                     else 'RESEARCH_COMMANDS_NOT_ENABLED' if name == 'research_run'
                     else 'RESEARCH_WORKSPACE_NOT_CONFIGURED')
             key = EFFECT_PREFIX + call_id
             full_key = run_context.run_id + ':' + key
-            for effect in store.effects(run_context.session_id):
-                if (EFFECT_PREFIX in effect['effect_key'] and effect['effect_key'] != full_key
+            effects = store.effects(run_context.session_id)
+            for effect in effects:
+                if (EFFECT_PREFIX in effect['effect_key']
+                        and (effect['effect_key'] != full_key or name != 'research_ask_assistant')
                         and effect['status'] not in {'DONE', 'CANCELLED'}):
                     raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN')
+            event = {'toolName': name, 'callId': call_id, 'operation': name.removeprefix('research_')}
+            try:
+                values = validate_tool_arguments(TOOLS[name][1], arguments)
+            except ValueError:
+                if any(EFFECT_PREFIX in effect['effect_key'] and effect['status'] not in {'DONE', 'CANCELLED'}
+                        for effect in effects):
+                    raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN') from None
+                guard()
+                receipt = {'outcome': 'failed', 'stopped': True, 'code': 'PERSONAL_TOOL_INPUT_INVALID',
+                    'message': 'No operation was started. Check the required fields and types in this tool schema.'}
+                store.event(identity[1], 'research_tool_finished', '研究工具参数无效', {**event, **receipt})
+                return self._receipt(receipt)
             mutating = name in {'research_edit_file', 'research_run', 'research_ask_assistant'}
             if mutating:
                 request = {'ownerId': identity[0], 'taskId': identity[1], 'sessionId': execution['id'],
@@ -228,7 +243,6 @@ class ResearchSessionTools:
                         raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN') from None
                     guard()
                     return output
-            event = {'toolName': name, 'callId': call_id, 'operation': name.removeprefix('research_')}
             if 'path' in values:
                 event['relativePath'] = values['path']
             store.event(identity[1], 'research_tool_started', '开始执行研究工具', event)
@@ -249,9 +263,16 @@ class ResearchSessionTools:
                     workspace = self._workspace(execution)
                     if name == 'research_run':
                         output = await self._run(workspace, values, guard, self._environment(binding), execution)
+                    elif name in {'research_read_file', 'research_search'}:
+                        try:
+                            output = self._files(workspace, name, values)
+                        except (ValueError, OSError, UnicodeError):
+                            raise _rejected('RESEARCH_FILE_TARGET_INVALID') from None
                     else:
                         output = self._files(workspace, name, values)
                 if len(json.dumps(output, ensure_ascii=False).encode()) > self._environment(binding).output_bytes:
+                    if not mutating:
+                        raise _rejected('RESEARCH_TOOL_OUTPUT_TOO_LARGE')
                     raise ValueError('RESEARCH_TOOL_OUTPUT_TOO_LARGE')
                 receipt = {'outcome': 'completed', 'output': output}
             except CLIProcessError as error:
@@ -292,8 +313,12 @@ class ResearchSessionTools:
             guard()
             return self._receipt(receipt)
 
+        async def serialized(*, run_context, fc, **arguments):
+            async with run_lock:
+                return await invoke(run_context=run_context, fc=fc, **arguments)
+
         return Function(name=name, description=TOOLS[name][0], parameters=TOOLS[name][1],
-            entrypoint=invoke, skip_entrypoint_processing=True)
+            entrypoint=serialized, skip_entrypoint_processing=True)
 
     @staticmethod
     def _receipt(receipt):
@@ -303,14 +328,28 @@ class ResearchSessionTools:
             if receipt.get('outcome') == 'cancelled' and receipt.get('stopped') is True:
                 raise RunCancelledException('RESEARCH_TOOL_CANCELLED')
             if receipt.get('outcome') == 'failed' and receipt.get('stopped') is True:
-                raise ValueError(receipt['code'])
+                return {'outcome': 'failed', 'code': receipt['code'], 'message': receipt.get('message',
+                    'Tool call failed. Check the reported code and tool arguments before correcting this call.')}
         raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN')
 
     def _files(self, workspace, name, values):
         if name == 'research_edit_file':
             return self._edit(workspace, values)
         if name == 'research_search':
-            with _directory(workspace, _parts(values.get('path', '.'), directory=True)) as descriptor:
+            parts = _parts(values.get('path', '.'), directory=True)
+            with _directory(workspace, parts[:-1]) as parent:
+                single_file = bool(parts) and not stat.S_ISDIR(os.stat(parts[-1], dir_fd=parent,
+                    follow_symlinks=False).st_mode)
+                if single_file:
+                    content = _read(parent, parts[-1])
+                    matches = []
+                    for line, text in enumerate(content.splitlines(), 1):
+                        if values['query'] in text:
+                            matches.append({'path': '/'.join(parts), 'line': line, 'text': text[:200]})
+                            if len(matches) == 30:
+                                break
+                    return {'matches': matches, 'truncated': len(matches) == 30, 'entriesScanned': 1}
+            with _directory(workspace, parts) as descriptor:
                 matches, scanned, truncated = [], 0, False
 
                 def search(parent, prefix, depth):
@@ -328,7 +367,7 @@ class ResearchSessionTools:
                                 search(child, (*prefix, filename), depth + 1)
                             finally:
                                 os.close(child)
-                        elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size <= MAX_TEXT:
+                        elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
                             try:
                                 content = _read(parent, filename)
                             except UnicodeError:
@@ -339,7 +378,7 @@ class ResearchSessionTools:
                                     if len(matches) == 30:
                                         truncated = True
                                         return
-                search(descriptor, tuple(_parts(values.get('path', '.'), directory=True)), 0)
+                search(descriptor, tuple(parts), 0)
                 return {'matches': matches, 'truncated': truncated, 'entriesScanned': scanned}
         parts = _parts(values['path'])
         with _directory(workspace, parts[:-1]) as parent:
@@ -370,8 +409,6 @@ class ResearchSessionTools:
                     if old and before.count(old) != 1:
                         raise ValueError()
                     raw = (before.replace(old, new, 1) if old else new).encode()
-                    if len(raw) > MAX_TEXT:
-                        raise ValueError()
                 except (ValueError, OSError, UnicodeError):
                     raise _rejected('RESEARCH_EDIT_MATCH_OR_SIZE_INVALID') from None
                 output.seek(0)

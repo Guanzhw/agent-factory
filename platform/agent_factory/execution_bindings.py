@@ -43,8 +43,8 @@ class EnvironmentLimits:
     def __post_init__(self):
         if not _IDENTIFIER.fullmatch(self.runtime_id):
             raise ValueError("Invalid trusted environment runtime ID")
-        if type(self.timeout_seconds) not in {int, float} or not math.isfinite(self.timeout_seconds) or not .1 <= self.timeout_seconds <= 30:
-            raise ValueError("Environment timeout must be between 0.1 and 30 seconds")
+        if type(self.timeout_seconds) not in {int, float} or not math.isfinite(self.timeout_seconds) or not .1 <= self.timeout_seconds <= 600:
+            raise ValueError("Environment timeout must be between 0.1 and 600 seconds")
         for value, lower, upper in ((self.output_bytes, 1024, 1024 * 1024),
                 (self.memory_bytes, 64 * 1024 * 1024, 1024 * 1024 * 1024), (self.process_limit, 1, 64), (self.cpu_percent, 1, 100)):
             if type(value) is not int or not lower <= value <= upper:

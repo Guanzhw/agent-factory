@@ -110,6 +110,8 @@ class Settings:
                 if (entry.adapter_id, entry.revision) not in installed]]
         if type(self.native_timeout_seconds) is not int or not 60 <= self.native_timeout_seconds <= 3600:
             raise ValueError("Native task timeout must be 60 through 3600 seconds")
+        if type(self.experiment_timeout_seconds) is not int or not 1 <= self.experiment_timeout_seconds <= 600:
+            raise ValueError("Operation timeout must be 1 through 600 seconds")
         if self.browser_oidc is not None:
             from .browser_oidc import BrowserOIDCConfig
             if type(self.browser_oidc) is not BrowserOIDCConfig:
@@ -159,6 +161,8 @@ class Settings:
             raise ValueError("Production requires an operator-configured JWT key (at least 32 bytes)")
         policy = os.getenv("FACTORY_TEMPORARY_POLICY", "member-self-service")
         return cls(db_url=url, jwt_key=key,
+                   experiment_timeout_seconds=int(os.getenv('FACTORY_OPERATION_TIMEOUT_SECONDS', '8')),
+                   native_timeout_seconds=int(os.getenv('FACTORY_NATIVE_TIMEOUT_SECONDS', '60')),
                    local_login_origin=os.getenv('FACTORY_LOCAL_LOGIN_ORIGIN') or None,
                    workspace=Path(os.getenv("FACTORY_WORKSPACE", ".local")).resolve(),
                    temporary_policy=policy, policy_revision=os.getenv("FACTORY_POLICY_REVISION", "department-member-v1"),
