@@ -15,7 +15,7 @@
 
 #### Scenario: Existing Research configurations survive restart
 - **WHEN** 已有Research精确配置在加列后重启
-- **THEN** 仅由其所属应用标注默认入口，重启不产生新版本或任务，原准确版本和原操作仍可核对
+- **THEN** 仅由其所属应用标注默认入口，重启不产生新版本或任务，原准确版本和原操作仍可核对；旧修订请求跨用途标注后重试仍取得原结果，缺失/不匹配旧引用仅记录未标注，不猜测写入
 
 ### Requirement: Complete published template browsing
 系统 SHALL 在已发布、可作为模板入口的范围内分页，且让成员读取100项之外的准确版本；未发布他人草稿不得进入目录。没有模板与读取失败 MUST 呈现不同状态及实际下一步。

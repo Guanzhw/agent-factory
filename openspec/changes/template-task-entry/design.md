@@ -14,9 +14,9 @@
 
 在已有 `af_application_states` 增加 `entry_kind`，值为 `template` 或 `application`，缺省 `template`；它仅声明默认发现/入口用途，不参与正文哈希、预算、权限或任务身份。复用项目现有inspect-column/ALTER TABLE模式增加一个column（String NOT NULL DEFAULT 'template'），新库create_all、旧库一次幂等加列；不建迁移框架/新表。旧origin、bootstrap含义不变。
 
-`ApplicationService.create_draft` 增加仅可信Python调用的 `entry_kind`关键字；HTTP普通作者仍默认template，修订继承原值。内部声明纳入原命令指纹；默认路径保留已有命令指纹，避免旧回执冲突。新增内部帮助方法对输入的准确pin核对已存id/version/sha后只标记application；没有公共写端点、不接收credentials。ResearchSessionSetup.prepare和ResearchSetup.publish的新定义明确application。
+`ApplicationService.create_draft` 增加仅可信Python调用的 `entry_kind`关键字；HTTP普通作者仍默认template，修订继承原值，但沿用旧 `{action,definition,parentRef}` 指纹；只有可信新create的显式非默认声明纳入用途字段，默认create路径也保留旧指纹。已保存revision跨用途标注后以同request重试仍返回原结果，不新增兼容分支。新增内部帮助方法对输入的准确pin核对已存id/version/sha后只标记application；没有公共写端点、不接收credentials。ResearchSessionSetup.prepare和ResearchSetup.publish的新定义明确application。
 
-旧自动生成定义确有当前会话数据消费者，故由两个Research服务初始化时各自读取自己表中已保存的applicationRef，结束读取事务后交上述方法幂等标注（不嵌套持有连接）；core不得读Research表。仅持有准确ref才标注，缺失/不匹配记录不猜测、不删除正文。该标注只改变默认入口，research+experiment混合mode的原exact引用和高级能力保留。应用未安装时不擅自推断未标注旧记录。重启不产生新版本、新任务或副作用。
+旧自动生成定义确有当前会话数据消费者，故由两个Research服务初始化时各自读取自己表中已保存的applicationRef，结束读取事务后交上述方法幂等标注（不嵌套持有连接）；core不得读Research表。仅持有准确ref才标注，原记录缺失或id/version/sha不匹配时只返回未标记并记录含ref/原因的warning，不打印正文或凭据；不因目录用途标注阻断Research启动。不得捕获连接/SQL等非预期错误，不猜测、不删除正文。该标注只改变默认入口，research+experiment混合mode的原exact引用和高级能力保留。应用未安装时不擅自推断未标注旧记录。重启不产生新版本、新任务或重放执行副作用，允许上述用途元数据的幂等写入。
 
 旧 `GET /applications`、definitions、inspect、require_current与精确引用开始完全保留，Research ExecutionEditor继续读取旧应用列表筛选兼容native。普通目录不替换这个接口。
 
