@@ -13,11 +13,11 @@ import { projectDraftKey, useProjectDraft } from './projectDraft.js';
 export const projectStates = { draft: '待确认约定', ready: '约定已确认', ended: '研究已结束' };
 type Props = { onDelivery: (id: string) => void; project: ResearchProject; tab: string; onTab: (tab: string) => void; onUpdate: (project: ResearchProject) => void; onTask: (id: string) => void; onApplications: () => void; onResources: () => void; setupId?: string; onSetup: (id: string) => void; onMaterials: () => void };
 export function ProjectDetails(props: Props) {
-  return <ProjectContent key={`${props.project.ownerId}:${props.project.id}:${props.project.currentGoalVersion}`} {...props}/>;
+  return <ProjectContent key={`${props.project.ownerId}:${props.project.id}:${props.project.currentGoalVersion}:${props.setupId || "new"}`} {...props}/>;
 }
 function ProjectContent({ onDelivery, project, tab, onTab, onUpdate, onTask, onApplications, onResources, setupId, onSetup, onMaterials }: Props) {
   const [editing, setEditing] = useState(false);
-  const view = useProjectDraft<{ configuring: boolean; preparing: boolean; selection?: ExecutionSelection }>(projectDraftKey(project.ownerId, project.id, project.currentGoalVersion, 'view'), { configuring: !!setupId, preparing: !!setupId });
+  const view = useProjectDraft<{ configuring: boolean; preparing: boolean; selection?: ExecutionSelection }>(projectDraftKey(project.ownerId, project.id, project.currentGoalVersion, `view:${setupId || 'new'}`), { configuring: !!setupId, preparing: !!setupId });
   const { configuring, preparing, selection } = view.value;
   const [ending, setEnding] = useState(false);
   const [reason, setReason] = useState('');

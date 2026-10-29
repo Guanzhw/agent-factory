@@ -161,7 +161,7 @@ it('restores only non-secret model inputs after leaving and returning', async ()
 });
 it('offers the research continuation only after confirmed saving and permits ordinary return while unknown', async () => {
   const back = vi.fn();
-  await act(async () => root.render(createElement(ModelSettings, { ownerId: 'alice', onBack: back, returnLabel: '返回原研究' })));
+  await act(async () => root.render(createElement(ModelSettings, { ownerId: 'alice', onBack: back, returnLabel: '返回原研究', continueLabel: '继续原研究' })));
   vi.mocked(ownerModelApi.default).mockRejectedValueOnce(new ModelRequestError(0));
   await save();
   expect(button('继续原研究')).toBeUndefined();

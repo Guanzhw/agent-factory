@@ -6,7 +6,7 @@ import { personalRemoteApi, remoteCanBind, definitivelyRejected, RemoteRequestEr
 import type { JobSummary, User } from './models.js';
 const statusNames: Record<string, string> = { configured: '配置已保存，尚未验证', verified: '只读验证有效', expired: '验证已过期，需重新验证并绑定', revoked: '已撤销', credential_unavailable: '凭据不可用或已轮换', policy_changed: '部署策略已变更', unavailable: '当前不可用', failed: '验证未通过' };
 function validOrigin(value: string) { try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) && url.origin === value && !url.username && !url.password; } catch { return false; } }
-export function PersonalRemotes({ user, jobs, onChanged }: { user: User; jobs: JobSummary[]; onChanged: () => void }) {
+export function PersonalRemotes({ user, jobs, onChanged, revision = 0 }: { user: User; jobs: JobSummary[]; onChanged: () => void; revision?: number }) {
   const [providers, setProviders] = useState<RemoteProvider[]>([]); const [remotes, setRemotes] = useState<PersonalRemote[]>([]);
   const [ready, setReady] = useState(false); const [vault, setVault] = useState(false); const [error, setError] = useState('');
   const [providerId, setProviderId] = useState(''); const [origin, setOrigin] = useState(''); const [projectId, setProjectId] = useState('');
@@ -51,7 +51,7 @@ export function PersonalRemotes({ user, jobs, onChanged }: { user: User; jobs: J
       if (!controller.signal.aborted) timer = setTimeout(() => void read(), 5000);
     }
     void read(); return () => { controller.abort(); clearTimeout(timer); };
-  }, [user.id, refresh]);
+  }, [user.id, refresh, revision]);
   async function perform(work: () => Promise<void>) {
     if (lock.current || !ready || pendingRequest) return; lock.current = true; setBusy(true); setNotice('');
     try { await work(); setRefresh(n => n + 1); onChanged(); }

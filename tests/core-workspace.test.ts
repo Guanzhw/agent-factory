@@ -4,6 +4,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Workspace } from '../web/composition.js';
 import { api } from '../web/api.js';
+import { ownerModelApi } from '../web/ownerModelApi.js';
 import { clearBrowserSession } from '../web/browserAuth.js';
 import { readWorkspaceRoute, workspaceUrl } from '../web/workspaceNavigation.js';
 
@@ -64,6 +65,17 @@ it('preserves valid task and model return pointers across URL serialization and 
     expect(readWorkspaceRoute(new URL(workspaceUrl(url, route), url), false)).toEqual(route);
   }
   expect(readWorkspaceRoute(new URL('https://fixture.example/?tab=accounts'), false).tab).toBe('catalog');
+});
+it.each([
+  ['connections', '返回连接配置'], ['catalog', '返回应用'], ['resources', '返回我的资源'],
+])('returns from model settings to its actual generic %s origin', async (origin, label) => {
+  vi.spyOn(ownerModelApi, 'capabilities').mockResolvedValue({ enabled: false, providers: [], liveCompatibilityVerified: false });
+  vi.spyOn(ownerModelApi, 'list').mockResolvedValue([]);
+  await mount(`/?tab=models&modelReturn=${origin}&resource=credentials`);
+  await click(label);
+  expect(new URL(window.location.href).searchParams.get('tab')).toBe(origin);
+  if (origin === 'connections') expect(new URL(window.location.href).searchParams.get('resource')).toBe('credentials');
+  expect(host.textContent).not.toContain('返回原研究');
 });
 
 it('uses three daily entries and keeps author and maintenance destinations reachable', async () => {

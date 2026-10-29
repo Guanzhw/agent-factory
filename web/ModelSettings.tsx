@@ -10,7 +10,7 @@ import { MODEL_PROVIDER_PRESETS } from './modelProviderConfig.js';
 import { authEpoch } from './browserAuth.js';
 import { clearModelSettingsDraft, readModelSettingsDraft, saveModelSettingsDraft } from './modelSettingsDraft.js';
 
-export function ModelSettings({ ownerId, onBack, onCredentials, returnLabel = '返回工作区' }: { ownerId: string; onBack: () => void; onCredentials?: () => void; returnLabel?: string }) {
+export function ModelSettings({ ownerId, onBack, onCredentials, returnLabel = '返回工作区', continueLabel }: { ownerId: string; onBack: () => void; onCredentials?: () => void; returnLabel?: string; continueLabel?: string }) {
   const [draft] = useState(() => readModelSettingsDraft(ownerId));
   const [draftRestored, setDraftRestored] = useState(false);
   const epoch = useRef(authEpoch());
@@ -334,7 +334,7 @@ export function ModelSettings({ ownerId, onBack, onCredentials, returnLabel = '�
     <p className="model-purpose">研究内容会发送给所选模型提供方，费用由你的提供方账户承担。密钥加密保存，不回显。</p>
     {onCredentials && <button className="secondary" disabled={busy} onClick={onCredentials}>管理我的凭据与连接</button>}
     {error && <div className="error-message" role="alert">{error}</div>}{notice && <div className="success-message" role="status">{notice}</div>}
-    {savedForReturn && returnLabel === '返回原研究' && <div className="state-note"><p>设置已确认。返回后核对模型选择再开始，已有会话的模型绑定不会自动改变。</p><button className="primary" onClick={onBack}>继续原研究</button></div>}
+    {savedForReturn && continueLabel && <div className="state-note"><p>设置已确认。返回后核对模型选择再开始，已有会话的模型绑定不会自动改变。</p><button className="primary" onClick={onBack}>{continueLabel}</button></div>}
     {pendingSharing && <p role="alert">共享请求尚未确认。<button disabled={busy} onClick={() => void recoverSharing()}>核对原共享请求</button></p>}
     {!ready && !error && <p role="status">正在读取模型设置…</p>}
     <button className="text-button" disabled={busy} onClick={() => { setError(''); setRefresh(n => n + 1); }}>重新读取设置</button>
