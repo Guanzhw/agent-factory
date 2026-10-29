@@ -98,6 +98,8 @@ contains `.` and is intentionally not accepted for enabled commands. Tools use
 spaces; junction/reparse targets, hard-linked files and device/stream aliases are
 rejected. Commands run directly without shell expansion or automatic dependency
 installation. Windows uses the existing Job Object owner for process-tree cleanup.
+The native Windows path is a candidate; real Windows Research acceptance has not
+yet passed.
 See [development checks](docs/DEVELOPMENT_CHECKS.md#native-windows-research-verification)
 for the separate native Windows checks and their current evidence status.
 
