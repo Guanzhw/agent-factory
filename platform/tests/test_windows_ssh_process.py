@@ -12,13 +12,74 @@ import time
 import unittest
 
 from agent_factory.ssh_exchange import exchange, SSHExchangeCancelled
-from agent_factory.windows_ssh_process import WindowsSSHProcess
+from agent_factory.windows_ssh_process import WindowsProcessCreateError, WindowsSSHProcess
 
 
 @unittest.skipUnless(sys.platform == 'win32', 'Requires actual Windows process, Job and handle-list APIs')
 class WindowsSSHProcessTests(unittest.TestCase):
-    def process(self, program, *args, cwd=None):
-        return WindowsSSHProcess([sys.executable, '-I', '-S', '-c', program, *args], dict(os.environ), cwd=cwd)
+    def process(self, program, *args, cwd=None, capture_stderr=False):
+        return WindowsSSHProcess([sys.executable, '-I', '-S', '-c', program, *args], dict(os.environ),
+                                 cwd=cwd, capture_stderr=capture_stderr)
+
+    def test_stderr_capture_is_optional_and_job_observation_uses_original_handle(self):
+        import win32job
+        for capture in (False, True):
+            with self.subTest(capture=capture):
+                with self.process('import os; os.write(1,b"out"); os.write(2,b"err")',
+                                  capture_stderr=capture) as process:
+                    job = process._job
+                    self.assertEqual(process.job_active_processes(), 1)
+                    self.assertEqual(win32job.QueryInformationJobObject(
+                        job, win32job.JobObjectBasicAccountingInformation)['ActiveProcesses'], 1)
+                    process.resume()
+                    process.stdin.close()
+                    self.assertEqual(process.stdout.read(), b'out')
+                    if capture:
+                        self.assertEqual(process.stderr.read(), b'err')
+                    else:
+                        self.assertIsNone(process.stderr)
+                    process.wait(timeout=5)
+                    self.assertEqual(process.job_active_processes(), 0)
+                    self.assertIs(process._job, job)
+                if capture:
+                    self.assertTrue(process.stderr.closed)
+                with self.assertRaisesRegex(ValueError, 'CLOSED'):
+                    process.job_active_processes()
+
+    def test_original_job_remains_observable_after_parent_exit_and_repeated_kill(self):
+        import win32job
+        program = ('import subprocess,sys; subprocess.Popen([sys.executable,"-I","-S","-c",'
+                   '"import time;time.sleep(60)"]); print("parent exited",flush=True)')
+        with self.process(program, capture_stderr=True) as process:
+            job = process._job
+            process.resume()
+            process.wait(timeout=5)
+            self.assertEqual(process.poll(), 0)
+            self.assertGreater(process.job_active_processes(), 0)
+            process.kill()
+            process.kill()
+            deadline = time.monotonic() + 5
+            while process.job_active_processes() and time.monotonic() < deadline:
+                time.sleep(.01)
+            self.assertIs(process._job, job)
+            self.assertEqual(win32job.QueryInformationJobObject(
+                job, win32job.JobObjectBasicAccountingInformation)['ActiveProcesses'], 0)
+            self.assertEqual(process.stdout.read().strip(), b'parent exited')
+            self.assertEqual(process.stderr.read(), b'')
+
+    def test_captured_stderr_is_closed_after_rejected_creation(self):
+        streams = []
+        original = os.fdopen
+        def record(*args, **kwargs):
+            stream = original(*args, **kwargs)
+            streams.append(stream)
+            return stream
+        with patch.object(os, 'fdopen', record):
+            with self.assertRaises(WindowsProcessCreateError):
+                WindowsSSHProcess([str(Path(sys.executable).parent / 'missing-cli-fixture.exe')],
+                                  dict(os.environ), capture_stderr=True)
+        self.assertEqual(len(streams), 3)
+        self.assertTrue(all(stream.closed for stream in streams))
 
     def test_suspended_until_resume_then_exact_pipe_roundtrip(self):
         with TemporaryDirectory() as folder:
@@ -158,7 +219,7 @@ class WindowsSSHProcessTests(unittest.TestCase):
             raise RuntimeError('controlled job assignment failure')
         try:
             with patch('win32job.AssignProcessToJobObject', side_effect=reject):
-                with self.assertRaisesRegex(RuntimeError, 'controlled job assignment failure'):
+                with self.assertRaisesRegex(WindowsProcessCreateError, 'WINDOWS_PROCESS_CREATE_FAILED'):
                     self.process('import time; time.sleep(60)')
             self.assertEqual(len(held), 1)
             self.assertEqual(win32event.WaitForSingleObject(held[0], 0), win32con.WAIT_OBJECT_0)
