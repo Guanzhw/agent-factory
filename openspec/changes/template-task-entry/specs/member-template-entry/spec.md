@@ -57,3 +57,11 @@
 #### Scenario: Automatic matching is preserved
 - **WHEN** 用户不显式选择模板
 - **THEN** 只匹配普通模板入口，保留既有关键词评分及ID同分顺序；无命中且没有唯一默认项才要求明确选择
+
+#### Scenario: Automatic match has required structured inputs
+- **WHEN** 成员在自动入口填写目标，匹配模板需要额外必填字段
+- **THEN** 先只读匹配并显示该模板字段，填写后再明确预览；匹配阶段没有提案/方案/任务，后续预览固定所示版本，原缺必填值提交仍被服务端拒绝
+
+#### Scenario: Return from a later template page
+- **WHEN** 成员读到第二页并查看详情，再使用浏览器后退/前进
+- **THEN** 返回原已读列表且每版本仅一张卡片，不重复追加当前页；明确“更多模板”才读取并追加下一页
