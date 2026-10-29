@@ -7,9 +7,9 @@
 ## 2. 普通模板路径
 
 - [x] 2.1 后端作者完成单字段entry_kind、published模板keyset读取、自动匹配候选、Research新旧准确引用声明；只允许 `platform/agent_factory/applications.py`、`composition.py`、`applications/research/session_setup.py`、`setup.py` 与直接对应测试。验证新旧数据库加列/重启、mixed-mode精确引用保持、未发布隔离、过滤前100截断反例及旧revision跨用途标记重试/孤儿引用不阻断启动的原命令回执兼容；不改require_current权限/执行器/凭据/认证，不写分类/迁移框架。
-- [ ] 2.2 前端作者完成应用到模板列表/详情/创建及必要输入、资源返回，保留接受≠启动和原请求。只允许 `web/ApplicationCatalog.tsx`及其CSS、`ApplicationComposer.tsx`、`ApplicationInputs.tsx`、`api.ts`、`models.ts`、`workspaceNavigation.ts`、`composition.tsx`、`research-composition.tsx`、`App.tsx`及一个模板临时草稿文件和直接对应tests；资源页只接现有返回接口，不改编辑主体。先跑一个测试模板完整路径，再覆盖刷新/后退/换owner/缺项/UNKNOWN/双击/旧业务seed锁定；复用现有smoke，无新表单/路由/预算引擎。
+- [x] 2.2 前端作者完成应用到模板列表/详情/创建及必要输入、资源返回，保留接受≠启动和原请求。只允许 `web/ApplicationCatalog.tsx`及其CSS、`ApplicationComposer.tsx`、`ApplicationInputs.tsx`、`api.ts`、`models.ts`、`workspaceNavigation.ts`、`composition.tsx`、`research-composition.tsx`、`App.tsx`及一个模板临时草稿文件和直接对应tests；资源页只接现有返回接口，不改编辑主体。先跑一个测试模板完整路径，再覆盖刷新/后退/换owner/缺项/UNKNOWN/双击/旧业务seed锁定；复用现有smoke，无新表单/路由/预算引擎。
 
-- [ ] 2.3 修复独审 TE-001/TE-002：只读复用后端匹配，先显示必填字段再预览；列表详情后退不重加当前页。仅上述既有文件与对应测试，原反例日志保留，契约小补充须非作者核对。
+- [x] 2.3 修复独审 TE-001/TE-002：只读复用后端匹配，先显示必填字段再预览；列表详情后退不重加当前页。仅上述既有文件与对应测试，原反例日志保留，契约小补充须非作者核对。
 
 ## 3. 整合与验收
 

@@ -96,6 +96,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
   const inputError = selectedMode?.inputSchema ? inputValuesError(selectedMode.inputSchema, inputValues) : '';
   const accepted = !!plan || proposal?.state === 'accepted';
   const pending = proposal?.state === 'pending';
+  const needsMatch = template && !pinnedApplication && !proposal;
   useEffect(() => {
     if (!active) return;
     setReady(false);
@@ -145,6 +146,15 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
   }
   async function createOrRevise() {
     if (!ready || template && !entryAvailable && !proposal && !uncertainRevision.current || (!applications.length && !uncertainRevision.current) || applicationStale || inputError || !goal.trim() || accepted || proposal && !uncertainRevision.current && (!pending || !proposal.allowedActions.includes('revise'))) return;
+    if (needsMatch) {
+      await act('match-template', async () => {
+        const matched = await api.matchTemplate(goal.trim());
+        setApplications([matched]); setApplicationId(matched.id); setMode(matched.defaultMode);
+        setPinnedApplication({ id: matched.id, version: matched.version, sha256: matched.sha256 });
+        setEntryAvailable(true);
+      });
+      return;
+    }
     const values = uncertainRevision.current?.input ?? input(); const parentId = uncertainRevision.current?.id ?? proposal?.id;
     await act(parentId ? 'revise-proposal' : 'propose', async () => {
       const key = await keys(parentId ? 'revise-proposal' : 'propose', { ...values, ...(parentId ? { parentId } : {}) });
@@ -221,7 +231,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
         {selectedMode?.inputSchema && <ApplicationInputs schema={selectedMode.inputSchema} values={inputValues} onChange={setInputValues} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending || !ready}/>}
         {selectedMode?.connectionRequirements.map(requirement => <label key={requirement.name}>资源连接 · {requirement.name}{requirement.required ? '（必需）' : '（可选）'}<select aria-label={`资源连接 ${requirement.name}`} value={connectionRefs[requirement.name] ?? ''} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending || !ready} onChange={event => setConnectionRefs(current => { const next = { ...current }; if (event.target.value) next[requirement.name] = event.target.value; else delete next[requirement.name]; return next; })}><option value="">未选择连接</option>{connections.filter(item => item.available && !item.taskId && item.kind === requirement.kind && requirement.requiredCapabilities.every(capability => item.capabilities.includes(capability))).map(item => <option key={item.ref} value={item.ref}>{item.registrationRef} · {item.ref.slice(0, 8)}</option>)}</select><small className="quiet">只可选自己的可用连接；配置可用不等于真实提供商已验证。{requirement.requiredCapabilities.length > 0 && `需要能力：${requirement.requiredCapabilities.join('、')}。`}</small>{onConfigureResource && <button type="button" className="text-button" disabled={!!busy || !!uncertainRevision.current} onClick={() => onConfigureResource(requirement.kind)}>配置{requirement.kind === 'model' ? '模型' : '资源'}并返回</button>}</label>)}
         {selectedMode && Object.keys(selectedMode.materialChoices).length > 0 && <details className="technical-detail composer-advanced"><summary>高级选项：调整已发布材料</summary><p className="quiet">默认使用应用的已发布材料；需要时可在允许范围内调整。</p>{Object.entries(selectedMode.materialChoices).map(([slot, choice]) => <label key={slot}>{kindNames[choice.kind]}选择 · {slot}<select aria-label={`材料选择 ${slot}`} disabled={!!busy || !!uncertainRevision.current || accepted || !!proposal && !pending || !ready} value={refKey(choices[slot] ?? choice.defaultRef)} onChange={event => { const ref = choice.allowedRefs.find(item => refKey(item) === event.target.value); if (ref) setChoices(current => ({ ...current, [slot]: ref })); }}>{choice.allowedRefs.map(ref => <option key={refKey(ref)} value={refKey(ref)}>{materials.find(item => refKey(item) === refKey(ref))?.name ?? ref.id} · v{ref.version}</option>)}</select></label>)}</details>}
-        {!accepted && (!proposal || pending || uncertainRevision.current) && <><p className="quiet">下一步只预览任务范围、所需权限和预算，不会开始执行。</p><button className="primary wide" type="submit" disabled={template && !entryAvailable && !proposal && !uncertainRevision.current || applicationStale || !!inputError || !!busy || !ready || (!applications.length && !uncertainRevision.current) || !goal.trim() || !!proposal && !uncertainRevision.current && !proposal.allowedActions.includes('revise')}>{busy === 'propose' || busy === 'revise-proposal' ? '正在准备方案…' : uncertainRevision.current ? '核对原装配请求' : proposal ? '更新任务方案' : '预览任务方案'}</button></>}
+        {!accepted && (!proposal || pending || uncertainRevision.current) && <><p className="quiet">{needsMatch ? '先匹配任务模板，再填写它需要的输入；此步不会创建提案或任务。' : '下一步只预览任务范围、所需权限和预算，不会开始执行。'}</p><button className="primary wide" type="submit" disabled={template && !entryAvailable && !proposal && !uncertainRevision.current || applicationStale || !!inputError || !!busy || !ready || (!applications.length && !uncertainRevision.current) || !goal.trim() || !!proposal && !uncertainRevision.current && !proposal.allowedActions.includes('revise')}>{busy === 'match-template' ? '正在匹配模板…' : needsMatch ? '匹配任务模板' : busy === 'propose' || busy === 'revise-proposal' ? '正在准备方案…' : uncertainRevision.current ? '核对原装配请求' : proposal ? '更新任务方案' : '预览任务方案'}</button></>}
       </form>
       {candidate && <div className="preflight"><div className="section-heading"><h3>3. 核对任务方案</h3><span className={`badge ${candidate.status === 'ready' ? 'status-ready' : 'status-blocked'}`}>{candidate.status === 'ready' ? '预检通过' : '预检存在缺项'}</span></div><p className="normalized-goal">{candidate.normalizedGoal}</p><p className="quiet">应用 {applications.find(item => item.id === candidate.application)?.name ?? candidate.application} · v{candidate.applicationRef.version} · {(modeLabels[candidate.mode] ?? candidate.mode)} · {({ pending: '等待你的决定', revised: '已被新提案修订', rejected: '已拒绝', accepted: '已固定为方案' })[proposal!.state]}</p>
         <ComposerProposalScope candidate={candidate}/>

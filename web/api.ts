@@ -338,6 +338,7 @@ export const api = {
   submitControl, controlReceipt, controlCommands,
   dispatchControl: async (owner: string, task: string, commandId: string) => validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}/dispatch`, 'POST'), owner, task, commandId),
   acknowledgeControl: async (owner: string, task: string, commandId: string) => validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}/acknowledge`, 'POST'), owner, task, commandId),
+  matchTemplate: async (goal: string) => application(await request('/compositions/proposals/match', 'POST', { goal })),
   applications, templateCatalog, inspectApplication, applicationVersions, applicationReviews, propose, reviseProposal, inspectProposal, recoverProposal,
   proposalInbox: (after?: string, signal?: AbortSignal) => request<unknown>(`/compositions/proposals${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
   draftApplication: async (definition: Record<string, unknown>, requestId: string) => application(await request('/applications/drafts', 'POST', { definition, requestId })),

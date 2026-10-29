@@ -44,6 +44,7 @@ beforeEach(() => {
   vi.spyOn(api, 'materials').mockResolvedValue([]); vi.spyOn(api, 'executionTargets').mockResolvedValue([]);
   vi.spyOn(api, 'templateCatalog').mockResolvedValue({ items: [application], nextCursor: null });
   vi.spyOn(api, 'inspectApplication').mockResolvedValue(version);
+  vi.spyOn(api, 'matchTemplate').mockResolvedValue(application);
   vi.spyOn(api, 'userConnections').mockResolvedValue([]);
   vi.spyOn(api, 'proposalInbox').mockResolvedValue({ schema: 1, ownerId: owner.id, snapshot: false, items: [], nextCursor: null });
   vi.spyOn(api, 'propose'); vi.spyOn(api, 'instantiate');
@@ -95,16 +96,16 @@ it('distinguishes a failed directory from empty and exposes real next steps', as
   expect(api.propose).not.toHaveBeenCalled();
 });
 
-it('can read subsequent pages and returns to the first page after inspecting a version', async () => {
+it('can read subsequent pages and returns to the loaded list after inspecting a version', async () => {
   const second = { ...application, id: 'qa-next', name: 'QA 第二页' };
   vi.mocked(api.templateCatalog).mockImplementation(async after => after ? { items: [second], nextCursor: null } : { items: [application], nextCursor: 'cursor-1' });
   vi.mocked(api.inspectApplication).mockResolvedValue({ ...version, application: second });
   await mount('/?tab=templates'); await settle(() => expect(buttons('更多模板')).toHaveLength(1));
   await click('更多模板'); await settle(() => expect(buttons('查看模板')).toHaveLength(2));
   await act(async () => buttons('查看模板')[1]!.click()); await settle(() => expect(buttons('用此模板创建任务')).toHaveLength(1));
-  await click('返回模板列表'); await settle(() => expect(buttons('查看模板')).toHaveLength(1));
-  expect(host.textContent).not.toContain(second.name);
-  expect(vi.mocked(api.templateCatalog).mock.calls.map(args => args[0])).toEqual([undefined, 'cursor-1', undefined]);
+  await click('返回模板列表'); await settle(() => expect(buttons('查看模板')).toHaveLength(2));
+  expect(host.textContent).toContain(second.name);
+  expect(vi.mocked(api.templateCatalog).mock.calls.map(args => args[0])).toEqual([undefined, 'cursor-1']);
 });
 
 it.each(['application', 'withdrawn'])('does not create through a %s presentation detail', async state => {
@@ -175,4 +176,53 @@ it('uses encoded read-only template requests and rejects a mismatched exact vers
   await expect(api.inspectApplication(application.id, 1)).resolves.toEqual(version);
   await expect(api.inspectApplication(application.id, 1)).rejects.toThrow('模板版本与所选记录不一致');
   expect(vi.mocked(fetch).mock.calls.every(([, options]) => options?.method === 'GET')).toBe(true);
+});
+
+
+it('matches before proposing so the required input is available without an invalid proposal', async () => {
+  await mount('/?tab=templates');
+  await settle(() => expect(buttons('根据目标自动匹配')).toHaveLength(1));
+  await click('根据目标自动匹配');
+  await settle(() => expect(host.querySelector('#task-goal')).not.toBeNull());
+  await input('#task-goal', '校验当前文件');
+  expect(host.querySelector('[aria-label="文件路径（必需）"]')).toBeNull();
+  await click('匹配任务模板');
+  await settle(() => expect(host.querySelector('[aria-label="文件路径（必需）"]')).not.toBeNull());
+  expect(api.matchTemplate).toHaveBeenCalledExactlyOnceWith('校验当前文件');
+  expect(api.propose).not.toHaveBeenCalled(); expect(api.instantiate).not.toHaveBeenCalled();
+  expect(buttons('预览任务方案')[0]!.disabled).toBe(true);
+  await input('[aria-label="文件路径（必需）"]', 'example.py');
+  vi.mocked(api.propose).mockRejectedValue(new Error('Synthetic stop before proposal persistence'));
+  await click('预览任务方案');
+  await settle(() => expect(api.propose).toHaveBeenCalledTimes(1));
+  expect(vi.mocked(api.propose).mock.calls[0][0]).toMatchObject({ goal: '校验当前文件', inputValues: { path: 'example.py' }, applicationRef: { id: application.id, version: 1, sha256: application.sha256 } });
+  expect(api.instantiate).not.toHaveBeenCalled();
+});
+
+it('retains the goal when read-only matching fails and allows a deliberate retry', async () => {
+  vi.mocked(api.matchTemplate).mockRejectedValueOnce(new Error('Synthetic no unique template'));
+  await mount('/?tab=templates&templateStart=1');
+  await settle(() => expect(host.querySelector('#task-goal')).not.toBeNull()); await input('#task-goal', '校验当前文件');
+  await click('匹配任务模板'); await settle(() => expect(host.textContent).toContain('Synthetic no unique template'));
+  expect(host.querySelector<HTMLTextAreaElement>('#task-goal')!.value).toBe('校验当前文件');
+  await click('匹配任务模板'); await settle(() => expect(host.querySelector('[aria-label="文件路径（必需）"]')).not.toBeNull());
+  expect(api.matchTemplate).toHaveBeenCalledTimes(2); expect(api.propose).not.toHaveBeenCalled(); expect(api.instantiate).not.toHaveBeenCalled();
+});
+
+it('review regression: browser back from page two detail does not append duplicate cards', async () => {
+  const second = { ...application, id: 'qa-next', name: 'QA 第二页' };
+  vi.mocked(api.templateCatalog).mockImplementation(async after => after ? { items: [second], nextCursor: null } : { items: [application], nextCursor: 'cursor-1' });
+  vi.mocked(api.inspectApplication).mockResolvedValue({ ...version, application: second });
+  await mount('/?tab=templates');
+  await settle(() => expect(buttons('更多模板')).toHaveLength(1));
+  await click('更多模板'); await settle(() => expect(buttons('查看模板')).toHaveLength(2));
+  await act(async () => buttons('查看模板')[1]!.click());
+  await settle(() => expect(buttons('用此模板创建任务')).toHaveLength(1));
+  await act(async () => { history.back(); await new Promise(resolve => setTimeout(resolve, 20)); });
+  await settle(() => expect(buttons('查看模板')).toHaveLength(2));
+  await act(async () => { history.forward(); await new Promise(resolve => setTimeout(resolve, 20)); });
+  await settle(() => expect(buttons('用此模板创建任务')).toHaveLength(1));
+  await act(async () => { history.back(); await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(buttons('查看模板')).toHaveLength(2);
+  expect(vi.mocked(api.templateCatalog).mock.calls.map(args => args[0])).toEqual([undefined, 'cursor-1']);
 });

@@ -6,18 +6,87 @@ import os
 import unittest
 from unittest.mock import patch
 
+from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.os import AgentOS
 from fastapi import HTTPException
-from sqlalchemy import create_engine, inspect, select, text
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, func, inspect, select, text
 from sqlalchemy.exc import OperationalError
 
 from agent_factory.applications import ApplicationService
+from agent_factory.composition import composition_router
 from agent_factory.store import digest
+from core_native_fixture import FixtureModel
 from pg_fixture import IsolatedPostgres
 from test_applications_composition import ApplicationCompositionFixture, app_definition, pin
 
 
 class ApplicationTemplateTests(ApplicationCompositionFixture):
+    def required_template(self):
+        definition = app_definition(self.store, identifier='required-input-template',
+            contractVersion=2, defaultMode='literature')
+        definition['modes']['literature']['inputSchema'] = {
+            'type': 'object', 'additionalProperties': False, 'required': ['subject'],
+            'properties': {'subject': {'type': 'string', 'minLength': 1, 'maxLength': 80}}}
+        return self.publish(definition)
+
+    def composition_counts(self):
+        with self.store.engine.connect() as conn:
+            return tuple(conn.execute(select(func.count()).select_from(table)).scalar_one()
+                for table in (self.composition.proposals, self.composition.commands, self.store.plan_table))
+
+    def test_match_reads_required_fields_before_proposing_and_accepting(self):
+        application = self.required_template()
+        before = self.composition_counts()
+        with patch.object(self.composition, '_candidate', side_effect=AssertionError('Match must not preflight')):
+            self.assertEqual(self.composition.match_template('alice', 'Text audit a public subject'), application)
+        self.assertEqual(self.composition_counts(), before)
+        with self.assertRaisesRegex(HTTPException, 'Application inputs differ'):
+            self.composition.propose('alice', 'Text audit a public subject', request_id='missing-required-input')
+        self.assertEqual(self.composition_counts(), before)
+        proposal = self.composition.propose('alice', 'Text audit a public subject',
+            application_ref=pin(application), input_values={'subject': 'public'}, request_id='filled-input')
+        self.assertEqual(proposal['candidate']['inputValues'], {'subject': 'public'})
+        self.assertEqual(self.composition_counts(), (before[0] + 1, before[1] + 1, before[2]))
+        plan = self.composition.accept('alice', proposal['id'], 'accept-filled-input')
+        self.assertEqual(plan['applicationRef'], pin(application))
+        self.assertEqual(plan['inputValues'], {'subject': 'public'})
+        self.assertEqual(self.composition_counts(), (before[0] + 1, before[1] + 2, before[2] + 1))
+
+    def test_authenticated_match_http_accepts_only_goal_and_does_not_create_a_proposal(self):
+        application = self.required_template()
+        native = AgentOS(id='template-match-http', agents=[Agent(id='factory-executor', db=self.db,
+            model=FixtureModel(), telemetry=False)], db=self.db, **self.auth.agentos_kwargs(),
+            mcp=False, scheduler=False, telemetry=False).get_app()
+        native.include_router(composition_router(self.auth, self.composition))
+        path = '/api/factory/compositions/proposals'
+        with TestClient(native, base_url='https://testserver') as client:
+            headers = {'Authorization': 'Bearer ' + self.auth._issue_native_token('alice')}
+            before = self.composition_counts()
+            self.assertEqual(client.post(path + '/match', json={'goal': 'Text audit public'}).status_code, 401)
+            for body in ({'goal': ' '}, {'goal': 'Text audit public', 'ownerId': 'manager'},
+                         {'goal': 'Text audit public', 'applicationRef': pin(application)},
+                         {'goal': 'Text audit public', 'requestId': 'not-a-command'}):
+                self.assertEqual(client.post(path + '/match', headers=headers, json=body).status_code, 422)
+            with patch.object(self.composition, '_candidate', side_effect=AssertionError('Match must not preflight')):
+                response = client.post(path + '/match', headers=headers, json={'goal': 'Text audit public'})
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json(), application)
+            self.assertEqual(self.composition_counts(), before)
+            invalid = client.post(path, headers=headers, json={'goal': 'Text audit public', 'requestId': 'missing-http-input'})
+            self.assertEqual(invalid.status_code, 422, invalid.text)
+            self.assertEqual(self.composition_counts(), before)
+            proposal = client.post(path, headers=headers, json={'goal': 'Text audit public',
+                'applicationRef': pin(response.json()), 'inputValues': {'subject': 'public'}, 'requestId': 'filled-http-input'})
+            self.assertEqual(proposal.status_code, 201, proposal.text)
+            self.assertEqual(self.composition_counts(), (before[0] + 1, before[1] + 1, before[2]))
+            accepted = client.post(path + '/' + proposal.json()['id'] + '/accept', headers=headers,
+                json={'requestId': 'accept-http-input'})
+            self.assertEqual(accepted.status_code, 201, accepted.text)
+            self.assertEqual(accepted.json()['applicationRef'], pin(application))
+            self.assertEqual(self.composition_counts(), (before[0] + 1, before[1] + 2, before[2] + 1))
+
     def seed_pages(self):
         """Direct metadata fixtures isolate paging from publication/adapter tests."""
         source = self.publish()
@@ -52,6 +121,7 @@ class ApplicationTemplateTests(ApplicationCompositionFixture):
         chosen, selection = self.composition._application('alice', values)
         self.assertEqual(chosen['id'], 'z-template-000', 'Existing keyword ties still select by ID')
         self.assertEqual(selection['method'], 'approved-keyword-selection-v1')
+        self.assertEqual(self.composition.match_template('alice', 'text audit'), chosen)
 
     def test_pages_order_versions_and_withdrawal_is_not_a_snapshot(self):
         first = self.publish()
