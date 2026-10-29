@@ -14,7 +14,8 @@
 .research-sessions summary { cursor: pointer; min-height: 44px; display: list-item; padding: 11px 0; font-size: 14px; }
 .research-sessions summary:focus-visible { outline: 2px solid #0754ff; outline-offset: 3px; }
 .research-sessions pre, .research-sessions code { white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; font-size: 12px; }
-.research-sessions pre { background: #f4f6fa; border-radius: 6px; padding: 12px; line-height: 1.55; margin: 8px 0; }
+.research-sessions pre { background: #f4f6fa; border-radius: 6px; padding: 12px; line-height: 1.55; margin: 8px 0; max-width: 100%; overflow-x: auto; }
+.research-sessions pre, .research-sessions pre code { white-space: pre; overflow-wrap: normal; word-break: normal; }
 .rs-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
 .rs-toolbar [aria-current], .rs-session-list [aria-current] { color: #0747cc; background: #edf3ff; border-color: #adc5ff; }
 .rs-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); gap: 28px; align-items: start; }
@@ -55,9 +56,25 @@
 .rs-message-heading span { color: #5b697d; font-size: 12px; }
 .rs-message p { white-space: pre-wrap; font-size: 14px; }
 .rs-reply { padding-left: 0; background: transparent; }
+.rs-markdown { max-width: 75ch; font-size: 16px; line-height: 1.65; overflow-wrap: anywhere; }
+.research-sessions .rs-markdown p { font-size: inherit; white-space: normal; }
+.rs-markdown > :first-child { margin-top: 12px; }
+.rs-markdown > :last-child { margin-bottom: 0; }
+.rs-markdown :is(h1, h2, h3, h4, h5, h6) { font-size: 17px; line-height: 1.5; margin: 20px 0 8px; }
+.rs-markdown :is(ul, ol) { padding-left: 24px; margin: 10px 0; }
+.rs-markdown li + li { margin-top: 6px; }
+.rs-markdown blockquote { margin: 12px 0; padding-left: 14px; border-left: 3px solid #adc5ff; color: #526176; }
+.rs-markdown a { color: #0754d1; text-underline-offset: 3px; }
+.rs-markdown a:focus-visible { outline: 2px solid #0754ff; outline-offset: 3px; }
+.research-sessions .rs-markdown code { font-size: 13px; }
+.rs-child-goal summary span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; font-weight: 600; }
+.rs-child-goal summary::after { content: '展开完整分工'; display: block; font-size: 12px; color: #526176; margin-top: 4px; }
+.rs-child-goal[open] summary::after { content: '收起分工'; }
+.rs-child-goal > p { margin-top: 0; }
 .rs-correction { background: #eef4ff; }
 .rs-tool-results details, .rs-events { border-top: 1px solid #e0e6ee; }
 .rs-tool-results summary code { display: block; padding: 4px 0 0 16px; color: #5b697d; }
+.rs-tool-warning > summary > span { color: #a22222; font-weight: 600; }
 .rs-events ol { list-style: none; padding: 0; margin: 8px 0; }
 .rs-events li { border-left: 2px solid #d9e2f0; margin: 0 0 14px 4px; padding-left: 12px; font-size: 13px; }
 .rs-events time { color: #5b697d; margin-right: 12px; }

@@ -4,6 +4,7 @@ import { assistantApi, type ResearchSource } from './live/assistantClient.js';
 import { researchSessionsApi as api, type CreateSession, type ResearchSession, type SessionAction, type SessionOptions, type SessionPage, type SessionTurn } from './researchSessionsClient.js';
 import { draftKey, readStored, removeStored, requestKey, writeStored, type PendingSessionRequest, type SessionDraft } from './researchSessionStorage.js';
 import { SessionQuestions } from './SessionQuestions.js';
+import { ResearchReply } from './ResearchReply.js';
 import './sessions.css';
 
 type Props = { ownerId: string; selectedId?: string; questionId?: string; onSelect: (id: string) => void; onQuestion: (id: string) => void; onModels: () => void; onTask: (id: string) => void };
@@ -38,6 +39,11 @@ const subagentTools: Record<string, string> = { research_delegate: '分派临时
 const childStates: Record<string, string> = {
   pending: '待执行', queued: '排队中', running: '执行中', paused: '已暂停，等待继续',
   completed: '已完成', failed: '执行失败', cancelled: '已停止', canceled: '已停止', canceling: '停止请求已接收，尚未确认停止', unknown: '结果未知，请核对原子任务',
+};
+const turnStates: Record<string, string> = {
+  reserved: '等待提交', queued: '排队中', running: '执行中', waiting_approval: '等待执行继续',
+  completed: '本轮已完成', failed: '本轮未完成', cancelled: '本轮已停止', canceled: '本轮已停止',
+  canceling: '正在停止', unknown: '结果未知，需核对原任务',
 };
 
 function MemoryEventResult({ data }: { data: Record<string, unknown> }) {
@@ -124,28 +130,48 @@ function CreateSessionForm({ ownerId, options, busy, blocked, onModels, onCreate
   </section>;
 }
 
+function toolOutput(result: Record<string, unknown> | null) {
+  return result?.output && typeof result.output === 'object' && !Array.isArray(result.output) ? result.output as Record<string, unknown> : null;
+}
+
 function ToolOutput({ result }: { result: Record<string, unknown> }) {
-  const output = result.output && typeof result.output === 'object' && !Array.isArray(result.output) ? result.output as Record<string, unknown> : null;
-  if (output && Array.isArray(output.argv) && output.argv.every(item => typeof item === 'string')) return <div className="rs-command-output"><p><strong>命令</strong> <code>{output.argv.join(' ')}</code></p><p>工作目录：{String(output.cwd ?? '')} · 退出码：{typeof output.exitCode === 'number' ? output.exitCode : '未确认'}</p>{typeof output.stdout === 'string' && output.stdout && <><h4>标准输出</h4><pre>{output.stdout}</pre></>}{typeof output.stderr === 'string' && output.stderr && <><h4>错误输出</h4><pre>{output.stderr}</pre></>}<details><summary>原工具回执</summary><pre>{JSON.stringify(result, null, 2)}</pre></details></div>;
+  const output = toolOutput(result);
+  if (output && Array.isArray(output.argv) && output.argv.every(item => typeof item === 'string')) return <div className="rs-command-output"><p>工作目录：{String(output.cwd ?? '')}</p>{typeof output.stdout === 'string' && output.stdout && <><h4>标准输出</h4><pre>{output.stdout}</pre></>}{typeof output.stderr === 'string' && output.stderr && <><h4>错误输出</h4><pre>{output.stderr}</pre></>}<details><summary>原工具回执</summary><pre>{JSON.stringify(result, null, 2)}</pre></details></div>;
   if (output && typeof output.path === 'string' && typeof output.afterSha256 === 'string') return <div><p><strong>{output.created === true ? '新建文件' : '修改文件'}</strong> <code>{output.path}</code></p><p>修改前：<code>{String(output.beforeSha256 ?? '文件不存在')}</code></p><p>修改后：<code>{output.afterSha256}</code></p><details><summary>原工具回执</summary><pre>{JSON.stringify(result, null, 2)}</pre></details></div>;
   return <pre>{JSON.stringify(result, null, 2)}</pre>;
+}
+
+function ToolRecord({ item }: { item: SessionTurn['toolResults'][number] }) {
+  const output = toolOutput(item.result);
+  const unknown = item.status.toUpperCase() === 'UNKNOWN';
+  const failed = item.result?.outcome === 'failed' || typeof output?.exitCode === 'number' && output.exitCode !== 0;
+  const status = unknown ? '结果未知，需核对原操作' : failed ? '操作失败' : item.result?.outcome === 'cancelled' ? '操作已停止'
+    : item.status.toUpperCase() === 'DONE' ? '回执已确认' : item.status.toUpperCase() === 'RESERVED' ? '等待操作回执' : `回执状态：${item.status}`;
+  const command = Array.isArray(output?.argv) && output.argv.every(value => typeof value === 'string') ? output.argv.join(' ') : null;
+  return <details className={unknown || failed ? 'rs-tool-warning' : undefined} open={unknown || failed}>
+    <summary><span role={unknown || failed ? 'alert' : undefined}>{status}{typeof output?.exitCode === 'number' && ` · 退出码 ${output.exitCode}`}</span>
+      {command ? <code>{command}</code> : typeof output?.path === 'string' && <code>{output.path}</code>}</summary>
+    {item.result ? <ToolOutput result={item.result}/> : <p>还没有已确认的结果。</p>}
+    <p className="rw-muted">操作标识：<code>{item.effectKey}</code></p>
+  </details>;
 }
 
 function TurnRecord({ turn, onTask, onQuestion }: { turn: SessionTurn; onTask: (id: string) => void; onQuestion: (id: string) => void }) {
   const replies = [...(turn.assistantReply ? [turn.assistantReply] : []), ...(turn.assistantReplies ?? [])];
   const children = turn.children ?? [];
-  return <article className="rs-turn"><header><h3>第 {turn.sequence} 轮</h3><span>{children.length && turn.status === 'waiting_approval' ? '等待子助手结果' : turn.status}</span><time>{time(turn.createdAt)}</time></header>
+  return <article className="rs-turn"><header><h3>第 {turn.sequence} 轮</h3><span>{children.length && turn.status === 'waiting_approval' ? '等待子助手结果' : turnStates[turn.status] ?? turn.status}</span><time>{time(turn.createdAt)}</time></header>
     {turn.continuation && <div className="rs-continuation"><p>由同事回复自动发起本轮。创建轮次不代表回复已纳入模型请求，请核对下方引用与原问题状态。</p>{turn.continuation.questionIds.map(id => <button key={id} className="rs-text-button" onClick={() => onQuestion(id)}>自动继续的原问题 {id}</button>)}</div>}
     {turn.messages.map(message => <div key={message.id} className={`rs-message rs-${message.kind}`}><div className="rs-message-heading"><strong>{message.kind === 'correction' ? '你的纠正' : turn.continuation ? '自动继续指令' : '你的指令'}</strong><span>{message.state === 'included' ? '已纳入研究请求' : '待纳入研究请求'}</span></div><p>{message.text}</p></div>)}
-    {turn.result !== null && <div className="rs-message rs-reply"><strong>助手回复</strong><p>{turn.result}</p></div>}
+    {turn.result !== null && <div className="rs-message rs-reply"><strong>助手回复</strong><ResearchReply text={turn.result}/></div>}
     {!!replies.length && <section className="rs-adopted-reply" aria-label={`第 ${turn.sequence} 轮引用的同事回复`}><h4>本轮引用的同事回复</h4>{replies.map(reply => <div key={reply.questionId}><button className="rs-text-button" onClick={() => onQuestion(reply.questionId)}>核对原问题 {reply.questionId}</button>{reply.state === 'available' ? <><p>{reply.questionText}</p><p>{reply.reply.text}</p><p className="rw-muted">作为引用证据，不代表实验已验证。输入依据：{reply.reply.contentIds.length ? reply.reply.contentIds.join('、') : '无可用团队依据'}</p></> : <p role="status">引用的回复当前不可用，正文与来源已隐藏；后续研究需先核对权限。</p>}</div>)}</section>}
     {turn.failure && <p className="rw-error" role="alert">本轮未完成：{turn.failure}</p>}
     {!!children.length && <section aria-label={`第 ${turn.sequence} 轮临时子助手`}><h4>临时子助手</h4><p className="rw-muted">本轮临时分工，使用你的工作区与授权。停止本会话也会请求停止子任务。</p>{children.map(child => <div className="rs-message rs-reply" key={child.childTaskId}>
-      <p><strong>{child.goal}</strong></p><p role="status">{childStates[child.status] ?? childStates.unknown}</p>
-      {child.status === 'completed' && (child.result !== null ? <details><summary>查看子助手结果</summary><p>{child.result}</p></details> : <p className="rw-muted">尚无已确认的结果正文。</p>)}
+      <p role="status">{childStates[child.status] ?? childStates.unknown}</p>
+      <details className="rs-child-goal"><summary><span>{child.goal}</span></summary><p>{child.goal}</p></details>
+      {child.status === 'completed' && (child.result !== null ? <details className="rs-child-result"><summary>查看子助手结果</summary><ResearchReply text={child.result}/></details> : <p className="rw-muted">尚无已确认的结果正文。</p>)}
       <button className="rs-text-button" onClick={() => onTask(child.childTaskId)}>查看原子任务记录</button>
     </div>)}</section>}
-    {!!turn.toolResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{turn.toolResults.map(item => <details key={item.effectKey} open={item.status.toUpperCase() === 'UNKNOWN'}><summary><span>{item.status.toUpperCase() === 'UNKNOWN' ? '结果未知，需核对原操作' : `工具回执：${item.status}`}</span><code>{item.effectKey}</code></summary>{item.result ? <ToolOutput result={item.result}/> : <p>还没有已确认的结果。</p>}</details>)}</section>}
+    {!!turn.toolResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{turn.toolResults.map(item => <ToolRecord key={item.effectKey} item={item}/>)}</section>}
     <details className="rs-events" open={turn.events.some(event => Object.hasOwn(memoryTools, String(event.data.toolName)) || event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required')}><summary>执行事件 · {turn.events.length} 条</summary><p className="rw-muted">以下是已保存的任务事件，不是模型全文流。</p>{turn.events.length ? <ol>{turn.events.map(event => <li key={event.id}><time>{time(event.createdAt)}</time><strong>{memoryTools[String(event.data.toolName)]?.title ?? subagentTools[String(event.data.toolName)] ?? event.type}</strong>{event.type === 'research_tool_finished' && Object.hasOwn(memoryTools, String(event.data.toolName)) ? <MemoryEventResult data={event.data}/> : <p>{event.message}</p>}{Object.keys(event.data).length > 0 && <details><summary>事件详情</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details>}</li>)}</ol> : <p>还没有任务事件。</p>}</details>
     {turn.taskId && <button className="rs-text-button" onClick={() => onTask(turn.taskId!)}>查看原任务记录</button>}
   </article>;
@@ -192,7 +218,7 @@ function SessionDetail({ ownerId, value, busy, blocked, questionId, onQuestion, 
     if (!draft.value.trim()) { setError('请填写这一轮要做的事，或要补充的限制。'); return; }
     setError(''); if (await onSend(draft.value.trim(), correction, !correction && selectedReply.value || undefined)) { draft.change(''); if (!correction) selectedReply.change(''); }
   }
-  return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`}>{stateLabel}</span></div>{value.allowedActions.includes('stop') && <button disabled={busy} onClick={onStop}>请求停止</button>}</header>
+  return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`} role="status">{stateLabel}</span></div>{value.allowedActions.includes('stop') && <button disabled={busy} onClick={onStop}>请求停止</button>}</header>
     {value.state === 'stopping' && <p className="rs-warning" role="status">已记录停止请求，仍在等待执行边界和本地进程的停止回执；目前不能确认已停止。</p>}
     {value.collaboration?.enabled ? <p className="rs-collaboration-note">{value.state === 'stopped' ? '会话已停止，之后到达的同事回复不会自动继续研究。原问题仍可核对；停止本会话不会停止同事的任务。' : '此会话可自主询问同事助手，收到回复后按原限制继续。请求停止会取消尚未采用的自动继续安排，不会停止同事的任务。'}</p> : <p className="rw-muted">此会话沿用原配置，仅支持手动向同事助手提问；自主协作仅用于具备该能力的新会话。</p>}
     {value.capabilities?.memory === false && <p className="rw-muted">此会话的原工具配置不包含个人记忆。可使用上方“新建会话”，再直接告诉助手要记住、查找、纠正或忘记的偏好。</p>}
@@ -313,7 +339,7 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
     {requests.length > 0 && <section className="rs-recovery" aria-label="待核对的会话请求"><h2>原请求仍需核对</h2><p>不会自动重发；没有查到回执也不代表未发生。</p>{requests.map(pointer => <div key={pointer.requestId}><span>{actions[pointer.action]}<code>{pointer.requestId}</code></span><button disabled={busy} onClick={() => void recover(pointer)}>查询原请求</button></div>)}</section>}
     {(actionError || notice) && <div ref={feedback} tabIndex={-1} className="rs-action-feedback">{actionError && <p className="rw-error" role="alert">{actionError}</p>}{notice && <p role="status">{notice}</p>}</div>}
     <div className="rs-layout"><aside className="rs-session-list" aria-label="我的研究会话"><h2>我的会话</h2>{readError ? <p className="rw-error" role="alert">{readError}</p> : !page ? <p role="status">正在读取会话…</p> : page.items.length ? page.items.map(item => <button key={item.id} aria-current={item.id === selectedId ? 'page' : undefined} onClick={() => onSelect(item.id)}><strong>{item.title}</strong><span>{states[item.state]} · {time(item.updatedAt)}</span></button>) : <p className="rw-muted">{after ? '本页没有会话。' : '还没有会话。提交第一个目标后，记录会保存在这里。'}</p>}<div className="rs-pagination">{after && <button onClick={() => setAfter('')}>第一页</button>}{page?.nextCursor && <button onClick={() => setAfter(page.nextCursor!)}>下一页会话</button>}</div></aside>
-      <div className="rs-content">{selectedId ? detailError ? <p className="rw-error" role="alert">{detailError}</p> : detail ? <SessionDetail key={detail.id} ownerId={ownerId} value={detail} busy={busy} blocked={currentPending} questionId={questionId} onQuestion={onQuestion} onTask={onTask} onStop={() => void run(async () => { await post('stop', detail.id, requestId => api.stop(ownerId, detail.id, { requestId })); setNotice('停止请求已接收，请核对实际停止状态。'); })} onSend={(text, correction, assistantQuestionId) => run(async () => { await post(correction ? 'correct' : 'turn', detail.id, requestId => correction ? api.correct(ownerId, detail.id, { requestId, text }) : api.turn(ownerId, detail.id, { requestId, text, ...(assistantQuestionId ? { assistantQuestionId } : {}) })); setNotice(correction ? '纠正已保存；是否已纳入下一次请求请看消息状态。' : '本轮请求已接收，请查看实际执行记录。'); })}/> : <p role="status">正在读取会话详情…</p> : <CreateSessionForm ownerId={ownerId} options={options} busy={busy} blocked={currentPending} onModels={onModels} onCreate={create}/>}</div>
+      <div className="rs-content">{selectedId ? detailError ? <p className="rw-error" role="alert">{detailError}</p> : detail ? <SessionDetail key={detail.id} ownerId={ownerId} value={detail} busy={busy} blocked={currentPending} questionId={questionId} onQuestion={onQuestion} onTask={onTask} onStop={() => void run(async () => { await post('stop', detail.id, requestId => api.stop(ownerId, detail.id, { requestId })); })} onSend={(text, correction, assistantQuestionId) => run(async () => { await post(correction ? 'correct' : 'turn', detail.id, requestId => correction ? api.correct(ownerId, detail.id, { requestId, text }) : api.turn(ownerId, detail.id, { requestId, text, ...(assistantQuestionId ? { assistantQuestionId } : {}) })); setNotice(correction ? '纠正已保存；是否已纳入下一次请求请看消息状态。' : '本轮请求已接收，请查看实际执行记录。'); })}/> : <p role="status">正在读取会话详情…</p> : <CreateSessionForm ownerId={ownerId} options={options} busy={busy} blocked={currentPending} onModels={onModels} onCreate={create}/>}</div>
     </div>
   </div>;
 }
