@@ -412,27 +412,31 @@ it('keeps a new detail observation when an older in-flight list succeeds later w
 
 it('shows stop pending separately from confirmation and keeps UNKNOWN original operation visible', async () => {
   current = { ...current, state: 'running', allowedActions: ['correct', 'stop'] };
-  vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopping', allowedActions: [] }; return current; });
+  vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopping', allowedActions: ['stop'] }; return current; });
   await mount(session.id); await act(async () => button('请求停止').click());
   expect(host.textContent).toContain('目前不能确认已停止'); expect(api.stop).toHaveBeenCalledOnce();
   current = { ...current, state: 'blocked', allowedActions: ['stop'], blockReason: 'RESEARCH_EFFECT_UNKNOWN', turns: [{ id: 'turn-a', sequence: 1, requestId: 'start-id', taskId: 'task-a', runId: null, status: 'unknown', createdAt: session.createdAt, completedAt: null, result: null, failure: null, messages: [], events: [], toolResults: [{ effectKey: 'original-operation', status: 'UNKNOWN', result: null }] }] };
   await act(async () => button('刷新会话').click());
   expect(host.textContent).toContain('结果未知，需核对原操作'); expect(host.querySelector('.rs-tool-results details')?.hasAttribute('open')).toBe(true); expect(button('开始这一轮')).toBeUndefined();
-  expect(button('请求停止')).toBeDefined();
+  expect(button('请求停止').disabled).toBe(false);
   await act(async () => button('查看原任务记录').click()); expect(task).toHaveBeenCalledWith('task-a'); expect(api.turn).not.toHaveBeenCalled();
 });
 
-it('replaces stop pending feedback when polling confirms the original session stopped', async () => {
+it('prevents repeat stop while pending and replaces feedback when polling confirms the original session stopped', async () => {
   vi.useFakeTimers();
   try {
     current = { ...current, state: 'running', allowedActions: ['correct', 'stop'] };
-    vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopping', allowedActions: [] }; return current; });
+    vi.mocked(api.stop).mockImplementation(async () => { current = { ...current, state: 'stopping', allowedActions: ['stop'] }; return current; });
     await mount(session.id); await act(async () => button('请求停止').click());
     expect(host.textContent).toContain('目前不能确认已停止');
+    expect(button('请求停止').disabled).toBe(true);
+    await act(async () => button('请求停止').click());
+    expect(api.stop).toHaveBeenCalledOnce();
     current = { ...current, state: 'stopped', allowedActions: ['start'] };
     await act(async () => vi.advanceTimersByTimeAsync(4000));
     expect(host.querySelector('.rs-detail-heading [role="status"]')?.textContent).toBe('已停止');
     expect(host.textContent).not.toContain('停止请求已接收'); expect(host.textContent).not.toContain('目前不能确认已停止');
+    expect(button('请求停止')).toBeUndefined(); expect(button('开始这一轮').disabled).toBe(false);
     expect(api.stop).toHaveBeenCalledOnce(); expect(api.turn).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
 });

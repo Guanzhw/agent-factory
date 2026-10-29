@@ -218,7 +218,7 @@ function SessionDetail({ ownerId, value, busy, blocked, questionId, onQuestion, 
     if (!draft.value.trim()) { setError('请填写这一轮要做的事，或要补充的限制。'); return; }
     setError(''); if (await onSend(draft.value.trim(), correction, !correction && selectedReply.value || undefined)) { draft.change(''); if (!correction) selectedReply.change(''); }
   }
-  return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`} role="status">{stateLabel}</span></div>{value.allowedActions.includes('stop') && <button disabled={busy} onClick={onStop}>请求停止</button>}</header>
+  return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`} role="status">{stateLabel}</span></div>{value.allowedActions.includes('stop') && <button disabled={busy || value.state === 'stopping'} onClick={onStop}>请求停止</button>}</header>
     {value.state === 'stopping' && <p className="rs-warning" role="status">已记录停止请求，仍在等待执行边界和本地进程的停止回执；目前不能确认已停止。</p>}
     {value.collaboration?.enabled ? <p className="rs-collaboration-note">{value.state === 'stopped' ? '会话已停止，之后到达的同事回复不会自动继续研究。原问题仍可核对；停止本会话不会停止同事的任务。' : '此会话可自主询问同事助手，收到回复后按原限制继续。请求停止会取消尚未采用的自动继续安排，不会停止同事的任务。'}</p> : <p className="rw-muted">此会话沿用原配置，仅支持手动向同事助手提问；自主协作仅用于具备该能力的新会话。</p>}
     {value.capabilities?.memory === false && <p className="rw-muted">此会话的原工具配置不包含个人记忆。可使用上方“新建会话”，再直接告诉助手要记住、查找、纠正或忘记的偏好。</p>}
