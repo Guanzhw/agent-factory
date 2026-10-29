@@ -290,6 +290,7 @@ class ApplicationRuntimeTests(unittest.TestCase):
     def test_cancel_marker_rolls_back_with_task_in_same_transaction(self):
         store = Fixture()
         engine = create_engine('sqlite://')
+        store.engine = engine
         self.addCleanup(engine.dispose)
         with engine.begin() as conn:
             conn.execute(text('CREATE TABLE af_tasks(id TEXT PRIMARY KEY,cancel_requested BOOLEAN)'))
@@ -303,7 +304,8 @@ class ApplicationRuntimeTests(unittest.TestCase):
         store.transaction = transaction
         store.sql = lambda query, **values: store.connection.execute(text(query), values)
         store.event = lambda *args: None
-        def mark_cancel(actual, identifier):
+        def mark_cancel(actual, identifier, *, reason):
+            self.assertEqual(reason, 'cancel-requested')
             actual.sql('INSERT INTO marker VALUES(:task)', task=identifier)
             raise ValueError('controlled marker failure')
         store.application_runtime.register('alpha', SimpleNamespace(mark_cancel=mark_cancel), bindings=(A,))

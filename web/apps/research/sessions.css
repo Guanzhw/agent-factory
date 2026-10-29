@@ -76,6 +76,10 @@
 .rs-question-list span { font-size: 13px; color: #526176; overflow-wrap: anywhere; line-height: 1.6; }
 .rs-adopted-reply { padding: 12px 16px; border-left: 3px solid #adc5ff; background: #f0f4fb; }
 .rs-adopted-reply p { white-space: pre-wrap; }
+.rs-adopted-reply > div + div { border-top: 1px solid #d9e2f0; padding-top: 12px; margin-top: 12px; }
+.rs-collaboration-note, .rs-continuation, .rs-question-status p { font-size: 14px; line-height: 1.6; overflow-wrap: anywhere; }
+.rs-question-status p { margin: 4px 0; }
+.rs-continuation button { display: block; max-width: 100%; overflow-wrap: anywhere; text-align: left; }
 .rs-selected-reply { padding: 12px 0; border-bottom: 1px solid #e0e6ee; }
 .rs-composer { padding-top: 4px; }
 .rs-composer .rw-primary { justify-self: start; }

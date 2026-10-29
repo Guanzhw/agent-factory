@@ -50,8 +50,12 @@ class ResearchConversations:
 
     def _item(self, owner, origin):
         message = self.messages.request(owner, origin['request_id'])
+        collaboration = {'origin': 'manual'}
+        if self.sessions.collaboration is not None:
+            with self.db.read() as conn:
+                collaboration = self.sessions.collaboration.projection(conn, owner, origin['request_id'])
         return {**self.assistants.read_question(owner, message['id']), 'sessionId': origin['session_id'],
-            'requestId': origin['request_id'], 'assistantId': origin['assistant_id']}
+            'requestId': origin['request_id'], 'assistantId': origin['assistant_id'], **collaboration}
 
     async def question(self, owner, session_id, body):
         try:

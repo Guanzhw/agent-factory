@@ -172,3 +172,77 @@ it('uses one identity for explicit re-send while the original POST is still unre
   await act(async () => finishOld({ ...question, requestId: original.requestId }));
   expect(api.ask).toHaveBeenCalledTimes(2); expect(sessionStorage.getItem(`${requestKey('alice')}:question:session-a`)).toBeNull();
 });
+
+it.each([
+  ['waiting', '等待 bob 的助手回答'], ['pending', '待纳入研究请求'], ['included', '已纳入研究请求'],
+  ['blocked', '协作受阻'], ['stopped', '已停止自动继续'],
+] as const)('shows the server collaboration %s state without creating another question', async (state, label) => {
+  const automatic: ResearchQuestion = { ...question, origin: 'agent', collaboration: { originTurnId: 'origin-turn', state, ...(state === 'pending' ? { continuedTurnId: 'reserved-turn' } : {}) }, reply: state === 'waiting' ? null : { state: 'available', text: '同事原回复', contentIds: [], createdAt: question.createdAt } };
+  vi.mocked(api.questions).mockResolvedValue({ items: [automatic], nextCursor: null });
+  await mount(); expect(host.textContent).toContain('助手自主提问'); expect(host.textContent).toContain(label);
+  if (state === 'pending') { expect(host.textContent).toContain('回复已到'); expect(host.textContent).toContain('已保留自动继续轮次，尚未确认纳入'); expect(host.textContent).not.toContain('已纳入研究请求'); }
+  await act(async () => button('刷新已发问题').click()); expect(api.ask).not.toHaveBeenCalled();
+});
+
+it('keeps an unconfirmed automatic admission pending with its original-operation explanation', async () => {
+  vi.mocked(api.questions).mockResolvedValue({ items: [{ ...question, origin: 'agent', collaboration: { originTurnId: 'origin-turn', state: 'pending', code: 'RESEARCH_COLLABORATION_ADMISSION_UNCONFIRMED' } }], nextCursor: null });
+  await mount(); expect(host.textContent).toContain('自动继续请求尚未确认'); expect(host.textContent).toContain('待纳入研究请求');
+  expect(host.textContent).not.toContain('协作受阻'); expect(button('按原请求再次发送')).toBeUndefined(); expect(api.ask).not.toHaveBeenCalled();
+});
+
+it('polls collaboration changes read-only and removes an open answer when its source is revoked', async () => {
+  vi.useFakeTimers();
+  try {
+    let latest: ResearchQuestion = { ...question, origin: 'agent', collaboration: { originTurnId: 'origin-turn', state: 'pending' }, reply: { state: 'available', text: '不能保留的私密回答', contentIds: ['private-source'], createdAt: question.createdAt } };
+    vi.mocked(api.questions).mockImplementation(async () => ({ items: [latest], nextCursor: null }));
+    vi.mocked(assistantApi.question).mockResolvedValue(latest);
+    await mount(); await act(async () => button(question.text).click()); expect(host.textContent).toContain('不能保留的私密回答');
+    latest = { ...latest, reply: { state: 'source_unavailable' }, collaboration: { originTurnId: 'origin-turn', state: 'blocked', code: 'RESEARCH_SOURCE_UNAVAILABLE' } };
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(host.textContent).toContain('原共享来源已不可读'); expect(host.textContent).not.toContain('不能保留的私密回答'); expect(host.textContent).not.toContain('private-source');
+    expect(button('用于下一轮')).toBeUndefined(); expect(api.ask).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
+it('hides an open answer if the current session question list can no longer be read', async () => {
+  const answered: ResearchQuestion = { ...question, reply: { state: 'available', text: '读取失权后隐藏的旧回答', contentIds: ['restricted-source'], createdAt: question.createdAt } };
+  vi.mocked(api.questions).mockResolvedValue({ items: [answered], nextCursor: null }); vi.mocked(assistantApi.question).mockResolvedValue(answered);
+  await mount(); await act(async () => button(question.text).click()); expect(host.textContent).toContain('读取失权后隐藏的旧回答');
+  vi.mocked(api.questions).mockRejectedValue(new ApiError('当前会话不可读', 403, 'FORBIDDEN'));
+  await act(async () => button('刷新已发问题').click());
+  expect(host.textContent).not.toContain('读取失权后隐藏的旧回答'); expect(host.textContent).not.toContain('restricted-source');
+  expect(host.textContent).toContain('暂时无法核对本会话的问题'); expect(button('用于下一轮')).toBeUndefined(); expect(api.ask).not.toHaveBeenCalled();
+});
+
+it('rechecks an open answer outside the current page and removes revoked text, source and adoption', async () => {
+  vi.useFakeTimers();
+  try {
+    let original: ResearchQuestion = { ...question, reply: { state: 'available', text: '翻页后仍须核权的回答', contentIds: ['source-off-page'], createdAt: question.createdAt } };
+    vi.mocked(api.questions).mockImplementation(async (_owner, _session, after) => ({ items: after ? [] : [original], nextCursor: after ? null : 'page-two' }));
+    vi.mocked(assistantApi.question).mockImplementation(async () => original);
+    vi.spyOn(assistantApi, 'source').mockResolvedValue({ id: 'source-off-page', ownerId: 'bob', source: {}, content: { text: '已打开的私密依据' }, verificationStatus: 'unverified', createdAt: question.createdAt });
+    await mount(); await act(async () => button(question.text).click()); await act(async () => button('source-off-page').click());
+    await act(async () => button('下一页问题').click());
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(host.textContent).toContain('已打开的私密依据');
+    original = { ...original, reply: { state: 'source_unavailable' } };
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(host.textContent).not.toContain('翻页后仍须核权的回答'); expect(host.textContent).not.toContain('source-off-page'); expect(host.textContent).not.toContain('已打开的私密依据');
+    expect(button('用于下一轮')).toBeUndefined(); expect(api.ask).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
+it('updates an already open unanswered question when an off-page reply arrives without sending work', async () => {
+  vi.useFakeTimers();
+  try {
+    let original: ResearchQuestion = { ...question, reply: null };
+    vi.mocked(api.questions).mockImplementation(async (_owner, _session, after) => ({ items: after ? [] : [original], nextCursor: after ? null : 'page-two' }));
+    vi.mocked(assistantApi.question).mockImplementation(async () => original);
+    await mount(); await act(async () => button(question.text).click()); await act(async () => button('下一页问题').click());
+    expect(host.textContent).toContain('尚未取得回答');
+    original = { ...original, reply: { state: 'available', text: '离线助手刚返回的回答', contentIds: [], createdAt: question.createdAt } };
+    await act(async () => vi.advanceTimersByTimeAsync(4000));
+    expect(host.textContent).toContain('离线助手刚返回的回答'); expect(button('用于下一轮')).toBeDefined();
+    expect(api.ask).not.toHaveBeenCalled(); expect(useReply).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});

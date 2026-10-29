@@ -17,6 +17,11 @@ export interface ResearchQuestion {
   reply: null | { state: 'source_unavailable' } | { state: 'available'; text: string; contentIds: string[]; createdAt: string };
   allowedActions?: 'recover'[]; recoveryCode?: string | null;
   sessionId?: string; requestId?: string; assistantId?: string;
+  origin?: 'manual' | 'agent';
+  collaboration?: {
+    originTurnId: string; state: 'waiting' | 'pending' | 'included' | 'blocked' | 'stopped';
+    code?: string; includedTurnId?: string; continuedTurnId?: string;
+  };
 }
 export interface ResearchSource { id: string; ownerId: string; source: Record<string, unknown>; content: Record<string, unknown>; verificationStatus: string; createdAt: string }
 const base = '/research';

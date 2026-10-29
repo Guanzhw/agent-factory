@@ -270,7 +270,7 @@ class Store:
         return {'planId': row['plan_id'], 'taskId': row['id'], 'nativeRunId': row['run_id'],
                 'executionContract': 'personal-external-v1'}
 
-    def reserve_task(self, plan, request_id, *, allocation_id=None, delivery_id=None, remote_target=False):
+    def reserve_task(self, plan, request_id, *, allocation_id=None, delivery_id=None, private_event_id=None, remote_target=False):
         owner, fp = plan["ownerId"], digest({"planId": plan["id"], "planHash": digest(plan)})
         with self.transaction() as conn:
             # Serialize admission globally so simultaneous users cannot evade total quotas.
@@ -343,6 +343,8 @@ class Store:
                 return dict(old), False
             if delivery_id is not None:
                 self.assistant_events.validate_admission(conn, owner, delivery_id, request_id, plan, allocation_id)
+            if private_event_id is not None:
+                self.assistant_events.validate_private_admission(conn, owner, private_event_id, request_id, plan)
             if self.assistant_messages is not None:
                 self.assistant_messages.validate_admission(conn, owner, request_id, plan, allocation_id)
             count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal")).scalar()
@@ -605,10 +607,12 @@ class Store:
             self.request_cancel(context.session_id)
 
     def request_cancel(self, task_id):
-        with self.transaction():
+        with self.transaction() as conn:
+            if self.engine.dialect.name == 'postgresql':
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             self.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id", id=task_id)
             if self.application_runtime:
-                self.application_runtime.mark_cancel(self.task(task_id))
+                self.application_runtime.mark_cancel(self.task(task_id), reason='cancel-requested')
             self.event(task_id, "cancel_requested", "Cancellation requested; waiting for native run and experiments to stop", {})
 
     def cancellation_requested(self, identifier):

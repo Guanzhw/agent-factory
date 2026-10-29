@@ -11,7 +11,7 @@ export function AssistantInbox({ ownerId, onQuestion, onSettings }: { ownerId: s
       .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : '收到的问题暂时不可读取。'); });
     return () => controller.abort();
   }, [ownerId, after, refresh]);
-  return <section aria-label="收到的问题"><h2>收到的问题</h2><p>查看发给你助手的原问题。已接受的任务可在你离线时回答；尚未启动的原问题需打开核对。</p>
+  return <section aria-label="收到的问题"><h2>收到的问题</h2><p>查看发给你助手的原问题。助手可在你离线时使用自己的配置回答；打开原问题可核对任务与回复，不需要保持此页面打开。</p>
     <div className="rw-actions"><button onClick={() => setRefresh(value => value + 1)}>刷新收到的问题</button><button onClick={onSettings}>设置我的助手</button></div>
     <p className="rw-muted">未配置问答或额度不足时，请在自己的助手设置中调整。</p>
     {error ? <p role="alert">{error}</p> : !page ? <p role="status">正在读取收到的问题…</p> : !page.items.length ? <p>本页尚无收到的问题。</p> : <ul className="rs-question-list">{page.items.map(question => <li key={question.id}><button onClick={() => onQuestion(question.id)}>{question.text.length > 120 ? `${question.text.slice(0, 120)}…` : question.text}</button><span>来自 {question.senderId} · 送达：{question.delivery.state} · {question.reply?.state === 'available' ? '已有回答' : question.reply ? '回答来源不可用' : '尚无回答'}</span></li>)}</ul>}

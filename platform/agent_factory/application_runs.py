@@ -229,7 +229,7 @@ class ApplicationRuns:
             **({'input_values': body.inputValues} if body.inputValues is not None else {})))
         return plan, key
 
-    async def start(self, owner, body, *, allocation_id=None, delivery_id=None):
+    async def start(self, owner, body, *, allocation_id=None, delivery_id=None, private_event_id=None):
         from .factory_api import InstanceRequest
         if self.factory.store._connection.get() is not None:
             raise RuntimeError('Native admission requires a committed metadata boundary')
@@ -247,6 +247,8 @@ class ApplicationRuns:
         options = {'allocation_id': allocation_id} if allocation_id is not None else {}
         if delivery_id is not None:
             options['delivery_id'] = delivery_id
+        if private_event_id is not None:
+            options['private_event_id'] = private_event_id
         job = await self.factory.instantiate(owner, InstanceRequest(planId=plan['id'], requestId=key), **options)
         return {'interfaceVersion': 1, 'requestId': body.requestId, 'planId': plan['id'], 'job': job}
 
