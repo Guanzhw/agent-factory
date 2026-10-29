@@ -13,6 +13,7 @@
 - 作者 `npm run check`：618测试/58文件、类型/lint/core构建通过；Research构建通过，既有chunk大小提示保留。113个前端模块边界检查无违规；官方production/full依赖审计均0，未新增依赖。
 - 非作者完整累计审查与简洁性复审通过；最终增量独立7文件93测试通过，另有项目反例和28项独立补充检查。均为组件/协议检查，不能替代下面的实际浏览器结果。
 - 开发辅助Go请求返回429，没有回答，未重试或切换provider；未将它记为模型审查通过。
+- 原最终候选 `0350978` 的 [full40799622755](https://github.com/Guanzhw/agent-factory/actions/runs/40799622755) 在 Chromium 工具连接 smoke 失败，Windows frontend 因矩阵 fail-fast 取消；不能把取消算作独立代码失败。按 CI 锁定 Playwright1.58.0/Chromium145.0.7632.6 本地运行原脚本，复现旧“资源”按钮定位超时。仅将两处旧入口更新为实际“我的资源→管理工具”，未改产品、等待期限、原请求身份或行为断言；修复后的独立复跑及准确新 head full 另行核验，原失败保留。
 
 ## Real Browser Coverage
 
