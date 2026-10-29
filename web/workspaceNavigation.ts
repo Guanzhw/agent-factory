@@ -1,6 +1,6 @@
 /** Generic workspace views; unknown retired application URLs return to the catalog. */
 export const workspaceTabs = {
-  catalog: '应用', resources: '我的资源', models: '我的模型/API', developer: '高级装配', tasks: '我的任务',
+  catalog: '应用', templates: '任务模板', resources: '我的资源', models: '我的模型/API', developer: '高级装配', tasks: '我的任务',
   connections: '我的凭据与连接', schedules: '计划任务', storage: '存储与回收',
   materials: '共享材料', applications: '应用模板', reviews: '历史方案记录', accounts: '账号管理',
 } as const;
@@ -24,7 +24,13 @@ export function readWorkspaceRoute(url: URL, administrator: boolean, navigation 
   const tab = requested && Object.hasOwn(navigation.tabs, requested) && (requested !== 'accounts' || administrator) ? requested : 'catalog';
   const modelReturn = url.searchParams.get('modelReturn');
   const modelReturns = navigation.modelReturns ?? ['catalog', 'resources', 'connections'];
-  return { ...navigation.readQuery?.(url), tab,
+  const templateId = routePointer(url.searchParams.get('templateId'));
+  const templateVersion = url.searchParams.get('templateVersion');
+  const template = templateId && templateVersion && /^[1-9][0-9]*$/.test(templateVersion) && Number.isSafeInteger(Number(templateVersion))
+    ? { templateId, templateVersion } : {};
+  return { ...navigation.readQuery?.(url), tab, ...template,
+    ...(url.searchParams.get('templateStart') === '1' ? { templateStart: '1' } : {}),
+    ...(url.searchParams.get('templateReturn') === '1' && ['models', 'connections'].includes(tab) ? { templateReturn: '1' } : {}),
     task: routePointer(url.searchParams.get('task')),
     ...(connectionResources.includes(url.searchParams.get('resource') as ConnectionResource) ? { resource: url.searchParams.get('resource')! } : {}),
     ...(modelReturn && modelReturns.includes(modelReturn) ? { modelReturn } : {}) };
@@ -32,7 +38,7 @@ export function readWorkspaceRoute(url: URL, administrator: boolean, navigation 
 export function workspaceUrl(current: URL, route: WorkspaceRoute, navigation = defaultNavigation): string {
   const url = new URL(current);
   url.searchParams.set('tab', route.tab);
-  for (const key of ['task', 'modelReturn', 'resource', ...navigation.queryKeys ?? []]) {
+  for (const key of ['task', 'modelReturn', 'resource', 'templateId', 'templateVersion', 'templateStart', 'templateReturn', ...navigation.queryKeys ?? []]) {
     if (route[key]) url.searchParams.set(key, route[key]); else url.searchParams.delete(key);
   }
   return `${url.pathname}${url.search}${url.hash}`;

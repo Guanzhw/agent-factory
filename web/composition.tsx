@@ -3,7 +3,7 @@ import { useState } from 'react';
 import App, { Workspace as WorkspaceShell, type WorkspaceSessionProps, type WorkspaceContext } from './App.js';
 import { api } from './api.js';
 import { ApplicationComposer, type ComposerSeed } from './ApplicationComposer.js';
-import { ApplicationCatalog, type InstalledApplication } from './ApplicationCatalog.js';
+import { ApplicationCatalog, TemplateCatalog, type InstalledApplication } from './ApplicationCatalog.js';
 import { AccountManagement } from './AccountManagement.js';
 import { ResourceCenter } from './ResourceCenter.js';
 import { ModelSettings } from './ModelSettings.js';
@@ -31,16 +31,28 @@ export function Pages({ context: original, applications = installedApplications,
   const context: WorkspaceContext = { ...original, onCompose: (next, notice) => { setSeed(next); original.navigate({ tab: 'developer' }); original.notice(notice); } };
   const { route, user, navigate, materials, targets, jobs, busy, act, notice, onTask } = context;
   const tab = route.tab;
+  const templateReturn = route.templateReturn === '1' && ['models', 'connections'].includes(tab);
+  const returnToTemplate = () => navigate({ tab: 'templates', templateReturn: undefined, modelReturn: undefined, resource: undefined });
+  const currentResourceReturn = templateReturn ? { label: '这次任务', onBack: returnToTemplate } : resourceReturn;
+  const templateList = () => navigate({ tab: 'templates', templateId: undefined, templateVersion: undefined, templateStart: undefined, templateReturn: undefined, modelReturn: undefined });
+
   return <>
     {tab === 'accounts' && user.role === 'manager' && <AccountManagement/>}
-    {tab === 'catalog' && <ApplicationCatalog applications={applications} onSelect={navigate}/>}
+    {tab === 'catalog' && <ApplicationCatalog applications={applications} onSelect={navigate} onTemplates={templateList}/>}
+    {(tab === 'templates' || templateReturn) && <div hidden={tab !== 'templates'}><TemplateCatalog key={user.id} id={route.templateId} version={route.templateVersion ? Number(route.templateVersion) : undefined} creating={route.templateStart === '1'}
+      onSelect={item => navigate({ tab: 'templates', templateId: item.id, templateVersion: String(item.version), templateStart: undefined })}
+      onCreate={() => navigate({ tab: 'templates', templateStart: '1' })} onBack={templateList} onApplications={() => navigate({ tab: 'catalog', templateReturn: undefined })} onAuthor={() => navigate({ tab: 'applications', templateReturn: undefined })}
+      renderComposer={item => <ApplicationComposer active={tab === 'templates'} key={`${user.id}:${item?.id ?? 'auto'}:${item?.version ?? ''}`} seed={{ kind: 'template', key: `${item?.id ?? 'auto'}:${item?.version ?? ''}`, ...(item ? { applicationRef: { id: item.id, version: item.version, sha256: item.sha256 } } : {}) }}
+        onConfigureResource={kind => navigate({ tab: kind === 'model' ? 'models' : 'connections', resource: kind === 'environment' ? 'servers' : kind === 'orx' ? 'remotes' : kind === 'knowledge' ? 'records' : 'tools', templateReturn: '1', modelReturn: undefined })}
+        onSchedule={plan => { setSchedule({ planId: plan.id, planFingerprint: plan.fingerprint, goal: plan.normalizedGoal }); navigate({ tab: 'schedules', templateReturn: undefined }); }}
+        user={user} busy={busy} act={act} materials={materials} targets={targets} onCreated={id => { onTask(id); notice('创建请求已确认。请在任务记录中查看进度与结果。'); }}/>} /></div>}
     {tab === 'resources' && <ResourceCenter onModels={() => navigate({ tab: 'models', modelReturn: 'resources' })} onConnections={resource => navigate({ tab: 'connections', resource })} onBack={() => navigate({ tab: 'catalog' })}/>}
-    {tab === 'models' && <ModelSettings key={`ModelSettings:${user.id}`} ownerId={user.id} returnLabel={resourceReturn ? `返回${resourceReturn.label}` : route.modelReturn === 'connections' ? '返回连接配置' : route.modelReturn === 'catalog' ? '返回应用' : '返回我的资源'} continueLabel={resourceReturn ? `继续${resourceReturn.label}` : undefined} onBack={resourceReturn?.onBack ?? (() => navigate({ tab: route.modelReturn ?? 'resources' }))} onCredentials={() => navigate({ tab: 'connections', resource: 'credentials' })}/>}
+    {tab === 'models' && <ModelSettings key={`ModelSettings:${user.id}`} ownerId={user.id} returnLabel={currentResourceReturn ? `返回${currentResourceReturn.label}` : route.modelReturn === 'connections' ? '返回连接配置' : route.modelReturn === 'catalog' ? '返回应用' : '返回我的资源'} continueLabel={currentResourceReturn ? `继续${currentResourceReturn.label}` : undefined} onBack={currentResourceReturn?.onBack ?? (() => navigate({ tab: route.modelReturn ?? 'resources' }))} onCredentials={() => navigate({ tab: 'connections', resource: 'credentials' })}/>}
     {tab === 'developer' && <section><div className="page-heading"><div><h1>开发者装配</h1><p>高级材料与应用契约验证。</p></div></div><ApplicationComposer key={seed?.key ?? 'ordinary'} seed={seed} onSchedule={plan => { setSchedule({ planId: plan.id, planFingerprint: plan.fingerprint, goal: plan.normalizedGoal }); navigate({ tab: 'schedules' }); }} user={user} busy={busy} act={act} materials={materials} targets={targets} onCreated={id => { onTask(id); notice('创建请求已确认。请在任务记录中查看进度与结果。'); }}/></section>}
     {tab === 'tasks' && <TaskWorkspace context={context}/>}
     {tab === 'schedules' && <><ScheduleDiagnostics key={`diagnostics:${user.id}`} ownerId={user.id} api={api.scheduleDiagnostics}/><SchedulesPanel key={`SchedulesPanel:${user.id}`} ownerId={user.id} canManage={!!user} seed={schedule} api={api.schedules} disabled={!!busy} onTask={onTask}/></>}
     {tab === 'storage' && <StoragePanel key={`StoragePanel:${user.id}`} ownerId={user.id} busy={busy} act={act} onNotice={notice}/>}
-    {tab === 'connections' && <ConnectionsPanel user={user} jobs={jobs} busy={busy} act={act} onNotice={notice} resource={route.resource as ConnectionResource | undefined} onSelectResource={resource => navigate({ resource })} onModels={() => navigate({ tab: 'models', ...(!resourceReturn ? { modelReturn: 'connections' } : {}) })} onBack={resourceReturn?.onBack ?? (() => navigate({ tab: 'resources' }))} applicationLabel={resourceReturn?.label ?? '我的资源'} remoteServices={(refresh, onChanged) => <PersonalRemotes key={user.id} user={user} jobs={jobs} revision={refresh} onChanged={onChanged}/>}/>}
+    {tab === 'connections' && <ConnectionsPanel user={user} jobs={jobs} busy={busy} act={act} onNotice={notice} resource={route.resource as ConnectionResource | undefined} onSelectResource={resource => navigate({ resource })} onModels={() => navigate({ tab: 'models', ...(!currentResourceReturn ? { modelReturn: 'connections' } : {}) })} onBack={currentResourceReturn?.onBack ?? (() => navigate({ tab: 'resources' }))} applicationLabel={currentResourceReturn?.label ?? '我的资源'} remoteServices={(refresh, onChanged) => <PersonalRemotes key={user.id} user={user} jobs={jobs} revision={refresh} onChanged={onChanged}/>}/>}
     {tab === 'materials' && <MaterialGovernancePanel user={user} materials={materials} busy={busy} act={act} onNotice={notice}/>}
     {tab === 'applications' && <ApplicationGovernance user={user} materials={materials} busy={busy} act={act} onNotice={notice}/>}
     {tab === 'reviews' && <PlanReviews ownerId={user.id} busy={busy} act={act}/>}

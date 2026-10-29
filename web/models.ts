@@ -208,7 +208,7 @@ export interface FactoryApplication {
 }
 export interface ApplicationVersion {
   application: FactoryApplication;
-  governance: { author_id: string; state: 'draft' | 'published' | 'withdrawn' | 'archived'; bootstrap: boolean; review_id: string | null; reason: string | null };
+  governance: { entry_kind?: 'template' | 'application'; author_id: string; state: 'draft' | 'published' | 'withdrawn' | 'archived'; bootstrap: boolean; review_id: string | null; reason: string | null };
   immutableBodyPreserved: boolean;
 }
 export interface ApplicationReview {

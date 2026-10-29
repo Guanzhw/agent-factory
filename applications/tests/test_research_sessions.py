@@ -111,6 +111,9 @@ class ResearchSessionContracts(unittest.TestCase):
         self.assertEqual(len(rows), 1, 'Connection selection and total turns must not republish structural materials')
         self.assertEqual(first_config['applicationRef'], third_config['applicationRef'])
         self.assertNotEqual(first_config['connectionRefs'], third_config['connectionRefs'])
+        self.assertEqual(self.store.applications.list_templates('alice')['items'], [])
+        application = self.store.applications.require_current(first_config['applicationRef'])
+        self.assertIn(application, self.store.applications.list_active('alice'))
 
     def test_new_session_uses_configured_timeout_without_rewriting_old_session(self):
         self.store.settings.experiment_timeout_seconds = 60

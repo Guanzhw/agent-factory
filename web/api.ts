@@ -269,6 +269,16 @@ async function applications(signal?: AbortSignal): Promise<FactoryApplication[]>
   const values = await request<unknown>('/applications', 'GET', undefined, signal);
   if (!Array.isArray(values)) throw invalid('可用应用列表无法核对。'); return values.map(application);
 }
+async function templateCatalog(after?: string, signal?: AbortSignal): Promise<{ items: FactoryApplication[]; nextCursor: string | null }> {
+  const value = await request<unknown>(`/applications/templates${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal);
+  if (!record(value) || !Array.isArray(value.items) || !(value.nextCursor === null || typeof value.nextCursor === 'string')) throw invalid('任务模板列表无法核对。');
+  return { items: value.items.map(application), nextCursor: value.nextCursor };
+}
+async function inspectApplication(id: string, version: number, signal?: AbortSignal): Promise<ApplicationVersion> {
+  const value = applicationVersion(await request(versionPath(id, version), 'GET', undefined, signal));
+  if (value.application.id !== id || value.application.version !== version) throw invalid('模板版本与所选记录不一致。');
+  return value;
+}
 async function applicationVersions(allAuthors = false, signal?: AbortSignal): Promise<ApplicationVersion[]> {
   const values = await request<unknown>(`/applications/definitions?allAuthors=${allAuthors}`, 'GET', undefined, signal);
   if (!Array.isArray(values)) throw invalid('应用版本列表无法核对。'); return values.map(applicationVersion);
@@ -328,7 +338,7 @@ export const api = {
   submitControl, controlReceipt, controlCommands,
   dispatchControl: async (owner: string, task: string, commandId: string) => validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}/dispatch`, 'POST'), owner, task, commandId),
   acknowledgeControl: async (owner: string, task: string, commandId: string) => validateControlReceipt(await request(`/jobs/${segment(task)}/commands/${segment(commandId)}/acknowledge`, 'POST'), owner, task, commandId),
-  applications, applicationVersions, applicationReviews, propose, reviseProposal, inspectProposal, recoverProposal,
+  applications, templateCatalog, inspectApplication, applicationVersions, applicationReviews, propose, reviseProposal, inspectProposal, recoverProposal,
   proposalInbox: (after?: string, signal?: AbortSignal) => request<unknown>(`/compositions/proposals${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
   draftApplication: async (definition: Record<string, unknown>, requestId: string) => application(await request('/applications/drafts', 'POST', { definition, requestId })),
   reviseApplication: async (id: string, version: number, definition: Record<string, unknown>, requestId: string) => application(await request(`${versionPath(id, version)}/revise`, 'POST', { definition, requestId })),

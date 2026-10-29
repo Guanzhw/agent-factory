@@ -101,7 +101,7 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
     const epoch = authEpoch();
     return () => { if (authEpoch() !== epoch) clearModelSettingsDraft(user.id); };
   }, [user.id]);
-  const primaryTabs = ['catalog', 'tasks', 'resources', 'models', 'connections', ...navigation.applicationTabs ?? []];
+  const primaryTabs = ['catalog', 'templates', 'tasks', 'resources', 'models', 'connections', ...navigation.applicationTabs ?? []];
   const [navigationOpen, setNavigationOpen] = useState(() => !primaryTabs.includes(readWorkspaceRoute(new URL(window.location.href), user.role === 'manager', navigation).tab));
   const [route, setRoute] = useState(() => readWorkspaceRoute(new URL(window.location.href), user.role === 'manager', navigation));
   const routeRef = useRef(route);
@@ -114,13 +114,13 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
   };
   const tab = route.tab;
   const selected = route.task;
-  const setTab = (tab: WorkspaceTab) => navigate({ tab, modelReturn: undefined, resource: undefined });
-  const setSelected = (task: string) => { navigate({ tab: 'tasks', task }); setActionError(''); };
+  const setTab = (tab: WorkspaceTab) => navigate({ tab, modelReturn: undefined, resource: undefined, templateId: undefined, templateVersion: undefined, templateStart: undefined, templateReturn: undefined });
+  const setSelected = (task: string) => { navigate({ tab: 'tasks', task, templateId: undefined, templateVersion: undefined, templateStart: undefined, templateReturn: undefined }); setActionError(''); };
   useEffect(() => {
     const restore = () => {
       const next = readWorkspaceRoute(new URL(window.location.href), user.role === 'manager', navigation);
       routeRef.current = next; setRoute(next);
-      setNavigationOpen(!['catalog', 'tasks', 'resources', 'models', 'connections', ...navigation.applicationTabs ?? []].includes(next.tab));
+      setNavigationOpen(!['catalog', 'templates', 'tasks', 'resources', 'models', 'connections', ...navigation.applicationTabs ?? []].includes(next.tab));
     };
     // Normalize unknown/unauthorized views without adding a history entry.
     window.history.replaceState(null, '', workspaceUrl(new URL(window.location.href), routeRef.current, navigation));
@@ -234,7 +234,7 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
   if (appView !== undefined) return appView;
   return <FeeVisibility enabled={status?.feeManagementEnabled === true}><div className="factory-shell">
     <aside className="sidebar"><div className="brand"><span className="brand-symbol" aria-hidden="true">F</span><div><strong>Agent Factory</strong><small>应用与任务</small></div></div>
-    <nav aria-label="工作区"><span className="nav-group-label">日常工作</span><button aria-current={tab === 'catalog' || navigation.applicationTabs?.includes(tab) ? 'page' : undefined} onClick={() => setTab('catalog')}>应用</button><button aria-current={tab === 'tasks' ? 'page' : undefined} onClick={() => setTab('tasks')}>我的任务</button><button aria-current={['resources', 'models', 'connections'].includes(tab) ? 'page' : undefined} onClick={() => setTab('resources')}>我的资源</button>
+    <nav aria-label="工作区"><span className="nav-group-label">日常工作</span><button aria-current={['catalog', 'templates'].includes(tab) || navigation.applicationTabs?.includes(tab) ? 'page' : undefined} onClick={() => setTab('catalog')}>应用</button><button aria-current={tab === 'tasks' ? 'page' : undefined} onClick={() => setTab('tasks')}>我的任务</button><button aria-current={['resources', 'models', 'connections'].includes(tab) ? 'page' : undefined} onClick={() => setTab('resources')}>我的资源</button>
       <button className="mobile-nav-toggle" aria-expanded={navigationOpen} aria-controls="secondary-navigation" onClick={() => setNavigationOpen(value => !value)}>{navigationOpen ? '收起创作与维护' : '创作与维护'}</button>
       <div id="secondary-navigation" className={`secondary-navigation ${navigationOpen ? 'expanded' : ''}`}><span className="nav-group-label">应用创作</span><button aria-current={tab === 'applications' ? 'page' : undefined} onClick={() => setTab('applications')}>应用模板</button><button aria-current={tab === 'materials' ? 'page' : undefined} onClick={() => setTab('materials')}>共享材料</button><button aria-current={tab === 'developer' ? 'page' : undefined} onClick={() => setTab('developer')}>高级装配</button><span className="nav-group-label">运行与维护</span>{(navigation.advancedTabs ?? ['schedules', 'storage']).map(value => <button key={value} aria-current={tab === value ? 'page' : undefined} onClick={() => setTab(value)}>{tabs[value]}</button>)}<button aria-current={tab === 'reviews' ? 'page' : undefined} onClick={() => setTab('reviews')}>历史方案记录</button>{user.role === 'manager' && <button aria-current={tab === 'accounts' ? 'page' : undefined} onClick={() => setTab('accounts')}>账号管理</button>}</div>
     </nav><div className="sidebar-context"><span className="sidebar-line"/><p>先选应用开始工作。<br/>任务与个人资源随时可查。</p></div><div className="identity"><div className="avatar" aria-hidden="true">{user.name.slice(0, 1)}</div><div><strong>{user.name}</strong><small>{user.role === 'manager' ? '账号管理员' : '成员'}</small></div><button className="logout" disabled={sessionBusy || !!busy} onClick={logout}>退出</button></div></aside>

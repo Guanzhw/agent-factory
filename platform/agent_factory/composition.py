@@ -78,7 +78,8 @@ class CompositionService:
         self.auth.require_member(owner)
         if values["applicationRef"]:
             return self.applications.require_current(values["applicationRef"]), {"method": "explicit-application", "matchedKeywords": []}
-        active = self.applications.list_active(owner)
+        active = (self.applications.list_active(owner) if values["application"]
+                  else self.applications.list_template_candidates(owner))
         latest = {}
         for application in active:
             latest.setdefault(application["id"], application)
