@@ -117,7 +117,7 @@ function WorkflowSession({ ownerId, taskId, api, disabled }: { ownerId: string; 
   return <section className="workflow-panel" aria-label="工作流记录">
     {error && <p role="alert" className="error-message">{error}</p>}{notice && <p role="status">{notice}</p>}
     {!view && !error && <p>正在读取工作流记录…</p>}
-    {view?.available && <><WorkflowStages workflow={view.workflow}/><div className="button-row">{view.allowedActions.map(item => {
+    {view?.available && <><details className="task-secondary-detail" open={view.workflow.requirements.length > 0 || view.workflow.operations.some(operation => !operation.allStopped)}><summary>工作流阶段与操作记录</summary><WorkflowStages workflow={view.workflow}/></details><div className="button-row">{view.allowedActions.map(item => {
       const version = view.workflow.version;
       if (item.action === 'decide') {
         const requirement = view.workflow.requirements.find(entry => entry.id === item.requirementId)!;

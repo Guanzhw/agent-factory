@@ -385,3 +385,48 @@ class PostgresCheckTests(unittest.TestCase):
                 patch('sys.stderr', io.StringIO()):
             self.assertEqual(checks.main([]), 1)
         collect.assert_not_called()
+
+    def test_both_entrypoints_report_actual_failures_only_in_actions(self):
+        ordinary = sys.modules[checks.discover_tests.__module__]
+        for entry in (ordinary, checks):
+            for actions in ('true', 'false'):
+                with self.subTest(entry=entry.__name__, actions=actions):
+                    module, discovered, required = self.fixture('''
+                        class Case(unittest.TestCase):
+                            def test_failure(self): self.fail('fixture%\\r\\nfailed')
+                            def test_error(self): raise RuntimeError('fixture%\\r\\nerrored')
+                    ''')
+                    name = 'collect' if entry is checks else 'discover_tests'
+                    collected = (discovered, required) if entry is checks else discovered
+                    with patch.dict(os.environ, {'GITHUB_ACTIONS': actions,
+                            'FACTORY_TEST_DATABASE_URL': 'synthetic-unused'}), \
+                            patch.object(sys, 'platform', 'linux'), patch.object(entry, 'configure_imports'), \
+                            patch.object(entry, name, return_value=collected), \
+                            patch('sys.stdout', io.StringIO()) as output, patch('sys.stderr', io.StringIO()):
+                        code = entry.main([]) if entry is checks else entry.main()
+                    self.assertEqual(code, 1)
+                    annotations = [line for line in output.getvalue().splitlines() if line.startswith('::error::')]
+                    self.assertEqual(len(annotations), 2 if actions == 'true' else 0)
+                    if actions == 'true':
+                        for method in ('test_failure', 'test_error'):
+                            self.assertTrue(any(module + '.Case.' + method in line for line in annotations))
+                        self.assertTrue(all('fixture%25%0D%0A' in line for line in annotations))
+                    if entry is checks:
+                        summary = json.loads(output.getvalue().splitlines()[-1])
+                        self.assertEqual((summary['failures'], summary['errors'], summary['accepted']), (1, 1, False))
+
+    def test_required_skip_reports_acceptance_without_inventing_unittest_failure(self):
+        module, discovered, required = self.fixture('''
+            class Case(unittest.TestCase):
+                def test_required(self): self.skipTest('synthetic platform skip')
+        ''')
+        with patch.dict(os.environ, {'GITHUB_ACTIONS': 'true', 'FACTORY_TEST_DATABASE_URL': 'synthetic-unused'}), \
+                patch.object(sys, 'platform', 'linux'), patch.object(checks, 'configure_imports'), \
+                patch.object(checks, 'collect', return_value=(discovered, required)), \
+                patch('sys.stdout', io.StringIO()) as output, patch('sys.stderr', io.StringIO()):
+            self.assertEqual(checks.main([]), 1)
+        lines = output.getvalue().splitlines()
+        self.assertTrue(lines[0].startswith('::error::PostgreSQL required acceptance did not pass: '))
+        self.assertIn(module + '.Case.test_required', lines[0])
+        summary = json.loads(lines[-1])
+        self.assertEqual((summary['failures'], summary['errors'], summary['skipped'], summary['accepted']), (0, 0, 1, False))

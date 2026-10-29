@@ -7,7 +7,7 @@ export const workspaceTabs = {
 export const connectionResources = ['servers', 'tools', 'remotes', 'credentials', 'records'] as const;
 export type ConnectionResource = typeof connectionResources[number];
 export type WorkspaceTab = string;
-export type WorkspaceRoute = { tab: WorkspaceTab; task: string; modelReturn?: string; [key: string]: string | undefined };
+export type WorkspaceRoute = { tab: WorkspaceTab; task: string; modelReturn?: string; taskReturn?: string; taskReturnTask?: string; scheduleId?: string; [key: string]: string | undefined };
 export interface WorkspaceNavigation {
   tabs: Readonly<Record<string, string>>;
   applicationTabs?: readonly string[];
@@ -28,17 +28,24 @@ export function readWorkspaceRoute(url: URL, administrator: boolean, navigation 
   const templateVersion = url.searchParams.get('templateVersion');
   const template = templateId && templateVersion && /^[1-9][0-9]*$/.test(templateVersion) && Number.isSafeInteger(Number(templateVersion))
     ? { templateId, templateVersion } : {};
+  const task = routePointer(url.searchParams.get('task'));
+  const scheduleId = routePointer(url.searchParams.get('scheduleId'));
+  const taskReturn = url.searchParams.get('taskReturn');
+  const taskReturnTask = routePointer(url.searchParams.get('taskReturnTask'));
+  const hasTaskReturn = tab === 'tasks' && !!task && taskReturnTask === task
+    && (taskReturn === 'schedules' ? !!scheduleId : !!taskReturn && navigation.applicationTabs?.includes(taskReturn));
   return { ...navigation.readQuery?.(url), tab, ...template,
     ...(url.searchParams.get('templateStart') === '1' ? { templateStart: '1' } : {}),
     ...(url.searchParams.get('templateReturn') === '1' && ['models', 'connections'].includes(tab) ? { templateReturn: '1' } : {}),
-    task: routePointer(url.searchParams.get('task')),
+    task, ...(scheduleId ? { scheduleId } : {}),
+    ...(hasTaskReturn ? { taskReturn: taskReturn!, taskReturnTask } : {}),
     ...(connectionResources.includes(url.searchParams.get('resource') as ConnectionResource) ? { resource: url.searchParams.get('resource')! } : {}),
     ...(modelReturn && modelReturns.includes(modelReturn) ? { modelReturn } : {}) };
 }
 export function workspaceUrl(current: URL, route: WorkspaceRoute, navigation = defaultNavigation): string {
   const url = new URL(current);
   url.searchParams.set('tab', route.tab);
-  for (const key of ['task', 'modelReturn', 'resource', 'templateId', 'templateVersion', 'templateStart', 'templateReturn', ...navigation.queryKeys ?? []]) {
+  for (const key of ['task', 'modelReturn', 'resource', 'templateId', 'templateVersion', 'templateStart', 'templateReturn', 'taskReturn', 'taskReturnTask', 'scheduleId', ...navigation.queryKeys ?? []]) {
     if (route[key]) url.searchParams.set(key, route[key]); else url.searchParams.delete(key);
   }
   return `${url.pathname}${url.search}${url.hash}`;
