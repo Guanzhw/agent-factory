@@ -96,7 +96,7 @@ it('accepts model API bases with custom paths and local network destinations', (
 });
 let host: HTMLDivElement; let root: Root;
 beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear();
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); localStorage.clear(); sessionStorage.clear();
   vi.stubGlobal('fetch', vi.fn(() => { throw new Error('Network forbidden in model settings test'); }));
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
   vi.spyOn(api, 'session').mockResolvedValue({ id: 'alice', name: 'Alice', role: 'user' });
@@ -123,6 +123,54 @@ async function choose(label: string, value: string) {
   await act(async () => { const select = host.querySelector<HTMLSelectElement>(`[aria-label="${label}"]`)!; select.value = value; select.dispatchEvent(new Event('change', { bubbles: true })); });
 }
 async function save() { await fill('模型名称', row.model); await fill('API 密钥', secret); await act(async () => { button('保存并设为默认').click(); button('保存并设为默认').click(); }); }
+it('shows missing model fields in place without sending a save request', async () => {
+  await mount(); await act(async () => button('保存并设为默认').click());
+  expect(host.querySelector('[aria-label="模型名称"]')?.getAttribute('aria-invalid')).toBe('true');
+  expect(host.querySelector('#model-name-error')?.textContent).toContain('填写');
+  expect(host.querySelector('#model-key-error')?.textContent).toContain('API 密钥');
+  expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
+  await choose('模型提供方', 'openai-compatible'); await fill('模型名称', row.model); await fill('API 端点', 'not-a-url');
+  await act(async () => button('保存并设为默认').click());
+  expect(host.querySelector('#model-endpoint-error')?.textContent).toContain('HTTP');
+  expect(ownerModelApi.configure).not.toHaveBeenCalled();
+});
+it('keeps the current form when another model becomes the default, including original-request recovery', async () => {
+  vi.mocked(ownerModelApi.list).mockResolvedValue([row]);
+  vi.mocked(ownerModelApi.default).mockRejectedValueOnce(new ModelRequestError(0));
+  vi.mocked(ownerModelApi.recover).mockImplementation(async (_owner, requestId) => ({ ownerId: 'alice', requestId,
+    action: 'model.default', result: { ...row, isDefault: true }, completedAt: '2026-10-09T00:00:01Z' }));
+  await mount(); await fill('模型名称', 'my-unsubmitted-model'); await fill('API 密钥', secret); await fill('单次输出上限（token）', '16384');
+  await act(async () => button('设为默认').click());
+  expect(button('核对并继续原保存')).toBeDefined();
+  await act(async () => button('核对并继续原保存').click());
+  expect(host.querySelector<HTMLInputElement>('[aria-label="模型名称"]')?.value).toBe('my-unsubmitted-model');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="API 密钥"]')?.value).toBe(secret);
+  expect(host.querySelector<HTMLInputElement>('[aria-label="单次输出上限（token）"]')?.value).toBe('16384');
+  expect(ownerModelApi.default).toHaveBeenCalledTimes(1); expect(ownerModelApi.configure).not.toHaveBeenCalled();
+});
+it('restores only non-secret model inputs after leaving and returning', async () => {
+  await mount(); await choose('模型提供方', 'openai-compatible'); await fill('模型名称', 'draft-model');
+  await fill('API 端点', 'http://localhost:11434/v1'); await fill('单次输出上限（token）', '16384'); await fill('API 密钥', secret);
+  expect(JSON.stringify(sessionStorage)).not.toContain(secret);
+  await act(async () => root.unmount()); root = createRoot(host); await mount();
+  expect(host.querySelector<HTMLInputElement>('[aria-label="模型名称"]')?.value).toBe('draft-model');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="API 端点"]')?.value).toBe('http://localhost:11434/v1');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="单次输出上限（token）"]')?.value).toBe('16384');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="API 密钥"]')?.value).toBe('');
+  expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(ownerModelApi.default).not.toHaveBeenCalled();
+});
+it('offers the research continuation only after confirmed saving and permits ordinary return while unknown', async () => {
+  const back = vi.fn();
+  await act(async () => root.render(createElement(ModelSettings, { ownerId: 'alice', onBack: back, returnLabel: '返回原研究' })));
+  vi.mocked(ownerModelApi.default).mockRejectedValueOnce(new ModelRequestError(0));
+  await save();
+  expect(button('继续原研究')).toBeUndefined();
+  await act(async () => button('返回原研究').click()); expect(back).toHaveBeenCalledOnce();
+  vi.mocked(ownerModelApi.recover).mockImplementation(async (_owner, requestId) => ({ ownerId: 'alice', requestId,
+    action: 'model.default', result: { ...row, isDefault: true }, completedAt: '2026-10-09T00:00:01Z' }));
+  await act(async () => button('核对并继续原保存').click());
+  expect(button('继续原研究')).toBeDefined(); expect(ownerModelApi.default).toHaveBeenCalledTimes(1);
+});
 it('saves the official Go endpoint with an origin-bound credential and no model invocation', async () => {
   const baseURL = 'https://opencode.ai/zen/go/v1';
   vi.mocked(personalRemoteApi.saveCredential).mockResolvedValue({ ...credential, destination: 'https://opencode.ai' });

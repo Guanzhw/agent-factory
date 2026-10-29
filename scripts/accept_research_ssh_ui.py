@@ -97,7 +97,7 @@ def run(browser, dist, output, *, windows_diagnostic_only=False):
             page.route('**/personal-ssh/capabilities', project_windows_diagnostic)
         page.goto(origin + '/?tab=connections')
         page.get_by_role('button', name='使用企业账号登录', exact=True).click()
-        expect(page.get_by_role('heading', name='我的凭据与连接', exact=True)).to_be_visible()
+        expect(page.get_by_role('heading', name='我的资源 · 服务器', exact=True)).to_be_visible()
         logged_in = True
         expect(page.get_by_text('尚未允许训练执行', exact=True)).to_be_visible()
         assert fixture.store.tasks('alice') == [] and not fixture.started.exists()

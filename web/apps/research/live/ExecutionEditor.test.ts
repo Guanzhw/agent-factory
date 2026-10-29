@@ -7,6 +7,8 @@ import type { ApplicationMode, FactoryApplication } from '../../../models.js';
 import type { ResearchAgreement } from '../types.js';
 import { ExecutionEditor } from './ExecutionEditor.js';
 import { setupApi, type SetupCandidates } from './setupClient.js';
+import { clearSessionDrafts } from '../researchSessionStorage.js';
+import { clearBrowserSession } from '../../../browserAuth.js';
 let host: HTMLDivElement; let root: Root;
 const save = vi.fn(); const applications = vi.fn(); const resources = vi.fn();
 const agreement: ResearchAgreement = { objective: '研究目标', evaluation: '评价', stopConditions: '停止条件', resourceRefs: {}, budget: { rounds: 3, toolCalls: 8, tokenLimit: null, amountMicros: null, currency: null } };
@@ -16,12 +18,12 @@ const mode = { nativeComponent: workflowPin, materialRefs: [], materialChoices: 
 const published: FactoryApplication = { id: 'research-published', version: 2, sha256: 'a'.repeat(64), name: '已发布研究执行', description: '', discoveryKeywords: [], defaultForDiscovery: false, defaultMode: 'research', modes: { research: mode } };
 const execution = { applicationRef: { id: published.id, version: published.version, sha256: published.sha256 }, mode: 'research', materialChoices: {}, connectionRefs: {}, deadline: 1_800_000_000, perRoundCaps: { rounds: 1 as const, toolCalls: 4, tokenLimit: null, amountMicros: null, currency: null } };
 beforeEach(() => {
-  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); host = document.createElement('div'); document.body.append(host); root = createRoot(host); save.mockReset(); applications.mockReset(); resources.mockReset();
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); window.sessionStorage.clear(); host = document.createElement('div'); document.body.append(host); root = createRoot(host); save.mockReset(); applications.mockReset(); resources.mockReset();
   vi.spyOn(api, 'applications').mockResolvedValue([]); vi.spyOn(api, 'userConnections').mockResolvedValue([]);
   vi.spyOn(setupApi, 'candidates').mockResolvedValue(candidates);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
-async function mount(value = agreement) { await act(async () => root.render(createElement(ExecutionEditor, { ownerId: 'alice', agreement: value, disabled: false, onSave: save, onApplications: applications, onResources: resources }))); }
+async function mount(value = agreement, projectId = 'project-a', ownerId = 'alice', goalVersion = 1) { await act(async () => root.render(createElement(ExecutionEditor, { key: `${ownerId}:${projectId}:${goalVersion}`, ownerId, projectId, goalVersion, agreement: value, disabled: false, onSave: save, onApplications: applications, onResources: resources }))); }
 const select = (label: string) => [...host.querySelectorAll('label')].find(item => item.firstChild?.textContent === label)!.querySelector('select')!;
 async function field(label: string, value: string) {
   const element = [...host.querySelectorAll('label')].find(item => item.firstChild?.textContent === label)!.querySelector('input,select')!;
@@ -82,4 +84,25 @@ it('requires the current workflow candidate response before saving any published
   expect((host.querySelector('fieldset') as HTMLFieldSetElement).disabled).toBe(true);
   await act(async () => (host.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })));
   expect(save).not.toHaveBeenCalled();
+});
+
+it('returns to the same project execution draft without saving or replacing another owner or version', async () => {
+  vi.mocked(api.applications).mockResolvedValue([published]);
+  await mount(); await field('执行应用', 'research-published:2:' + 'a'.repeat(64)); await field('执行方式', 'research'); await field('研究截止时间（本地时间）', '2027-01-01T10:00'); await field('每轮工具调用上限', '5');
+  await act(async () => [...host.querySelectorAll('button')].find(item => item.textContent === '配置模型与资源')!.click());
+  expect(resources).toHaveBeenCalledOnce(); expect(save).not.toHaveBeenCalled();
+  await act(async () => root.render(null)); await mount();
+  expect(select('执行应用').value).toBe('research-published:2:' + 'a'.repeat(64)); expect(select('执行方式').value).toBe('research');
+  expect([...host.querySelectorAll('input')].map(input => input.value)).toContain('2027-01-01T10:00'); expect([...host.querySelectorAll('input')].map(input => input.value)).toContain('5');
+  await mount(agreement, 'project-b'); expect(select('执行应用').value).toBe('');
+  await mount(agreement, 'project-a', 'bob'); expect(select('执行应用').value).toBe('');
+  await mount(agreement, 'project-a', 'alice', 2); expect(select('执行应用').value).toBe('');
+  await mount(); expect(select('执行应用').value).toBe('research-published:2:' + 'a'.repeat(64)); expect(save).not.toHaveBeenCalled();
+});
+it('clears project input with existing logout cleanup and rejects writes from the old auth epoch', async () => {
+  await mount(); await field('每轮工具调用上限', '5'); expect(sessionStorage.length).toBe(1);
+  clearBrowserSession(); clearSessionDrafts('alice');
+  await field('每轮工具调用上限', '7'); expect(sessionStorage.length).toBe(0);
+  await act(async () => root.render(null)); await mount();
+  expect([...host.querySelectorAll('input')].map(input => input.value)).not.toContain('5'); expect(save).not.toHaveBeenCalled();
 });

@@ -36,8 +36,15 @@ async function field(label: string, value: string) {
 }
 it('uses the real empty list and resource entry without importing demo projects or replies', async () => {
   await mount(); expect(host.textContent).toContain('还没有研究项目'); expect(host.textContent).not.toContain('小模型推理加速'); expect(host.querySelector('canvas')).toBeNull();
-  await act(async () => button('配置模型与资源').click()); expect(navigate).toHaveBeenLastCalledWith({ tab: 'resources', modelReturn: 'research' });
+  await act(async () => button('配置模型与资源').click()); expect(navigate).toHaveBeenLastCalledWith({ tab: 'resources', modelReturn: 'research', project: '' });
   await act(async () => button('返回平台').click()); expect(navigate).toHaveBeenLastCalledWith(expect.objectContaining({ tab: 'catalog', project: '', modelReturn: '' }));
+});
+it('retains the actually selected project when opening resources from the workbench', async () => {
+  vi.mocked(researchApi.projects).mockResolvedValue({ items: [project], nextCursor: null });
+  await mount();
+  await act(async () => button('资源').click());
+  expect(navigate).toHaveBeenLastCalledWith({ tab: 'resources', modelReturn: 'research', project: 'p1' });
+  expect(researchApi.goal).not.toHaveBeenCalled(); expect(researchApi.start).not.toHaveBeenCalled();
 });
 it('preserves a timed-out create through dialog remount and owner change using the exact original request', async () => {
   vi.mocked(researchApi.create).mockRejectedValueOnce(new ApiError('未确认', 408));

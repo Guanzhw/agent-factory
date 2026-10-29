@@ -8,25 +8,30 @@ import { CreateDelivery } from './EvidenceViews.js';
 import { RunRecords } from './RunRecords.js';
 import { useProjectCommand } from '../useProjectCommand.js';
 import type { ResearchProject } from '../types.js';
+import { projectDraftKey, useProjectDraft } from './projectDraft.js';
 
 export const projectStates = { draft: '待确认约定', ready: '约定已确认', ended: '研究已结束' };
-export function ProjectDetails({ onDelivery, project, tab, onTab, onUpdate, onTask, onApplications, onResources, setupId, onSetup, onMaterials }: { onDelivery: (id: string) => void; project: ResearchProject; tab: string; onTab: (tab: string) => void; onUpdate: (project: ResearchProject) => void; onTask: (id: string) => void; onApplications: () => void; onResources: () => void; setupId?: string; onSetup: (id: string) => void; onMaterials: () => void }) {
+type Props = { onDelivery: (id: string) => void; project: ResearchProject; tab: string; onTab: (tab: string) => void; onUpdate: (project: ResearchProject) => void; onTask: (id: string) => void; onApplications: () => void; onResources: () => void; setupId?: string; onSetup: (id: string) => void; onMaterials: () => void };
+export function ProjectDetails(props: Props) {
+  return <ProjectContent key={`${props.project.ownerId}:${props.project.id}:${props.project.currentGoalVersion}`} {...props}/>;
+}
+function ProjectContent({ onDelivery, project, tab, onTab, onUpdate, onTask, onApplications, onResources, setupId, onSetup, onMaterials }: Props) {
   const [editing, setEditing] = useState(false);
-  const [configuring, setConfiguring] = useState(!!setupId);
-  const [preparing, setPreparing] = useState(!!setupId);
-  const [selection, setSelection] = useState<ExecutionSelection>();
+  const view = useProjectDraft<{ configuring: boolean; preparing: boolean; selection?: ExecutionSelection }>(projectDraftKey(project.ownerId, project.id, project.currentGoalVersion, 'view'), { configuring: !!setupId, preparing: !!setupId });
+  const { configuring, preparing, selection } = view.value;
   const [ending, setEnding] = useState(false);
   const [reason, setReason] = useState('');
   const [outcome, setOutcome] = useState<'not_met' | 'cancelled'>('not_met');
   const goal = project.goals.find(goal => goal.version === project.currentGoalVersion);
   const current = goal && !goal.sourceUnavailable ? goal : undefined;
-  const command = useProjectCommand(project.ownerId, project.id, result => { onUpdate(result); setEditing(false); setEnding(false); setConfiguring(false); });
+  const command = useProjectCommand(project.ownerId, project.id, result => { if (result.currentGoalVersion !== project.currentGoalVersion) onSetup(''); onUpdate(result); setEditing(false); setEnding(false); view.change({ ...view.value, configuring: false }); });
   if (project.sourceUnavailable) return <section className="rw-project-card" aria-label={project.title}><h2>{project.title}</h2><p role="status">来源不可用，目标、分析及派生成果已隐藏。</p><p className="rw-id">项目：{project.id} · 目标版本 {project.currentGoalVersion}</p>{project.ending && <p>原终态记录存在；不代表资源已确认停止。</p>}{command.feedback}{project.state !== 'ended' && <button disabled={command.disabled} onClick={() => void command.run({ action: 'end', body: { requestId: crypto.randomUUID(), expectedVersion: project.currentGoalVersion, outcome: 'cancelled', reason: '来源不可用，成员明确请求取消原研究' } })}>取消原研究</button>}<h3>目标历史</h3>{project.goals.map(goal => <p key={goal.version}>版本 {goal.version} · {goal.confirmedAt ? '已确认' : '未确认'} · 正文不可用</p>)}<RunRecords ownerId={project.ownerId} projectId={project.id} evidence={false} onTask={onTask}/></section>;
   return <section className="rw-project-card" aria-label={project.title}>
     <header><h2>{project.title}</h2><span className={`rw-state ${project.state}`}>{projectStates[project.state]}</span><small>{time(project.createdAt)}</small></header>
     <p className="rw-objective"><strong>目标：</strong>{current?.agreement.objective ?? '尚未建立研究约定'}</p>
     <div className="rw-tabs" role="tablist" aria-label="项目内容">{[['overview', '概览'], ['experiments', '实验'], ['evidence', '证据'], ['delivery', '成果']].map(([id, name]) => <button key={id} role="tab" aria-selected={tab === id} onClick={() => onTab(id)}>{name}</button>)}</div>
     {command.feedback}
+    {!view.saved && <p role="alert">浏览器未能保留当前准备位置，离开前请先保留输入。</p>}
     {tab === 'delivery' ? <CreateDelivery key={`${project.ownerId}:${project.id}`} ownerId={project.ownerId} projectId={project.id} version={project.currentGoalVersion} onCreated={onDelivery}/> : tab !== 'overview' ? <RunRecords ownerId={project.ownerId} projectId={project.id} evidence={tab === 'evidence'} onTask={onTask}/> : <>
       {current && <article className="rw-agreement"><h3>研究约定 · 版本 {current.version}</h3><dl><dt>评价与达标标准</dt><dd>{current.agreement.evaluation}</dd><dt>停止与放弃条件</dt><dd>{current.agreement.stopConditions}</dd><dt>共同预算</dt><dd>最多 {current.agreement.budget.rounds} 轮 / {current.agreement.budget.toolCalls} 次工具调用</dd></dl>
         <p>{current.confirmedAt ? `已确认于 ${time(current.confirmedAt)}` : '尚未确认；保存约定不会启动实验。'}</p>
@@ -34,8 +39,8 @@ export function ProjectDetails({ onDelivery, project, tab, onTab, onUpdate, onTa
       </article>}
       {project.state !== 'ended' && <>
         {project.execution.available && current?.confirmedAt && <div className="rw-actions"><button className="rw-primary" disabled={command.disabled || editing || configuring || ending} onClick={() => void command.run({ action: 'start', body: { requestId: crypto.randomUUID(), expectedVersion: project.currentGoalVersion } })}>按当前约定启动或续接研究</button><p>将使用已确认配置与预算；准入不代表执行完成。</p></div>}
-        {current && <div className="rw-actions"><button disabled={command.disabled || editing || ending} onClick={() => setConfiguring(value => !value)}>{configuring ? '取消配置' : '配置研究执行'}</button></div>}
-        {configuring && current && <><div className="rw-actions"><button onClick={() => setPreparing(value => !value)}>{preparing ? '选择已有发布版本' : '准备新的研究执行配置'}</button></div>{preparing ? <SetupPanel key={`${project.ownerId}:${setupId ?? 'new'}`} ownerId={project.ownerId} setupId={setupId} onSetup={onSetup} onResources={onResources} onMaterials={onMaterials} onPublished={value => { setSelection(value); setPreparing(false); }}/> : <ExecutionEditor key={`${project.currentGoalVersion}:${selection?.applicationRef.sha256 ?? ''}`} ownerId={project.ownerId} agreement={current.agreement} selection={selection} disabled={command.disabled} onApplications={onApplications} onResources={onResources} onSave={agreement => void command.run({ action: 'goal', body: { requestId: crypto.randomUUID(), expectedVersion: project.currentGoalVersion, agreement } })}/>}</>}
+        {current && <div className="rw-actions"><button disabled={command.disabled || editing || ending} onClick={() => view.change({ ...view.value, configuring: !configuring })}>{configuring ? '取消配置' : '配置研究执行'}</button></div>}
+        {configuring && current && <><div className="rw-actions"><button onClick={() => view.change({ ...view.value, preparing: !preparing })}>{preparing ? '选择已有发布版本' : '准备新的研究执行配置'}</button></div>{preparing ? <SetupPanel key={`${project.ownerId}:${setupId ?? 'new'}`} ownerId={project.ownerId} projectId={project.id} goalVersion={project.currentGoalVersion} setupId={setupId} onSetup={onSetup} onResources={onResources} onMaterials={onMaterials} onPublished={value => { view.change({ ...view.value, selection: value, preparing: false }); }}/> : <ExecutionEditor key={`${project.currentGoalVersion}:${selection?.applicationRef.sha256 ?? ''}`} ownerId={project.ownerId} projectId={project.id} goalVersion={project.currentGoalVersion} agreement={current.agreement} selection={selection} disabled={command.disabled} onApplications={onApplications} onResources={onResources} onSave={agreement => void command.run({ action: 'goal', body: { requestId: crypto.randomUUID(), expectedVersion: project.currentGoalVersion, agreement } })}/>}</>}
 
         {!project.execution.available && <p className="rw-muted">当前不能开始新运行：{project.execution.reason === 'RESEARCH_ORIGINAL_ATTEMPT_REQUIRED' ? '已有原运行，请在实验页核对其状态。' : project.execution.reason === 'RESEARCH_NATIVE_COMPONENT_REQUIRED' ? '请选择兼容当前研究组件的执行配置；可从原任务记录核对与清理运行。' : project.execution.reason === 'RESEARCH_EXECUTION_NOT_INSTALLED' ? '当前未安装研究执行组件；可从原任务记录核对与清理运行。' : project.execution.reason === 'RESEARCH_EXECUTION_CONFIGURATION_REQUIRED' ? '尚未保存执行配置。' : project.execution.reason === 'RESEARCH_CONFIRMED_GOAL_REQUIRED' ? '请先确认当前研究约定。' : project.execution.reason}</p>}
 <div className="rw-actions">{current && <button disabled={command.disabled || configuring || ending} onClick={() => setEditing(value => !value)}>{editing ? '取消修订' : '修改目标'}</button>}<button disabled={command.disabled || editing || configuring} onClick={() => { setEnding(value => !value); setOutcome(current ? 'not_met' : 'cancelled'); }}>{ending ? '取消结束' : '结束研究'}</button></div>

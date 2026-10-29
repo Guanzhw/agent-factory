@@ -63,7 +63,7 @@ export function ResearchWorkbench({ user, route, navigate, onLogout, sessionBusy
   const tab = route.researchTab || 'overview';
   const home = () => navigate({ tab: 'research', project: '', researchView: '', researchSession: '', researchTab: '', researchSetup: '', researchQASetup: '', researchPeer: '', researchQuestion: '', researchAssociation: '', researchDelivery: '' });
   const openSessions = (id = route.researchSession ?? '') => navigate({ tab: 'research', project: '', researchView: 'sessions', researchSession: id, researchTab: '', researchSetup: '', researchQASetup: '', researchPeer: '', researchQuestion: '', researchAssociation: '', researchDelivery: '' });
-  const resources = () => navigate({ tab: 'resources', modelReturn: 'research' });
+  const resources = () => navigate({ tab: 'resources', modelReturn: 'research', project: !team && !settings && !sessions ? selectedId ?? '' : route.project ?? '' });
   useEffect(() => {
     const controller = new AbortController(); setAssistantError(''); setAssistantLoading(true);
     void assistantApi.me(user.id, controller.signal).then(value => { if (!controller.signal.aborted) setMyAssistant(value.assistant); }).catch(reason => { if (!controller.signal.aborted) setAssistantError(errorText(reason)); }).finally(() => { if (!controller.signal.aborted) setAssistantLoading(false); });

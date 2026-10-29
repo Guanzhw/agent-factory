@@ -99,12 +99,17 @@ it('refreshes SSH identity revisions after rotation in the sibling credentials p
   await act(async () => button('更换连接设置').click());
   await act(async () => button('核对服务器身份').click());
   await field('已保存的此服务器 SSH 身份', credential.credentialRef); await consent();
+  await act(async () => button('凭据').click());
+  expect(host.querySelector('.personal-ssh')?.parentElement?.hidden).toBe(true);
   await act(async () => button('更换凭据').click());
   await field('新的专用 SSH 私钥', secret);
   await act(async () => host.querySelector<HTMLInputElement>('.personal-credentials input[type=checkbox]')!.click());
   await act(async () => button('保存更换后的凭据').click());
   expect(personalRemoteApi.rotateCredential).toHaveBeenCalledTimes(1);
   expect(host.textContent).toContain('SSH 身份版本已改变或撤销');
+  await act(async () => button('服务器').click());
+  expect(host.querySelector('.personal-ssh')?.parentElement?.hidden).toBe(false);
+  expect([...host.querySelectorAll('label')].find(label => label.textContent?.startsWith('服务器名称'))?.querySelector('input')?.value).toBe(input.name);
   expect(button('保存身份并登记服务器').disabled).toBe(true);
   await field('已保存的此服务器 SSH 身份', credential.credentialRef); await consent();
   await act(async () => button('保存身份并登记服务器').click());
