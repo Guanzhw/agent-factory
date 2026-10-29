@@ -86,6 +86,24 @@ and `agent_factory_server.research:create_app` in the same server command, then
 enter AutoResearch from the application catalog. Login does not configure a model
 or start research.
 
+Personal Research file tools require an existing absolute
+`FACTORY_RESEARCH_WORKSPACE_ROOT`; files are kept under separate owner/session
+directories. Set `FACTORY_RESEARCH_HOST_COMMANDS=1` only when ordinary commands
+should run with the service OS user's permissions. This is not an OS sandbox.
+`FACTORY_RESEARCH_COMMAND_PATH` is an explicit list of absolute executable
+directories (`;`-separated on Windows, `:`-separated on POSIX). On Windows, include
+the prepared Python/CLI installation directories: the Windows default search path
+contains `.` and is intentionally not accepted for enabled commands. Tools use
+`/`-separated relative workspace paths, including names with Chinese text or
+spaces; junction/reparse targets, hard-linked files and device/stream aliases are
+rejected. Commands run directly without shell expansion or automatic dependency
+installation. Windows uses the existing Job Object owner for process-tree cleanup.
+The native Windows path is a candidate. Track Linux, Windows CI, local Windows
+with PostgreSQL, and browser/model acceptance separately for the exact revision
+in the Draft PR and linked CI records.
+See [development checks](docs/DEVELOPMENT_CHECKS.md#native-windows-research-verification)
+for each verification entrypoint and its limits.
+
 `npm start`, `npm run dev` and `npm run start:configured` retain the plain HTTP
 server entrypoint; use the HTTPS command above or an already configured HTTPS
 deployment for browser login. Missing signing configuration fails startup; with

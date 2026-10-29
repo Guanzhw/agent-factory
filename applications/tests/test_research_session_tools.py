@@ -1,15 +1,19 @@
 """Native Agno Function calls, real temporary files/processes; synthetic authority only."""
 import asyncio
 import ast
+from contextlib import chdir
 from copy import deepcopy
+import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
+import subprocess
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 
 from agno.agent import Agent
 from agno.exceptions import RunCancelledException, StopAgentRun
@@ -21,7 +25,8 @@ from fastapi import HTTPException
 
 from agent_factory.execution_bindings import BindingContext, EnvironmentLimits
 from agent_factory.store import digest
-from research.session_tools import EFFECT_PREFIX, ResearchSessionTools, _directory
+from agent_factory.personal_tool_contract import ToolInvocationError
+from research.session_tools import EFFECT_PREFIX, ResearchSessionTools, _directory, _open_file, _parts
 
 
 CONTENT_ID = 'abcdefab-1111-2222-3333-abcdefabcdef'
@@ -47,9 +52,10 @@ class ResearchSessionConfigurationTests(unittest.TestCase):
             with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'RESEARCH_COMMAND_CONFIGURATION_INVALID'):
                 ResearchSessionTools(**options)
 
-    def test_non_posix_workspace_is_rejected_before_open(self):
-        unavailable = SimpleNamespace(name='nt', open=Mock())
-        with patch('research.session_tools.os', unavailable):
+    def test_unsupported_platform_workspace_is_rejected_before_open(self):
+        unavailable = SimpleNamespace(name='java', open=Mock())
+        with patch('research.session_tools.os', unavailable), \
+                patch('research.session_tools.sys', SimpleNamespace(platform='unsupported')):
             with self.assertRaisesRegex(ValueError, 'RESEARCH_WORKSPACE_CONFIGURATION_INVALID'):
                 ResearchSessionTools(workspace_root=Path.cwd())
             with self.assertRaisesRegex(ValueError, 'RESEARCH_WORKSPACE_CONFIGURATION_INVALID'):
@@ -57,12 +63,57 @@ class ResearchSessionConfigurationTests(unittest.TestCase):
                     self.fail('Unsupported directory was opened')
         unavailable.open.assert_not_called()
 
+    @unittest.skipUnless(os.name == 'posix', 'POSIX flag contract')
     def test_missing_required_posix_flags_never_fall_back_to_unprotected_open(self):
         unavailable = SimpleNamespace(name='posix', O_RDONLY=os.O_RDONLY, open=Mock())
         with patch('research.session_tools.os', unavailable), self.assertRaises(AttributeError):
             with _directory(Path.cwd()):
                 self.fail('Directory opened without required flags')
         unavailable.open.assert_not_called()
+
+    def test_windows_path_grammar_rejects_aliases_without_native_io(self):
+        with patch('research.session_tools.sys', SimpleNamespace(platform='win32')):
+            self.assertEqual(_parts('中文 空格/source.py'), ['中文 空格', 'source.py'])
+            for path in ('C:/outside', 'C:outside', '//server/share', r'\\?\C:\outside',
+                    'file:stream', 'NUL.txt', 'COM¹', 'LPT1.py', 'trailing.', 'trailing ', 'a*/b', 'a\n'):
+                with self.subTest(path=path), self.assertRaises(ValueError):
+                    _parts(path)
+
+
+class WindowsFileErrorProtocolTests(unittest.TestCase):
+    """Portable pywin32 exception-shape fixtures, not native Windows IO evidence."""
+
+    def setUp(self):
+        self.native_error = type('NativeFileError', (Exception,), {})
+        self.handle = MagicMock()
+        self.files = SimpleNamespace(CreateFile=Mock(return_value=self.handle),
+            GetFileInformationByHandle=Mock(side_effect=self.native_error('synthetic native IO error')),
+            FILE_FLAG_OPEN_REPARSE_POINT=0x200000)
+        constants = SimpleNamespace(GENERIC_READ=1, GENERIC_WRITE=2, FILE_SHARE_READ=1,
+            OPEN_EXISTING=3, CREATE_NEW=1, FILE_FLAG_BACKUP_SEMANTICS=0x2000000)
+        self.enterContext(patch.dict(sys.modules, {'pywintypes': SimpleNamespace(error=self.native_error),
+            'win32con': constants, 'win32file': self.files, 'msvcrt': SimpleNamespace()}))
+        self.enterContext(patch('research.session_tools.sys', SimpleNamespace(platform='win32')))
+
+    def test_native_directory_and_preopen_errors_use_existing_recoverable_oserror_contract(self):
+        self.files.CreateFile.side_effect = self.native_error('synthetic missing file')
+        with self.assertRaises(OSError):
+            with _directory(Path.cwd()):
+                self.fail('Failed directory must not open')
+        for create in (False, True):
+            with self.subTest(create=create), self.assertRaises(OSError):
+                _open_file(Path.cwd(), 'source.py', edit=True, create=create)
+        self.handle.Close.assert_not_called()
+
+    def test_metadata_failure_after_create_keeps_unknown_but_unwritten_existing_file_can_fail(self):
+        with self.assertRaises(ToolInvocationError) as caught:
+            _open_file(Path.cwd(), 'new.py', edit=True, create=True)
+        self.assertEqual(caught.exception.outcome, 'unknown')
+        self.handle.Close.assert_called_once()
+        self.handle.Close.reset_mock()
+        with self.assertRaises(OSError):
+            _open_file(Path.cwd(), 'existing.py', edit=True)
+        self.handle.Close.assert_called_once()
 
 
 class Store:
@@ -170,7 +221,7 @@ class RepairModel(Model):
         return response
 
 
-@unittest.skipUnless(os.name == 'posix', 'Host command custody requires POSIX process groups')
+@unittest.skipUnless(os.name in {'posix', 'nt'}, 'Requires an implemented host process owner')
 class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         asyncio.get_running_loop().set_debug(False)
@@ -179,14 +230,14 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.root = Path(self.temporary.name)
         self.store, self.sessions, self.content = Store(), Sessions(), Content()
         self.tools = ResearchSessionTools(workspace_root=self.root, host_commands=True,
-            command_path=str(Path(sys.executable).parent) + os.pathsep + os.defpath)
+            command_path=str(Path(sys.executable).parent) + (os.pathsep + os.defpath if os.name == 'posix' else ''))
         self.tools.bind(self.sessions, self.content)
         self.sequence = 0
 
     def call(self, name, arguments, *, owner='alice', call_id=None, run_id=None):
         self.sequence += 1
         ctx = RunContext(user_id=owner, session_id='task-' + owner, run_id=run_id or 'run-' + owner, session_state={})
-        binding = BindingContext(None, self.store, {'budget': {'operationSeconds': 3, 'outputBytes': 65536}},
+        binding = BindingContext(None, self.store, {'budget': {'operationSeconds': self.sessions.seconds, 'outputBytes': 65536}},
             ctx, {})
         registration = next(item for item in self.tools.tool_registrations if item.tool_name == name)
         function = registration.factory(binding)
@@ -227,6 +278,149 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(passed['stopped'])
         self.assertTrue(any(event['data'].get('exitCode') == 1 for event in self.store.events))
 
+    async def test_utf8_space_paths_exact_hashes_and_real_command_cwd(self):
+        workspace = self.workspace()
+        (workspace / '中文 空格').mkdir()
+        original = '# 注释\r\nvalue = "原值"\r\n'
+        path = '中文 空格/源码.py'
+        created = await self.invoke('research_edit_file', {'path': path, 'old': '', 'new': original})
+        self.assertEqual(created['afterSha256'], hashlib.sha256(original.encode()).hexdigest())
+        read = await self.invoke('research_read_file', {'path': path})
+        self.assertEqual(read['text'], original)
+        found = await self.invoke('research_search', {'query': '原值', 'path': '中文 空格'})
+        self.assertEqual(found['matches'], [{'path': path, 'line': 2, 'text': 'value = "原值"'}])
+        changed = await self.invoke('research_edit_file', {'path': path, 'old': '原值', 'new': '新值'})
+        expected = original.replace('原值', '新值').encode()
+        self.assertEqual((workspace / path).read_bytes(), expected)
+        self.assertEqual(changed['beforeSha256'], created['afterSha256'])
+        self.assertEqual(changed['afterSha256'], hashlib.sha256(expected).hexdigest())
+        result = await self.invoke('research_run', {'argv': [Path(sys.executable).name, '-c',
+            'import os,sys;from pathlib import Path;assert Path("源码.py").exists();'
+            'print("中文输出");print("中文错误",file=sys.stderr);print(os.getcwd())'], 'cwd': '中文 空格'})
+        self.assertEqual(result['exitCode'], 0)
+        self.assertIn('中文输出', result['stdout'])
+        self.assertIn(str(workspace / '中文 空格'), result['stdout'])
+        self.assertEqual(result['stderr'].strip(), '中文错误')
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Requires actual Windows junction and file handle APIs')
+    async def test_windows_junctions_hardlinks_and_device_aliases_never_change_outside_file(self):
+        workspace = self.workspace()
+        outside = self.root / 'outside'
+        outside.mkdir()
+        target = outside / 'private.txt'
+        target.write_text('outside-private', encoding='utf-8')
+        junction = workspace / 'junction'
+        command = str(Path(os.environ['SystemRoot']) / 'System32' / 'cmd.exe')
+        subprocess.run([command, '/d', '/c', 'mklink', '/J', str(junction), str(outside)],
+            capture_output=True, check=True)
+        self.addCleanup(junction.rmdir)
+        with self.assertRaises(ValueError):
+            ResearchSessionTools(workspace_root=junction)
+        (workspace / 'hardlink.txt').hardlink_to(target)
+        for path in ('junction/private.txt', 'hardlink.txt', 'NUL.txt', 'file:stream', 'C:/outside', '../outside'):
+            with self.subTest(path=path):
+                read = await self.invoke('research_read_file', {'path': path})
+                self.assertEqual(read['outcome'], 'failed')
+                edit = await self.invoke('research_edit_file', {'path': path, 'old': 'outside-private', 'new': 'wrong'})
+                self.assertEqual(edit['outcome'], 'failed')
+        search = await self.invoke('research_search', {'path': 'junction', 'query': 'outside-private'})
+        self.assertEqual(search['outcome'], 'failed')
+        command_result = await self.invoke('research_run', {'argv': [Path(sys.executable).name, '-c', 'pass'],
+            'cwd': 'junction'})
+        self.assertEqual(command_result['outcome'], 'failed')
+        self.assertEqual(target.read_text(encoding='utf-8'), 'outside-private')
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Requires actual Windows directory sharing modes')
+    async def test_windows_ancestor_handles_block_replacement_and_release_after_operation(self):
+        import pywintypes
+        import win32con
+        import win32file
+        workspace = self.workspace()
+        nested = workspace / '中文 nested'
+        nested.mkdir()
+        with _directory(workspace, ('中文 nested',)):
+            with self.assertRaises(OSError):
+                workspace.rename(workspace.with_name('moved'))
+            with self.assertRaises(OSError):
+                nested.rename(workspace / 'replaced')
+            with self.assertRaises(pywintypes.error):
+                handle = win32file.CreateFile(str(nested), win32con.GENERIC_WRITE,
+                    win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE | win32con.FILE_SHARE_DELETE,
+                    None, win32con.OPEN_EXISTING, win32con.FILE_FLAG_BACKUP_SEMANTICS, None)
+                handle.Close()
+            created = await self.invoke('research_edit_file', {'path': '中文 nested/source.py',
+                'old': '', 'new': 'value = 1\n'})
+            self.assertTrue(created['created'])
+        nested.rename(workspace / 'released')
+        self.assertEqual((workspace / 'released/source.py').read_bytes(), b'value = 1\n')
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Requires native Windows missing/existing/readonly failures')
+    async def test_windows_prewrite_file_failures_can_be_corrected_without_unknown_effect(self):
+        read = await self.invoke('research_read_file', {'path': 'missing.py'})
+        self.assertEqual(read['outcome'], 'failed')
+        bad_parent = await self.invoke('research_edit_file', {'path': 'missing/source.py', 'old': '', 'new': 'no'})
+        self.assertEqual(bad_parent['outcome'], 'failed')
+        bad_cwd = await self.invoke('research_run', {'argv': [Path(sys.executable).name, '-c', 'pass'], 'cwd': 'missing'})
+        self.assertEqual(bad_cwd['outcome'], 'failed')
+        missing = await self.invoke('research_edit_file', {'path': 'missing.py', 'old': 'old', 'new': 'new'})
+        self.assertEqual(missing['outcome'], 'failed')
+        created = await self.invoke('research_edit_file', {'path': 'source.py', 'old': '', 'new': 'old'})
+        self.assertTrue(created['created'])
+        exists = await self.invoke('research_edit_file', {'path': 'source.py', 'old': '', 'new': 'wrong'})
+        self.assertEqual(exists['outcome'], 'failed')
+        source = self.workspace() / 'source.py'
+        source.chmod(0o400)
+        try:
+            readonly = await self.invoke('research_edit_file', {'path': 'source.py', 'old': 'old', 'new': 'wrong'})
+            self.assertEqual(readonly['outcome'], 'failed')
+        finally:
+            source.chmod(0o600)
+        fixed = await self.invoke('research_edit_file', {'path': 'source.py', 'old': 'old', 'new': 'new'})
+        self.assertEqual(source.read_text(), 'new')
+        self.assertNotEqual(created['afterSha256'], fixed['afterSha256'])
+        self.assertTrue(all(effect['status'] == 'DONE' for effect in self.store.effects('task-alice')))
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Native CREATE_NEW plus injected metadata failure')
+    async def test_windows_failure_after_create_keeps_original_effect_unknown(self):
+        import pywintypes
+        import win32con
+        import win32file
+        original = win32file.GetFileInformationByHandle
+        def fail_file(handle):
+            info = original(handle)
+            if not info[0] & win32con.FILE_ATTRIBUTE_DIRECTORY:
+                raise pywintypes.error(5, 'GetFileInformationByHandle', 'synthetic metadata failure')
+            return info
+        with patch.object(win32file, 'GetFileInformationByHandle', side_effect=fail_file):
+            with self.assertRaises(StopAgentRun):
+                await self.call('research_edit_file', {'path': 'created.py', 'old': '', 'new': 'original'}).aexecute()
+        self.assertEqual((self.workspace() / 'created.py').read_bytes(), b'')
+        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'UNKNOWN')
+        with self.assertRaises(StopAgentRun):
+            await self.call('research_edit_file', {'path': 'replay.py', 'old': '', 'new': 'no'}).aexecute()
+        self.assertFalse((self.workspace() / 'replay.py').exists())
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Requires actual Windows executable search semantics')
+    async def test_windows_command_lookup_does_not_add_service_current_directory(self):
+        fake = self.root / 'research-cwd-only.exe'
+        shutil.copyfile(sys.executable, fake)
+        with chdir(self.root):
+            result = await self.invoke('research_run', {'argv': [fake.name]})
+        self.assertEqual(result, {'outcome': 'failed', 'code': 'RESEARCH_COMMAND_UNAVAILABLE',
+            'message': 'Tool call failed. Check the reported code and tool arguments before correcting this call.'})
+        for command in ('C:python.exe', 'NUL.exe', 'python.exe:stream'):
+            rejected = await self.invoke('research_run', {'argv': [command]})
+            self.assertEqual(rejected['code'], 'RESEARCH_COMMAND_INVALID')
+
+    @unittest.skipUnless(sys.platform == 'win32', 'Native Windows configured long operation acceptance')
+    async def test_windows_command_can_run_beyond_thirty_seconds_within_selected_budget(self):
+        self.sessions.seconds = 40
+        result = await self.invoke('research_run', {'argv': [Path(sys.executable).name, '-c',
+            'import time;time.sleep(30.1);print("long-test-completed")']})
+        self.assertEqual(result['exitCode'], 0)
+        self.assertEqual(result['stdout'].strip(), 'long-test-completed')
+        self.assertTrue(result['stopped'])
+
     async def test_native_agent_two_turns_use_actual_failure_edit_and_test_results(self):
         workspace = self.workspace()
         (workspace / 'calc.py').write_text('def total(values):\n    return sum(values)\n')
@@ -257,16 +451,19 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_normal_source_larger_than_12kb_can_be_read_found_and_edited(self):
         original = '# ordinary unchanged source line\n' * 1400 + 'answer = 40 + 1\n'
         source = self.workspace() / 'module.py'
-        source.write_text(original)
+        source.write_bytes(original.encode('utf-8'))
         self.assertGreater(source.stat().st_size, 12000)
         read = await self.invoke('research_read_file', {'path': 'module.py'})
-        self.assertEqual(read['text'], original)
+        self.assertEqual(read['text'].encode('utf-8'), original.encode('utf-8'))
         found = await self.invoke('research_search', {'query': 'answer = 40 + 1'})
         self.assertEqual(found['matches'], [{'path': 'module.py', 'line': 1401, 'text': 'answer = 40 + 1'}])
         self.assertFalse(found['truncated'])
         changed = await self.invoke('research_edit_file', {'path': 'module.py',
             'old': 'answer = 40 + 1', 'new': 'answer = 40 + 2'})
-        self.assertEqual(source.read_text(), original.replace('answer = 40 + 1', 'answer = 40 + 2'))
+        expected = original.replace('answer = 40 + 1', 'answer = 40 + 2').encode('utf-8')
+        self.assertEqual(source.read_bytes(), expected)
+        self.assertEqual(changed['beforeSha256'], hashlib.sha256(original.encode('utf-8')).hexdigest())
+        self.assertEqual(changed['afterSha256'], hashlib.sha256(expected).hexdigest())
         self.assertNotEqual(changed['beforeSha256'], changed['afterSha256'])
         self.assertEqual(changed['bytes'], source.stat().st_size)
 
@@ -351,6 +548,9 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(call.result)
 
     async def test_native_agent_completes_both_commands_from_one_model_response(self):
+        commands = (['pwd'], ['ls', '-la']) if os.name == 'posix' else (
+            [Path(sys.executable).name, '-c', 'import os;print(os.getcwd())'],
+            [Path(sys.executable).name, '-c', 'import os;print(os.listdir())'])
         class ParallelResponse(RepairModel):
             def invoke(self, messages, **kwargs):
                 self.calls += 1
@@ -358,7 +558,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
                     return ModelResponse(role='assistant', tool_calls=[
                         {'id': 'parallel-' + str(index), 'type': 'function', 'function': {
                             'name': 'research_run', 'arguments': json.dumps({'argv': argv})}}
-                        for index, argv in enumerate((['pwd'], ['ls', '-la']))])
+                        for index, argv in enumerate(commands)])
                 return ModelResponse(role='assistant', content='Scripted model received both tool results.')
 
         def selected_tools(run_context: RunContext):
@@ -372,7 +572,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(model.calls, 2)
         effects = self.store.effects('task-alice')
         self.assertEqual([item['status'] for item in effects], ['DONE', 'DONE'])
-        self.assertEqual([item['result']['output']['argv'] for item in effects], [['pwd'], ['ls', '-la']])
+        self.assertEqual([item['result']['output']['argv'] for item in effects], list(commands))
         self.assertTrue(all(item['result']['output']['exitCode'] == 0 for item in effects))
 
     async def test_different_runs_start_processes_without_waiting_for_each_other(self):
@@ -406,6 +606,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.effects('task-alice'), [])
         self.assertEqual(self.store.events[-1]['data']['code'], 'RESEARCH_TOOL_OUTPUT_TOO_LARGE')
 
+    @unittest.skipUnless(os.name == 'posix', 'POSIX symlink fixture; Windows junctions tested separately')
     async def test_owner_paths_symlinks_traversal_and_exact_edit_failure(self):
         await self.invoke('research_edit_file', {'path': 'private.txt', 'old': '', 'new': 'alice-private'})
         bob = self.call('research_read_file', {'path': 'private.txt'}, owner='bob')
@@ -468,6 +669,19 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await other.aexecute()).status, 'failure')
         self.assertEqual(len(self.store.receipts), 1)
 
+    async def test_file_error_unknown_preserves_original_effect_and_blocks_next_tool(self):
+        call = self.call('research_edit_file', {'path': 'created', 'old': '', 'new': 'data'})
+        with patch.object(self.tools, '_files', side_effect=ToolInvocationError(
+                'RESEARCH_TOOL_OUTCOME_UNKNOWN', outcome='unknown', stopped=True)):
+            with self.assertRaises(StopAgentRun):
+                await call.aexecute()
+        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'UNKNOWN')
+        self.assertEqual(self.store.events[-1]['data']['outcome'], 'unknown')
+        self.assertTrue(self.store.events[-1]['data']['stopped'])
+        with self.assertRaises(StopAgentRun):
+            await self.call('research_read_file', {'path': 'created'}).aexecute()
+        self.assertEqual(len(self.store.receipts), 1)
+
     async def test_unknown_effect_stops_new_call_instead_of_replaying(self):
         self.sessions.seconds = .1
         call = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
@@ -478,7 +692,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(effect['status'], 'UNKNOWN')
         self.assertEqual((self.workspace() / 'effect').read_text(), 'once')
         self.tools = ResearchSessionTools(workspace_root=self.root, host_commands=True,
-            command_path=str(Path(sys.executable).parent) + os.pathsep + os.defpath)
+            command_path=str(Path(sys.executable).parent) + (os.pathsep + os.defpath if os.name == 'posix' else ''))
         self.tools.bind(self.sessions, self.content)
         new = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
             'from pathlib import Path;Path("replayed").write_text("bad")']}, run_id='run-after-reopen')
@@ -495,6 +709,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.store.events[-1]['data']['outcome'], 'unknown')
         self.assertTrue(self.store.events[-1]['data']['stopped'])
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux /proc group evidence; Windows uses original Job tests')
     async def test_cancel_waits_for_real_parent_and_child_group_stop(self):
         script = ('import os,subprocess,sys,time;from pathlib import Path;'
             'child=subprocess.Popen([sys.executable,"-c","import time;time.sleep(30)"]);'
@@ -526,6 +741,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(effect['status'], 'CANCELLED')
         self.assertEqual(effect['result']['stopped'], True)
 
+    @unittest.skipUnless(sys.platform == 'linux', 'Linux /proc evidence; Windows uses original Job tests')
     async def test_revocation_stops_running_command_and_rejects_waiting_tool(self):
         workspace = self.workspace()
         call = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',

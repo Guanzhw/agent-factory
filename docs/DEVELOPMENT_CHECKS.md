@@ -96,8 +96,9 @@ CLI tests launch real local synthetic processes. Member commands run once with
 their selected arguments, workdir, environment and input/output contract.
 Specialized installed adapters retain their integration-specific probes. Tests
 distinguish business dispatch from local stop and retained-directory state.
-Execution requires POSIX process groups and is verified on Linux; a Windows skip
-does not establish Windows CLI support. Debug event loops are intentionally
+Execution uses POSIX process groups on Linux and the existing Job Object owner
+on Windows. Linux evidence does not establish Windows CLI support; native
+Windows verification is listed below. Debug event loops are intentionally
 rejected by the adapter, not silently reconfigured. MCP tests run a local protocol
 server and cover stateful/stateless sessions, exact schema/authentication,
 revocation, response/log leak rejection, no call replay and bounded session DELETE
@@ -178,6 +179,61 @@ console errors; deliberately aborted synthetic acknowledgements are recorded
 separately. Requests outside the static app and explicitly intercepted APIs,
 including WebSockets, are rejected. Browser access from Windows does not imply
 Windows CLI execution support.
+
+## Native Windows research verification
+
+The native Windows file/CLI path is a candidate. Record the exact commit, OS,
+interpreter and executed/skipped cases in the Draft PR and linked CI records;
+a pass in one row does not establish another row:
+
+| Evidence | What it establishes |
+| --- | --- |
+| Cloud Linux | Existing behavior, static/boundary checks, portable protocol fixtures and isolated PostgreSQL restart on Linux |
+| Windows CI | Native file/pipe/Job behavior actually executed on the CI Windows host; skipped database tests remain unverified |
+| Local Windows and isolated PostgreSQL | Prepared user environment, original Job stop, and actual service hard-exit/restart with the same session/task/effect |
+| Browser and real model | Normal login, resource configuration and a real coding task through the selected provider |
+
+Agno stays pinned to 3.1.0, with locked pywin32 and Python 3.12+ pipe APIs. Use an
+isolated temporary workspace and prepared interpreter/tools, without changing
+existing user data or installing dependencies from a Research command.
+
+From a configured Windows checkout with its locked environment, run:
+
+```powershell
+$env:PYTHONPATH = 'platform;deployment;platform/tests;applications;applications/tests'
+.\.venv\Scripts\python.exe -m unittest test_research_session_tools test_personal_cli_process test_windows_ssh_process -v
+```
+
+The Research tool cases perform real create/read/search/edit and failed→passing
+tests, including UTF-8 text and Chinese/space paths. Windows-only cases cover
+junctions, hard links, directory replacement, explicit executable lookup and a
+test longer than 30 seconds within its selected budget. Pipe/process cases must
+confirm the original Job is empty, including when the root exits before a child
+holding inherited pipes, during spawn cancellation, repeated stop, authority loss
+or output/timeout failure. Inspect actual skip reasons; symlink privilege or OS
+requirements must not be recorded as passed checks.
+
+The command environment does not copy the service environment. Windows adds the
+system Windows directory, invocation-owned TEMP/TMP/user/config paths and Python
+UTF-8 mode; configured PATH remains explicit. Ordinary nonzero exits return their
+exit code and separate stdout/stderr. Closing a Job after service failure can
+terminate local children but cannot establish that an earlier operation had no
+effect. With an authorized disposable `FACTORY_TEST_DATABASE_URL`, run the same
+portable restart entrypoint on Windows:
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest test_research_windows_restart -v
+```
+
+Its three cases use an actual service process, local command and PostgreSQL with
+explicit fixture identity and a scripted provider: crash after the command but
+before the durable receipt (UNKNOWN), crash after DONE but before tool return,
+and restart a completed session before an explicit next turn. They assert the
+original session/task/run/effect identities and one actual write. These windows
+do not test a service crash while its Job is still active; process stopping uses
+the native Job tests above. No configured test database means three skips,
+not recovery acceptance. Normal browser login and a real-model coding task remain
+separate checks; the fixtures make no provider usability claim.
 
 Test counts are diagnostic, not fixed acceptance targets. Record actual results
 in the PR and distinguish local process/protocol, native PostgreSQL and browser
