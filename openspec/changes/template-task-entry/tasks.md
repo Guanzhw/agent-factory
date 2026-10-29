@@ -13,7 +13,7 @@
 
 ## 3. 整合与验收
 
-- [ ] 3.1 非作者QA以真实PG/密码/browser完成目录与Research内部定义共存、普通模板预览→接受0任务→显式开始1任务→结果、补资源返回；1440/390实际PNG，保留错误与注入说明。脚本模型/测试seed/本地工具与外部模型分别记录；0外部GPU/SSH、Go429未解除不得探测。
+- [x] 3.1 非作者QA以真实PG/密码/browser完成目录与Research内部定义共存、普通模板预览→接受0任务→显式开始1任务→结果、补资源返回；1440/390实际PNG，保留错误与注入说明。脚本模型/测试seed/本地工具与外部模型分别记录；0外部GPU/SSH、Go429未解除不得探测。
 - [ ] 3.2 作者外review完整base..head及可删代码/原生复用，整改后运行npm check、core/research构建、既有Chromium smoke、官方依赖audit、适用Python/PG/边界与准确head full。唯一CI/发布负责人处理门禁和main核验，作者不push/PR/dispatch。合入不等于用户部署，真实部署链并行，不等待B或全部维护页。
 
 ## Workflow follow-up
