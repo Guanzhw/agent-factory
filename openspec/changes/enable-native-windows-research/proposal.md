@@ -29,4 +29,6 @@
 
 允许配套：`applications/tests/test_research_session_tools.py`、`applications/tests/test_research_sessions.py`、必要的同目录 `test_research_windows_restart.py` 隔离进程夹具；`platform/tests/test_personal_cli_process.py`、`test_personal_cli.py`、`test_windows_ssh_process.py`；`README.md`、`docs/DEVELOPMENT_CHECKS.md`、本变更文档。无依赖升级、schema/API/登录/模型配置改变。
 
+PR 的 Linux fast 实跑发现原模块选择器包含新增 Windows 专用类，六项 skip 正确触发未通过。因此允许在 `scripts/fast_test_groups.py` 将该项明确为原 POSIX 类和便携协议类；保留原 Linux 用例与严格 skip 门禁，Windows 专用类仍由完整 discovery 在 Windows 执行。
+
 不包含 PTY、WSL、远端自由编码、GPU、多团队编排、OS 沙箱保证、安装依赖、新模型/账号/TLS/本机信任、部署或发布。现有工作树和数据库保持原状；本轮云端不操作用户设备或调用外部模型。

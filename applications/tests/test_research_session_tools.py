@@ -451,16 +451,19 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
     async def test_normal_source_larger_than_12kb_can_be_read_found_and_edited(self):
         original = '# ordinary unchanged source line\n' * 1400 + 'answer = 40 + 1\n'
         source = self.workspace() / 'module.py'
-        source.write_text(original)
+        source.write_bytes(original.encode('utf-8'))
         self.assertGreater(source.stat().st_size, 12000)
         read = await self.invoke('research_read_file', {'path': 'module.py'})
-        self.assertEqual(read['text'], original)
+        self.assertEqual(read['text'].encode('utf-8'), original.encode('utf-8'))
         found = await self.invoke('research_search', {'query': 'answer = 40 + 1'})
         self.assertEqual(found['matches'], [{'path': 'module.py', 'line': 1401, 'text': 'answer = 40 + 1'}])
         self.assertFalse(found['truncated'])
         changed = await self.invoke('research_edit_file', {'path': 'module.py',
             'old': 'answer = 40 + 1', 'new': 'answer = 40 + 2'})
-        self.assertEqual(source.read_text(), original.replace('answer = 40 + 1', 'answer = 40 + 2'))
+        expected = original.replace('answer = 40 + 1', 'answer = 40 + 2').encode('utf-8')
+        self.assertEqual(source.read_bytes(), expected)
+        self.assertEqual(changed['beforeSha256'], hashlib.sha256(original.encode('utf-8')).hexdigest())
+        self.assertEqual(changed['afterSha256'], hashlib.sha256(expected).hexdigest())
         self.assertNotEqual(changed['beforeSha256'], changed['afterSha256'])
         self.assertEqual(changed['bytes'], source.stat().st_size)
 

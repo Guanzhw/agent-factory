@@ -38,7 +38,11 @@ class WindowsSSHProcessTests(unittest.TestCase):
                         self.assertEqual(process.stderr.read(), b'err')
                     else:
                         self.assertIsNone(process.stderr)
-                    process.wait(timeout=5)
+                    deadline = time.monotonic() + 5
+                    self.assertEqual(process.wait(timeout=max(0, deadline - time.monotonic())), 0)
+                    # Root completion does not establish Job accounting completion.
+                    while process.job_active_processes() and time.monotonic() < deadline:
+                        time.sleep(.01)
                     self.assertEqual(process.job_active_processes(), 0)
                     self.assertIs(process._job, job)
                 if capture:
