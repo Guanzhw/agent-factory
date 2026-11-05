@@ -27,10 +27,12 @@
 
 允许产品文件：`applications/research/session_tools.py`、`platform/agent_factory/_personal_cli_process.py`、`platform/agent_factory/windows_ssh_process.py`；确有 Windows 系统目录/临时目录/UTF-8 需要时，小改 `platform/agent_factory/personal_cli.py::_environment`。文件操作保持 Research 所有，不新建通用文件系统/执行器框架或第二套 Job Object。
 
-允许配套：`applications/tests/test_research_session_tools.py`、`applications/tests/test_research_sessions.py`、必要的同目录 `test_research_windows_restart.py` 隔离进程夹具；`platform/tests/test_personal_cli_process.py`、`test_personal_cli.py`、`test_windows_ssh_process.py`；`README.md`、`docs/DEVELOPMENT_CHECKS.md`、本变更文档。无依赖升级、schema/API/登录/模型配置改变。
+允许配套：`applications/tests/test_research_session_tools.py`、`applications/tests/test_research_sessions.py`、必要的同目录 `test_research_windows_restart.py` 隔离进程夹具；`platform/tests/test_personal_cli_process.py`、`test_personal_cli.py`、`test_windows_ssh_process.py`；`README.md`、`docs/DEVELOPMENT_CHECKS.md`、本变更文档。除下述已复现的开发依赖漏洞修复外，无依赖升级、schema/API/登录/模型配置改变。
 
 PR 的 Linux fast 实跑发现原模块选择器包含新增 Windows 专用类，六项 skip 正确触发未通过。因此允许在 `scripts/fast_test_groups.py` 将该项明确为原 POSIX 类和便携协议类；保留原 Linux 用例与严格 skip 门禁，Windows 专用类仍由完整 discovery 在 Windows 执行。
 
 恢复时已核验准确 `91f722f` full 全部成功，但 Windows job 没有数据库配置，三项重启恢复测试仍跳过。为完成任务 2.2，允许仅在现有 `.github/workflows/ci.yml` 的 Windows full 中追加临时 PostgreSQL 验收：复用 runner 已安装的 PostgreSQL，在 `RUNNER_TEMP` 的独立目录初始化、仅监听 loopback，执行现有三项测试并拒绝 skip，最后只关闭该集群。不操作系统 PG 服务或用户机器，不改变产品、依赖或测试断言。
+
+恢复后的完整 npm audit 在未变更的主干锁文件上失败：开发依赖 `minimatch@10.2.6` 命中 [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)。当前 ESLint 依赖范围未包含修复版；允许在 `package.json` 和锁文件中显式覆盖为公告修复版 `11.0.1`，以完整审计和既有 lint/构建/测试验证兼容性。不降级 ESLint，不扩展业务或升级其他直接依赖。
 
 不包含 PTY、WSL、远端自由编码、GPU、多团队编排、OS 沙箱保证、安装依赖、新模型/账号/TLS/本机信任、部署或发布。现有工作树和数据库保持原状；本轮云端不操作用户设备或调用外部模型。
