@@ -267,7 +267,6 @@ class ProcessRuntimeService:
 
     async def run(self, context, config):
         _require(type(config) is dict and set(config) == {"targetRef"})
-        self.store.authorize_tool(context, self.tool_name)
         task = self.store.task(context.session_id, context.user_id)
         plan = self.store.plan(task["plan_id"], context.user_id)
         execution = {"nativeRunId": context.run_id, "effectKey": self.effect_key}

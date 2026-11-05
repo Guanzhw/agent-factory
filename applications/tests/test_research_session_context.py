@@ -76,8 +76,8 @@ class ResearchContextContracts(unittest.TestCase):
         projected = json.loads(messages[-1].content.split('\n', 1)[1])
         self.assertEqual(projected['goal'], self.create.goal)
         self.assertEqual(projected['boundaries'], self.create.boundaries)
-        self.assertEqual(projected['turns'][0]['taskId'], prior['id'])
-        self.assertEqual(projected['turns'][0]['status'], 'completed')
+        self.assertEqual([item['turnId'] for item in projected['turns']], [turns[-1]['id']])
+        self.assertNotIn(prior['id'], str(projected['turns']))
         self.assertLessEqual(len(session_context.canonical(projected)), 12000)
         row, turns = self.rows()
         self.assertEqual(turns[0]['body']['result'], original)
@@ -88,13 +88,12 @@ class ResearchContextContracts(unittest.TestCase):
         self.assertEqual(sum(message.id == 'research-context:' + turns[-1]['id'] for message in messages), 1)
         self.assertNotEqual(prior['id'], task['id'])
 
-    def test_oversized_summary_input_is_rejected_before_reservation(self):
+    def test_history_above_old_summary_limit_can_be_reserved_without_changing_original(self):
         _, prior = self.reserved()
         self.finish(prior, 'x' * 48000)
-        with self.assertRaises(HTTPException) as caught:
-            self.service._reserve('alice', self.identifier, SessionText(requestId='too-long', text='Continue'))
-        self.assertEqual(caught.exception.detail['code'], 'RESEARCH_SUMMARY_INPUT_LIMIT')
-        self.assertEqual(len(self.rows()[1]), 1)
+        self.reserved('long-history', 'Continue')
+        self.assertEqual(len(self.rows()[1]), 2)
+        self.assertEqual(self.rows()[1][0]['body']['result'], 'x' * 48000)
 
     def test_correction_commits_while_summary_is_outside_transaction_and_is_in_main_only(self):
         self.long_turn()
@@ -117,57 +116,32 @@ class ResearchContextContracts(unittest.TestCase):
         self.assertEqual(self.rows()[1][-1]['body']['messages'][-1]['state'], 'included')
         self.assertNotIn('Never change the public API', str(response.call_args))
 
-    def fill_summary_capacity(self):
-        for index in range(8):
-            row, turns = self.rows()
-            through = turns[-1]['body']['compaction']['throughSequence']
-            protected = session_context.project(row, turns, protected=True)
-            capacity = session_context.summary_capacity(protected, through)
-            candidate = deepcopy(turns[-1]['body'])
-            candidate['messages'].append(self.service._message('correction', 'x'))
-            changed = [*turns[:-1], {**turns[-1], 'body': candidate}]
-            overhead = session_context.summary_capacity(session_context.project(
-                row, changed, protected=True), through) - capacity - 1
-            count = min(2000, 12000 - capacity - overhead)
-            if count <= 0:
-                break
-            self.service.correct('alice', self.identifier,
-                SessionText(requestId=f'capacity-correction-{index}', text='x' * count))
-        row, turns = self.rows()
-        self.assertEqual(session_context.summary_capacity(session_context.project(
-            row, turns, protected=True), through), 12000)
-        summary = {'summary': '', 'topics': []}
-        summary['summary'] = 's' * (3000 - len(session_context.canonical(summary)))
-        self.assertEqual(len(session_context.canonical(summary)), 3000)
-        return ModelResponse(role='assistant', content=json.dumps(summary))
-
-    def test_actual_summary_wrapper_capacity_accepts_boundary_and_rejects_extra_correction(self):
+    def test_current_corrections_keep_each_constraint_during_summary(self):
         self.long_turn()
         def response(**kwargs):
-            result = self.fill_summary_capacity()
-            accepted = deepcopy(self.rows()[1][-1]['body']['messages'])
-            with self.assertRaises(HTTPException) as caught:
-                self.service.correct('alice', self.identifier, SessionText(requestId='one-more', text='z'))
-            self.assertEqual(caught.exception.detail['code'], 'RESEARCH_CONTEXT_LIMIT')
-            self.assertEqual(self.rows()[1][-1]['body']['messages'], accepted)
-            return result
+            for index, text in enumerate(('Do not use GPU', 'Report before editing')):
+                self.service.correct('alice', self.identifier,
+                    SessionText(requestId=f'late-correction-{index}', text=text))
+            return ModelResponse(role='assistant', content='{"summary":"Historical notes","topics":[]}')
         factory, provider = self.model(action=response)
         messages = self.before(factory)
         row, turns = self.rows()
         self.assertEqual(turns[-1]['body']['compaction']['status'], 'ready')
-        self.assertEqual(len(self.service._context(row, turns)), 12000)
-        self.assertEqual(len(messages[-1].content.split('\n', 1)[1]), 12000)
-        self.assertTrue(all(message['state'] == 'included' for message in turns[-1]['body']['messages']))
+        self.assertLessEqual(len(self.service._context(row, turns)), 12000)
+        self.assertIn('Do not use GPU', messages[-1].content)
+        self.assertIn('Report before editing', messages[-1].content)
+        self.assertEqual(len(turns[-1]['body']['messages']), 3)
+        self.assertEqual(turns[-1]['body']['messages'][-2]['state'], 'included')
+        self.assertEqual(turns[-1]['body']['messages'][-1]['state'], 'included')
         self.assertEqual(provider.call_count, 1)
 
     def test_known_final_capacity_failure_is_failed_not_unknown(self):
         _, task = self.long_turn()
         def response(**kwargs):
-            result = self.fill_summary_capacity()
-            # A real observation can fill task/run identities after admission.
-            with patch.object(self.service.runs.factory, 'detail', return_value=self.observed_detail(task, 'running')):
-                asyncio.run(self.service._refresh('alice', self.identifier))
-            return result
+            with self.service.db.write() as conn:
+                row = self.service._row(conn, 'alice', self.identifier)
+                self.service._save_session(conn, row, {**row['body'], 'goal': 'x' * 12000})
+            return ModelResponse(role='assistant', content='{"summary":"Historical notes","topics":[]}')
         factory, provider = self.model(action=response)
         with self.assertRaises(StopAgentRun):
             self.before(factory)
@@ -367,7 +341,7 @@ class ResearchContextContracts(unittest.TestCase):
         self.assertEqual(self.rows()[0]['body']['contextCheckpoint'], saved)
         self.assertEqual(saved['summary']['summary'], 'New checkpoint')
 
-    def test_too_large_summary_does_not_overwrite_prior_checkpoint_and_failed_turn_counts(self):
+    def test_manual_consent_continues_after_saved_lifetime_limit_without_recharging_automatic_budget(self):
         _, task = self.long_turn()
         factory, _ = self.model()
         self.before(factory)
@@ -383,13 +357,18 @@ class ResearchContextContracts(unittest.TestCase):
         self.finish(later, status='failed')
         _, final_task = self.reserved('fourth-turn', 'Explicit retry')
         self.finish(final_task, status='failed')
-        with self.assertRaises(HTTPException) as caught:
-            self.service._reserve('alice', self.identifier, SessionText(requestId='over-max-turns', text='Continue'))
+        row, turns = self.rows()
+        saved_limits = deepcopy(row['body']['limits'])
+        with self.service._write() as conn, self.assertRaises(HTTPException) as caught:
+            self.service.collaboration._reserve(conn, row, turns, [], 'automatic-after-cap')
         self.assertEqual(caught.exception.detail['code'], 'RESEARCH_TURN_LIMIT')
+        self.reserved('manual-after-cap', 'Explicitly authorize one more task')
+        self.assertEqual(self.rows()[0]['body']['limits'], saved_limits)
+        self.assertEqual(len(self.rows()[1]), 5)
 
 
 class NativeSummaryContract(unittest.TestCase):
-    def test_failed_and_canceled_result_are_never_removed_from_protected_projection(self):
+    def test_ended_diagnostics_are_summary_background_but_current_unknown_identity_remains(self):
         turns = [{'id': 'old-' + status, 'sequence': index + 1, 'body': {
             'messages': [], 'status': status, 'terminal': True, 'result': status + ' original diagnostic'}}
             for index, status in enumerate(('completed', 'failed', 'canceled'))]
@@ -397,11 +376,73 @@ class NativeSummaryContract(unittest.TestCase):
         source, identity = session_context.summary_source(row, turns)
         self.assertEqual([item['sequence'] for item in source['confirmedReplies']], [1])
         row['body']['contextCheckpoint'] = {**identity, 'summary': {'summary': 'Non-authoritative', 'topics': []}}
+        self.assertIn('failed original diagnostic', str(source['historicalMessages']))
+        turns.append({'id': 'current-unknown', 'sequence': 4, 'body': {'messages': [],
+            'status': 'unknown', 'terminal': False, 'toolResults': [{'effectKey': 'original-effect', 'status': 'UNKNOWN'}]}})
         for protected in (False, True):
             projected = json.loads(session_context.project(row, turns, protected=protected))
-            self.assertNotIn('result', projected['turns'][0])
-            self.assertEqual(projected['turns'][1]['result'], 'failed original diagnostic')
-            self.assertEqual(projected['turns'][2]['result'], 'canceled original diagnostic')
+            self.assertEqual(len(projected['turns']), 1)
+            self.assertEqual(projected['turns'][0]['effects'], [{'effectKey': 'original-effect', 'status': 'UNKNOWN'}])
+        self.assertIn('failed original diagnostic', session_context.project(row, turns, raw=True))
+
+    def test_long_history_and_source_catalog_do_not_fill_current_protected_context(self):
+        row = {'body': {'goal': 'Current goal', 'boundaries': 'No network',
+                        'sharedSourceIds': ['old-source-' + str(index) for index in range(1000)]}}
+        turns = [{'id': str(index), 'sequence': index + 1, 'body': {'messages': [
+            {'id': 'message-' + str(index), 'kind': 'instruction', 'text': 'historical ' * 200},
+            {'id': 'correction-' + str(index), 'kind': 'correction', 'text': 'Prior constraint ' + str(index)}],
+            'terminal': True, 'status': 'completed', 'result': 'old observed result'}} for index in range(30)]
+        current = {'id': 'current', 'sequence': 31, 'body': {'messages': [
+            {'id': 'new-instruction', 'kind': 'instruction', 'text': 'Continue the authorized work'},
+            {'id': 'latest', 'kind': 'correction', 'text': 'Preserve the public API'}],
+            'sharedSourceIds': ['current-source'], 'status': 'reserved', 'terminal': False}}
+        packet, pending = session_context.prepare(row, turns, prospective=current)
+        self.assertLessEqual(len(packet), 12000)
+        self.assertEqual(json.loads(packet)['latestCorrection']['text'], 'Preserve the public API')
+        self.assertEqual(json.loads(packet)['sharedSourceIds'], ['current-source'])
+        self.assertEqual(pending['projectionVersion'], 2)
+        source, identity = session_context.summary_source(row, turns)
+        self.assertGreater(len(session_context.canonical(source)), 48000)
+        self.assertEqual(len(source['historicalMessages']), 30)
+        row['body']['contextCheckpoint'] = {**identity, 'summary': {'summary': 'Background only', 'topics': []}}
+        projected = json.loads(session_context.project(row, [*turns, current]))
+        self.assertEqual([item['turnId'] for item in projected['turns']], ['current'])
+        self.assertTrue(projected['summary']['nonAuthoritative'])
+        self.assertEqual(len(turns), 30)
+
+    def test_active_constraints_and_legacy_source_ids_are_kept_exact(self):
+        row = {'body': {'goal': 'Current goal', 'boundaries': 'Owner boundary', 'sharedSourceIds': ['legacy-source']}}
+        turns = [{'id': 'active', 'sequence': 1, 'body': {'messages': [
+            {'id': 'first', 'kind': 'correction', 'text': 'Never use GPU'},
+            {'id': 'second', 'kind': 'correction', 'text': 'Report first'}], 'terminal': False, 'status': 'running'}}]
+        for protected in (False, True):
+            packet = json.loads(session_context.project(row, turns, protected=protected))
+            self.assertEqual(packet['sharedSourceIds'], ['legacy-source'])
+            self.assertEqual(packet['turns'][0]['messages'][0]['text'], 'Never use GPU')
+            self.assertEqual(packet['latestCorrection']['text'], 'Report first')
+        turns[0]['body'].update(terminal=True, status='completed', result='Reported A')
+        turns.append({'id': 'new-user-turn', 'sequence': 2, 'body': {'messages': [
+            {'id': 'new-instruction', 'kind': 'instruction', 'text': 'Now report B'}],
+            'sharedSourceIds': [], 'terminal': False, 'status': 'reserved'}})
+        packet = json.loads(session_context.project(row, turns, protected=True))
+        self.assertEqual(packet['latestCorrection']['turnId'], 'active')
+        self.assertEqual(packet['latestCorrection']['sequence'], 1)
+        self.assertEqual(packet['turns'][0]['sequence'], 2)
+        self.assertEqual(packet['turns'][0]['messages'][0]['text'], 'Now report B')
+
+    def test_legacy_pending_summary_keeps_original_source_fingerprint(self):
+        row = {'body': {'goal': 'Current', 'boundaries': 'Stop safely', 'sharedSourceIds': []}}
+        turns = [{'id': 'old', 'sequence': 1, 'body': {'messages': [
+            {'id': 'instruction', 'kind': 'instruction', 'text': 'Original request'}],
+            'terminal': True, 'status': 'completed', 'result': 'Original reply'}}]
+        source, identity = session_context.summary_source(row, turns, version=1)
+        self.assertEqual(source, {'previousSummary': None, 'confirmedReplies': [{'sequence': 1, 'text': 'Original reply'}]})
+        self.assertNotIn('projectionVersion', identity)
+        self.assertEqual(identity['sourceDigest'], session_context.digest(source))
+        row['body']['contextCheckpoint'] = {**identity, 'summary': {'summary': 'Legacy replies only', 'topics': []}}
+        upgraded, updated_identity = session_context.summary_source(row, turns)
+        self.assertEqual(upgraded['historicalMessages'][0]['messages'][0]['text'], 'Original request')
+        self.assertEqual(updated_identity['projectionVersion'], 2)
 
     def test_native_wrapper_consumes_only_exact_json_object_and_rejects_tool_arguments(self):
         provider = Mock()

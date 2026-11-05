@@ -61,6 +61,12 @@ limits its own subtree. Charges persist across restarts; reusing the same native
 call ID does not charge again, while changing its tool conflicts. This free
 synthetic runtime makes no claim about paid token/cost accounting.
 
+Each ancestor's `maxChildren` counts descendants in that ancestor's own subtree,
+including unresolved intents. `maxDepth` retains the saved root-relative meaning:
+the prospective child's absolute depth must fit every ancestor's ceiling. Preview
+and creation apply these same limits; a wider root cannot override a narrower
+intermediate plan. Existing saved budgets are not rewritten.
+
 A PostgreSQL root advisory lock serializes creation, budget charging and cascade
 intent. The lock covers committed metadata phases and is released before native
 HTTP. A persisted, fingerprinted intent precedes Store reservation; the child

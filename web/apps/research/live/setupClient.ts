@@ -5,6 +5,7 @@ export interface SetupConnection { ref: string; registrationRef: string; kind: s
 export interface SetupRequirement { name: string; kind: string; requiredCapabilities: string[] }
 export interface SetupCandidates {
   workflowPin: { kind: 'workflow'; id: string; revision: string; sha256: string };
+  qaMinimumToolCalls?: number | null;
   models: { reference: string; provider: string; model: string; available: boolean; connectionRef?: string }[];
   connections: SetupConnection[];
   environments: { adapterId: string; revision: string; connectionKind: string | null; requiredCapabilities: string[] }[];

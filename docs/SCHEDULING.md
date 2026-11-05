@@ -167,6 +167,20 @@ create or native write. GET recovery can repair only metadata for that exact
 already-committed native row; if no authoritative native result exists, the command
 remains UNKNOWN. It does not guess failure, adopt a same-name row or replay effects.
 
+`GET commands/{requestId}` identifies a completed original command with `ownerId`,
+`scheduleId`, `commandId` and `commandStatus: "complete"`. When the current schedule
+is readable, its existing fields remain at the top level. If its projection returns
+404 or 409, the response contains only those command fields plus `schedule: null`.
+For example, A's completed edit remains confirmed while B's later edit is UNKNOWN.
+The browser settles A's pending pointer, keeps editing disabled until current state
+can be read, and does not modify or replay B. Authorization failures and unavailable
+services (403/503) still fail; they do not return a completion fallback.
+
+A direct write response carries `X-Factory-Command-Rejected: true` only for a known
+validation rejection before its durable intent. This settles that browser pointer.
+An existing command, a native-write failure, or a missing recovery GET never supplies
+that proof; UNKNOWN requests retain their original identity.
+
 Editor CAS fingerprints include the stable definition, enabled state and monotonic
 editor revision, excluding natural clock/lease advancement. Old pending snapshots
 are re-read under the schedule lock before receipt repair so they cannot roll back

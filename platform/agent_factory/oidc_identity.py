@@ -21,9 +21,10 @@ import jwt
 from fastapi import HTTPException
 from starlette.responses import JSONResponse
 
+from .accounts import AccountCreate
+
 MAX_TOKEN_BYTES = 16384
 _KID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
-_OWNER = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}\Z")
 _B64 = re.compile(r"[A-Za-z0-9_-]+\Z")
 _REQUIRED = ("iss", "sub", "aud", "exp", "iat", "jti", "client_id")
 
@@ -101,8 +102,8 @@ class OIDCIdentityConfig:
             _require(isinstance(self.subject_owners, Mapping) and 1 <= len(self.subject_owners) <= 1024)
             owners = {}
             for pair, owner in self.subject_owners.items():
-                _require(type(pair) is tuple and len(pair) == 2 and pair[0] == self.issuer and _text(pair[1], 255)
-                         and type(owner) is str and _OWNER.fullmatch(owner) is not None and not owner.startswith("__"))
+                _require(type(pair) is tuple and len(pair) == 2 and pair[0] == self.issuer and _text(pair[1], 255))
+                AccountCreate(id=owner)
                 owners[pair] = owner
             object.__setattr__(self, "jwks", MappingProxyType({"keys": tuple(copied)}))
             object.__setattr__(self, "subject_owners", MappingProxyType(owners))

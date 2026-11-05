@@ -81,6 +81,16 @@ class PersonalToolTests(unittest.TestCase):
             'credentialRef': self.credential['credentialRef'],
             'credentialRevision': self.credential['credentialRevision'], 'requestId': 'http-configure', **changes}
 
+    def test_flat_tool_and_registration_lists_return_every_owned_resource(self):
+        for number in range(101):
+            last = self.configure(request_id='configure-' + str(number))
+        self.connections.personal_tools = self.service
+        self.assertEqual(len(self.service.list('alice')), 101)
+        self.assertEqual(len(self.connections.registrations('alice')), 101)
+        self.assertEqual(self.service.list('bob'), [])
+        self.assertIn('bind', self.service.inspect('alice', last['registrationRef'])['allowedActions'])
+        self.connections.bind('alice', last['registrationRef'], 'bind-last-tool')
+
     def test_configure_describe_list_and_binding_authorize_without_resolving_or_invoking(self):
         with patch.object(self.vault, 'authorize', wraps=self.vault.authorize) as authorize, \
                 patch.object(self.vault, 'resolve', side_effect=AssertionError('No secret resolution during setup')):

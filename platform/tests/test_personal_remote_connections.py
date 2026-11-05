@@ -97,6 +97,16 @@ class PersonalRemoteTests(unittest.TestCase):
         return self.service.bind("alice", verified["registrationRef"], uuid4().hex,
                                  capabilities=["runtime:health"])
 
+    def test_flat_remote_list_keeps_every_owned_resource_without_probing(self):
+        for _ in range(101):
+            last = self.create()
+        self.assertEqual(len(self.personal.list('alice')), 101)
+        self.assertEqual(self.personal.list('bob'), [])
+        self.assertEqual(self.probe.calls, [])
+        current = self.personal.verify('alice', last['registrationRef'], uuid4().hex)
+        self.assertIn('bind', current['allowedActions'])
+        self.service.bind('alice', last['registrationRef'], 'bind-last-remote')
+
     def registration(self, ref):
         calls = list(self.probe.calls)
         response = self.client.get('/api/factory/user-connections/registrations', headers={'x-fixture-owner': 'alice'})

@@ -563,7 +563,7 @@ class ApplicationService:
         with self.db.read() as conn:
             query = (select(self.states).where((self.states.c.author_id == actor) |
                      (self.states.c.state == "published"))
-                     .order_by(self.states.c.id, self.states.c.version.desc()).limit(100))
+                      .order_by(self.states.c.id, self.states.c.version.desc()))
             return [{"application": self._row(conn, row["id"], row["version"])[0], "governance": dict(row), "immutableBodyPreserved": True}
                     for row in conn.execute(query).mappings()]
 
@@ -571,7 +571,7 @@ class ApplicationService:
         self._require_read(actor)
         result = []
         with self.db.read() as conn:
-            for row in conn.execute(select(self.versions).order_by(self.versions.c.id, self.versions.c.version.desc()).limit(100)).mappings():
+            for row in conn.execute(select(self.versions).order_by(self.versions.c.id, self.versions.c.version.desc())).mappings():
                 try:
                     body, state = self._row(conn, row["id"], row["version"])
                     self._active(conn, body, state)

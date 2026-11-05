@@ -295,7 +295,7 @@ class ResearchSessionTools:
         # common descriptor's CPU/memory fields are not an OS sandbox claim.
         return EnvironmentLimits(runtime_id='research-session-host-v1',
             timeout_seconds=budget.get('operationSeconds', budget.get('experimentSeconds', 30)),
-            output_bytes=min(65536, budget.get('outputBytes', 65536)))
+            output_bytes=budget.get('outputBytes', 65536))
 
     def _workspace(self, execution):
         if self.workspace_root is None:
@@ -418,7 +418,8 @@ class ResearchSessionTools:
                 if len(json.dumps(output, ensure_ascii=False).encode()) > self._environment(binding).output_bytes:
                     if not mutating:
                         raise _rejected('RESEARCH_TOOL_OUTPUT_TOO_LARGE')
-                    raise ValueError('RESEARCH_TOOL_OUTPUT_TOO_LARGE')
+                    raise ToolInvocationError('RESEARCH_TOOL_OUTPUT_TOO_LARGE', outcome='unknown',
+                        stopped=name == 'research_run' and output.get('stopped') is True)
                 receipt = {'outcome': 'completed', 'output': output}
             except RunCancelledException:
                 if name not in MEMORY_WRITES:
@@ -566,6 +567,11 @@ class ResearchSessionTools:
 
     async def _run(self, workspace, values, guard, limits, execution):
         argv = values['argv']
+        output = {'argv': argv, 'cwd': values.get('cwd', '.'), 'exitCode': 0,
+                  'stdout': '', 'stderr': '', 'stopped': True}
+        output_bytes = limits.output_bytes - len(json.dumps(output, ensure_ascii=False).encode())
+        if output_bytes <= 0:
+            raise _rejected('RESEARCH_TOOL_OUTPUT_TOO_LARGE')
         if not argv[0] or '/' in argv[0] or '\\' in argv[0] or any('\0' in arg for arg in argv):
             raise _rejected('RESEARCH_COMMAND_INVALID')
         if sys.platform == 'win32':
@@ -601,14 +607,14 @@ class ResearchSessionTools:
                 result = await run_cli_process(executable=executable, argv=argv[1:], env=environment,
                     cwd=workspace.joinpath(*cwd_parts), stdin=b'',
                     timeout_seconds=min(limits.timeout_seconds, execution['limits']['operationSeconds']),
-                    max_output_bytes=min(MAX_TEXT, limits.output_bytes // 2), before_spawn=check, check_authorized=check)
+                    max_output_bytes=output_bytes, before_spawn=check, check_authorized=check)
                 stopped = result.stopped
             except CLIProcessError as error:
                 stopped = error.stopped
                 raise
-            return {'argv': argv, 'cwd': values.get('cwd', '.'), 'exitCode': result.returncode,
-                'stdout': result.stdout.decode(errors='replace'), 'stderr': result.stderr.decode(errors='replace'),
-                'stopped': result.stopped}
+            # The shared final JSON check also counts escaping and the actual exit code.
+            return {**output, 'exitCode': result.returncode, 'stdout': result.stdout.decode(errors='replace'),
+                    'stderr': result.stderr.decode(errors='replace'), 'stopped': result.stopped}
         finally:
             manager.__exit__(None, None, None)
             if stopped and root is not None:

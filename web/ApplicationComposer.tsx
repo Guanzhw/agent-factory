@@ -67,7 +67,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
   const [entryAvailable, setEntryAvailable] = useState(true);
   const [applications, setApplications] = useState<FactoryApplication[]>([]);
   const [connections, setConnections] = useState<UserConnection[]>([]);
-  const [applicationId, setApplicationId] = useState(seed?.applicationRef?.id ?? seed?.applicationId ?? '');
+  const [applicationId, setApplicationId] = useState(seed?.applicationRef ? refKey(seed.applicationRef) : seed?.applicationId ?? '');
   const [mode, setMode] = useState(seed?.mode ?? '');
   const [pinnedApplication, setPinnedApplication] = useState(seed?.applicationRef);
   const [goal, setGoal] = useState(seed?.goal ?? '');
@@ -90,7 +90,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
   const [refresh, setRefresh] = useState(0);
   const uncertainRevision = useRef<{ id?: string; input: CompositionInput; requestId: string } | undefined>(undefined);
   const keys = useCommandKeys(user.id);
-  const application = applications.find(item => item.id === applicationId && (!pinnedApplication || refKey(item) === refKey(pinnedApplication)));
+  const application = applications.find(item => (refKey(item) === applicationId || item.id === applicationId) && (!pinnedApplication || refKey(item) === refKey(pinnedApplication)));
   const applicationStale = !!pinnedApplication && !application;
   const selectedMode = application?.modes[mode || application.defaultMode];
   const inputError = selectedMode?.inputSchema ? inputValuesError(selectedMode.inputSchema, inputValues) : '';
@@ -132,14 +132,14 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
       const value = recovered.proposal;
       rememberProposal(value); uncertainRevision.current = undefined;
       setProposal(value); setPlan(recovered.plan ?? undefined); setExecutionAllowed(false);
-      setPinnedApplication(undefined); setGoal(value.candidate.normalizedGoal); setSourceRef(value.input.sourceSnapshotRef); setApplicationId(value.candidate.application); setMode(value.candidate.mode);
+      setPinnedApplication(undefined); setGoal(value.candidate.normalizedGoal); setSourceRef(value.input.sourceSnapshotRef); setApplicationId(refKey(value.candidate.applicationRef)); setMode(value.candidate.mode);
       setChoices(value.input.materialChoices ?? {}); setConnectionRefs(value.input.connectionRefs ?? {}); setInputValues(value.input.inputValues ?? {});
       setRefresh(n => n + 1);
     });
   }
-  function selectApplication(id: string) {
-    const selected = applications.find(item => item.id === id);
-    setApplicationId(id); setMode(selected?.defaultMode ?? ''); setChoices({}); setConnectionRefs({}); setInputValues({});
+  function selectApplication(key: string) {
+    const selected = applications.find(item => refKey(item) === key);
+    setApplicationId(key); setMode(selected?.defaultMode ?? ''); setChoices({}); setConnectionRefs({}); setInputValues({});
   }
   function input(): CompositionInput {
     return { goal: goal.trim(), ...(sourceRef ? { sourceSnapshotRef: sourceRef } : {}), ...(application ? { application: application.id, applicationRef: { id: application.id, version: application.version, sha256: application.sha256 }, mode: mode || application.defaultMode } : {}), materialChoices: choices, connectionRefs, ...(selectedMode?.inputSchema ? { inputValues: applicationInputValues(selectedMode.inputSchema, inputValues) } : {}) };
@@ -149,7 +149,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
     if (needsMatch) {
       await act('match-template', async () => {
         const matched = await api.matchTemplate(goal.trim());
-        setApplications([matched]); setApplicationId(matched.id); setMode(matched.defaultMode);
+        setApplications([matched]); setApplicationId(refKey(matched)); setMode(matched.defaultMode);
         setPinnedApplication({ id: matched.id, version: matched.version, sha256: matched.sha256 });
         setEntryAvailable(true);
       });
@@ -170,7 +170,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
         throw error;
       }
       rememberProposal(saved); key.acknowledged(); uncertainRevision.current = undefined; setProposal(saved); setPlan(undefined); setExecutionAllowed(false);
-      setApplicationId(saved.candidate.application); setMode(saved.candidate.mode);
+      setApplicationId(refKey(saved.candidate.applicationRef)); setMode(saved.candidate.mode);
       setChoices(saved.input.materialChoices ?? {}); setConnectionRefs(saved.input.connectionRefs ?? {}); setInputValues(saved.input.inputValues ?? {});
     });
   }
@@ -193,7 +193,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
     if (!ready || !plan || plan.status !== 'ready' || !executionAllowed || !bindingsCurrent || !targetSupported || plan.usageBudget !== undefined && !usageCommitment(plan.usageBudget)) return;
     await act('instantiate', async () => { const key = await keys('instantiate', { planId: plan.id, executionTargetRef: target || null }); try { const job = await api.instantiate(plan.id, key.requestId, target || undefined); onCreated(job.id); } catch (e) { setRefresh(n => n + 1); throw e; } });
   }
-  function startAgain() { if (busy || uncertainRevision.current) return; setPinnedApplication(template ? seed?.applicationRef : undefined); setApplicationId(template ? seed?.applicationRef?.id ?? '' : applicationId); setMode(template ? seed?.mode ?? '' : mode); rememberProposal(); setProposal(undefined); setPlan(undefined); setExecutionAllowed(false); setGoal(''); setSourceRef(undefined); setChoices({}); setConnectionRefs({}); setInputValues({}); uncertainRevision.current = undefined; }
+  function startAgain() { if (busy || uncertainRevision.current) return; setPinnedApplication(template ? seed?.applicationRef : undefined); setApplicationId(template ? seed?.applicationRef ? refKey(seed.applicationRef) : '' : applicationId); setMode(template ? seed?.mode ?? '' : mode); rememberProposal(); setProposal(undefined); setPlan(undefined); setExecutionAllowed(false); setGoal(''); setSourceRef(undefined); setChoices({}); setConnectionRefs({}); setInputValues({}); uncertainRevision.current = undefined; }
   const candidate = proposal?.candidate;
   const usageVerified = plan?.usageBudget === undefined || !!usageCommitment(plan.usageBudget);
   const bound = plan?.bindingManifest?.connections;
@@ -223,7 +223,7 @@ export function ApplicationComposer({ user, busy, act, materials, targets, onCre
       {uncertainRevision.current && <p className="policy-note">原装配请求未确认，输入已锁定。重试保持同一请求；刷新后请从提案历史核对原记录。</p>}
       <form onSubmit={event => { event.preventDefault(); void createOrRevise(); }}>
         {template ? <p className="state-note">{application ? `使用 ${application.name} · v${application.version}` : '根据目标自动匹配已发布模板；预览后可核对匹配结果。'}</p> : <><label htmlFor="application-selector">1. 选择应用</label>
-        <select id="application-selector" value={applicationId} disabled={!!pinnedApplication || !!busy || !!uncertainRevision.current || accepted || !ready || !!proposal && !pending} onChange={event => selectApplication(event.target.value)}><option value="">根据任务自动匹配已发布应用</option>{applications.map(item => <option key={refKey(item)} value={item.id}>{item.name} · v{item.version}</option>)}</select>
+        <select id="application-selector" value={application ? refKey(application) : ''} disabled={!!pinnedApplication || !!busy || !!uncertainRevision.current || accepted || !ready || !!proposal && !pending} onChange={event => selectApplication(event.target.value)}><option value="">根据任务自动匹配已发布应用</option>{applications.map(item => <option key={refKey(item)} value={refKey(item)}>{item.name} · v{item.version}</option>)}</select>
         {application && <p className="quiet">{application.description}</p>}</>}
         <label htmlFor="task-goal">2. 描述任务</label>
         <textarea id="task-goal" rows={4} value={goal} disabled={!!pinnedApplication && !template || !!sourceRef || !!busy || !!uncertainRevision.current || accepted || !!proposal && !pending} onChange={event => setGoal(event.target.value)} placeholder="例如：比较两种方法的公开证据，列出差异、来源和待验证的问题。" required maxLength={2000}/>

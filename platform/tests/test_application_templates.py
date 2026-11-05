@@ -123,6 +123,16 @@ class ApplicationTemplateTests(ApplicationCompositionFixture):
         self.assertEqual(selection['method'], 'approved-keyword-selection-v1')
         self.assertEqual(self.composition.match_template('alice', 'text audit'), chosen)
 
+    def test_flat_catalog_and_explicit_id_survive_more_than_one_hundred_drafts(self):
+        self.seed_pages()
+        selected = 'z-template-104'
+        self.assertIn(selected, {app['id'] for app in self.applications.list_active('alice')})
+        self.assertIn(selected, {item['application']['id']
+            for item in self.applications.list_definitions('alice')})
+        plan = self.composition.create_plan('alice', 'Text audit selected application', 'literature',
+            application=selected)
+        self.assertEqual(plan['applicationRef']['id'], selected)
+
     def test_pages_order_versions_and_withdrawal_is_not_a_snapshot(self):
         first = self.publish()
         revised = self.applications.revise('manager', first['id'], 1, app_definition(self.store), 'revise-page')

@@ -83,6 +83,7 @@ class ResearchQA:
             if self.associations is not None:
                 delivery = self.associations.events.delivery_for_task(ctx.user_id, ctx.session_id)
                 if delivery is not None:
+                    self.assistants.require_question_budget(ctx.user_id, message['endpointId'], ctx.session_id)
                     return self.associations.context(ctx, message, delivery)
             saved = self.messages.read(ctx.user_id, message['messageId'])['reply']
             row = conn.execute(select(self.inputs).where(self.inputs.c.task_id == ctx.session_id)).mappings().first()
@@ -96,6 +97,7 @@ class ResearchQA:
                     raise HTTPException(403, 'RESEARCH_QA_REPLY_SOURCE_UNAVAILABLE')
                 return {'savedReply': self.messages.reply_for_task(ctx.user_id, ctx.session_id,
                     saved['text'], content_ids=row['content_ids'])}
+            self.assistants.require_question_budget(ctx.user_id, message['endpointId'], ctx.session_id)
             if row is None:
                 sources = self._select(message)
                 conn.execute(self.inputs.insert().values(task_id=ctx.session_id, owner_id=ctx.user_id,

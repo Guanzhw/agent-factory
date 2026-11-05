@@ -79,7 +79,8 @@ class SSHPersonalTargetTests(unittest.TestCase):
         self.resources = SimpleNamespace(auth=None, register_target=Mock())
         self.server = SimpleNamespace(validate=lambda: None, host_key='synthetic-host-key', name='selected',
             allowed_root='/private/runs', pin=lambda: 'd' * 64)
-        self.personal = SimpleNamespace(server=Mock(return_value=self.server), lease=Mock())
+        self.personal = SimpleNamespace(server=Mock(return_value=self.server), lease=Mock(),
+            _cleanup_lease=Mock(), _original_servers=Mock(return_value=[self.server]))
         self.runtime = SSHOperationRuntime(self.store, self.resources, self.personal, {'fixed': self.profile})
         self.task = {'id': 'child', 'run_id': 'native-run', 'owner_id': 'alice',
                      'plan_id': 'plan', 'request_id': 'request'}
@@ -92,8 +93,11 @@ class SSHPersonalTargetTests(unittest.TestCase):
             expected_adapter_ref='owner-ssh-server-v1')
         self.personal.server.assert_called_once_with('alice', 'personal-server', required_capability='ssh:execute')
         target = self.resources.register_target.call_args.args[1]
-        target.provider.exchange.lease_for('inspect')
+        target.provider.exchange.lease_for('submit')
         self.personal.lease.assert_called_once_with(self.server, required_capability='ssh:execute')
+        for action in ('inspect', 'cancel', 'reclaim', 'output'):
+            target.provider.exchange.lease_for(action)
+        self.assertEqual(self.personal._cleanup_lease.call_count, 4)
         self.assertEqual(target.owners, frozenset({'alice'}))
         self.assertEqual(self.resources.register_target.call_args.args[0], ref)
         self.assertNotEqual(ref, self.runtime.ensure_target({**self.task, 'owner_id': 'bob'}, {}))
@@ -158,24 +162,56 @@ class SSHPersonalTargetTests(unittest.TestCase):
         from agent_factory.store import digest
         self.input_profile()
         values = {'condition': 'original'}
-        reference = self.runtime.ensure_target(self.task, {}, values)
+        plan = {'delegation': {'parentTaskId': 'original-parent'}}
+        reference = self.runtime.ensure_target(self.task, plan, values)
         original_input = {'targetRef': reference, 'callId': 'call-1', 'inputs': values}
         operation = {'adapterPin': self.runtime.pin, 'taskId': self.task['id'],
                      'nativeRunId': self.task['run_id'], 'inputs': original_input,
                      'inputsSha256': digest(original_input)}
         lease = {'connectionRef': reference, 'executionEffect': self.runtime.effect_key,
             'localTaskId': self.task['id'], 'planId': 'plan', 'nativeRunId': self.task['run_id'],
-            'planHash': digest({}), 'executionGuard': {'operationId': 'operation'}}
+            'planHash': digest(plan), 'executionGuard': {'operationId': 'operation'}}
+        from agent_factory.resources import PersistentResourceService
+        self.resources._target_fingerprint = PersistentResourceService._target_fingerprint
         self.store.sql = Mock(return_value=[{'body': lease}])
-        self.store.task, self.store.plan = Mock(return_value=self.task), Mock(return_value={})
+        self.store.task, self.store.plan = Mock(return_value=self.task), Mock(return_value=plan)
         self.store.workflow = SimpleNamespace(_load=Mock(return_value=operation), _identity=Mock())
         self.resources._body = lambda value: value
         target = self.resources.register_target.call_args.args[1]
+        lease['targetFingerprint'] = self.resources._target_fingerprint(target)
         self.resources.targets = {reference: target}
+        self.connections.preflight.side_effect = PermissionError('execution revoked')
+        self.personal.server.side_effect = PermissionError('member disabled')
+        self.store.remote_bindings = SimpleNamespace(historical_manifest=Mock(return_value={'tools': [self.spec]}))
+        self.store.execution_bindings.manifest.side_effect = PermissionError('current receiver binding unavailable')
         self.assertIs(self.runtime.restore_target('alice', reference), target)
+        self.store.remote_bindings.historical_manifest.assert_called_once()
         recovered = self.resources.register_target.call_args.args[1]
         self.assertEqual(recovered.provider.spec.argv, target.provider.spec.argv)
+        recovered.provider.exchange.lease_for('cancel')
+        self.personal._cleanup_lease.assert_called_once_with(self.server)
+        self.assertEqual(self.connections.preflight.call_count, 1)
         operation['inputs']['inputs'] = {'condition': 'replacement'}
+        before = self.resources.register_target.call_count
+        with self.assertRaises(HTTPException):
+            self.runtime.restore_target('alice', reference)
+        self.assertEqual(self.resources.register_target.call_count, before)
+
+    def test_restore_rejects_replacement_target_before_registering(self):
+        from agent_factory.resources import PersistentResourceService
+        from agent_factory.store import digest
+        reference = self.runtime.ensure_target(self.task, {})
+        inputs = {'targetRef': reference, 'callId': 'original-call', 'inputs': {}}
+        self.store.sql = Mock(return_value=[{'body': {'connectionRef': reference,
+            'executionEffect': self.runtime.effect_key, 'localTaskId': self.task['id'], 'planId': 'plan',
+            'nativeRunId': self.task['run_id'], 'planHash': digest({}), 'targetFingerprint': 'f' * 64,
+            'executionGuard': {'operationId': 'original-operation'}}}])
+        self.store.task, self.store.plan = Mock(return_value=self.task), Mock(return_value={})
+        self.store.workflow = SimpleNamespace(_load=Mock(return_value={'adapterPin': self.runtime.pin,
+            'taskId': self.task['id'], 'nativeRunId': self.task['run_id'], 'inputs': inputs,
+            'inputsSha256': digest(inputs)}), _identity=Mock())
+        self.resources._body = lambda value: value
+        self.resources._target_fingerprint = PersistentResourceService._target_fingerprint
         before = self.resources.register_target.call_count
         with self.assertRaises(HTTPException):
             self.runtime.restore_target('alice', reference)

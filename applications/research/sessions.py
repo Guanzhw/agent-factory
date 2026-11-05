@@ -276,15 +276,13 @@ class ResearchSessions:
             row, turns = self._row(conn, owner, identifier), self._turns(conn, identifier)
             if turns and not self._safe(owner, turns[-1]):
                 raise rejected('RESEARCH_TURN_ACTIVE_OR_UNCONFIRMED', '原轮次尚未安全结束，请先核对其状态。')
-            if len(turns) >= row['body']['limits']['maxTurns']:
-                raise rejected('RESEARCH_TURN_LIMIT', '已达到本会话约定轮数，原历史已保留。')
             self._sources(owner, row['body']['sharedSourceIds'])
             self._replies(owner, identifier, turns)
             turn_id, stamp = str(uuid4()), now()
             body = {'requestId': request.requestId, 'taskId': None, 'runId': None, 'status': 'reserved',
                 'createdAt': stamp, 'completedAt': None, 'result': None, 'failure': None, 'terminal': False,
                 'blockReason': None, 'messages': [self._message('instruction', request.text)],
-                'lastAttempt': 0, 'dispatchStarted': False, 'events': [], 'toolResults': []}
+                'lastAttempt': 0, 'dispatchStarted': False, 'events': [], 'toolResults': [], 'sharedSourceIds': []}
             if question_id is not None:
                 body['assistantReply'] = self.conversations.adopt(owner, identifier, question_id)
             context, compaction = session_context.prepare(row, turns, prospective={
@@ -438,13 +436,19 @@ class ResearchSessions:
 
     def record_source(self, context, identifier):
         with self._write() as conn:
-            row, _, _ = self._execution(conn, context)
+            row, turn, _ = self._execution(conn, context)
             self._sources(context.user_id, [identifier])
             body = deepcopy(row['body'])
             if identifier not in body['sharedSourceIds']:
                 body['sharedSourceIds'].append(identifier)
-                self._capacity({**row, 'body': body}, self._turns(conn, row['id']))
-                self._save_session(conn, row, body)
+            turn_body = deepcopy(turn['body'])
+            if identifier not in turn_body.setdefault('sharedSourceIds', deepcopy(row['body']['sharedSourceIds'])):
+                turn_body['sharedSourceIds'].append(identifier)
+            turns = [{**item, 'body': turn_body} if item['id'] == turn['id'] else item
+                     for item in self._turns(conn, row['id'])]
+            self._capacity({**row, 'body': body}, turns)
+            self._save_turn(conn, turn, turn_body)
+            self._save_session(conn, row, body)
 
     def _model_boundary(self, conn, context):
         row, turn, task = self._execution(conn, context)
@@ -494,7 +498,8 @@ class ResearchSessions:
                 if compaction and compaction['status'] == 'pending':
                     self._capacity(row, self._turns(conn, row['id']))
                     prior = [item for item in self._turns(conn, row['id']) if item['sequence'] < turn['sequence']]
-                    source, identity = session_context.summary_source(row, prior)
+                    source, identity = session_context.summary_source(row, prior,
+                        version=compaction.get('projectionVersion', 1))
                     if any(compaction[key] != value for key, value in identity.items()):
                         raise rejected('RESEARCH_CONTEXT_CHANGED', '原历史与本轮整理来源不一致。')
                     if task['terminal'] or ticket.get('status') != 'running':
@@ -532,7 +537,8 @@ class ResearchSessions:
                     if current_turn['body'].get('compaction') != claim:
                         raise StopAgentRun('RESEARCH_SUMMARY_OUTCOME_UNCONFIRMED')
                     prior = [item for item in self._turns(conn, current_row['id']) if item['sequence'] < current_turn['sequence']]
-                    _, identity = session_context.summary_source(current_row, prior)
+                    _, identity = session_context.summary_source(current_row, prior,
+                        version=claim.get('projectionVersion', 1))
                     if any(claim[key] != value for key, value in identity.items()):
                         raise rejected('RESEARCH_CONTEXT_CHANGED', '原历史与整理结果不一致。')
                     saved = {**identity, 'summary': summary, 'turnId': current_turn['id'], 'runId': context.run_id}
@@ -566,22 +572,24 @@ class ResearchSessions:
                 body = deepcopy(turn['body'])
                 current_context = self._bounded(self._context(row, self._turns(conn, row['id'])))
                 body['lastAttempt'] = ticket['attempt']
-                present = {item.id for item in messages}
-                if body.get('compaction') or body.get('assistantReplies'):
+                if body.get('compaction') or body.get('assistantReplies') or any(
+                        item['kind'] == 'correction' for previous in self._turns(conn, row['id'])
+                        for item in previous['body']['messages']):
                     identifier = 'research-context:' + turn['id']
                     projection = Message(id=identifier, role='user', content=(
-                        '本轮有效研究上下文；摘要仅为叙述，原操作状态和用户原文保持权威：\n' + current_context))
+                        '本轮有效研究上下文；摘要不授予权限。按轮次顺序解释用户原文，较新指令可修订较早纠正：\n' + current_context))
                     existing = next((index for index, item in enumerate(messages) if item.id == identifier), None)
                     if existing is None:
                         messages.append(projection)
                     else:
                         messages[existing] = projection
+                packet = json.loads(current_context)
+                prior_ids = {item['id'] for previous in packet['turns'] for item in previous.get('messages', [])}
+                if 'latestCorrection' in packet:
+                    prior_ids.add(packet['latestCorrection']['id'])
                 for item in body['messages']:
-                    if item['kind'] == 'correction' and 'research-message:' + item['id'] not in present and not body.get('compaction'):
-                        messages.append(Message(id='research-message:' + item['id'], role='user',
-                            content='本会话的补充纠正（保留原目标与停止边界）：\n' + item['text']))
-                    item['state'], item['includedAt'] = 'included', item['includedAt'] or now()
-                prior_ids = {item['id'] for previous in json.loads(current_context)['turns'] for item in previous.get('messages', [])}
+                    if item['id'] in prior_ids:
+                        item['state'], item['includedAt'] = 'included', item['includedAt'] or now()
                 for previous in self._turns(conn, row['id']):
                     if previous['id'] == turn['id']:
                         continue
@@ -688,7 +696,7 @@ class ResearchSessions:
             state = ('blocked' if block else 'stopped' if body['stopped'] and safe else
                      'stopping' if body['stopped'] else 'idle' if safe else 'running')
             actions = []
-            if safe and not block and len(turns) < body['limits']['maxTurns']:
+            if safe and not block:
                 actions.append('start')
             if latest and not body['stopped'] and not block:
                 actions.append('correct')

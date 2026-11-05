@@ -63,6 +63,15 @@ class RSAFixture:
 
 
 class OIDCVerifierTests(RSAFixture, unittest.TestCase):
+    def test_owner_mapping_uses_the_account_identifier_contract(self):
+        for owner in ('alice@example.com', 'sk-alice'):
+            with self.subTest(owner=owner):
+                config = self.config(subject_owners={(ISSUER, 'subject-123'): owner})
+                self.assertEqual(self.verify(self.token(), config).owner_id, owner)
+        for owner in ('', '__internal', 'bad id', 'factory-manager', 'a' * 129):
+            with self.subTest(owner=owner), self.assertRaises(OIDCIdentityError):
+                self.config(subject_owners={(ISSUER, 'subject-123'): owner})
+
     def test_valid_access_token_maps_only_fixed_issuer_subject_owner(self):
         identity = self.verify(self.token(self.claims(roles=["agent_os:admin"], scope="all", owner="mallory")))
         self.assertEqual(identity.owner_id, "alice")

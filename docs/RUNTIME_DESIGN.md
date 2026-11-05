@@ -39,6 +39,12 @@ Child tickets share persisted root and ancestor tool budgets, plus a four-descen
 
 Scheduling composes Agno SchedulePoller with a guarded public executor interface, while AgentOS scheduler=False disables its unguarded executor. Native schedule ingress is blocked. The owner-scoped wrapper accepts only an immutable top-level plan reference and cron/timezone; occurrence receipts enter the same Store/native queue admission. Native polling and queue ownership remain upstream. See SCHEDULING.md for tested recovery and remaining lease/restart acceptance.
 
+Worker concurrency defaults to two and accepts any positive operator-selected
+integer; the same configured capacity reaches the native queue and schedule
+poller. Task/resource reservations remain independent admission budgets. Both
+official launchers share the existing 35-second process shutdown policy; see
+[SHUTDOWN.md](SHUTDOWN.md) for exit behavior and portable checks.
+
 Material governance separates immutable content from publication state and review
 receipts. The default requires a distinct current administrator. Catalog discovery,
 admission, native tools and delegated ancestor guards require current approved

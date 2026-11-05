@@ -462,6 +462,25 @@ class ResearchSessionContracts(unittest.TestCase):
             self.before([Message(role='user', content='original')])
         self.assertEqual(error.exception.detail['code'], 'RESEARCH_SOURCE_UNAVAILABLE')
 
+    def test_legacy_active_turn_keeps_existing_sources_when_a_new_source_is_read(self):
+        self.reserved()
+        sources = [self.service.content.publish('bob', ContentPublication(
+            source={'application': 'research', 'record': 'legacy-source-' + str(index), 'revision': '1'},
+            content={'finding': 'observed ' + str(index)}, visibility='team'), 'publish-legacy-source-' + str(index))
+            for index in range(2)]
+        self.service.record_source(self.context, sources[0]['id'])
+        with self.service._write() as conn:
+            turn = self.service._turns(conn, self.identifier)[0]
+            body = deepcopy(turn['body'])
+            body.pop('sharedSourceIds')
+            self.service._save_turn(conn, turn, body)
+        self.service.record_source(self.context, sources[1]['id'])
+        with self.service.db.read() as conn:
+            row = self.service._row(conn, 'alice', self.identifier)
+            turns = self.service._turns(conn, self.identifier)
+        self.assertEqual(turns[0]['body']['sharedSourceIds'], [source['id'] for source in sources])
+        self.assertEqual(row['body']['sharedSourceIds'], [source['id'] for source in sources])
+
     def test_context_capacity_rejects_without_new_task_or_silent_truncation(self):
         with self.service.db.write() as conn:
             row = self.service._row(conn, 'alice', self.identifier)

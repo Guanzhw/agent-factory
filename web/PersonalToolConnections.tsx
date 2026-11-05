@@ -16,6 +16,8 @@ type Revoke = { action: 'revoke'; owner: string; requestId: string; registration
 type Command = Setup | Revoke;
 const identifier = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_.:@-]{1,200}$/.test(value);
 const statusNames: Record<string, string> = { configured: '配置可用', revoked: '已撤销', unavailable: '当前不可用', credential_unavailable: '凭据不可用', adapter_changed: '工具版本已变化' };
+const bindingRejected = (error: unknown) => error instanceof ToolConnectionError && error.status === 409
+  && ['PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE', 'PERSONAL_TOOL_REVOKED', 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE', 'PERSONAL_TOOL_ADAPTER_CHANGED'].includes(error.code ?? '');
 
 function credential(value: PersonalCredential): PersonalCredential {
   if (!value || ![value.credentialRef, value.credentialRevision, value.providerId].every(identifier)
@@ -124,9 +126,7 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
         || tool.capabilities.length !== s.capabilities.length || s.capabilities.some(c => !tool.capabilities.includes(c))) throw new Error('Tool binding scope changed');
   }
   async function post<T>(command: Command, write: () => Promise<T>): Promise<T> {
-    await verifyOwner();
-    // A failed identity check or unmount is still a known unsent step. Mark it
-    // only immediately before calling the write, after all async preflight.
+    // The request itself checks the expected owner before any server write.
     if (!alive.current) throw new Error('Unmounted');
     retain({ ...command, dispatched: true });
     try { return await write(); }
@@ -182,8 +182,7 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
         // Only these direct bind POST responses prove that its precondition
         // failed before a binding/receipt was written. Never apply this to GET
         // recovery, unknown conflicts or an invalid/missing success response.
-        if (alive.current && failure instanceof ToolConnectionError && failure.status === 409
-            && ['PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE', 'PERSONAL_TOOL_REVOKED', 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE', 'PERSONAL_TOOL_ADAPTER_CHANGED'].includes(failure.code ?? '')) {
+        if (alive.current && bindingRejected(failure)) {
           release(s); setToken(''); setConsent(false); setCredentialRef(''); changed();
           setNotice('绑定请求已被明确拒绝。已保存的工具配置和原保存回执保留；没有重发绑定或更换凭据。'); return;
         }
@@ -335,11 +334,14 @@ function MemberToolSetup({ ownerId, credentials, providers, disabled, onChanged 
   }
   async function bind(tool: PersonalToolConnection, request: ResourceRequest) {
     if (!alive.current) return;
-    if ((await api.session()).id !== ownerId || !alive.current) throw new ToolConnectionError(403, 'EXPECTED_OWNER_MISMATCH');
     if (!tool.available) { retain(null); onChanged(); setMessage('工具配置已保存，当前不可用。'); return; }
     const next: ResourceRequest = { ...request, stage: 'bind', registrationRef: tool.registrationRef, capabilities: tool.capabilities };
     retain(next);
-    await personalToolConnectionApi.bind(ownerId, tool.registrationRef, request.bindRequestId, tool.capabilities);
+    try { await personalToolConnectionApi.bind(ownerId, tool.registrationRef, request.bindRequestId, tool.capabilities); }
+    catch (error) {
+      if (!bindingRejected(error)) throw error;
+      retain(null); onChanged(); setMessage('绑定请求已被明确拒绝。已保存的工具配置保留，请重新读取后选择。'); return;
+    }
     retain(null); onChanged(); if (alive.current) setMessage('工具已保存并绑定，可用于组件与工作流。');
   }
   function save() {
@@ -442,7 +444,7 @@ function ToolResourceActions({ ownerId, record, disabled, onChanged }: { ownerId
       localStorage.removeItem(storage); setPending(null); onChanged();
       setMessage(command.action === 'bind' ? '工具连接已核对。' : '共享设置已核对。');
     } catch (error) {
-      if (!original && error instanceof ToolConnectionError && [400, 401, 403, 404, 422].includes(error.status)) {
+      if (!original && error instanceof ToolConnectionError && ([400, 401, 403, 404, 422].includes(error.status) || bindingRejected(error))) {
         localStorage.removeItem(storage); setPending(null); setMessage('操作未被接受。');
       } else setMessage('原请求尚待核对。');
     } finally { lock.current = false; setBusy(false); }

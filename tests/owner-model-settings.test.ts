@@ -566,3 +566,20 @@ it('can restore the default output limit on a model with no credentials without 
   expect(personalRemoteApi.saveCredential).not.toHaveBeenCalled();
   expect(localStorage.getItem(storage)).toBeNull();
 });
+
+it('keeps a server-accepted Unicode endpoint through list, default selection and original receipt recovery', async () => {
+  vi.mocked(ownerModelApi.list).mockRestore(); vi.mocked(ownerModelApi.default).mockRestore(); vi.mocked(ownerModelApi.recover).mockRestore();
+  const configured = { ...row, baseURL: 'http://localhost:8000/模型/v1', credentialRef: null, credentialRevision: null };
+  const json = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } });
+  const fetch = vi.fn().mockResolvedValueOnce(json(Array.from({ length: 101 }, (_, index) => ({ ...configured, reference: `model-${index}` }))))
+    .mockResolvedValueOnce(json({ ...configured, isDefault: true }))
+    .mockResolvedValueOnce(json({ ownerId: 'alice', requestId: 'original-model', action: 'model.configure', result: configured, completedAt: row.updatedAt }));
+  vi.stubGlobal('fetch', fetch);
+  const list = await ownerModelApi.list('alice');
+  expect(list).toHaveLength(101); expect(list[100].baseURL).toBe(configured.baseURL);
+  expect((await ownerModelApi.default('alice', row.reference, 'choose-default')).baseURL).toBe(configured.baseURL);
+  expect((await ownerModelApi.recover('alice', 'original-model')).result.baseURL).toBe(configured.baseURL);
+  const setup: ModelSetup = { owner: 'alice', provider: configured.provider, baseURL: configured.baseURL, model: configured.model,
+    credentialRequest: 'request-credential', modelRequest: 'request-model', defaultRequest: 'request-default', stage: 'model', chooseDefault: true, noCredentials: true };
+  expect(readModelSetup(JSON.stringify(setup), 'alice')?.baseURL).toBe(configured.baseURL);
+});

@@ -66,7 +66,7 @@ class ApplicationEnvironments:
         self.auth.require_member(owner)
         with self.db.read() as conn:
             identifiers = conn.execute(select(self.environments.c.id).where(self.environments.c.owner_id == owner)
-                .order_by(self.environments.c.updated_at.desc()).limit(100)).scalars().all()
+                .order_by(self.environments.c.updated_at.desc())).scalars().all()
             return [self._public(self._row(conn, owner, identifier)) for identifier in identifiers]
 
     def _package(self, application, body):

@@ -5,7 +5,7 @@ import type { ResearchProject } from './types.js';
 const message = (error: unknown) => error instanceof Error ? error.message : '研究项目请求失败。';
 
 type SavedCommand = { action: string; body: { requestId: string } };
-export function useResearchCommand<Command extends SavedCommand, Result>(storageKey: string, actions: readonly string[], send: (command: Command) => Promise<Result>, onSuccess: (result: Result) => void) {
+export function useResearchCommand<Command extends SavedCommand, Result>(storageKey: string, actions: readonly string[], send: (command: Command) => Promise<Result>, onSuccess: (result: Result) => void, knownRejected?: (error: unknown) => boolean) {
   const [recovery] = useState(() => {
     try {
       const raw = window.sessionStorage.getItem(storageKey);
@@ -30,7 +30,7 @@ export function useResearchCommand<Command extends SavedCommand, Result>(storage
       const result = await send(command);
       if (active.current) { window.sessionStorage.removeItem(storageKey); setPending(null); onSuccess(result); }
     } catch (reason) {
-      let uncertain = pending !== null || !(reason instanceof ApiError) || reason.status === 0 || reason.status === 408 || reason.status >= 500 || reason.code === 'INVALID_RESPONSE';
+      let uncertain = !knownRejected?.(reason) && (pending !== null || !(reason instanceof ApiError) || reason.status === 0 || reason.status === 408 || reason.status >= 500 || reason.code === 'INVALID_RESPONSE');
       if (!uncertain) {
         try { window.sessionStorage.removeItem(storageKey); }
         catch { uncertain = true; }

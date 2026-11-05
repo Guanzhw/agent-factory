@@ -365,7 +365,7 @@ class ResearchCollaboration:
         body = {'requestId': request_id, 'taskId': None, 'runId': None, 'status': 'reserved',
             'createdAt': stamp, 'completedAt': None, 'result': None, 'failure': None, 'terminal': False,
             'blockReason': None, 'messages': [], 'lastAttempt': 0, 'dispatchStarted': False,
-            'events': [], 'toolResults': [], 'assistantReplies': [snapshot for _, snapshot in ready],
+            'events': [], 'toolResults': [], 'sharedSourceIds': [], 'assistantReplies': [snapshot for _, snapshot in ready],
             'continuation': {'questionIds': [intent['question_id'] for intent, _ in ready]},
             'collaborationEventId': event_id}
         turn = {'id': identifier, 'session_id': row['id'], 'owner_id': row['owner_id'],

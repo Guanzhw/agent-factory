@@ -1,4 +1,6 @@
 """Current native membership drive schedule writes and action projections."""
+from contextlib import nullcontext
+
 from fixture_auth import initialize_members
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -55,3 +57,54 @@ class ScheduleMemberPermissionTests(unittest.TestCase):
                     with self.assertRaises(HTTPException) as denied:
                         operation(owner)
                     self.assertEqual(denied.exception.status_code, 403)
+
+    def test_editor_marks_only_known_preintent_rejection(self):
+        self.service._lock = Mock(return_value=nullcontext())
+        self.service.db = Mock()
+        self.service._plan = Mock(side_effect=HTTPException(409, 'INACTIVE_APPLICATION'))
+        body = {'requestId': 'rejected-schedule', 'planId': self.plan['id'], 'name': 'Owned fixture',
+                'cron': '0 0 1 1 *', 'timezone': 'Etc/UTC'}
+        with self.assertRaises(HTTPException) as rejected:
+            self.management.mutate('alice', 'create', body)
+        self.assertEqual(rejected.exception.headers, {'X-Factory-Command-Rejected': 'true'})
+        self.assertFalse(any('INSERT INTO af_schedule_editor_commands' in call.args[0]
+                             for call in self.service.store.sql.call_args_list))
+        self.service.db.create_schedule.assert_not_called()
+        self.service._plan.side_effect = HTTPException(503, 'Directory unavailable')
+        with self.assertRaises(HTTPException) as unavailable:
+            self.management.mutate('alice', 'create', body)
+        self.assertIsNone(unavailable.exception.headers)
+
+    def test_native_editor_failure_stays_unknown_after_the_single_plan_check(self):
+        self.service._lock = Mock(return_value=nullcontext())
+        self.service._plan = Mock(return_value=self.plan)
+        self.service.db = Mock()
+        self.service.db.get_schedule_by_name.return_value = None
+        self.service.db.create_schedule.side_effect = HTTPException(409, 'INACTIVE_APPLICATION')
+        body = {'requestId': 'unknown-schedule', 'planId': self.plan['id'], 'name': 'Owned fixture',
+                'cron': '0 0 1 1 *', 'timezone': 'Etc/UTC'}
+        with self.assertRaises(HTTPException) as unknown:
+            self.management.mutate('alice', 'create', body)
+        self.assertEqual(unknown.exception.detail, 'SCHEDULE_EDITOR_UNKNOWN')
+        self.assertIsNone(unknown.exception.headers)
+        self.service._plan.assert_called_once_with(self.plan['id'], 'alice')
+        self.service.db.create_schedule.assert_called_once()
+        self.assertTrue(any('INSERT INTO af_schedule_editor_commands' in call.args[0]
+                            for call in self.service.store.sql.call_args_list))
+
+    def test_completed_command_recovers_without_touching_a_later_unknown_command(self):
+        commands = {'completed-a': {'request_id': 'completed-a', 'schedule_id': 'owned-schedule', 'status': 'complete'},
+                    'unknown-b': {'request_id': 'unknown-b', 'schedule_id': 'owned-schedule', 'status': 'pending'}}
+        self.service._lock = Mock(return_value=nullcontext())
+        self.service.store.sql.side_effect = lambda statement, **params: [commands[params['request']]]
+        self.management._project = Mock(side_effect=HTTPException(409, 'SCHEDULE_EDITOR_UNKNOWN'))
+        receipt = self.management.recover('alice', 'completed-a')
+        self.assertEqual(receipt, {'ownerId': 'alice', 'scheduleId': 'owned-schedule',
+            'commandId': 'completed-a', 'commandStatus': 'complete', 'schedule': None})
+        self.assertEqual(commands['unknown-b']['status'], 'pending')
+        self.assertTrue(all('SELECT' in call.args[0] for call in self.service.store.sql.call_args_list[1:]))
+        for status in (403, 503):
+            self.management._project.side_effect = HTTPException(status, 'Unavailable')
+            with self.subTest(status=status), self.assertRaises(HTTPException) as rejected:
+                self.management.recover('alice', 'completed-a')
+            self.assertEqual(rejected.exception.status_code, status)

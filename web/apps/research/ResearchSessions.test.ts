@@ -208,7 +208,7 @@ it('focuses and scrolls the first invalid field and opens collapsed invalid limi
   const goal = host.querySelector('textarea')!;
   expect(document.activeElement).toBe(goal); expect(goal.getAttribute('aria-invalid')).toBe('true');
   expect(scroll.mock.contexts.at(-1)).toBe(goal.closest('label')); expect(scroll).toHaveBeenLastCalledWith({ block: 'center' });
-  await field('研究目标', '检查测试程序'); await field('会话最多轮次', '99');
+  await field('研究目标', '检查测试程序'); await field('自动续轮停止边界', '99');
   const limits = host.querySelector<HTMLDetailsElement>('.rs-limits')!; limits.open = false;
   await act(async () => button('创建并开始研究').click());
   const input = limits.querySelector('input')!;

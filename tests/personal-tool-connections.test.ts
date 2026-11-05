@@ -215,20 +215,16 @@ it('clears secret input and blocks writes when the owner changes before submissi
   expect(host.querySelector('[aria-label="工具访问令牌"]')).toBeNull(); expect(host.textContent).toContain('当前登录账户已改变');
 });
 
-it('does not bind when the owner changes after configuration, retaining Alice original intent', async () => {
-  vi.mocked(tools.configure).mockImplementation(async () => {
-    vi.mocked(api.session).mockResolvedValue({ id: 'bob', name: 'Bob', role: 'user' });
-    return configured;
-  });
-  await mount(); await chooseSaved(); await click('保存并绑定工具');
-  expect(tools.configure).toHaveBeenCalledTimes(1); expect(tools.bind).not.toHaveBeenCalled();
-  expect(host.textContent).toContain('当前登录账户已改变'); expect(localStorage.getItem(storage)).not.toBeNull();
-  const pending = JSON.parse(localStorage.getItem(storage)!);
-  expect(pending.stage).toBe('bind'); expect(pending.dispatched).toBe(false);
-  vi.mocked(api.session).mockResolvedValue({ id: 'alice', name: 'Alice', role: 'user' });
-  await remount(); await click('核对原工具请求');
-  expect(tools.bind).toHaveBeenCalledExactlyOnceWith('alice', configured.registrationRef, pending.bindRequestId, descriptor.capabilities);
-  expect(tools.recoverBinding).not.toHaveBeenCalled(); expect(tools.configure).toHaveBeenCalledTimes(1); expect(localStorage.getItem(storage)).toBeNull();
+it('honors the server expected-owner rejection after configuration without another session preflight', async () => {
+  vi.mocked(tools.bind).mockRejectedValueOnce(new ToolConnectionError(403, 'EXPECTED_OWNER_MISMATCH'));
+  await mount(); await chooseSaved();
+  vi.mocked(api.session).mockClear();
+  await click('保存并绑定工具');
+  expect(api.session).toHaveBeenCalledTimes(1);
+  expect(tools.configure).toHaveBeenCalledTimes(1);
+  expect(tools.bind).toHaveBeenCalledExactlyOnceWith('alice', configured.registrationRef, expect.any(String), descriptor.capabilities);
+  expect(host.textContent).toContain('当前登录账户已改变');
+  expect(tools.recoverBinding).not.toHaveBeenCalled();
 });
 
 it('does not mark or dispatch an unsent binding when descriptor preflight finishes after unmount', async () => {
@@ -370,4 +366,39 @@ it('retains only public command metadata and rejects foreign-owner or secret-bea
   expect(readToolCommand(JSON.stringify(command), 'bob')).toBeNull();
   expect(readToolCommand(JSON.stringify({ ...command, password: secret }), 'alice')).toBeNull();
   expect(readToolCommand(JSON.stringify({ ...command, credential: { ...saved, password: secret } }), 'alice')).toBeNull();
+});
+
+it.each(['PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE', 'PERSONAL_TOOL_REVOKED', 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE', 'PERSONAL_TOOL_ADAPTER_CHANGED'])('settles custom onboarding direct binding rejection %s while keeping its configuration', async code => {
+  vi.spyOn(tools, 'discover').mockResolvedValue({ url: 'http://localhost:8999/mcp', tools: [{ name: 'lookup', description: 'Local tool', inputSchema: { type: 'object', properties: {} }, readOnly: true }] });
+  vi.spyOn(tools, 'configureResource').mockResolvedValue(configured);
+  vi.mocked(tools.bind).mockRejectedValue(new ToolConnectionError(409, code));
+  await mount(); await field('MCP URL', 'http://localhost:8999/mcp'); await click('发现 MCP 工具');
+  await field('发现的 MCP 工具', 'lookup'); await click('保存自定义工具并绑定');
+  expect(localStorage.getItem('factory-member-tool-request:alice')).toBeNull();
+  expect(host.textContent).toContain('已保存的工具配置保留');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="MCP URL"]')?.closest('fieldset')?.disabled).toBe(false);
+  expect(tools.configureResource).toHaveBeenCalledTimes(1); expect(tools.bind).toHaveBeenCalledTimes(1);
+  expect(tools.recoverBinding).not.toHaveBeenCalled();
+});
+
+it.each(['PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE', 'PERSONAL_TOOL_ADAPTER_CHANGED'])('settles a resource-row direct binding rejection %s', async code => {
+  vi.mocked(tools.list).mockResolvedValue([configured]);
+  vi.mocked(tools.bind).mockRejectedValue(new ToolConnectionError(409, code));
+  await mount(); await click('绑定此工具');
+  expect(localStorage.getItem(`factory-tool-action:alice:${configured.registrationRef}`)).toBeNull();
+  expect(button('绑定此工具').disabled).toBe(false);
+  expect(tools.recoverBinding).not.toHaveBeenCalled();
+});
+
+it('keeps an unknown custom bind pending after a recovery rejection without repeating the binding', async () => {
+  vi.spyOn(tools, 'discover').mockResolvedValue({ url: 'http://localhost:8999/mcp', tools: [{ name: 'lookup', description: 'Local tool', inputSchema: { type: 'object', properties: {} }, readOnly: true }] });
+  vi.spyOn(tools, 'configureResource').mockResolvedValue(configured);
+  vi.mocked(tools.bind).mockRejectedValue(new ToolConnectionError(409));
+  vi.mocked(tools.recoverBinding).mockRejectedValue(new ToolConnectionError(409, 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE'));
+  await mount(); await field('MCP URL', 'http://localhost:8999/mcp'); await click('发现 MCP 工具');
+  await field('发现的 MCP 工具', 'lookup'); await click('保存自定义工具并绑定');
+  const original = localStorage.getItem('factory-member-tool-request:alice');
+  await click('恢复原资源请求');
+  expect(localStorage.getItem('factory-member-tool-request:alice')).toBe(original);
+  expect(tools.bind).toHaveBeenCalledTimes(1);
 });

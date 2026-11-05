@@ -1,17 +1,19 @@
 import hashlib
+from concurrent.futures import ThreadPoolExecutor
 import json
 import sys
+import threading
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from agent_factory.process_enforcement import BoundedProcessAdapter, ProcessEnforcementError
 from agent_factory.ssh_process_contract import PROTOCOL, MAX_REQUEST_BYTES, encoded, request, specification
 from agent_factory.ssh_process_helper import handle, directory, read_file
 
 
-@unittest.skipUnless(sys.platform == 'linux', 'requires Linux no-follow descriptors and flock')
+@unittest.skipUnless(sys.platform == 'linux', 'requires Linux no-follow descriptors and custody')
 class SSHProcessHelperTests(unittest.TestCase):
     def setUp(self):
         self.temp = self.enterContext(TemporaryDirectory())
@@ -43,6 +45,36 @@ class SSHProcessHelperTests(unittest.TestCase):
         factory.create.assert_called_once()
         factory.create.return_value.launch.assert_called_once()
         factory.return_value.inspect.assert_called_once_with(owner_id='alice')
+
+    def test_unrelated_lease_and_duplicate_progress_while_original_launch_is_pending(self):
+        factory = self.adapter()
+        entered, release = threading.Event(), threading.Event()
+        launched = []
+        def create(path, **_):
+            adapter = Mock()
+            def launch(**_):
+                launched.append(path.parent.name)
+                if path.parent.name == 'lease-1':
+                    entered.set()
+                    if not release.wait(3):
+                        raise TimeoutError('Original launch fixture was not released')
+                return self.observation
+            adapter.launch.side_effect = launch
+            return adapter
+        factory.create.side_effect = create
+        second = json.loads(json.dumps(self.value))
+        second['binding'].update(leaseId='lease-2', operationId='operation-2')
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            first = workers.submit(handle, self.value)
+            try:
+                self.assertTrue(entered.wait(1))
+                self.assertEqual(workers.submit(handle, second).result(timeout=1)['binding'], second['binding'])
+                self.assertEqual(handle(self.value)['binding'], self.value['binding'])
+            finally:
+                release.set()
+                first.result(timeout=2)
+        self.assertEqual(sorted(launched), ['lease-1', 'lease-2'])
+        self.assertEqual(factory.create.call_count, 2)
 
     def test_incomplete_prior_intent_never_recreates_or_launches(self):
         factory = self.adapter()

@@ -178,7 +178,7 @@ class EncryptedCredentialVault:
                 rows = conn.execute(select(*(self.credentials.c[key] for key in
                     ("reference", "revision", "provider_id", "destination", "state")))
                     .where(self.credentials.c.owner_id == owner)
-                                    .order_by(self.credentials.c.reference).limit(100)).mappings().all()
+                                    .order_by(self.credentials.c.reference)).mappings().all()
                 return [self._public(row) for row in rows]
         except CredentialRequestRejected:
             raise

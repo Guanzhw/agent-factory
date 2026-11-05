@@ -218,6 +218,20 @@ class OperationCustodyTests(unittest.IsolatedAsyncioTestCase):
             await self.service.inspect('alice', original['id'])
         self.assertTrue(self.service.task_held('task'))
 
+    async def test_completed_report_releases_only_its_original_effect(self):
+        original = await self.start()
+        other = await self.start('native-step-2')
+        output = {'url': 'https://example.invalid/report', 'token': 'reported business value',
+                  'text': 'first line\n第二行'}
+        self.runtime.records[original['id']].update(state='COMPLETED', allStopped=True, output=output)
+        completed = await self.service.inspect('alice', original['id'])
+        self.assertTrue(completed['closed'])
+        self.assertEqual(completed['observation']['output'], output)
+        self.assertFalse(self.service.read('alice', other['id'])['closed'])
+        self.assertTrue(self.service.task_held('task'))
+        self.assertEqual(sorted(row['status'] for row in self.store.sql('SELECT status FROM af_effects')),
+                         ['DONE', 'UNKNOWN'])
+
     async def test_late_running_snapshot_cannot_regress_positive_terminal(self):
         original = await self.start()
         old = deepcopy(self.runtime.records[original['id']])

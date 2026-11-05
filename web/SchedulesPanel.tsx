@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { ApiError } from './api.js';
 import { useCommandKeys } from './commandKeys.js';
-import { occurrencePage, scheduleMetadata, schedulePage, schedulePreview, scheduleSummary, sendScheduleOnce, ScheduleGuard,
+import { occurrencePage, scheduleCommand, scheduleMetadata, schedulePage, schedulePreview, scheduleSummary, sendScheduleOnce, ScheduleGuard,
   type ScheduleApi, type ScheduleMetadata, type ScheduleMutation, type ScheduleOccurrencePage, type SchedulePage, type SchedulePreview, type ScheduleSummary } from './scheduleState.js';
 export interface SchedulesPanelProps {
   ownerId: string; canManage: boolean; seed?: { planId: string; planFingerprint: string; goal: string }; api: ScheduleApi;
@@ -39,6 +39,16 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, selected
     if (!active()) return; setPending(pointer ? { epoch, pointer } : undefined);
     try { if (pointer) window.localStorage.setItem(pointerStorage(ownerId), JSON.stringify(pointer)); else window.localStorage.removeItem(pointerStorage(ownerId)); } catch { /* Keep the current-page lock even without durable storage. */ }
   }
+  function settleRejection(cause: unknown, visible: boolean) {
+    if (!(cause instanceof ApiError && cause.rejected)) return false;
+    remember(); intent.current = undefined;
+    if (visible) { setPreview(undefined); if ((cause.code ?? cause.message) === 'SCHEDULE_EDITOR_STALE') { setChosen(undefined); setHistory(undefined); } setError('服务端已拒绝此次变更。请重新读取并检查方案、资源或执行时间后再提交。'); }
+    return true;
+  }
+  function unavailableProjection() {
+    setData(undefined); setChosen(undefined); setHistory(undefined); setPreview(undefined);
+    setError('原变更已完成；当前计划状态暂不可读。请刷新读取当前状态，暂不编辑或重发。');
+  }
   useEffect(() => {
     setData(undefined); setChosen(undefined); setHistory(undefined); setPreview(undefined); setName(''); setCron('0 8 * * *'); setTimezone('Etc/UTC'); setAfter(undefined); setError(''); intent.current = undefined;
     const pointer = readPointer(ownerId); setPending(pointer ? { epoch, pointer } : undefined);
@@ -46,22 +56,27 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, selected
   useEffect(() => {
     const controller = new AbortController(); reads.current = controller; setBusy(true); setError('');
     if (onSelect) { setChosen(undefined); setHistory(undefined); setPreview(undefined); }
-    void Promise.all([transport.current.metadata(controller.signal), transport.current.list(after, controller.signal)]).then(async ([meta, rows]) => {
+    void (async () => {
+      const pointer = readPointer(ownerId);
+      let recovered: ScheduleSummary | undefined;
+      let missing = false;
+      if (pointer) {
+        try {
+          const found = scheduleCommand(await transport.current.recover(pointer.requestId, controller.signal), ownerId, pointer.requestId, pointer.scheduleId);
+          if (controller.signal.aborted || !guard.current.current(epoch)) return;
+          setPending(undefined); intent.current = undefined;
+          try { window.localStorage.removeItem(pointerStorage(ownerId)); } catch { /* Original commit was independently read. */ }
+          if (!found) { unavailableProjection(); return; }
+          setError(''); setChosen({ epoch, row: found }); setCron(found.cron); setTimezone(found.timezone); setName(found.name); setPreview(undefined);
+          recovered = found;
+          if (!selectedId && onSelect) { onSelect(found.id); return; }
+        } catch { if (!controller.signal.aborted && guard.current.current(epoch)) setError('原变更仍未确认；保留原请求，只能核对或显式重试同一请求。'); missing = true; }
+      }
+      const [meta, rows] = await Promise.all([transport.current.metadata(controller.signal), transport.current.list(after, controller.signal)]);
       const metadata = scheduleMetadata(meta, ownerId), page = schedulePage(rows, ownerId);
       if (controller.signal.aborted || !guard.current.current(epoch)) return;
       setData({ epoch, metadata, page });
-      const pointer = readPointer(ownerId);
-      let recovered: ScheduleSummary | undefined;
-      if (pointer) {
-        const found = pointer.scheduleId ? scheduleSummary(await transport.current.inspect(pointer.scheduleId, controller.signal), ownerId, pointer.scheduleId) : scheduleSummary(await transport.current.recover(pointer.requestId, controller.signal), ownerId);
-        if (controller.signal.aborted || !guard.current.current(epoch)) return;
-        if (found && (pointer.scheduleId ? found.lastCommandId === pointer.requestId : found.requestId === pointer.requestId)) {
-          setPending(undefined); intent.current = undefined; setError(''); setChosen({ epoch, row: found }); setCron(found.cron); setTimezone(found.timezone); setName(found.name); setPreview(undefined);
-          try { window.localStorage.removeItem(pointerStorage(ownerId)); } catch { /* Original commit was independently read. */ }
-          recovered = found;
-          if (!selectedId && onSelect) { onSelect(found.id); return; }
-        } else return;
-      }
+      if (missing) return;
       const id = selectedId || recovered?.id;
       if (id) {
         try {
@@ -73,7 +88,7 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, selected
           if (!controller.signal.aborted && guard.current.current(epoch)) { setChosen(undefined); setHistory(undefined); setError('原计划或执行历史无法读取。可重试读取或返回计划列表；未提交任何变更。'); }
         }
       }
-    }).catch(() => { if (!controller.signal.aborted && guard.current.current(epoch)) { setData(undefined); setError('计划记录或当前管理权限无法核对。仅可重试读取，暂不提交变更。'); } }).finally(() => { if (!controller.signal.aborted && guard.current.current(epoch)) setBusy(false); });
+    })().catch(() => { if (!controller.signal.aborted && guard.current.current(epoch)) { setData(undefined); setError('计划记录或当前管理权限无法核对。仅可重试读取，暂不提交变更。'); } }).finally(() => { if (!controller.signal.aborted && guard.current.current(epoch)) setBusy(false); });
     return () => controller.abort();
   }, [ownerId, epoch, after, refresh, selectedId]);
   async function inspect(id: string, cursor?: string) {
@@ -84,7 +99,6 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, selected
       const [row, events] = await Promise.all([transport.current.inspect(id, signal), transport.current.occurrences(id, cursor, signal)]);
       const value = scheduleSummary(row, ownerId, id); const page = occurrencePage(events, ownerId, id);
       if (!current()) return; setChosen({ epoch, row: value }); setHistory({ epoch, page }); setCron(value.cron); setTimezone(value.timezone); setName(value.name); setPreview(undefined);
-      if (value.lastCommandId === pending?.pointer.requestId) { remember(); intent.current = undefined; }
     } catch { if (current()) { setChosen(undefined); setHistory(undefined); setError('原计划或执行历史无法核对，未改变任何执行。'); } }
     finally { guard.current.release(epoch); if (current()) setBusy(false); }
   }
@@ -111,12 +125,10 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, selected
       intent.current = { epoch, value }; remember({ requestId: value.requestId, scheduleId: value.kind === 'create' ? null : value.scheduleId });
       const row = await sendScheduleOnce(transport.current, ownerId, value); if (!active()) return;
       remember(); intent.current = undefined; key.acknowledged();
-      if (current()) { setChosen({ epoch, row }); setHistory(undefined); setPreview(undefined); setAfter(undefined); onSelect?.(row.id); }
-      setRefresh(n => n + 1);
+      if (current()) { if (row) { setChosen({ epoch, row }); setHistory(undefined); setPreview(undefined); setAfter(undefined); onSelect?.(row.id); } else unavailableProjection(); }
+      if (row) setRefresh(n => n + 1);
     } catch (cause) { if (active()) {
-      if (cause instanceof ApiError && ['SCHEDULE_NAME_EXISTS', 'SCHEDULE_EDITOR_STALE', 'SCHEDULE_CLOCK_INVALID'].includes(cause.code ?? cause.message)) { remember(); intent.current = undefined; if (current()) { setPreview(undefined); if ((cause.code ?? cause.message) === 'SCHEDULE_EDITOR_STALE') { setChosen(undefined); setHistory(undefined); } setError('服务端已拒绝此次变更：名称重复、定义已变化或时间无效。请重新读取并修改后再提交。'); } }
-      else setError('变更结果尚未确认。保留原请求并锁定编辑；刷新只读取原记录，不会重放变更。');
-      setRefresh(n => n + 1);
+      if (!settleRejection(cause, current())) { setError('变更结果尚未确认。保留原请求并锁定编辑；刷新只读取原记录，不会重放变更。'); setRefresh(n => n + 1); }
     } }
     finally { guard.current.release(epoch); if (current()) setBusy(false); }
   }
@@ -125,8 +137,8 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, selected
     setBusy(true); const original = intent.current.value;
     const signal = reads.current?.signal;
     const current = () => active() && !signal?.aborted;
-    try { const row = await sendScheduleOnce(transport.current, ownerId, original); if (!active()) return; remember(); intent.current = undefined; if (current()) { setChosen({ epoch, row }); setPreview(undefined); onSelect?.(row.id); } setRefresh(n => n + 1); }
-    catch { if (active()) setError('原变更仍未确认；继续保留原标识，不能改成新的请求。'); }
+    try { const row = await sendScheduleOnce(transport.current, ownerId, original); if (!active()) return; remember(); intent.current = undefined; if (current()) { if (row) { setChosen({ epoch, row }); setPreview(undefined); onSelect?.(row.id); } else unavailableProjection(); } if (row) setRefresh(n => n + 1); }
+    catch (cause) { if (active() && !settleRejection(cause, current())) setError('原变更仍未确认；继续保留原标识，不能改成新的请求。'); }
     finally { guard.current.release(epoch); if (current()) setBusy(false); }
   }
   return <section aria-label="计划任务" className="schedules-panel" style={{ minWidth: 0, overflowWrap: 'anywhere' }}><h1>计划任务</h1>

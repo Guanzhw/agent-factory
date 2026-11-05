@@ -41,7 +41,7 @@ async function settle(assert: () => void) { await vi.waitFor(async () => { await
 async function mount() { await act(async () => { root.render(createElement(Harness)); }); await settle(() => expect(host.querySelector<HTMLSelectElement>('#application-selector')?.disabled).toBe(false)); }
 async function fillTask() {
   await act(async () => {
-    const select = host.querySelector<HTMLSelectElement>('#application-selector')!; select.value = application.id; select.dispatchEvent(new Event('change', { bubbles: true }));
+    const select = host.querySelector<HTMLSelectElement>('#application-selector')!; select.value = `${application.id}@${application.version}:${application.sha256}`; select.dispatchEvent(new Event('change', { bubbles: true }));
   });
   await act(async () => {
     const goal = host.querySelector<HTMLTextAreaElement>('#task-goal')!;
@@ -56,6 +56,7 @@ async function previewAndAccept() {
   await click('确认范围并保存方案'); await settle(() => expect(host.querySelector('[aria-label="任务提交检查"]')).not.toBeNull());
 }
 beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Unexpected HTTP request')));
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto);
   window.sessionStorage.clear(); window.localStorage.clear();
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
@@ -72,7 +73,6 @@ beforeEach(() => {
   vi.spyOn(api, 'acceptProposal').mockImplementation(async () => { saved = { ...saved!, state: 'accepted', planId: plan.id, allowedActions: [] }; savedPlan = acceptedPlan; return acceptedPlan; });
   vi.spyOn(api, 'planAuthorization').mockImplementation(async () => authorization);
   vi.spyOn(api, 'planReviews').mockRejectedValue(new Error('Legacy history unavailable'));
-  vi.spyOn(api, 'requestPlanReview');
   vi.spyOn(api, 'instantiate').mockResolvedValue({ id: 'created-task' } as Awaited<ReturnType<typeof api.instantiate>>);
 });
 afterEach(async () => { await act(async () => { root.unmount(); }); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
@@ -141,7 +141,7 @@ describe('mounted task creation flow', () => {
     expect(vi.mocked(api.propose).mock.calls[0][0]).toMatchObject({ application: application.id, goal: candidate.normalizedGoal, connectionRefs: { model: connection.ref } });
     expect(api.instantiate).not.toHaveBeenCalled();
     await click('确认范围并保存方案'); await settle(() => expect(button('开始任务').disabled).toBe(false));
-    expect(host.textContent).not.toContain('提交方案审查'); expect(api.planReviews).not.toHaveBeenCalled(); expect(api.requestPlanReview).not.toHaveBeenCalled();
+    expect(host.textContent).not.toContain('提交方案审查'); expect(api.planReviews).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
     expect(api.instantiate).not.toHaveBeenCalled();
     await click('开始任务'); await settle(() => expect(onCreated).toHaveBeenCalledWith('created-task'));
     expect(api.instantiate).toHaveBeenCalledTimes(1); expect(vi.mocked(api.instantiate).mock.calls[0][0]).toBe(plan.id);
@@ -153,7 +153,7 @@ describe('mounted task creation flow', () => {
     authorization = { ...baseAuthorization, executionAllowed: false, code: 'ADMISSION_UNKNOWN', message: '原请求结果未知，请核对原任务。' };
     await click('刷新提交状态'); await settle(() => expect(host.textContent).toContain('原请求结果未知'));
     expect(button('开始任务').disabled).toBe(true); await click('开始任务'); expect(api.instantiate).not.toHaveBeenCalled();
-    expect(api.requestPlanReview).not.toHaveBeenCalled();
+    expect(fetch).not.toHaveBeenCalled();
   });
   it('explains an empty application catalog and cannot submit a task', async () => {
     vi.mocked(api.applications).mockResolvedValue([]); await mount();
@@ -338,4 +338,19 @@ describe('ordinary pinned template creation', () => {
     const goal = host.querySelector<HTMLTextAreaElement>('#task-goal')!;
     expect(goal.value).toBe('固定业务目标'); expect(goal.disabled).toBe(true);
   });
+});
+
+it('selects an older published application version and restores it without creating a dirty revision', async () => {
+  const newer = { ...application, version: 2, sha256: '9'.repeat(64) };
+  vi.mocked(api.applications).mockResolvedValue([newer, application]);
+  await mount(); await fillTask(); await click('预览任务方案');
+  expect(vi.mocked(api.propose).mock.calls[0][0].applicationRef).toEqual(applicationRef);
+  expect(button('确认范围并保存方案').disabled).toBe(false);
+  await act(async () => root.unmount()); root = createRoot(host); await mount();
+  await click('继续上次保存的任务');
+  await settle(() => expect(button('确认范围并保存方案').disabled).toBe(false));
+  const select = host.querySelector<HTMLSelectElement>('#application-selector')!;
+  expect(select.selectedOptions[0].textContent).toContain('v1');
+  expect(host.textContent).not.toContain('修改还未保存');
+  expect(api.propose).toHaveBeenCalledTimes(1);
 });

@@ -133,20 +133,19 @@ configuration. See [trusted gateway configuration](TRUSTED_MODEL_PROXY_DESIGN.md
 
 ## Go and historical configurations
 
-The [official Go endpoint and client requirements](https://opencode.ai/v2/docs/console/go/#endpoints)
-were read on 2026-10-13. The UI offers two explicit presets:
+The UI ships these explicit presets in `web/modelProviderConfig.ts`:
 
 | HTTP model | Protocol | Base URL |
 | --- | --- | --- |
-| `gpt-6-luna` | Responses | `https://opencode.ai/inference/go/v1` |
-| `deepseek-flash` (displayed by Go as DeepSeek V4.1 Flash) | Chat Completions | `https://opencode.ai/inference/go/v1` |
+| `gpt-6-luna` | Responses | `https://opencode.ai/inference/go/openai/v1` |
+| `deepseek-v4.1-flash` | Chat Completions | `https://opencode.ai/inference/go/openai/v1` |
 
 Native catalog identifiers (`opencode-go/gpt-6-luna` and
 `opencode-go/deepseek-v4.1-flash`) are distinct from the HTTP model values.
-The endpoint table currently names `deepseek-v4.1-flash`; the
+The previous preset used `/inference/go/v1` and the `deepseek-flash` alias. The
 [legacy public model catalog](https://opencode.ai/zen/go/v1/models) also lists
-`deepseek-flash`. The latter remains the requested HTTP alias in the preset.
-Its presence in that catalog does not verify inference on the new prefix.
+`deepseek-flash`. That is historical compatibility information, not the current
+preset. Its presence in that catalog does not verify inference on the new prefix.
 The [fixed OpenCode model metadata](https://raw.githubusercontent.com/anomalyco/models.dev/2858118c7109c87cdaaeeb6db35d8e6a10f3ea46/providers/opencode-go/models/deepseek-flash.toml)
 marks that alias deprecated and declares `interleaved.reasoning_content`.
 Go requests include the application's User-Agent and stable conversation header.

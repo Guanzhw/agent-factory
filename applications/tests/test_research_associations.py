@@ -196,6 +196,31 @@ class ResearchPeerConsumerTests(round_fixtures.ResearchRoundsFixture):
             sourceAssessments=[{'contentId': self.peer['id'], 'disposition': 'reproduce',
                                 'reason': 'Confirm under the new evaluation conditions'}])
 
+    def test_actual_stop_before_experiment_matches_notifications_and_direct_reuse(self):
+        configurations = {owner: {'endpointId': str(uuid4()),
+            'associations': {'enabled': True, 'maxRecipients': 2},
+            'budget': {'deadline': 9999999999.0}} for owner in ('alice', 'bob')}
+        self.associations.assistants.association_configuration.side_effect = configurations.get
+        self.service.context(self.ctx)
+        self.service.record_decision(self.ctx, Decision(action='stop', outcome='not_met',
+            reason='No justified experiment', evidenceIds=[self.peer['id']],
+            sourceAssessments=self.chosen().sourceAssessments).model_dump())
+        self.finish()
+        record = self.service.list('alice', self.project)['rounds'][0]['terminalRecordId']
+        body = self.content.read('bob', record)['content']
+        self.assertIsNone(body['experiment'])
+        self.assertEqual(body['agreement']['objective'], self.agreement.objective)
+        with self.sources.db.write() as conn:
+            self.associations.prepare(conn, 'alice', record)
+            intent = conn.execute(select(self.associations.intents).where(
+                self.associations.intents.c.content_id == record)).mappings().one()
+        self.assertEqual({item['ownerId'] for item in intent['candidates']}, {'bob'})
+        selected = self.associations.for_round('bob', 'reuse-stop', 'bob-project', self.agreement)
+        self.assertIn(record, {item['id'] for item in selected if item['kind'] == 'original_record'})
+        self.content.set_visibility('alice', record, 'personal', 'withdraw-terminal')
+        with self.assertRaises(HTTPException):
+            self.associations.round_inputs('bob', 'reuse-stop')
+
     def test_source_to_decision_to_original_action_and_all_projections_on_withdrawal(self):
         context = self.service.context(self.ctx)
         self.assertEqual(context['peerEvidence'][0]['sources'][0]['id'], self.peer['id'])

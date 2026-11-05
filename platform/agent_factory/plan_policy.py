@@ -40,8 +40,7 @@ def application_tool_catalog(store):
     if personal is not None:
         for name, capability in personal.catalog_tools().items():
             catalog.setdefault(name, capability)
-    policy = getattr(store, "plan_policy", None)
-    return policy.extend_application_tool_catalog(catalog) if policy is not None else catalog
+    return catalog
 
 
 @dataclass(frozen=True)
@@ -62,11 +61,6 @@ class PlanPolicyConfig:
         # Preserve the historic false bit in immutable policy fingerprints;
         # no application-specific tool or enabling switch remains.
         return digest({**asdict(self), "source_synthesis_enabled": False})
-
-    @property
-    def known_tools(self):
-        return tools_for_contract(self.tool_contract)
-
 
 
 class NativeMandateCompleted(HTTPException):
@@ -141,9 +135,6 @@ class PlanPolicyService:
     Immutable plan storage owns snapshot integrity. Runtime services own current
     identity, resource access, cancellation, budgets and operation receipts.
     """
-    def extend_application_tool_catalog(self, catalog):
-        return catalog
-
     def __init__(self, store: Any, auth: Any, config: PlanPolicyConfig | None = None, *,
                  clock: Callable[[], datetime] | None = None,
                  ancestor_guard: Callable[[str, dict, Any], list[dict]] | None = None):
@@ -195,14 +186,12 @@ class PlanPolicyService:
     def _plan_summary(self, plan):
         return {key: plan.get(key) for key in ("normalizedGoal", "application", "mode", "tools", "capabilities", "budget", "materialRefs", "config", "usageBudget")}
 
-    def _require_authorization(self, owner, plan, *, run_context=None, ancestor_resolver=None):
+    def _require_authorization(self, owner, plan, *, run_context=None):
         self.auth.require_member(owner)
         current = self._plan(owner, plan)
         self._scope(current)
         ancestors = []
-        if ancestor_resolver is not None:
-            ancestors = ancestor_resolver(current)
-        elif current.get("delegation"):
+        if current.get("delegation"):
             if self.ancestor_guard is None or run_context is None:
                 raise HTTPException(409, "DELEGATION_CONTEXT_REQUIRED: original child task is required")
             ancestors = self.ancestor_guard(owner, current, run_context)

@@ -47,6 +47,14 @@ and ambiguous identity remain UNKNOWN. Cancel/release transmission is claimed
 durably once; lost replies are reconciled through inspection, never retransmitted
 as a new operation.
 
+SSH requests for different leases do not share a host-root lock. Atomic lease
+directory creation and the original SQLite journal retain one launch per lease.
+New submission requires current execution authority. Existing inspect, cancel,
+reclaim and output use the original target and still-available exact credential
+revision, including after binding withdrawal or member disable. Restart recovery
+matches immutable SSH configuration history against the saved target fingerprint;
+it cannot redirect cleanup to a replacement host or revive a revoked credential.
+
 Only a matching positive original-process stop proof permits release. UNKNOWN
 retains shared CPU/memory/disk/slot reservations and task/storage capacity.
 `executionStatus` and `exitCode` survive reclaim: FAILED and LIMIT_STOPPED do not

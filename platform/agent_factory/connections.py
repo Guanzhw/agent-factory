@@ -303,13 +303,8 @@ class ConnectionService:
             "createdAt": row["created_at"], "revokedAt": row["revoked_at"],
             "allowedActions": ["inspect"] + (["revoke"] if row["state"] != "REVOKED" else [])}
 
-    def _can_bind(self, owner):
-        self.auth.require_member(owner)
-        return True
-
     def registrations(self, owner):
         self.auth.require_member(owner)
-        can_bind = self._can_bind(owner)
         values = []
         with self._read() as conn:
             for ref, binding in self.trusted_bindings.items():
@@ -327,7 +322,7 @@ class ConnectionService:
                 values.append({"registrationRef": ref, "kind": binding.kind, "revision": binding.revision,
                     "capabilities": sorted(binding.capabilities), "expiresAt": binding.expires_at.isoformat() if binding.expires_at else None,
                     "status": status, "available": status == "available",
-                    "allowedActions": ["inspect", "bind"] if can_bind else ["inspect"]})
+                    "allowedActions": ["inspect", "bind"]})
         # Personal registrations are created by their owner, never by the operator.
         # Their dedicated lifecycle (configured/verified/revoked and configure/
         # verify/revoke actions) is not the shared registration-list contract.
@@ -340,7 +335,7 @@ class ConnectionService:
             values.append({key: remote[key] for key in (
                 'registrationRef', 'kind', 'revision', 'capabilities', 'expiresAt',
             )} | {'status': status, 'available': available,
-                'allowedActions': ['inspect'] + (['bind'] if available and can_bind
+                'allowedActions': ['inspect'] + (['bind'] if available
                     and 'bind' in remote['allowedActions'] else [])})
         if self.personal_tools is not None:
             for item in self.personal_tools.list(owner):
@@ -348,7 +343,7 @@ class ConnectionService:
                 values.append({key: item[key] for key in (
                     'registrationRef', 'kind', 'revision', 'capabilities', 'expiresAt',
                 )} | {'status': 'available' if available else 'unavailable', 'available': available,
-                    'allowedActions': ['inspect'] + (['bind'] if available and can_bind else [])})
+                    'allowedActions': ['inspect'] + (['bind'] if available else [])})
         if self.owner_models is not None:
             from .byok_model import CAPABILITY
             for item in self.owner_models.list(owner):
@@ -356,7 +351,7 @@ class ConnectionService:
                 values.append({'registrationRef': item['reference'], 'kind': 'model',
                     'revision': item['revision'], 'capabilities': [CAPABILITY], 'expiresAt': None,
                     'status': 'available' if available else 'unavailable', 'available': available,
-                    'allowedActions': ['inspect'] + (['bind'] if available and can_bind else [])})
+                    'allowedActions': ['inspect'] + (['bind'] if available else [])})
         return sorted(values, key=lambda value: value["registrationRef"])
 
     def inspect(self, owner, reference):
@@ -369,7 +364,7 @@ class ConnectionService:
         self.auth.require_member(owner)
         with self._read() as conn:
             rows = conn.execute(select(self.references.c.ref).where(self.references.c.owner_id == owner)
-                .order_by(self.references.c.created_at.desc(), self.references.c.ref).limit(100)).scalars()
+                .order_by(self.references.c.created_at.desc(), self.references.c.ref)).scalars()
             return [self._project(conn, owner, self._row(conn, owner, reference)) for reference in rows]
 
     def request_result(self, owner, request_id):

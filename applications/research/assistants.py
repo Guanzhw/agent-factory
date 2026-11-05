@@ -80,13 +80,29 @@ class ResearchAssistants:
         with self.db.read() as conn:
             return self._historical_configuration(conn, owner, endpoint_id)
 
-    def _historical_configuration(self, conn, owner, endpoint_id):
+    def _configuration_row(self, conn, owner, endpoint_id):
         row = conn.execute(select(self.configurations).join(self.identities,
             self.identities.c.id == self.configurations.c.assistant_id).where(
                 self.identities.c.owner_id == owner, self.configurations.c.endpoint_id == endpoint_id)).mappings().first()
         if row is None:
             raise HTTPException(404, 'RESEARCH_ASSISTANT_CONFIGURATION_NOT_FOUND')
+        return row
+
+    def _historical_configuration(self, conn, owner, endpoint_id):
+        row = self._configuration_row(conn, owner, endpoint_id)
         return {'id': row['assistant_id'], 'revision': row['revision'], 'endpointId': row['endpoint_id']}
+
+    def _require_budget(self, execution_budget, total, per_question):
+        if min(total['toolCalls'], per_question['toolCalls'], execution_budget['toolCalls']) < len(self.tools):
+            raise HTTPException(422, 'RESEARCH_QA_BUDGET_INSUFFICIENT')
+
+    def require_question_budget(self, owner, endpoint_id, task_id):
+        with self.db.read() as conn:
+            configuration = self._configuration_row(conn, owner, endpoint_id)['body']
+        task = self.store.task(task_id, owner)
+        plan = self.store.plan(task['plan_id'], owner)
+        budget = configuration['budget']
+        self._require_budget(plan['budget'], budget['caps'], budget['perQuestionCaps'])
 
     def _projection(self, conn, row):
         qa = {'state': 'unconfigured'}
@@ -162,6 +178,7 @@ class ResearchAssistants:
         self.store.execution_bindings.build(materials, owner, pins)
         if self.store.execution_bindings.preflight(materials, owner, pins):
             raise HTTPException(409, 'RESEARCH_QA_BINDING_UNAVAILABLE')
+        return mode
 
     def configure(self, owner, body: ConfigureAssistant):
         self.auth.require_member(owner)
@@ -183,7 +200,8 @@ class ResearchAssistants:
                     raise HTTPException(404, 'RESEARCH_ASSISTANT_NOT_FOUND')
                 if row['configuration_revision'] != body.expectedRevision:
                     raise HTTPException(409, 'RESEARCH_ASSISTANT_REVISION_CONFLICT')
-                self._validate_execution(owner, value['applicationRef'], value['connectionRefs'])
+                mode = self._validate_execution(owner, value['applicationRef'], value['connectionRefs'])
+                self._require_budget(mode['budget'], value['budget']['caps'], value['budget']['perQuestionCaps'])
                 scope_id = str(uuid4())
                 budget = value['budget']
                 self.scopes.create_scope(owner, scope_id, digest(value), budget['caps'], budget['deadline'])
@@ -229,9 +247,10 @@ class ResearchAssistants:
             budget = endpoint['automaticBudget']
             with self.db.read() as conn:
                 self.endpoints.require_budget(conn, row['owner_id'], budget)
-            self._validate_execution(row['owner_id'], endpoint['applicationRef'], endpoint['defaults']['connectionRefs'])
+            mode = self._validate_execution(row['owner_id'], endpoint['applicationRef'], endpoint['defaults']['connectionRefs'])
             scope = self.scopes.inspect(row['owner_id'], budget['scopeId'])
             caps, per = scope['caps'], budget['caps']
+            self._require_budget(mode['budget'], caps, per)
             if scope['allocatedRounds'] + 1 > caps['rounds'] or scope['heldToolCalls'] + scope['settledToolCalls'] + per['toolCalls'] > caps['toolCalls']:
                 return {'available': False, 'unavailableCode': 'LOCAL_BUDGET_EXHAUSTED'}
             return {'available': True}

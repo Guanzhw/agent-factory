@@ -130,6 +130,20 @@ class ModelCommandRecoveryTests(unittest.TestCase):
         return self.post('/' + model['reference'] + '/default', {'requestId': request_id},
             owner=owner, expected=expected)
 
+    def test_flat_model_and_connection_lists_keep_choices_after_revoked_history(self):
+        for number in range(101):
+            model = self.models.configure('alice', self.configuration(model='model-' + str(number)),
+                'configure-' + str(number))
+            if number < 100:
+                self.models.revoke('alice', model['reference'], 'revoke-' + str(number))
+        listed = self.models.list('alice')
+        self.assertEqual(len(listed), 101)
+        self.assertEqual([item['reference'] for item in listed if item['available']], [model['reference']])
+        self.assertEqual(len(self.connections.list('alice')), 101)
+        self.assertEqual(self.models.list('bob'), [])
+        self.models.set_default('alice', model['reference'], 'select-last-model')
+        self.assertEqual(self.models.default('alice')['reference'], model['reference'])
+
     def receipt(self, owner, request_id):
         # Independent persisted evidence to compare against the production API.
         with self.engine.connect() as conn:

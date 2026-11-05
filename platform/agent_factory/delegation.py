@@ -307,6 +307,13 @@ class DelegationService:
                 return True
         return False
 
+    def _require_child_budget(self, tasks, plans):
+        depth = len(tasks)
+        for task, plan in zip(tasks, plans):
+            if (depth > min(2, int(plan['budget'].get('maxDepth', 2)))
+                    or len(self._descendants(task['id'])) >= min(4, int(plan['budget'].get('maxChildren', 4)))):
+                raise HTTPException(429, 'Shared delegation budget exhausted')
+
     def delegation_scope(self, owner: str, parentTaskId: str) -> dict[str, Any]:
         """Current owner-scoped UI facts; this response never grants authority."""
         parent = self.store.task(parentTaskId, owner)  # Cross-owner access stays 404.
@@ -328,6 +335,8 @@ class DelegationService:
             # successful previews and every create/execute still check fresh authority.
             if depth > shared["maxDepth"] or children >= shared["childrenLimit"] or used >= shared["toolCallsLimit"]:
                 raise HTTPException(429, "Shared delegation budget exhausted")
+            self._require_child_budget([parent, *ancestors],
+                [plan, *[self.store.plan(task['plan_id'], owner) for task in ancestors]])
             _, plans = self._mandate(owner, parent, creating=True)
             applications = getattr(self.store, "applications", None)
             if applications is not None and root_plan.get("applicationRef"):
@@ -351,8 +360,6 @@ class DelegationService:
             else:
                 # Only legacy snapshots lack a versioned application definition.
                 scope.update(modes=["literature", "experiment"], defaultMode="literature")
-            if depth > shared["maxDepth"] or children >= shared["childrenLimit"] or used >= shared["toolCallsLimit"]:
-                raise HTTPException(429, "Shared delegation budget exhausted")
             counts = self.store.sql("SELECT COUNT(*) AS total,COUNT(*) FILTER(WHERE owner_id=:owner) AS owned FROM af_tasks WHERE NOT terminal", owner=owner)[0]
             if counts["total"] >= self.settings.max_total_tasks or counts["owned"] >= self.settings.max_user_tasks:
                 raise HTTPException(429, "Active task budget exhausted")
@@ -398,7 +405,7 @@ class DelegationService:
         request = self._creation_request(owner, parent, goal, mode, placement)
         if input_values is not None:
             request['inputValues'] = input_values
-        root_id, _ = self._ancestry(parent)
+        root_id, ancestors = self._ancestry(parent)
         fp = digest(request)
         native_request = "delegation:" + digest({"parent": parent["id"], "request": requestId})
         def original_operation():
@@ -437,11 +444,7 @@ class DelegationService:
                 parent = self.store.task(parent["id"], owner)
                 _, plans = self._mandate(owner, parent, creating=True)
                 depth = len(plans)
-                max_depth = min(2, int(plans[-1]["budget"].get("maxDepth", 2)))
-                max_children = min(4, int(plans[-1]["budget"].get("maxChildren", 4)))
-                count = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_links WHERE root_id=:root", root=root_id)[0]["n"]
-                if depth > max_depth or count >= max_children:
-                    raise HTTPException(429, "Shared delegation depth or lifetime child budget exhausted")
+                self._require_child_budget([parent, *ancestors], plans)
                 binding = {"parentTaskId": parent["id"], "rootTaskId": root_id, "depth": depth}
                 planner_store = _ChildPlannerStore(self.store, plans, binding)
                 if input_values is not None and plans[-1].get('remoteHandoff'):
@@ -522,10 +525,16 @@ class DelegationService:
         snapshot, unavailable = {}, False
         if task.get("run_id"):
             try:
-                snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
-            except HTTPException as error:
-                if error.status_code < 500:
-                    raise
+                ticket = self.store.lifecycle_observer._binding(task)
+                if ticket is None:
+                    unavailable = True
+                else:
+                    snapshot = {"run_id": task["run_id"], "queue": ticket,
+                                "requirements": ticket["requirements"]}
+            except Exception:
+                # A missing or mismatched original ticket is uncertainty, not
+                # stopped work. Public callers already check member/owner scope;
+                # internal cleanup must also work after execution revocation.
                 unavailable = True
         native = snapshot.get("queue") or snapshot.get("job") or {}
         raw = str(native.get("status") or (snapshot.get("run") or snapshot).get("status") or "").lower().removeprefix("runstatus.")

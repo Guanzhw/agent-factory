@@ -72,6 +72,7 @@ class ResearchSetup:
         self.auth.require_member(owner)
         fields = ('reference', 'provider', 'model', 'available', 'connectionRef')
         return {'workflowPin': self.store.native_workflows.pin(WORKFLOW_ID),
+            'qaMinimumToolCalls': len(self.qa_workflow.tool_registrations) if self.qa_workflow is not None else None,
             'models': [{k: item[k] for k in fields if k in item} for item in self.models.list(owner)],
             'connections': [{k: item[k] for k in ('ref', 'registrationRef', 'kind', 'capabilities', 'available')}
                 for item in self.connections.list(owner)],

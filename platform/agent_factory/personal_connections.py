@@ -70,7 +70,6 @@ class PersonalRemoteConnections:
             except HTTPException as error:
                 status = {"REMOTE_VERIFICATION_EXPIRED": "expired", "REMOTE_CREDENTIAL_UNAVAILABLE": "credential_unavailable",
                           "REMOTE_POLICY_CHANGED": "policy_changed"}.get(str(error.detail), "unavailable")
-        can_run = self.connections._can_bind(owner)
         is_owner = row['owner_id'] == owner
         return {"registrationRef": reference, **self.connections.sharing.projection(conn, owner, reference, row['owner_id']),
             "providerId": body["providerId"], "kind": body.get("kind", "environment"),
@@ -81,15 +80,15 @@ class PersonalRemoteConnections:
             "expiresAt": verified["expiresAt"] if verified else None,
             "createdAt": row["created_at"], "updatedAt": row["updated_at"],
             "allowedActions": ["inspect"] + ([] if status == "revoked" else
-                ((["revoke", "sharing"] + (["configure", "verify"] if can_run else []) if is_owner else [])
-                    + (["bind"] if can_run and status == "verified" else [])))}
+                ((["revoke", "sharing", "configure", "verify"] if is_owner else [])
+                    + (["bind"] if status == "verified" else [])))}
 
     def list(self, owner):
         self.connections.auth.require_member(owner)
         with self.connections._read() as conn:
             refs = list(conn.execute(select(self.resources.c.registration_ref).where(
                 or_(self.resources.c.owner_id == owner, self.resources.c.registration_ref.in_(
-                    self.connections.sharing.visible_refs(conn, owner)))).limit(100)).scalars())
+                    self.connections.sharing.visible_refs(conn, owner))))).scalars())
             return [self._projection(conn, owner, ref) for ref in refs]
 
     def inspect(self, owner, reference):

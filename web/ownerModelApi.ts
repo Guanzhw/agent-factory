@@ -62,7 +62,7 @@ export function ownerModel(value: unknown, owner: string): OwnerModel {
     throw new ModelRequestError(200, 'INVALID_RESPONSE');
   }
   try {
-    if (modelEndpoint(m.baseURL) !== m.baseURL) throw new Error();
+    modelEndpoint(m.baseURL);
   } catch { throw new ModelRequestError(200, 'INVALID_RESPONSE'); }
   return {
     reference: m.reference as string, revision: m.revision as string,
@@ -87,7 +87,7 @@ export const ownerModelApi = {
   },
   list: async (owner: string, signal?: AbortSignal) => {
     const values = await safe<unknown>('/personal-models', 'GET', undefined, signal, owner);
-    if (!Array.isArray(values) || values.length > 100) throw new ModelRequestError(200, 'INVALID_RESPONSE');
+    if (!Array.isArray(values)) throw new ModelRequestError(200, 'INVALID_RESPONSE');
     return values.map(value => ownerModel(value, owner));
   },
   recover: async (owner: string, requestId: string): Promise<OwnerModelReceipt> => {

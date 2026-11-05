@@ -3,7 +3,7 @@ from copy import copy
 
 from agent_factory.main import create_app as create_core_app
 from agent_factory.config import Settings
-from .shutdown import shutdown_failed, shutdown_guard
+from agent_factory.shutdown import shutdown_failed, shutdown_guard
 from .application_composition import (validate_applications, install_applications,
     application_lifespan, release_applications)
 

@@ -60,9 +60,13 @@ class SSHOperationRuntime(ProcessRuntimeService):
         self.pin = deepcopy(pin)
         self.personal_ssh, self.profiles = personal_ssh, dict(profiles)
 
-    def _selected(self, task, plan):
+    def _selected(self, task, plan, *, cleanup=False):
         context = self._context(task)
-        tools = self.store.execution_bindings.manifest(plan, context=context).get('tools', [])
+        receiver = getattr(self.store, 'remote_bindings', None)
+        manifest = (receiver.historical_manifest(plan, context) if cleanup and receiver is not None
+            and (plan.get('remoteHandoff') or plan.get('delegation'))
+            else self.store.execution_bindings.manifest(plan, context=context))
+        tools = manifest.get('tools', [])
         selected = [item for item in tools if item.get('toolName') == LAUNCH_TOOL]
         require(len(selected) == 1 and selected[0]['adapterId'] == LAUNCH_ADAPTER_ID
                 and selected[0]['revision'] == REVISION)
@@ -87,8 +91,14 @@ class SSHOperationRuntime(ProcessRuntimeService):
             task_id=task['id'], expected_adapter_ref='owner-ssh-server-v1')
         registration = connections.inspect(task['owner_id'], pin['ref'])['registrationRef']
         server = self.personal_ssh.server(task['owner_id'], registration, required_capability='ssh:execute')
+        target = self._target(task, reference, process_spec, profile, server)
+        self.resources.register_target(reference, target)
+        return reference
+
+    def _target(self, task, reference, process_spec, profile, server):
         transport = SSHProcessTransport(server,
-            lambda action: self.personal_ssh.lease(server, required_capability='ssh:execute'),
+            lambda action: self.personal_ssh.lease(server, required_capability='ssh:execute')
+                if action in {'capabilities', 'submit'} else self.personal_ssh._cleanup_lease(server),
             interpreter=profile.interpreter)
         def read_lease(owner, lease_id):
             lease = self._custody(lease_id)[0]
@@ -99,12 +109,10 @@ class SSHOperationRuntime(ProcessRuntimeService):
                                       archive_original=lambda owner, key: self._archive(read_lease(owner, key)))
         pool = replace(profile.pool, pool_id='ssh-host-' + provider.capacity_namespace)
         reservation = process_reservation(provider)
-        target = RemoteTarget(name=server.name, axis='compute', owners=frozenset({task['owner_id']}),
+        return RemoteTarget(name=server.name, axis='compute', owners=frozenset({task['owner_id']}),
             provider=provider, capacity_pool=pool, configuration_revision=profile.fingerprint,
             max_leases=pool.max_owner_leases, max_cpu=pool.cpu, max_memory_mb=pool.memory_mb,
             max_disk_mb=pool.disk_mb, max_seconds=reservation['seconds'])
-        self.resources.register_target(reference, target)
-        return reference
 
     def restore_target(self, owner, reference):
         rows = self.store.sql('SELECT body FROM af_leases WHERE owner_id=:owner AND target_id=:target',
@@ -120,11 +128,16 @@ class SSHOperationRuntime(ProcessRuntimeService):
         require(body['adapterPin'] == self.pin and body['taskId'] == task['id']
                 and body['nativeRunId'] == original['nativeRunId'])
         inputs = self._inputs(body)
-        spec, profile = self._selected(task, plan)
-        checked, _ = profile.prepare(inputs)
+        spec, profile = self._selected(task, plan, cleanup=True)
+        checked, process_spec = profile.prepare(inputs)
         require(ssh_target_reference(owner, spec['materialRef'], spec['connection'],
                                       profile.fingerprint, checked) == reference)
-        self.ensure_target(task, plan, checked)
+        targets = [self._target(task, reference, process_spec, profile, server)
+            for server in self.personal_ssh._original_servers(owner, spec['connection'], task['id'])]
+        matching = [target for target in targets
+            if self.resources._target_fingerprint(target) == original['targetFingerprint']]
+        require(len(matching) == 1)
+        self.resources.register_target(reference, matching[0])
         return self.resources.targets[reference]
 
     @staticmethod
@@ -179,7 +192,7 @@ class SSHOperationRuntime(ProcessRuntimeService):
     def _custody(self, lease_id):
         original = ResourceMaintenance(self.resources)._custody(lease_id)
         if original['connectionRef'] not in self.resources.targets:
-            self.resources._authorize(original['ownerId'], original['connectionRef'])
+            self.restore_target(original['ownerId'], original['connectionRef'])
         lease, target, task, ticket = super()._custody(lease_id)
         guard = lease.get('executionGuard')
         require(type(guard) is dict and set(guard) == {'operationId'})

@@ -4,7 +4,7 @@ import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { Workspace } from '../web/composition.js';
-import { api } from '../web/api.js';
+import { api, ApiError } from '../web/api.js';
 import { SchedulesPanel, type SchedulesPanelProps } from '../web/SchedulesPanel.js';
 import type { ScheduleMetadata, ScheduleSummary } from '../web/scheduleState.js';
 
@@ -151,13 +151,14 @@ it('reconciles a pending original request before reading a different navigation 
   const pointer = JSON.stringify({ requestId: 'unconfirmed-disable', scheduleId: row.id });
   localStorage.setItem(pointerKey, pointer);
   await panel({ selectedId: 'other-schedule' });
-  expect(client.inspect).toHaveBeenCalledExactlyOnceWith(row.id, expect.any(AbortSignal));
+  expect(client.recover).toHaveBeenCalledExactlyOnceWith('unconfirmed-disable', expect.any(AbortSignal));
+  expect(client.inspect).not.toHaveBeenCalled();
   expect(client.occurrences).not.toHaveBeenCalled();
   expect(host.textContent).toContain('原变更请求未确认');
   expect(host.querySelector('[aria-label="计划执行历史"]')).toBeNull();
   expect(localStorage.getItem(pointerKey)).toBe(pointer);
   await click('刷新计划任务');
-  expect(vi.mocked(client.inspect).mock.calls.every(call => call[0] === row.id)).toBe(true);
+  expect(vi.mocked(client.recover).mock.calls.every(call => call[0] === 'unconfirmed-disable')).toBe(true);
   expect(client.setEnabled).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled();
 });
 
@@ -194,6 +195,7 @@ it('returns to the same paused schedule through the workspace task page and a re
 
 it('retains a recovered original schedule selection in the URL and on a subsequent refresh', async () => {
   localStorage.setItem(pointerKey, JSON.stringify({ requestId: row.lastCommandId, scheduleId: row.id }));
+  vi.mocked(client.recover).mockResolvedValue({ ...row, commandId: row.lastCommandId, commandStatus: 'complete', scheduleId: row.id });
   window.history.replaceState(null, '', '/?tab=schedules');
   await act(async () => root.render(createElement(Workspace, { user: owner, logout: vi.fn(), sessionBusy: false, sessionError: '' })));
   expect(new URL(window.location.href).searchParams.get('scheduleId')).toBe(row.id);
@@ -281,7 +283,7 @@ it.each(['confirmed', 'reconciled', 'unknown', 'retried'])('keeps an in-flight %
   expect(localStorage.getItem(pointerKey)).toContain(requestId);
   await act(async () => {
     if (result === 'confirmed' || result === 'retried') resolve({ ...first, enabled: true, lastCommandId: requestId });
-    else if (result === 'reconciled') { first.enabled = true; first.lastCommandId = requestId; reject(new Error('Synthetic lost acknowledgement')); }
+    else if (result === 'reconciled') { first.enabled = true; first.lastCommandId = requestId; vi.mocked(client.recover).mockResolvedValue({ ...first, commandId: requestId, commandStatus: 'complete', scheduleId: first.id }); reject(new Error('Synthetic lost acknowledgement')); }
     else reject(new Error('Synthetic lost acknowledgement'));
   });
   expect(onSelect).not.toHaveBeenCalled();
@@ -312,4 +314,74 @@ it.each(['developer', 'templates'])('opens a new saved-plan seed from %s rather 
   expect(host.textContent).toContain('从本人已保存方案创建计划');
   expect(host.querySelector('[aria-label="计划执行历史"]')).toBeNull();
   expect(client.inspect).not.toHaveBeenCalled(); expect(client.create).not.toHaveBeenCalled();
+});
+
+it('allows editing after a directly rejected withdrawn-application schedule without waiting for a missing command', async () => {
+  vi.mocked(client.create).mockRejectedValueOnce(new ApiError('INACTIVE_APPLICATION', 409, undefined, true));
+  await panel({ seed }); await field('计划任务名称', 'Rejected plan'); await click('预览下次执行时间');
+  await click('保存计划任务');
+  await settle(() => expect(button('预览下次执行时间')?.disabled).toBe(false));
+  expect(localStorage.getItem(pointerKey)).toBeNull();
+  expect(client.recover).not.toHaveBeenCalled();
+  await field('计划任务名称', 'Corrected plan'); await click('预览下次执行时间'); await click('保存计划任务');
+  expect(client.create).toHaveBeenCalledTimes(2);
+  expect(localStorage.getItem(pointerKey)).toBeNull();
+});
+
+it('remounts a completed original edit after another editor has changed its current projection', async () => {
+  localStorage.setItem(pointerKey, JSON.stringify({ requestId: 'original-edit', scheduleId: row.id }));
+  row = { ...row, cron: '0 10 * * *', lastCommandId: 'later-edit' };
+  vi.mocked(client.recover).mockResolvedValue({ ...row, commandId: 'original-edit', commandStatus: 'complete', scheduleId: row.id });
+  await panel({ selectedId: row.id });
+  expect(localStorage.getItem(pointerKey)).toBeNull();
+  expect(host.querySelector<HTMLInputElement>('[aria-label="Cron表达式"]')?.value).toBe(row.cron);
+  expect(button('恢复后续计划')?.disabled).toBe(false);
+  expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
+});
+
+it('keeps a missing receipt pending and permits an explicit same-command retry to settle a direct rejection', async () => {
+  vi.mocked(client.create).mockRejectedValueOnce(new Error('Unacknowledged first dispatch'))
+    .mockRejectedValueOnce(new ApiError('INACTIVE_APPLICATION', 409, undefined, true));
+  vi.mocked(client.recover).mockRejectedValue(new ApiError('SCHEDULE_COMMAND_NOT_FOUND', 404));
+  await panel({ seed }); await field('计划任务名称', 'Original request'); await click('预览下次执行时间');
+  await click('保存计划任务');
+  await settle(() => expect(button('显式重试原变更请求')?.disabled).toBe(false));
+  expect(localStorage.getItem(pointerKey)).not.toBeNull(); expect(client.create).toHaveBeenCalledTimes(1);
+  await click('显式重试原变更请求');
+  expect(client.create).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(client.create).mock.calls[1]).toEqual(vi.mocked(client.create).mock.calls[0]);
+  expect(localStorage.getItem(pointerKey)).toBeNull();
+  expect(button('预览下次执行时间')?.disabled).toBe(false);
+  expect(host.textContent).toContain('服务端已拒绝此次变更');
+});
+
+it('settles A completion independently of an unreadable B projection and keeps editing unavailable', async () => {
+  localStorage.setItem(pointerKey, JSON.stringify({ requestId: 'completed-edit-a', scheduleId: row.id }));
+  vi.mocked(client.recover).mockResolvedValue({ ownerId: owner.id, scheduleId: row.id,
+    commandId: 'completed-edit-a', commandStatus: 'complete', schedule: null });
+  vi.mocked(client.list).mockRejectedValue(new ApiError('SCHEDULE_EDITOR_UNKNOWN', 409));
+  vi.mocked(client.inspect).mockRejectedValue(new ApiError('SCHEDULE_EDITOR_UNKNOWN', 409));
+  await panel({ selectedId: row.id, seed });
+  expect(localStorage.getItem(pointerKey)).toBeNull();
+  expect(host.textContent).toContain('原变更已完成');
+  expect(host.textContent).toContain('当前计划状态暂不可读');
+  expect(host.textContent).not.toContain('原变更请求未确认');
+  expect(button('显式重试原变更请求')).toBeUndefined();
+  expect(button('保存计划任务')).toBeUndefined(); expect(button('保存执行时间')).toBeUndefined();
+  expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
+  await click('刷新计划任务');
+  expect(localStorage.getItem(pointerKey)).toBeNull();
+  expect(button('保存计划任务')).toBeUndefined();
+  expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
+});
+
+it('settles an in-flight completed command when later state cannot be projected without replaying it', async () => {
+  vi.mocked(client.setEnabled).mockRejectedValue(new Error('Lost A acknowledgement'));
+  vi.mocked(client.recover).mockImplementation(async commandId => ({ ownerId: owner.id, scheduleId: row.id,
+    commandId, commandStatus: 'complete', schedule: null }));
+  await panel({ selectedId: row.id, seed }); await click('恢复后续计划');
+  expect(localStorage.getItem(pointerKey)).toBeNull();
+  expect(host.textContent).toContain('原变更已完成');
+  expect(button('保存计划任务')).toBeUndefined(); expect(button('暂停后续计划')).toBeUndefined();
+  expect(client.setEnabled).toHaveBeenCalledTimes(1); expect(client.update).not.toHaveBeenCalled();
 });

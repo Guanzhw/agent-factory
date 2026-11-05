@@ -187,7 +187,7 @@ class ResearchSessionReplyContracts(unittest.TestCase):
         self.assertEqual(turns[-1]['body']['messages'][0]['state'], 'pending')
         self.assertEqual(turns[0]['body']['assistantReply'], self.snapshot)
 
-    def test_successful_summary_keeps_reply_outside_summary_and_checks_checkpoint_reuse(self):
+    def test_successful_summary_treats_old_reply_as_background_and_still_rechecks_authority(self):
         _, task = self.activate()
         self.finish(task, 'Confirmed synthetic history. ' * 600)
         self.activate(SessionTurn(requestId='continue-with-summary', text='Continue'))
@@ -196,8 +196,8 @@ class ResearchSessionReplyContracts(unittest.TestCase):
         factory = Mock(return_value=model)
         messages = self.before(factory)
         packet = json.loads(messages[-1].content.split('\n', 1)[1])
-        self.assertEqual(packet['turns'][0]['assistantReply']['reply']['text'], self.snapshot['reply']['text'])
-        self.assertNotIn(self.snapshot['reply']['text'], str(model.response.call_args))
+        self.assertNotIn('assistantReply', packet['turns'][0])
+        self.assertIn(self.snapshot['reply']['text'], str(model.response.call_args))
         self.revoked = True
         with self.assertRaises(HTTPException):
             self.before(factory)

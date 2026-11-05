@@ -70,7 +70,7 @@ class ResearchSessionSetup:
     def ceilings(self):
         caps = budget_limits(self.store.settings, 2)
         return {'maxTurns': 20, 'toolCallsPerTurn': caps['toolCalls'],
-                'operationSeconds': caps['operationSeconds'], 'outputBytes': min(65536, caps['outputBytes'])}
+                'operationSeconds': caps['operationSeconds'], 'outputBytes': caps['outputBytes']}
 
     def options(self, owner):
         models = [{key: item[key] for key in ('connectionRef', 'provider', 'model', 'available') if key in item}

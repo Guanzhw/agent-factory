@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 
 from agent_factory.member_tool_operations import MemberToolOperations
+from agent_factory.personal_tools import OperationAccountRequest
 import test_personal_tools as fixtures
 
 
@@ -34,6 +35,20 @@ class MemberToolOperationsTests(unittest.TestCase):
         self.assertEqual(value['ownerId'], 'alice')
         self.assertNotIn('credentialRef', str(value))
         self.assertEqual(value['runtimeBinding']['config'], {'operationSha256': ref['sha256']})
+
+    def test_account_identifiers_create_and_bind_their_own_operations(self):
+        self.fixture.connections.personal_tools = self.service
+        for owner in ('alice@example.com', 'sk-alice'):
+            with self.subTest(owner=owner):
+                operation = self.operations.create(owner, self.configuration, 'publish')
+                ref = operation['operationRef']
+                account = self.service.configure_operation(owner, ref['id'], OperationAccountRequest(
+                    version=ref['version'], sha256=ref['sha256'], requestId='account'))
+                bound = self.fixture.connections.bind(owner, account['registrationRef'], 'bind')
+                self.assertEqual(bound['ownerId'], owner)
+                self.assertEqual(self.operations.get('bob', ref['id'], ref['version'])['ownerId'], owner)
+                with self.assertRaises(HTTPException):
+                    self.fixture.connections.resolve('bob', bound['ref'], 'tool')
 
     def test_replay_conflict_and_result_resolution(self):
         first = self.operations.create('alice', self.configuration, 'publish')
