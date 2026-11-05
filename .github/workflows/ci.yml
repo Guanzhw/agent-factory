@@ -87,6 +87,51 @@ jobs:
       - name: Full Python compatibility discovery
         if: needs.scope.outputs.mode == 'full' && runner.os == 'Windows'
         run: uv run python scripts/check_python.py
+      - name: Native Windows PostgreSQL original-operation recovery
+        if: needs.scope.outputs.mode == 'full' && runner.os == 'Windows'
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          import socket
+          import subprocess
+          import tempfile
+
+          pg_bin = Path(os.environ['PGBIN'])
+          subprocess.run([str(pg_bin / 'postgres.exe'), '--version'], check=True)
+          with tempfile.TemporaryDirectory(prefix='research-windows-pg-', dir=os.environ['RUNNER_TEMP']) as directory:
+              root = Path(directory)
+              data = root / 'data'
+              password = root / 'password.txt'
+              password.write_text('ci-fixture-only\n', encoding='utf-8')
+              subprocess.run([str(pg_bin / 'initdb.exe'), '-D', str(data), '-U', 'factory_ci',
+                              '--auth=scram-sha-256', '--encoding=UTF8', '--pwfile=' + str(password)], check=True)
+              with socket.socket() as listener:
+                  listener.bind(('127.0.0.1', 0))
+                  port = listener.getsockname()[1]
+              pg_ctl = [str(pg_bin / 'pg_ctl.exe'), '-D', str(data), '-w']
+              try:
+                  subprocess.run([*pg_ctl, '-l', str(root / 'postgres.log'),
+                                  '-o', f'-h 127.0.0.1 -p {port}', 'start'], check=True)
+                  env = dict(os.environ)
+                  env['FACTORY_TEST_DATABASE_URL'] = f'postgresql+psycopg://factory_ci:ci-fixture-only@127.0.0.1:{port}/postgres'
+                  env['AGNO_TELEMETRY'] = 'false'
+                  env['PYTHONPATH'] = os.pathsep.join(['platform', 'deployment', 'applications',
+                                                     'platform/tests', 'applications/tests'])
+                  code = r'''
+          import sys, unittest
+          suite = unittest.defaultTestLoader.loadTestsFromName('test_research_windows_restart.ResearchWindowsRestartTests')
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          for case, traceback in [*result.failures, *result.errors]:
+              message = (case.id() + '\n' + traceback).replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+              print('::error::' + message)
+          print(f'Windows PostgreSQL recovery: {result.testsRun} tests; {len(result.skipped)} skips')
+          sys.exit(0 if result.testsRun == 3 and result.wasSuccessful() and not result.skipped else 1)
+          '''
+                  subprocess.run([str(Path('.venv/Scripts/python.exe').resolve()), '-c', code], env=env, check=True)
+              finally:
+                  if (data / 'postmaster.pid').exists():
+                      subprocess.run([*pg_ctl, '-m', 'fast', 'stop'], check=True)
   postgres:
     needs: scope
     if: needs.scope.outputs.mode != 'docs'
