@@ -19,3 +19,16 @@
 .application-card p { color: var(--muted); font-size: 14px; margin-bottom: 28px; }
 .application-card button { margin-top: auto; }
 .application-catalog-empty { color: var(--muted); font-size: 14px; padding: 24px 0; }
+
+.template-catalog-intro { display: flex; align-items: center; gap: 20px; justify-content: space-between; margin: 0 0 24px; }
+.template-catalog-intro p { color: var(--muted); margin: 0; }
+.template-detail { max-width: 900px; padding: 28px; background: var(--white); border: 1px solid var(--line); border-radius: 12px; }
+.template-detail > h2 { margin-top: 28px; }
+.template-detail > section { border-top: 1px solid var(--line); padding-top: 16px; margin-top: 16px; }
+.template-detail > button, .template-more { margin-top: 24px; }
+@media (max-width: 600px) {
+  .template-catalog-intro { align-items: stretch; flex-direction: column; }
+  .template-detail, .application-card { padding: 20px; }
+}
+
+.application-catalog button { min-height: 44px; }

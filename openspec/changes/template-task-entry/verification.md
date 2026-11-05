@@ -1,0 +1,51 @@
+# Template task entry verification
+
+Base: `b6c383a5c5543fd0cf7d8c08c043ee8ad0f69abe`; design `a86a5420020350950b1c0ec98a8102ff2412a85c` independently reviewed before implementation. Product remains Agno 3.1.0. No external model/GPU/SSH, production credentials or deployment.
+
+- Backend: 36 portable regressions passed; additional mixed-mode/exact-copy counterexamples passed. Real PostgreSQL: 13 tests passed, zero skips, plus the final unrelated-copy counterexample. New/old schema, size-one connection pool, excluded rows before pagination, 105 ordinary templates, exact Research pins and original revision receipts were exercised in isolated test databases. The earlier portable invocation's PG skip is not PG acceptance.
+- Frontend: `npm run check` passed (59 files, 631 tests, lint, types, core build); `npm run build:research` passed. Exact template selection keeps the goal editable; ordinary source-bound goals remain fixed; the existing workspace mutation lock preserves separate preview/accept/start actions.
+- Resource return initially preserved inputs but waited for the next 5-second poll to reveal a new connection. The failing component case is retained; re-entering the task now immediately rereads resources without changing accepted plans. Refresh does not persist unsubmitted template input; the browser warns before loss. Existing proposal records remain recoverable.
+- The first full frontend run exposed a new test asserting completion before the asynchronous command key finished. It now waits for the same exactly-once callback, matching the existing flow tests; no product behavior or timing limit was weakened. Original failed output is retained with the author audit.
+- The existing locked Chromium smoke (`--desktop-only --scenario configured --scenario bind-loss`) passed both cases against the core build. These are explicit API fixtures, not real provider integration. Dependency audit against `https://registry.npmjs.org`: zero vulnerabilities; web ownership checker: zero violations/coverage gaps; OpenSpec strict passed.
+- At the initial author checkpoint, real PostgreSQL/password/browser and independent code review were pending; their later scoped results are recorded below. Inheritance of PR #164's final main was still pending at that checkpoint; integrated results follow below. Exact-head full CI and main verification remain separate gates. A does not block the separate Auto Research deployment acceptance. Author editing B and resource-form redesign are later work.
+
+## Independent review corrections
+
+The complete `b6c383a..9f5e5e6` review requested changes: TE-001, automatic matching could not expose required schema fields after a 422; TE-002, browser Back appended the last catalog page twice. Both original failures remain recorded. Contract delta `ffa26a6` received a separate non-author review before implementation.
+
+- TE-001: read-only matching reuses the existing backend selector before the user fills required fields. It returns the accurate definition with no persisted proposal/command/plan; the later preview pins that definition. The original missing-input proposal still returns 422. Nine portable tests, including native authenticated HTTP match→fill→propose→accept and persistence counts, passed. These portable stores are not PostgreSQL task-execution evidence.
+- TE-002: catalog paging and detail reads are separate; Back/Forward reuses loaded list entries. The reviewer's original unchanged pagination reproduction passed. The old TE-001 script expected the obsolete proposal-first step; its failure is preserved, while the revised case uses the same required schema and verifies match→fields→explicit preview instead of weakening schema validation.
+- Corrected candidate: `npm run check` passed all 634 tests, types, lint and core build; both original locked Chromium smoke cases and Research build passed. No dependency, runtime version, credentials, permissions or execution engine changed. At that correction checkpoint, true PostgreSQL/browser and independent cumulative re-review were still pending; their subsequent results follow below.
+
+## Independent scoped acceptance at 69a806c
+
+Non-author cumulative review of `b6c383a5c5543fd0cf7d8c08c043ee8ad0f69abe..69a806cf6d910cd3d5ed8f260be96d45660a917b` passed with no remaining findings. The reviewer independently ran 31 component and 12 portable/HTTP tests, and bridged the actual matched backend definition through the component's filled required input back into the same backend proposal service; no fabricated ready proposal was used. TE-001 and TE-002 are closed.
+
+Real isolated PostgreSQL, normal password login and Chromium 151 passed at the same product head/tree `a6bfbec6d0b0333002e15a2888cf9c7c30f4b345`: 52 published synthetic templates coexisted with a naturally prepared Research internal definition; second-page Back/Forward kept 52 unique cards with two catalog reads. Both desktop and 390px flows matched without a proposal, preserved exact inputs across model setup, previewed one proposal, accepted one plan with zero tasks, then explicitly started one original task each. Two native Agno tasks produced actual checksum artifacts whose UTF-8 digest/size were independently checked. Four provider responses were **scripted**; external model calls, Research turns and real credentials were zero. Same-browser logout/login across two owners cleared unsaved inputs; a foreign proposal read returned actual 404. An injected 503 was distinguished from a real empty directory and a successful retry.
+
+The QA's initial invalid synthetic schema and navigation-wait assumption failures were retained and corrected only in the test setup. Tests used disposable databases and loopback TLS; services/scratch were cleaned and shared PostgreSQL left running. They do not verify public TLS, user deployment, real providers, GPU/SSH, all UNKNOWN transport combinations or research quality. The pictures show synthetic QA records and the pre-#164 shell; they are not final integrated deployment screenshots.
+
+| Actual screenshot | What it demonstrates |
+| --- | --- |
+| [Desktop exact template](../../../docs/images/template-task-entry/01-catalog-second-page-detail.png) | Second-page definition, required inputs and explicit create action. |
+| [390px resource return](../../../docs/images/template-task-entry/02-390-required-resource-return.png) | The form after returning from model setup; original goal and required text remain. This is a locator screenshot within the actual 390px viewport. |
+| [Saved plan before start](../../../docs/images/template-task-entry/03-1440-saved-plan-explicit-start.png) | Accepted plan with zero tasks until explicit start; displayed 8-call/8-second limits are synthetic template metadata, not personal-research defaults. |
+
+At the 69a806c checkpoint, final #164 integration and its navigation review/browser delta were still pending; those results follow below. Exact-head full CI and main verification remain required. Author editing B and resource-form redesign remain deferred; this slice does not block the separate existing Auto Research deployment acceptance.
+
+
+## Integrated task and template navigation at 469b717
+
+Integrated main `db6d62a4880466f3bf50879809e2339e57cf8a44` into the template branch at `469b7179efed929b5f18da67cafe4de29d09bd9e` (tree `0b546fb90c24cc12a6f1c67f19b827a4a0b7c117`). The three navigation conflicts preserve both template resource return and exact task/application/plan return. Starting schedule setup from a newly saved template plan clears an old selected schedule ID; no router or recovery framework was added. Backend code remains byte-identical to the already reviewed 69a806c candidate.
+
+Non-author complete `db6d62a..469b717` review passed with no findings, including 69 independently run component/navigation tests and both original defect reproductions. Author checks passed: 664 frontend tests with lint/types/core build, 112 focused tests, Research build, both existing Chromium API-fixture smoke scenarios, official dependency audit (zero vulnerabilities), web ownership and strict OpenSpec checks.
+
+The separate actual PostgreSQL/password/Chromium integration campaign passed at the same head, with unchanged source/build hashes before and after. A 1440px member completed template matching, required input and model-setup return, accepted a plan with zero tasks and explicitly started one native task. At 390px, a Research task returned to its exact original session and a scheduled task returned to its original plan; navigation/refresh added no POSTs. Three native tasks produced two actual checksum artifacts using five **scripted** provider responses, zero external model calls. The ordinary-template artifact bytes/digest were independently checked; the scheduled artifact record was inspected. A separately injected UNKNOWN command GET verified only display and original-ID read behavior with zero POSTs; it does not prove backend UNKNOWN or stop handling.
+
+| Integrated screenshot | What it demonstrates |
+| --- | --- |
+| [Desktop task result](../../../docs/images/template-task-entry/04-integrated-task-result.png) | Actual checksum artifact in the new task detail; completed execution remains distinct from research validity. |
+| [390px original Research session](../../../docs/images/template-task-entry/05-integrated-research-return.png) | Locator capture after returning to the actual original session; the reply is explicitly SCRIPTED. |
+| [390px original plan](../../../docs/images/template-task-entry/06-integrated-plan-return.png) | Locator capture after returning to the actual plan and its existing execution history. |
+
+The integration campaign passed on its first execution. A preceding QA-only database-URL dialect parsing error occurred before connection; it and the proxy's navigation-abort diagnostic are retained in local QA evidence, not hidden as product successes. Owned services/scratch/test databases were cleaned; shared PostgreSQL was preserved. This remains loopback testing, not user deployment, public TLS, real model/GPU/SSH, Windows execution or capacity acceptance. Exact-head full CI and subsequent main verification are still pending; author editing B remains deferred.
