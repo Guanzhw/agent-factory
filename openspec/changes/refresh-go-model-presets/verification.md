@@ -17,6 +17,12 @@
 
 首次浏览器尝试因临时脚本选择了两个并存的 status 元素失败，保留 `gpt-luna-failure.json/png`；收窄到成功提示后通过，未因此改产品代码。
 
+## Integration follow-up
+
+主代理将已独审的 Windows 候选 `39bd202790e33dc6b3b71323cab07459b888e34c` 整合为 `ae796548250132719d5880b8a9eb10b24f748383`；该基线包含已合入的模板入口和 minimatch 公告修复。非作者确认七个 Go 文件与原实现逐字节相同，其余文件与基线相同。整合后重新执行 `npm run check`（61 文件 / 664 测试）、core/Research 构建、生产与完整官方依赖 audit，全部通过；完整 audit 为零漏洞。保留上述原始失败，不把它算作通过。
+
+主代理结合源码、独立累计审查和浏览器回执勾选本变更三个本地任务。发布仍需准确最终版本 full CI；此处不把本地完成等同于合入或部署。
+
 ## Unverified
 
-官方 Go 文档只读核验了当前模型 ID 与协议路径，未读取密钥或发真实 Go 请求；未执行 PostgreSQL、真实模型/远程集成、AutoResearch 或部署验证。完整依赖 audit 仍失败，不构成全部门禁通过。无 push、PR、Ready、merge、Approve 或 workflow dispatch。
+官方 Go 文档只读核验了当前模型 ID 与协议路径，未读取密钥或发真实 Go 请求；本变更未执行 PostgreSQL、真实模型/远程集成、AutoResearch 或部署验证。最终 full CI、合入与用户部署仍待完成；作者未执行远端发布操作。
