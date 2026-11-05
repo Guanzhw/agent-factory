@@ -31,4 +31,6 @@
 
 PR 的 Linux fast 实跑发现原模块选择器包含新增 Windows 专用类，六项 skip 正确触发未通过。因此允许在 `scripts/fast_test_groups.py` 将该项明确为原 POSIX 类和便携协议类；保留原 Linux 用例与严格 skip 门禁，Windows 专用类仍由完整 discovery 在 Windows 执行。
 
+恢复时已核验准确 `91f722f` full 全部成功，但 Windows job 没有数据库配置，三项重启恢复测试仍跳过。为完成任务 2.2，允许仅在现有 `.github/workflows/ci.yml` 的 Windows full 中追加临时 PostgreSQL 验收：复用 runner 已安装的 PostgreSQL，在 `RUNNER_TEMP` 的独立目录初始化、仅监听 loopback，执行现有三项测试并拒绝 skip，最后只关闭该集群。不操作系统 PG 服务或用户机器，不改变产品、依赖或测试断言。
+
 不包含 PTY、WSL、远端自由编码、GPU、多团队编排、OS 沙箱保证、安装依赖、新模型/账号/TLS/本机信任、部署或发布。现有工作树和数据库保持原状；本轮云端不操作用户设备或调用外部模型。
