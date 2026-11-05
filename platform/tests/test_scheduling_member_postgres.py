@@ -71,7 +71,8 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
             expectedDefinitionFingerprint=schedule['definitionFingerprint'])
         changed = self.request('PATCH', path, update)
         self.assertEqual(self.request('PATCH', path, update), changed)
-        self.assertEqual(self.request('GET', '/schedule-management/commands/' + update['requestId']), changed)
+        self.assertEqual(self.request('GET', '/schedule-management/commands/' + update['requestId']),
+            {**changed, 'scheduleId': changed['id'], 'commandId': update['requestId'], 'commandStatus': 'complete'})
         self.request('PATCH', path, {**update, 'requestId': str(uuid4())}, status=409)
         enabled = self.enabled(changed, True)
         self.assertEqual(enabled['allowedActions'], ['edit', 'disable'])
@@ -164,10 +165,12 @@ class MemberSchedulingPostgresTests(unittest.TestCase):
         with patch.object(self.service.db, 'create_schedule', side_effect=lost_create) as native_create:
             self.request('POST', '/schedule-management', create, status=409)
             recovered = self.request('GET', '/schedule-management/commands/' + create['requestId'])
-            self.assertEqual(self.request('POST', '/schedule-management', create, status=201), recovered)
+            schedule = self.request('POST', '/schedule-management', create, status=201)
+            self.assertEqual(recovered, {**schedule, 'scheduleId': schedule['id'],
+                'commandId': create['requestId'], 'commandStatus': 'complete'})
             self.assertEqual(native_create.call_count, 1)
         self.assertEqual(recovered['requestId'], create['requestId'])
-        schedule = self.enabled(recovered, True)
+        schedule = self.enabled(schedule, True)
         request = self.command()
         path = '/schedules/' + schedule['id'] + '/trigger'
         with patch.object(self.service.bridge, 'submit', side_effect=TimeoutError('Synthetic admission loss')) as submit:

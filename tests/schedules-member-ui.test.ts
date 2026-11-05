@@ -24,6 +24,14 @@ async function click(text: string) {
   expect(button(text), text).toBeDefined();
   await act(async () => button(text)!.click());
 }
+function holdNextDigest() {
+  const digest = webcrypto.subtle.digest.bind(webcrypto.subtle);
+  let finish!: () => void;
+  vi.spyOn(webcrypto.subtle, 'digest').mockImplementationOnce((algorithm, data) => new Promise<ArrayBuffer>((resolve, reject) => {
+    finish = () => { void digest(algorithm, data).then(resolve, reject); };
+  }));
+  return () => act(async () => finish());
+}
 async function settle(assertion: () => void) { await vi.waitFor(async () => { await act(async () => {}); assertion(); }); }
 async function field(label: string, value: string) {
   await act(async () => {
@@ -328,17 +336,13 @@ it('allows editing after a directly rejected withdrawn-application schedule with
   expect(client.recover).not.toHaveBeenCalled();
   await field('计划任务名称', 'Corrected plan'); await click('预览下次执行时间');
   await settle(() => expect(button('保存计划任务')?.disabled).toBe(false));
-  const digest = webcrypto.subtle.digest.bind(webcrypto.subtle);
-  let finishDigest!: () => void;
-  vi.spyOn(webcrypto.subtle, 'digest').mockImplementationOnce((algorithm, data) => new Promise<ArrayBuffer>((resolve, reject) => {
-    finishDigest = () => { void digest(algorithm, data).then(resolve, reject); };
-  }));
+  const finishDigest = holdNextDigest();
   await click('保存计划任务');
   try {
     expect(client.create).toHaveBeenCalledTimes(1);
     expect(host.querySelector('fieldset')?.disabled).toBe(true);
   }
-  finally { await act(async () => finishDigest()); }
+  finally { await finishDigest(); }
   await settle(() => expect(button('恢复后续计划')?.disabled).toBe(false));
   expect(client.create).toHaveBeenCalledTimes(2);
   expect(vi.mocked(client.create).mock.calls[1][0].name).toBe('Corrected plan');
@@ -396,9 +400,21 @@ it('settles an in-flight completed command when later state cannot be projected 
   vi.mocked(client.setEnabled).mockRejectedValue(new Error('Lost A acknowledgement'));
   vi.mocked(client.recover).mockImplementation(async commandId => ({ ownerId: owner.id, scheduleId: row.id,
     commandId, commandStatus: 'complete', schedule: null }));
-  await panel({ selectedId: row.id, seed }); await click('恢复后续计划');
+  await panel({ selectedId: row.id, seed });
+  await settle(() => expect(button('恢复后续计划')?.disabled).toBe(false));
+  const finishDigest = holdNextDigest();
+  await click('恢复后续计划');
+  try {
+    expect(client.setEnabled).not.toHaveBeenCalled(); expect(client.recover).not.toHaveBeenCalled();
+    expect(button('刷新计划任务')?.disabled).toBe(true);
+    expect(host.textContent).not.toContain('原变更已完成');
+  } finally { await finishDigest(); }
+  await settle(() => {
+    expect(host.textContent).toContain('原变更已完成');
+    expect(button('刷新计划任务')?.disabled).toBe(false);
+  });
   expect(localStorage.getItem(pointerKey)).toBeNull();
-  expect(host.textContent).toContain('原变更已完成');
   expect(button('保存计划任务')).toBeUndefined(); expect(button('暂停后续计划')).toBeUndefined();
   expect(client.setEnabled).toHaveBeenCalledTimes(1); expect(client.update).not.toHaveBeenCalled();
+  expect(client.recover).toHaveBeenCalledExactlyOnceWith(vi.mocked(client.setEnabled).mock.calls[0][1].requestId);
 });

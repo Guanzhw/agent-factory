@@ -4,7 +4,6 @@ import asyncio
 from contextlib import contextmanager, asynccontextmanager
 from functools import partial
 import gc
-import faulthandler
 from collections import deque
 from concurrent.futures import Future
 import json
@@ -32,9 +31,8 @@ import test_personal_tool_native_postgres as native_fixture
 
 class MCPPhaseRing:
     """Bounded locations/timestamps only; retains no callbacks or app objects."""
-    def __init__(self, limit=512, *, diagnostic=False):
+    def __init__(self, limit=512):
         self.events = deque(maxlen=limit)
-        self.diagnostic = diagnostic
         self.lock = threading.RLock()
         self.started = time.monotonic()
         self.sequence = 0
@@ -44,17 +42,10 @@ class MCPPhaseRing:
                status=None, attempt=None, worker_id=None, frames=None, generation=None, collected=None):
         with self.lock:
             self.sequence += 1
-            event = {'sequence': self.sequence, 'seconds': round(time.monotonic() - self.started, 6),
+            self.events.append({'sequence': self.sequence, 'seconds': round(time.monotonic() - self.started, 6),
                 'phase': phase, 'runId': run_id, 'callId': call_id, 'callback': callback,
                 'kind': kind, 'status': status, 'attempt': attempt, 'workerId': worker_id, 'frames': frames,
-                'generation': generation, 'collected': collected}
-            self.events.append(event)
-        if self.diagnostic and phase in {
-                'second_submit_begin', 'second_submit_return', 'native_wait_begin', 'native_wait_exit',
-                'capacity_wait_begin', 'capacity_wait_exit', 'native_wait_failed', 'capacity_wait_failed',
-                'generation_stop_begin', 'generation_stop_end',
-                'second_generation_start_begin', 'second_generation_start_end'}:
-            print('MCP_PHASE_CHECKPOINT ' + json.dumps(event, sort_keys=True), file=sys.stderr, flush=True)
+                'generation': generation, 'collected': collected})
 
     def snapshot(self):
         with self.lock:
@@ -301,15 +292,7 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
     # Reuse the established app/vault/publication API fixture without inheriting
     # its unrelated test cases or replacing any core admission implementation.
     start = native_fixture.PersonalToolNativePostgresTests.start
-
-    def stop(self):
-        ring = getattr(getattr(self, 'adapter', None), 'phase_ring', None)
-        if ring is not None:
-            ring.record('generation_stop_begin')
-        native_fixture.PersonalToolNativePostgresTests.stop(self)
-        if ring is not None:
-            ring.record('generation_stop_end')
-
+    stop = native_fixture.PersonalToolNativePostgresTests.stop
     request = native_fixture.PersonalToolNativePostgresTests.request
     publish = native_fixture.PersonalToolNativePostgresTests.publish
     configure = native_fixture.PersonalToolNativePostgresTests.configure
@@ -320,10 +303,6 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         except AssertionError as error:
             # Capture before teardown, only after the unchanged wait failed.
             # Frames contain locations only, never locals/credentials/messages.
-            ring = self.adapter.phase_ring
-            if ring is not None and ring.diagnostic:
-                ring.record('native_wait_failed')
-                print('MCP_PHASE_EVIDENCE ' + json.dumps(ring.snapshot(), sort_keys=True), file=sys.stderr, flush=True)
             task = self.store.task(started['job']['id'], owner)
             native = self.store.native_db.get_job(task['run_id']) or {}
             stacks = []
@@ -348,10 +327,6 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
                 json.dumps(diagnostic, sort_keys=True, default=str)) from error
 
     def setUp(self):
-        if self._testMethodName == 'test_credential_resolution_failure_releases_capacity_without_mcp_io':
-            faulthandler.dump_traceback_later(30, repeat=True, exit=False)
-            # Registered first so dumps remain armed through lifespan/database cleanup.
-            self.addCleanup(faulthandler.cancel_dump_traceback_later)
         database = IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']).__enter__()
         self.addCleanup(database.__exit__, None, None, None)
         directory = TemporaryDirectory(prefix='personal-mcp-capacity-')
@@ -431,10 +406,6 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
             time.sleep(0.03)
         # Read diagnostics only after the unchanged deadline; never tick the
         # observer, reconcile effects or expose tool outputs/credentials here.
-        ring = self.adapter.phase_ring
-        if ring is not None and ring.diagnostic:
-            ring.record('capacity_wait_failed')
-            print('MCP_PHASE_EVIDENCE ' + json.dumps(ring.snapshot(), sort_keys=True), file=sys.stderr, flush=True)
         observer = self.state['lifecycle_observer']
         native = self.store.native_db.get_job(task['run_id']) or {}
         effects = []
@@ -476,8 +447,7 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         self.assertEqual(effects[0]['result'], {'outcome': 'failed', 'stopped': True})
         request_count = len(self.mcp.requests)
         self.assert_original_receipt(body, task, effects, request_count)
-        ring = MCPPhaseRing(diagnostic=self._testMethodName ==
-            'test_credential_resolution_failure_releases_capacity_without_mcp_io')
+        ring = MCPPhaseRing()
         self.adapter.phase_ring = ring
         self.mcp.phase_ring = ring
         with ring.lifecycle_trace():
@@ -522,11 +492,7 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
                                         {**body, 'requestId': 'after-known-mcp-failure'}, expected=202)
                 ring.record('second_submit_return')
                 self.assertNotEqual(next_run['job']['id'], task['id'])
-                ring.record('native_wait_begin')
-                try:
-                    next_task = self.wait(next_run, 'alice')
-                finally:
-                    ring.record('native_wait_exit')
+                next_task = self.wait(next_run, 'alice')
                 ring.record('capacity_wait_begin', run_id=next_task['run_id'])
                 try:
                     self.wait_terminal(next_task)
