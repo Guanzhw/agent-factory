@@ -8,7 +8,6 @@ import { ModelSettings } from '../web/ModelSettings.js';
 import { ownerModel, ownerModelApi, ModelRequestError, type OwnerModel, type OwnerModelReceipt } from '../web/ownerModelApi.js';
 import { personalRemoteApi } from '../web/personalRemoteApi.js';
 import { modelEndpoint, readModelSetup, setupMetadata, type ModelSetup } from '../web/ownerModelSetup.js';
-import { MODEL_PROVIDER_PRESETS } from '../web/modelProviderConfig.js';
 
 const credential = { credentialRef: 'credential-fixture', credentialRevision: 'credential-revision', providerId: 'byok-chat-v1', destination: 'https://api.openai.com', status: 'active' };
 const row: OwnerModel = { reference: 'owner-model-fixture', revision: 'model-revision', connectionRef: 'binding-fixture', ownerId: 'alice', visibility: 'personal', isOwner: true, provider: 'openai', baseURL: 'https://api.openai.com/v1', model: 'fixture-model', credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision, updatedAt: '2026-10-09T00:00:00Z', status: 'configured', available: true, isDefault: false };
@@ -184,18 +183,28 @@ it('saves the official Go endpoint with an origin-bound credential and no model 
   expect(host.textContent).toContain('模型已保存并设为默认');
   expect(JSON.stringify(localStorage)).not.toContain(secret);
 });
-it.each(MODEL_PROVIDER_PRESETS)('applies and saves preset $id with its explicit protocol and Go base', async preset => {
+it.each([
+  { id: 'gpt-6-luna-responses', label: 'GPT-6 Luna · Responses', model: 'gpt-6-luna', protocol: 'responses' },
+  { id: 'deepseek-flash-chat-completions', label: 'DeepSeek V4.1 Flash · Chat Completions', model: 'deepseek-v4.1-flash', protocol: 'chat-completions' },
+] as const)('applies and saves preset $id with its explicit protocol and Go base', async preset => {
+  const baseURL = 'https://opencode.ai/inference/go/openai/v1';
   vi.mocked(personalRemoteApi.saveCredential).mockResolvedValue({ ...credential, destination: 'https://opencode.ai' });
-  const configured = { ...row, provider: 'openai-compatible' as const, baseURL: preset.baseURL, model: preset.model,
+  const configured = { ...row, provider: 'openai-compatible' as const, baseURL, model: preset.model,
     ...(preset.protocol === 'responses' ? { protocol: preset.protocol } : {}) };
   vi.mocked(ownerModelApi.configure).mockResolvedValue(configured);
   vi.mocked(ownerModelApi.default).mockResolvedValue({ ...configured, isDefault: true });
-  await mount(); await choose('模型快捷配置', preset.id);
+  await mount();
+  expect(host.querySelector(`option[value="${preset.id}"]`)?.textContent).toBe(preset.label);
+  await choose('模型快捷配置', preset.id);
+  expect((host.querySelector('[aria-label="模型名称"]') as HTMLInputElement).value).toBe(preset.model);
   expect((host.querySelector('[aria-label="模型 API 协议"]') as HTMLSelectElement).value).toBe(preset.protocol);
-  expect((host.querySelector('[aria-label="API 端点"]') as HTMLInputElement).value).toBe('https://opencode.ai/inference/go/v1');
+  expect((host.querySelector('[aria-label="API 端点"]') as HTMLInputElement).value).toBe(baseURL);
   await fill('API 密钥', secret); await act(async () => button('保存并设为默认').click());
   expect(personalRemoteApi.saveCredential).toHaveBeenCalledWith(expect.objectContaining({ destination: 'https://opencode.ai', password: secret }), 'alice');
-  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ baseURL: preset.baseURL, model: preset.model, protocol: preset.protocol }), undefined);
+  expect(ownerModelApi.configure).toHaveBeenCalledExactlyOnceWith('alice', {
+    requestId: expect.any(String), provider: 'openai-compatible', baseURL, model: preset.model, protocol: preset.protocol,
+    credentialRef: credential.credentialRef, credentialRevision: credential.credentialRevision,
+  }, undefined);
   expect(localStorage.getItem(storage)).toBeNull();
   expect(host.textContent).toContain('模型已保存并设为默认');
 });
@@ -488,8 +497,9 @@ it('creates a model with its chosen output limit and confirms the same default',
   expect(host.textContent).toContain('模型已保存并设为默认');
 });
 
-it('updates only output configuration once and recovers its lost acknowledgement after remount without credential writes', async () => {
-  const original = { ...row, protocol: 'responses' as const, isDefault: true };
+it('keeps an old Go configuration when updating output and recovering its lost acknowledgement after remount', async () => {
+  const original = { ...row, provider: 'openai-compatible' as const, baseURL: 'https://opencode.ai/inference/go/v1',
+    model: 'deepseek-flash', protocol: 'chat-completions' as const, isDefault: true };
   const updated = { ...original, revision: 'updated-output-revision', connectionRef: 'updated-output-binding', maxOutputTokens: 16384 };
   vi.mocked(ownerModelApi.list).mockResolvedValue([original]);
   vi.mocked(ownerModelApi.configure).mockRejectedValueOnce(new ModelRequestError(0));
@@ -502,11 +512,19 @@ it('updates only output configuration once and recovers its lost acknowledgement
   await act(async () => { button('保存输出额度').click(); button('保存输出额度').click(); });
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
   const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
-  expect(request).toMatchObject({ maxOutputTokens: 16384, protocol: 'responses', credentialRef: row.credentialRef, credentialRevision: row.credentialRevision });
+  expect(request).toEqual({ requestId: expect.any(String), provider: 'openai-compatible',
+    baseURL: 'https://opencode.ai/inference/go/v1', model: 'deepseek-flash', protocol: 'chat-completions',
+    maxOutputTokens: 16384, credentialRef: row.credentialRef, credentialRevision: row.credentialRevision });
   expect(vi.mocked(ownerModelApi.configure).mock.calls[0][2]).toBe(row.reference);
   expect(localStorage.getItem(storage)).toContain('"maxOutputTokens":16384');
+  const pending = JSON.parse(localStorage.getItem(storage)!);
+  expect(pending).toMatchObject({ baseURL: 'https://opencode.ai/inference/go/v1', model: 'deepseek-flash',
+    protocol: 'chat-completions', modelRequest: request.requestId,
+    credential: { credentialRef: row.credentialRef, credentialRevision: row.credentialRevision } });
   vi.mocked(ownerModelApi.recover).mockResolvedValue({ ownerId: 'alice', requestId: request.requestId, action: 'model.configure', result: updated, completedAt: '2026-10-09T00:00:01Z' });
   await act(async () => root.unmount()); root = createRoot(host); await mount();
+  expect(JSON.parse(localStorage.getItem(storage)!)).toEqual(pending);
+  expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
   await act(async () => button('核对并继续原保存').click());
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
   expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', request.requestId);
