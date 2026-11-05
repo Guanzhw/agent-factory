@@ -28,7 +28,7 @@ jobs:
     strategy:
       matrix:
         os: ${{ fromJSON(needs.scope.outputs.os) }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.os == 'ubuntu-latest' && 'ubuntu-24.04' || matrix.os }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -53,11 +53,12 @@ jobs:
         if: runner.os == 'Linux'
         with:
           version: '0.12.1'
-      - name: Install locked browser tooling and its matching Chromium
+      - name: Install locked browser tooling
         if: runner.os == 'Linux'
-        run: |
-          uv sync --frozen --only-group browser
-          uv run --no-sync python -m playwright install --with-deps chromium
+        run: uv sync --frozen --only-group browser
+      - name: Install matching Chromium and system dependencies
+        if: runner.os == 'Linux'
+        run: uv run --no-sync python -m playwright install --with-deps chromium
       - name: Real Chromium personal-tool configured and lost-binding-ack smoke
         if: runner.os == 'Linux'
         run: uv run --no-sync python platform/tests/browser/personal_tools_smoke.py --desktop-only --scenario configured --scenario bind-loss --output "${{ runner.temp }}/personal-tool-browser"

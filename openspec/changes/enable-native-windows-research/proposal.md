@@ -35,4 +35,6 @@ PR 的 Linux fast 实跑发现原模块选择器包含新增 Windows 专用类�
 
 恢复后的完整 npm audit 在未变更的主干锁文件上失败：开发依赖 `minimatch@10.2.6` 命中 [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)。当前 ESLint 依赖范围未包含修复版；允许在 `package.json` 和锁文件中显式覆盖为公告修复版 `11.0.1`，以完整审计和既有 lint/构建/测试验证兼容性。不降级 ESLint，不扩展业务或升级其他直接依赖。
 
+新 full 的 Linux 浏览器安装步骤失败，摘要未给出底层原因。固定 Playwright 1.58.0 的官方源码不支持 Ubuntu 26，而 `ubuntu-latest` 正在滚动迁移；因此将前端 Linux job 固定到其支持的 Ubuntu 24.04，并拆分工具安装与 Chromium 安装步骤以定位失败。保留原失败，不将平台兼容事实当作旧失败根因已确认；不升级 Playwright、不修改 Windows job 或减少验证。
+
 不包含 PTY、WSL、远端自由编码、GPU、多团队编排、OS 沙箱保证、安装依赖、新模型/账号/TLS/本机信任、部署或发布。现有工作树和数据库保持原状；本轮云端不操作用户设备或调用外部模型。
