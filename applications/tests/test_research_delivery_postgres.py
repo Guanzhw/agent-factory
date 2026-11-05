@@ -147,8 +147,15 @@ class ResearchDeliveryPostgresTests(unittest.TestCase):
         self.assertEqual(self.state['store'].task(continued, 'bob')['owner_id'], 'bob')
         with self.state['store'].engine.connect() as conn:
             original_allocation = conn.execute(select(rounds.rounds.c.allocation_id).where(rounds.rounds.c.task_id == task_id)).scalar_one()
-            continued_allocation = conn.execute(select(rounds.rounds.c.allocation_id).where(rounds.rounds.c.task_id == continued)).scalar_one()
+            continued_round = conn.execute(select(rounds.rounds).where(rounds.rounds.c.task_id == continued)).mappings().one()
+            continued_allocation = continued_round['allocation_id']
+            continued_attempt = conn.execute(select(rounds.legacy.attempts).where(
+                rounds.legacy.attempts.c.round_id == continued_round['id'])).mappings().one()
         self.assertNotEqual(original_allocation, continued_allocation)
+        self.assertEqual({item['contentId'] for item in continued_attempt['request']['sourceAssessments']},
+                         set(manifest['recordIds']))
+        self.assertTrue(all(item['disposition'] == 'reproduce'
+                            for item in continued_attempt['request']['sourceAssessments']))
         # Source withdrawal must deny the derived export, not merely remove its link.
         self.state['application_content'].set_visibility('alice', manifest['sourceIds'][0], 'personal', 'withdraw-evidence')
         self.assertEqual(self.client.get(path).status_code, 404)

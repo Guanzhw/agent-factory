@@ -603,7 +603,7 @@ class PreparedHandoffService:
                 "manifestHash": row["manifest_hash"], "remotePlanId": row["body"]["remotePlan"]["id"],
                 "remoteTaskId": task_id, "remoteRunId": task.get("run_id") if task else None,
                 "state": row["state"], "native": native,
-                "receiverBindingProof": self.store.remote_bindings.inspect(row["id"], row["remote_owner"]),
+                "receiverBindingProof": self.store.remote_bindings._inspect(row["id"], row["remote_owner"]),
                 "syntheticFixture": row["body"]["remotePlan"]["syntheticFixture"],
                 **({"receiverPlanSha256": digest(row["body"]["remotePlan"]),
                     "receiverUsageCommitment": copy.deepcopy(row["body"]["receiverUsageCommitment"])}

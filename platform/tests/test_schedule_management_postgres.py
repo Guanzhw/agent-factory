@@ -275,7 +275,7 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
         response = self.client.post('/api/factory/schedule-management', json=body,
             headers={'Authorization': 'Bearer ' + self.tokens['manager']})
         self.assertEqual(response.status_code, 409, response.text)
-        self.assertEqual(response.headers.get('X-Factory-Command-Rejected'), 'true')
+        self.assertEqual(response.headers.get('X-Factory-Command-Rejected'), 'true', response.text)
         self.request('GET', '/schedule-management/commands/' + body['requestId'], status=404)
         self.assertFalse(self.store.sql('SELECT * FROM af_schedule_editor_commands WHERE request_id=:request',
             request=body['requestId']))
@@ -287,7 +287,7 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
                 headers={'Authorization': 'Bearer ' + self.tokens['manager']})
         self.assertEqual(response.status_code, 409, response.text)
         self.assertNotIn('X-Factory-Command-Rejected', response.headers)
-        self.assertEqual(response.json()['detail'], 'SCHEDULE_EDITOR_UNKNOWN')
+        self.assertEqual(response.json(), {'message': 'SCHEDULE_EDITOR_UNKNOWN', 'code': 'REQUEST_REJECTED'})
         self.request('GET', '/schedule-management/commands/' + body['requestId'], status=409)
         self.assertEqual(self.store.sql('SELECT status FROM af_schedule_editor_commands WHERE request_id=:request',
             request=body['requestId'])[0]['status'], 'pending')

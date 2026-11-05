@@ -10,9 +10,11 @@ from unittest.mock import Mock
 
 from agno.db.schemas.scheduler import Schedule
 from agno.db.sqlite import SqliteDb
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 
 from agent_factory.auth import AuthService
+from agent_factory.main import http_error
 from agent_factory.schedule_management import ScheduleManagement
 from agent_factory.scheduling import ENDPOINT, MANAGED_BY, SchedulingService
 from agent_factory.store import digest
@@ -88,6 +90,58 @@ class ScheduleMemberPermissionTests(unittest.TestCase):
         self.assertEqual(unknown.exception.detail, 'SCHEDULE_EDITOR_UNKNOWN')
         self.assertIsNone(unknown.exception.headers)
         self.service._plan.assert_called_once_with(self.plan['id'], 'alice')
+        self.service.db.create_schedule.assert_called_once()
+        self.assertTrue(any('INSERT INTO af_schedule_editor_commands' in call.args[0]
+                            for call in self.service.store.sql.call_args_list))
+
+    def test_http_editor_prewrite_rejection_preserves_headers_for_both_detail_shapes(self):
+        self.service._lock = Mock(return_value=nullcontext())
+        self.service.db = Mock()
+        self.service._plan = Mock()
+        app = FastAPI()
+        app.exception_handler(HTTPException)(http_error)
+
+        @app.post('/schedule-command')
+        def submit():
+            return self.management.mutate('alice', 'create', {'requestId': 'rejected-http-command',
+                'planId': self.plan['id'], 'name': 'Owned fixture', 'cron': '0 0 1 1 *', 'timezone': 'Etc/UTC'})
+
+        details = [('INACTIVE_APPLICATION: withdrawn fixture',
+                    {'message': 'INACTIVE_APPLICATION: withdrawn fixture', 'code': 'INACTIVE_APPLICATION'}),
+                   ({'message': 'Withdrawn fixture', 'code': 'INACTIVE_APPLICATION'},
+                    {'message': 'Withdrawn fixture', 'code': 'INACTIVE_APPLICATION'})]
+        with TestClient(app) as client:
+            for detail, expected in details:
+                self.service._plan.side_effect = HTTPException(409, detail, headers={'X-Original': 'preserved'})
+                with self.subTest(detail=detail):
+                    response = client.post('/schedule-command')
+                    self.assertEqual(response.status_code, 409)
+                    self.assertEqual(response.json(), expected)
+                    self.assertEqual(response.headers.get('X-Factory-Command-Rejected'), 'true')
+                    self.assertEqual(response.headers.get('X-Original'), 'preserved')
+        self.service.db.create_schedule.assert_not_called()
+        self.assertFalse(any('INSERT INTO af_schedule_editor_commands' in call.args[0]
+                             for call in self.service.store.sql.call_args_list))
+
+    def test_http_native_boundary_failure_never_claims_a_prewrite_rejection(self):
+        self.service._lock = Mock(return_value=nullcontext())
+        self.service._plan = Mock(return_value=self.plan)
+        self.service.db = Mock()
+        self.service.db.get_schedule_by_name.return_value = None
+        self.service.db.create_schedule.side_effect = HTTPException(409, 'INACTIVE_APPLICATION')
+        app = FastAPI()
+        app.exception_handler(HTTPException)(http_error)
+
+        @app.post('/schedule-command')
+        def submit():
+            return self.management.mutate('alice', 'create', {'requestId': 'unknown-http-command',
+                'planId': self.plan['id'], 'name': 'Owned fixture', 'cron': '0 0 1 1 *', 'timezone': 'Etc/UTC'})
+
+        with TestClient(app) as client:
+            response = client.post('/schedule-command')
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json(), {'message': 'SCHEDULE_EDITOR_UNKNOWN', 'code': 'REQUEST_REJECTED'})
+        self.assertNotIn('X-Factory-Command-Rejected', response.headers)
         self.service.db.create_schedule.assert_called_once()
         self.assertTrue(any('INSERT INTO af_schedule_editor_commands' in call.args[0]
                             for call in self.service.store.sql.call_args_list))

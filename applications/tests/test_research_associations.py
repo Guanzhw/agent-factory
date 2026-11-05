@@ -7,6 +7,7 @@ from unittest.mock import Mock
 from uuid import uuid4
 
 from agno.run import RunContext
+from agno.models.message import Message
 from fastapi import HTTPException
 from sqlalchemy import Column, JSON, LargeBinary, MetaData, String, Table, select
 
@@ -19,6 +20,7 @@ from research.qa_workflow import Answer
 from research.workflow import Decision
 import test_applications_composition as fixtures
 import test_research_rounds as round_fixtures
+from test_research_workflow_postgres import ResearchModel
 
 
 class ResearchAssociationTests(fixtures.ApplicationCompositionFixture):
@@ -258,9 +260,28 @@ class ResearchPeerConsumerTests(round_fixtures.ResearchRoundsFixture):
         displayed = {source['id'] for item in context['peerEvidence'] for source in item['sources']}
         self.assertEqual(displayed, {self.peer['id']})
         self.assertNotIn(unrelated['id'], context['evidenceIds'])
+        model = ResearchModel(SimpleNamespace(plan={'mode': 'research'}))
+        decision = Decision.model_validate_json(model._response([Message(role='user', content=json.dumps(context))]).content)
+        self.assertEqual([item.contentId for item in decision.sourceAssessments], [self.peer['id']])
+        self.assertEqual(decision.sourceAssessments[0].disposition, 'reproduce')
+        with self.assertRaises(HTTPException) as denied:
+            asyncio.run(self.service.launch(self.ctx, decision.model_copy(update={'sourceAssessments': []})))
+        self.assertEqual(denied.exception.detail['code'], 'RESEARCH_SOURCE_ASSESSMENTS_REQUIRED')
+        self.custody.start.assert_not_awaited()
         self.custody.start.return_value = {'id': str(uuid4())}
-        asyncio.run(self.service.launch(self.ctx, self.chosen()))
-        self.assertEqual(self.custody.start.await_args.args[4]['goal'], self.chosen().goal)
+        asyncio.run(self.service.launch(self.ctx, decision))
+        self.assertEqual(self.custody.start.await_args.args[4]['goal'], decision.goal)
+
+    def test_synthetic_fixture_assesses_each_displayed_source_once_and_does_not_invent_sources(self):
+        context = self.service.context(self.ctx)
+        self.assertGreater(sum(len(item['sources']) for item in context['peerEvidence']), 1)
+        model = ResearchModel(SimpleNamespace(plan={'mode': 'research'}))
+        decision = Decision.model_validate_json(model._response([Message(role='user', content=json.dumps(context))]).content)
+        self.assertEqual([item.contentId for item in decision.sourceAssessments], [self.peer['id']])
+        self.service._assessments(self.row, decision.model_dump())
+        context['peerEvidence'] = []
+        without_sources = json.loads(model._response([Message(role='user', content=json.dumps(context))]).content)
+        self.assertNotIn('sourceAssessments', without_sources)
 
     def test_one_displayed_derived_record_keeps_more_than_eight_authority_dependencies(self):
         with self.sources.db.write() as conn:

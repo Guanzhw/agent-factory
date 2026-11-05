@@ -1341,17 +1341,18 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             deadline = time.monotonic() + 15
             while time.monotonic() < deadline:
                 remote = self.remote["store"].task(receipt["remoteTaskId"], "bob")
-                original = self.call_remote(lambda: self.receiver._receipt("bob", receipt["id"],
-                    reconcile=True, trusted_cleanup=True))
-                grants = self.remote["store"].sql("SELECT state FROM af_usage_remote_grants WHERE id=:id",
+                grants = self.remote["store"].sql("SELECT state,statement FROM af_usage_remote_grants WHERE id=:id",
                     id=receipt["id"])
-                if remote["terminal"] and original["allStopped"] and grants[0]["state"] == "CLOSED":
+                if remote["terminal"] and grants[0]["state"] == "CLOSED":
                     break
                 time.sleep(.03)
             self.assertTrue(remote["terminal"], remote)
             self.assertTrue(remote["cancel_requested"], remote)
-            self.assertTrue(original["allStopped"], original)
             self.assertEqual(grants[0]["state"], "CLOSED")
+            self.assertTrue(grants[0]["statement"]["allStopped"])
+            original = self.call_remote(lambda: self.receiver._receipt("bob", receipt["id"],
+                reconcile=False, trusted_cleanup=True))
+            self.assertTrue(original["allStopped"], original)
             self.assertEqual(remote["run_id"], receipt["remoteRunId"])
             self.assertEqual(self.ticket_count(self.remote, receipt["remoteTaskId"]), 1)
         finally:

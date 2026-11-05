@@ -73,6 +73,7 @@ class ResearchModel(Model):
                 'function': {'name': 'factory_wait_operations', 'arguments': json.dumps(launch)}}])
         values = list(objects(messages))
         result = next((value for value in values if 'operation' in value and 'evidenceIds' in value), None)
+        inputs = result or next(value for value in values if 'agreement' in value and 'roundId' in value)
         if result:
             # The decision consumes the output visible to the model, never reads custody tables.
             actual = json.dumps(result['operation'], ensure_ascii=False)
@@ -84,7 +85,7 @@ class ResearchModel(Model):
                 value = {'action': 'continue', 'reason': 'Carry original evidence into the remaining review allocation',
                     'evidenceIds': result['evidenceIds']}
         else:
-            context = next(value for value in values if 'agreement' in value and 'roundId' in value)
+            context = inputs
             if context.get('previousObservation') is not None:
                 success = DIGEST in json.dumps(context['previousObservation'])
                 value = {'action': 'stop', 'outcome': 'met' if success else 'not_met',
@@ -95,6 +96,14 @@ class ResearchModel(Model):
                 value = {'action': 'experiment', 'reason': 'Measure the specified actual bytes',
                     'hypothesis': 'Checksum matches the agreed bytes', 'conditions': 'Local deterministic UTF-8 tool',
                     'goal': PAYLOAD}
+        source_ids = {source['id'] for item in inputs.get('peerEvidence', []) for source in item['sources']}
+        if source_ids:
+            reproducing = value['action'] == 'experiment'
+            value['sourceAssessments'] = [{'contentId': identifier,
+                'disposition': 'reproduce' if reproducing else 'not_applicable',
+                'reason': 'Independently measure the displayed prior result with the fixture operation.' if reproducing else
+                          'This synthetic decision follows its own observation or agreement, not the peer conclusion.'}
+                for identifier in sorted(source_ids)]
         return ModelResponse(role='assistant', content=json.dumps(value))
 
     def invoke(self, messages, **kwargs): return self._response(messages)

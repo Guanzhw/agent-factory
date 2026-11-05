@@ -96,11 +96,17 @@ class DelegatedOperations:
             group = await self.observer.inspect_subtree(body['ownerId'], child['id'])
             facts = [group['parent'], *group['children']]
             if group['allStopped']:
+                # The original reservation can finish while subtree observation waits on its root lock.
+                child = self.store.task(child['id'], body['ownerId'])
                 observed['allStopped'] = True
-                if any(item['failed'] for item in facts):
+                rejected = child.get('admission') == 'rejected' and child.get('run_id') is None
+                cancelled_before_submit = (rejected
+                    and self.store.workflow._load(body['ownerId'], body['id'])['cancelRequested']
+                    and child.get('cancel_requested') is True)
+                if any(item['failed'] for item in facts) or rejected and not cancelled_before_submit:
                     observed.update(state='FAILED', failure={'schema': 1, 'code': 'DELEGATED_CHILD_FAILED',
                         'messageCode': 'DELEGATED_CHILD_FAILED', 'retryable': False})
-                elif any(item['nativeStatus'] in {'cancelled', 'canceled'} for item in facts):
+                elif cancelled_before_submit or any(item['nativeStatus'] in {'cancelled', 'canceled'} for item in facts):
                     observed['state'] = 'CANCELLED'
                 else:
                     limit = self.store.plan(child['plan_id'], body['ownerId'])['budget']['outputBytes']

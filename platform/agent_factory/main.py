@@ -59,6 +59,15 @@ class NativeIngress:
         await self.app(scope, receive, send)
 
 
+async def http_error(request: Request, error: HTTPException):
+    detail = error.detail
+    if isinstance(detail, dict):
+        return JSONResponse(detail, status_code=error.status_code, headers=error.headers)
+    message = str(detail)
+    return JSONResponse({"message": message, "code": message.split(":", 1)[0] if ":" in message else "REQUEST_REJECTED"},
+                        status_code=error.status_code, headers=error.headers)
+
+
 def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                storage_governance_type=None, lifecycle_observer_type=None,
                model_dispatch_type=None, handoff_client_type=None, handoff_receiver_type=None,
@@ -277,13 +286,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     base.include_router(resource_router(auth, resources, resource_maintenance))
     base.include_router(storage_router(auth, store.storage))
 
-    @base.exception_handler(HTTPException)
-    async def http_error(request: Request, error: HTTPException):
-        detail = error.detail
-        if isinstance(detail, dict):
-            return JSONResponse(detail, status_code=error.status_code)
-        message = str(detail)
-        return JSONResponse({"message": message, "code": message.split(":", 1)[0] if ":" in message else "REQUEST_REJECTED"}, status_code=error.status_code)
+    base.exception_handler(HTTPException)(http_error)
 
     @base.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError):
