@@ -1,4 +1,4 @@
-"""Owned Windows system-SSH process; no credentials or remote execution policy."""
+"""Owned Windows process used by system SSH and personal CLI execution."""
 import ctypes
 from ctypes import wintypes as wt
 import math
@@ -64,9 +64,14 @@ def _error() -> OSError:
     return OSError('WINDOWS_SSH_PROCESS_REQUIRES_WINDOWS')
 
 
+class WindowsProcessCreateError(OSError):
+    """Creation failed before resume, and the suspended process was reaped."""
+
+
 class WindowsSSHProcess:
     """Construct suspended and job-assigned; resume only after caller authority checks."""
-    def __init__(self, args: list[str], env: dict[str, str], *, cwd: str | None = None):
+    def __init__(self, args: list[str], env: dict[str, str], *, cwd: str | None = None,
+                 capture_stderr: bool = False):
         kernel = _kernel()
         import pywintypes
         import win32api
@@ -80,7 +85,7 @@ class WindowsSSHProcess:
         self._lock = threading.RLock()
         self._job = self._process = self._thread = None
         self._assigned = self._closed = self._resumed = False
-        self.stdin = self.stdout = None
+        self.stdin = self.stdout = self.stderr = None
         self.pid = None
         self.returncode = None
         child_handles = []
@@ -110,7 +115,12 @@ class WindowsSSHProcess:
             output_read, output_write = os.pipe()
             self.stdout = os.fdopen(output_read, 'rb', buffering=0)
             child_output = child_end(output_write)
-            child_error = child_end(os.open(os.devnull, os.O_WRONLY | _binary_flag()))
+            if capture_stderr:
+                error_read, error_write = os.pipe()
+                self.stderr = os.fdopen(error_read, 'rb', buffering=0)
+                child_error = child_end(error_write)
+            else:
+                child_error = child_end(os.open(os.devnull, os.O_WRONLY | _binary_flag()))
             size = ctypes.c_size_t()
             kernel.InitializeProcThreadAttributeList(None, 1, 0, ctypes.byref(size))
             attributes = ctypes.create_string_buffer(size.value)
@@ -144,8 +154,12 @@ class WindowsSSHProcess:
                 self._assigned = True
             finally:
                 kernel.DeleteProcThreadAttributeList(attributes)
-        except BaseException:
+        except BaseException as error:
             self.close()
+            if isinstance(error, Exception):
+                # A caller may release an undispatched effect only after this
+                # cleanup returned. A cleanup failure retains its own error.
+                raise WindowsProcessCreateError('WINDOWS_PROCESS_CREATE_FAILED') from None
             raise
         finally:
             for handle in child_handles:
@@ -202,6 +216,14 @@ class WindowsSSHProcess:
             if not self._closed and self._job is not None:
                 self._jobs.TerminateJobObject(self._job, 1)
 
+    def job_active_processes(self) -> int:
+        """Observe the original Job while its owned handle is still open."""
+        with self._lock:
+            if self._closed or self._job is None:
+                raise ValueError('WINDOWS_SSH_PROCESS_CLOSED')
+            return self._jobs.QueryInformationJobObject(
+                self._job, self._jobs.JobObjectBasicAccountingInformation)['ActiveProcesses']
+
     def close(self):
         with self._lock:
             if self._closed:
@@ -216,7 +238,7 @@ class WindowsSSHProcess:
                     self.wait(timeout=5)
             finally:
                 self._closed = True
-                for pipe in (self.stdin, self.stdout):
+                for pipe in (self.stdin, self.stdout, self.stderr):
                     if pipe is not None:
                         pipe.close()
                 for handle in (self._thread, self._process):

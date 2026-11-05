@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import os
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
 from threading import Barrier, Event
 from unittest.mock import AsyncMock, patch
@@ -38,7 +39,8 @@ class ResearchSessionContracts(unittest.TestCase):
         isolated = self.enterContext(IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']))
         directory = self.enterContext(TemporaryDirectory())
         (Path(directory) / 'coding').mkdir()
-        self.tools = ResearchSessionTools(workspace_root=Path(directory) / 'coding', host_commands=True)
+        self.tools = ResearchSessionTools(workspace_root=Path(directory) / 'coding', host_commands=True,
+            command_path=str(Path(sys.executable).parent))
         app = create_app(Settings(db_url=isolated.url, workspace=Path(directory) / 'factory'), session_tools=self.tools)
         state = factory_state(app)
         self.state = state
