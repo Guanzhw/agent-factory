@@ -15,6 +15,7 @@ from agent_factory.applications import ApplicationService
 from agent_factory.auth import AuthService
 from fixture_settings import Settings
 from agent_factory.connections import ConnectionService
+from agent_factory.composition import CompositionService
 from agent_factory.execution_bindings import ExecutionBindings
 from agent_factory.material_governance import MaterialGovernance
 from agent_factory.personal_models import PersonalModels
@@ -102,6 +103,9 @@ class ResearchSetupTests(unittest.TestCase):
         self.assertEqual(fresh.publish('alice', draft['id'], PublishSetup(requestId='publish-original')), result)
         self.assertEqual(self.counts(), after)
         app = self.apps.require_current(result['applicationRef'])
+        self.assertEqual(self.apps.list_templates('alice')['items'], [])
+        self.assertIn(app, self.apps.list_active('alice'))
+        self.assertIn('experiment', app['modes'])
         self.assertNotIn(self.model['connectionRef'], str(app))
         materials = self.apps.closure(app['modes']['research']['materialRefs'])
         self.assertNotIn(self.model['connectionRef'], str(materials))
@@ -112,6 +116,54 @@ class ResearchSetupTests(unittest.TestCase):
             self.assertEqual(self.bindings.preflight(materials, owner, pins), [])
         self.connections.revoke('bob', bob['connectionRef'], 'revoke-bob')
         self.assertTrue(self.bindings.preflight(materials, 'bob', pins))
+
+    def test_old_exact_research_refs_mark_entry_without_republishing_or_holding_read_connection(self):
+        self.configure()
+        draft = self.setup.prepare('alice', self.body)
+        result = self.setup.publish('alice', draft['id'], PublishSetup(requestId='publish-old'))
+        before = self.counts()
+        application = self.apps.require_current(result['applicationRef'])
+        with self.store.engine.begin() as conn:
+            conn.execute(self.apps.states.update().values(entry_kind='template'))
+        original = self.apps.mark_application_entry
+        def mark(ref):
+            self.assertIsNone(self.store._connection.get(), 'Read must be released before entry marking')
+            return original(ref)
+        with patch.object(self.apps, 'mark_application_entry', side_effect=mark):
+            fresh = ResearchSetup(self.store, self.auth, self.connections, self.models, controller_registrations=self.controllers)
+        self.assertEqual(fresh.publish('alice', draft['id'], PublishSetup(requestId='publish-old')), result)
+        self.assertEqual(self.counts(), before)
+        self.assertEqual(self.apps.require_current(result['applicationRef']), application)
+        self.assertEqual(self.apps.list_templates('alice')['items'], [])
+        self.assertIn('experiment', self.apps.require_current(result['applicationRef'])['modes'])
+        composition = CompositionService(self.store, self.auth, self.apps, self.bindings, self.connections)
+        plan = composition.create_plan('alice', 'Explicit experiment still uses the saved version', 'experiment',
+            application_ref=result['applicationRef'], connection_refs=result['connectionRefs'])
+        self.assertEqual(plan['applicationRef'], result['applicationRef'])
+        self.assertEqual(plan['mode'], 'experiment')
+
+    def test_session_saved_refs_are_marked_without_guessing_unrelated_definitions(self):
+        from research.session_setup import ResearchSessionSetup
+        self.configure()
+        draft = self.setup.prepare('alice', self.body)
+        result = self.setup.publish('alice', draft['id'], PublishSetup(requestId='publish-session-reference'))
+        source = self.apps.require_current(result['applicationRef'])
+        definition = {key: value for key, value in source.items()
+                      if key not in {'id', 'schema', 'version', 'createdAt', 'sha256', 'origin'}}
+        unrelated = self.apps.create_draft('alice', definition, 'unrelated-member-copy')
+        self.apps.publish('alice', unrelated['id'], unrelated['version'], 'publish-member-copy')
+        setup = ResearchSessionSetup(self.store, self.connections, self.models, None)
+        with self.store.engine.begin() as conn:
+            conn.execute(self.apps.states.update().values(entry_kind='template'))
+            conn.execute(setup.configurations.insert().values(owner_id='alice', fingerprint='saved-configuration',
+                body={'applicationRef': result['applicationRef']}))
+            conn.execute(setup.configurations.insert().values(owner_id='bob', fingerprint='orphan-configuration',
+                body={'applicationRef': {**result['applicationRef'], 'id': 'missing-application'}}))
+        before = self.counts()
+        with self.assertLogs('agent_factory.applications', level='WARNING'):
+            ResearchSessionSetup(self.store, self.connections, self.models, None)
+        self.assertEqual(self.counts(), before)
+        self.assertEqual(self.apps.list_templates('alice')['items'], [unrelated])
 
     def test_cross_owner_changed_request_and_preview_are_rejected(self):
         self.configure()

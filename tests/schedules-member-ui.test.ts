@@ -8,6 +8,9 @@ import { api } from '../web/api.js';
 import { SchedulesPanel, type SchedulesPanelProps } from '../web/SchedulesPanel.js';
 import type { ScheduleMetadata, ScheduleSummary } from '../web/scheduleState.js';
 
+vi.mock('../web/ApplicationComposer.js', () => ({ ApplicationComposer: ({ onSchedule }: { onSchedule: (plan: { id: string; fingerprint: string; normalizedGoal: string }) => void }) =>
+  createElement('button', { onClick: () => onSchedule({ id: 'new-plan', fingerprint: 'c'.repeat(64), normalizedGoal: '新的已保存方案' }) }, '合成装配出口：设置新计划') }));
+
 const owner = { id: 'alice', name: 'Alice', role: 'user' as const };
 const hash = 'a'.repeat(64);
 const baseRow: ScheduleSummary = { id: 'schedule-member', ownerId: owner.id, requestId: 'original-create', lastCommandId: 'original-create', name: '本人合成计划', cron: '0 8 * * *', timezone: 'Etc/UTC', enabled: false, planId: 'plan-member', planFingerprint: hash, planDigest: hash, definitionFingerprint: hash, nextRunAt: '2026-10-15T08:00:00Z', allowedActions: ['edit', 'enable'] };
@@ -63,9 +66,9 @@ it('lets an ordinary member reach their schedule from the actual workspace and e
   await field('Cron表达式', '0 9 * * *'); await click('预览下次执行时间'); await click('保存执行时间');
   await settle(() => expect(client.update).toHaveBeenCalledTimes(1));
   expect(client.update).toHaveBeenCalledWith(row.id, { cron: '0 9 * * *', timezone: row.timezone, expectedDefinitionFingerprint: hash, requestId: expect.any(String) });
-  await settle(() => expect(button('恢复计划任务')?.disabled).toBe(false)); await click('恢复计划任务');
-  await settle(() => expect(button('暂停计划任务')?.disabled).toBe(false)); await click('暂停计划任务');
-  await settle(() => expect(button('恢复计划任务')?.disabled).toBe(false));
+  await settle(() => expect(button('恢复后续计划')?.disabled).toBe(false)); await click('恢复后续计划');
+  await settle(() => expect(button('暂停后续计划')?.disabled).toBe(false)); await click('暂停后续计划');
+  await settle(() => expect(button('恢复后续计划')?.disabled).toBe(false));
   expect(vi.mocked(client.setEnabled).mock.calls.map(call => call[1].enabled)).toEqual([true, false]);
   expect(new Set(vi.mocked(client.setEnabled).mock.calls.map(call => call[1].requestId)).size).toBe(2);
   expect(client.create).not.toHaveBeenCalled(); expect(localStorage.getItem(pointerKey)).toBeNull();
@@ -81,7 +84,7 @@ it('creates a member-owned schedule paused after a time preview without automati
 it.each([[false, true], [true, false]])('requires both local authority (%s) and server metadata (%s)', async (canManage, serverCanManage) => {
   metadata.canManage = serverCanManage;
   await panel({ canManage, seed }); await inspect();
-  expect(button('预览下次执行时间')).toBeUndefined(); expect(button('恢复计划任务')).toBeUndefined();
+  expect(button('预览下次执行时间')).toBeUndefined(); expect(button('恢复后续计划')).toBeUndefined();
   expect(host.textContent).toContain('当前身份只能读取自己的计划与历史'); expect(host.textContent).not.toContain('管理员权限');
   expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
 });
@@ -98,9 +101,9 @@ it('keeps mutation controls unavailable until exact-owner permission metadata ar
 it('locks editing after run permission is revoked and still checks row-level allowed actions', async () => {
   row.allowedActions = [];
   await panel(); await inspect(); await click('预览下次执行时间');
-  expect(button('保存执行时间')?.disabled).toBe(true); expect(button('恢复计划任务')?.disabled).toBe(true);
+  expect(button('保存执行时间')?.disabled).toBe(true); expect(button('恢复后续计划')?.disabled).toBe(true);
   metadata.canManage = false; await click('刷新计划任务');
-  expect(button('保存执行时间')).toBeUndefined(); expect(button('恢复计划任务')).toBeUndefined();
+  expect(button('保存执行时间')).toBeUndefined(); expect(button('恢复后续计划')).toBeUndefined();
   expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
 });
 
@@ -111,18 +114,202 @@ it('does not apply a delayed owner response after switching to another member', 
   const aliceRow = row; row = { ...baseRow, ownerId: 'bob', id: 'schedule-bob', name: 'Bob 本人计划' };
   metadata = { ...metadata, ownerId: 'bob' }; await panel({ ownerId: 'bob' });
   await act(async () => resolve(aliceRow));
-  expect(host.textContent).not.toContain(aliceRow.name); expect(button('恢复计划任务')).toBeUndefined();
+  expect(host.textContent).not.toContain(aliceRow.name); expect(button('恢复后续计划')).toBeUndefined();
   expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
 });
 
 it('preserves an unknown original mutation across refresh and remount without a second write', async () => {
   vi.mocked(client.setEnabled).mockRejectedValue(new Error('Synthetic lost acknowledgement'));
-  await panel(); await inspect(); await click('恢复计划任务');
+  await panel(); await inspect(); await click('恢复后续计划');
   await settle(() => expect(localStorage.getItem(pointerKey)).not.toBeNull());
   const requestId = vi.mocked(client.setEnabled).mock.calls[0][1].requestId;
   await settle(() => expect(button('刷新计划任务')?.disabled).toBe(false)); await click('刷新计划任务');
   expect(client.setEnabled).toHaveBeenCalledTimes(1); expect(localStorage.getItem(pointerKey)).toContain(requestId);
   await act(async () => root.unmount()); root = createRoot(host); await panel();
   expect(client.setEnabled).toHaveBeenCalledTimes(1); expect(localStorage.getItem(pointerKey)).toContain(requestId);
-  expect(button('显式重试原变更请求')).toBeUndefined(); expect(button('恢复计划任务')).toBeUndefined();
+  expect(button('显式重试原变更请求')).toBeUndefined(); expect(button('恢复后续计划')).toBeUndefined();
+});
+
+it('reads the selected schedule and history after remount and links only existing task IDs', async () => {
+  const onTask = vi.fn();
+  vi.mocked(client.occurrences).mockResolvedValue({ schema: 1, ownerId: owner.id, scheduleId: row.id, snapshot: false, nextCursor: null, items: [
+    { id: 'occurrence-1', ownerId: owner.id, scheduleId: row.id, status: 'accepted', taskId: 'task-1', nativeRunId: 'run-1', createdAt: '2026-10-15T08:00:00Z', taskStatus: 'running', reasonCode: null },
+    { id: 'occurrence-2', ownerId: owner.id, scheduleId: row.id, status: 'unknown', taskId: null, nativeRunId: null, createdAt: '2026-10-15T09:00:00Z', taskStatus: null, reasonCode: 'ADMISSION_UNKNOWN' },
+  ] });
+  await panel({ selectedId: row.id, onTask });
+  expect(client.inspect).toHaveBeenCalledWith(row.id, expect.any(AbortSignal));
+  expect(client.occurrences).toHaveBeenCalledWith(row.id, undefined, expect.any(AbortSignal));
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(row.name);
+  expect([...host.querySelectorAll('button')].filter(item => item.textContent === '查看本次运行')).toHaveLength(1);
+  await click('查看本次运行'); expect(onTask).toHaveBeenCalledExactlyOnceWith('task-1', row.id);
+  await act(async () => root.unmount()); root = createRoot(host); await panel({ selectedId: row.id });
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(row.name);
+  expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
+});
+
+it('reconciles a pending original request before reading a different navigation target', async () => {
+  const pointer = JSON.stringify({ requestId: 'unconfirmed-disable', scheduleId: row.id });
+  localStorage.setItem(pointerKey, pointer);
+  await panel({ selectedId: 'other-schedule' });
+  expect(client.inspect).toHaveBeenCalledExactlyOnceWith(row.id, expect.any(AbortSignal));
+  expect(client.occurrences).not.toHaveBeenCalled();
+  expect(host.textContent).toContain('原变更请求未确认');
+  expect(host.querySelector('[aria-label="计划执行历史"]')).toBeNull();
+  expect(localStorage.getItem(pointerKey)).toBe(pointer);
+  await click('刷新计划任务');
+  expect(vi.mocked(client.inspect).mock.calls.every(call => call[0] === row.id)).toBe(true);
+  expect(client.setEnabled).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled();
+});
+
+it('keeps a denied or foreign schedule read recoverable without exposing its body', async () => {
+  const onSelect = vi.fn();
+  vi.mocked(client.inspect).mockResolvedValue({ ...row, ownerId: 'bob', name: '不得显示的他人计划' });
+  await panel({ selectedId: row.id, onSelect });
+  expect(host.textContent).toContain('原计划或执行历史无法读取');
+  expect(host.textContent).not.toContain('不得显示的他人计划');
+  expect(button('恢复后续计划')).toBeUndefined();
+  await click('返回计划列表'); expect(onSelect).toHaveBeenCalledExactlyOnceWith('');
+  expect(client.create).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
+});
+
+it('returns to the same paused schedule through the workspace task page and a reload without writes', async () => {
+  vi.spyOn(api, 'detail').mockRejectedValue(new Error('Synthetic task read denied'));
+  vi.spyOn(api, 'controlCommands').mockResolvedValue({ items: [], nextCursor: null });
+  vi.mocked(client.occurrences).mockResolvedValue({ schema: 1, ownerId: owner.id, scheduleId: row.id, snapshot: false, nextCursor: null, items: [
+    { id: 'occurrence-1', ownerId: owner.id, scheduleId: row.id, status: 'accepted', taskId: 'task-1', nativeRunId: 'run-1', createdAt: '2026-10-15T08:00:00Z', taskStatus: 'running', reasonCode: null },
+  ] });
+  const mountWorkspace = async () => { await act(async () => root.render(createElement(Workspace, { user: owner, logout: vi.fn(), sessionBusy: false, sessionError: '' }))); };
+  window.history.replaceState(null, '', `/?tab=schedules&scheduleId=${row.id}`);
+  await mountWorkspace(); await click('查看本次运行');
+  const params = new URL(window.location.href).searchParams;
+  expect(params.get('taskReturn')).toBe('schedules'); expect(params.get('taskReturnTask')).toBe('task-1'); expect(params.get('scheduleId')).toBe(row.id);
+  expect(host.textContent).toContain('Synthetic task read denied');
+  await act(async () => root.unmount()); root = createRoot(host); await mountWorkspace();
+  await click('返回原计划');
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(row.name);
+  expect(button('恢复后续计划')?.disabled).toBe(false);
+  expect(new URL(window.location.href).searchParams.get('taskReturn')).toBeNull();
+  expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
+});
+
+it('retains a recovered original schedule selection in the URL and on a subsequent refresh', async () => {
+  localStorage.setItem(pointerKey, JSON.stringify({ requestId: row.lastCommandId, scheduleId: row.id }));
+  window.history.replaceState(null, '', '/?tab=schedules');
+  await act(async () => root.render(createElement(Workspace, { user: owner, logout: vi.fn(), sessionBusy: false, sessionError: '' })));
+  expect(new URL(window.location.href).searchParams.get('scheduleId')).toBe(row.id);
+  expect(localStorage.getItem(pointerKey)).toBeNull();
+  await click('刷新计划任务');
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(row.name);
+  expect(button('恢复后续计划')?.disabled).toBe(false);
+  expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
+});
+
+it('ignores a late read for the previous selected schedule after navigation changes', async () => {
+  let resolve!: (value: unknown) => void;
+  const first = row;
+  vi.mocked(client.inspect).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  await panel({ selectedId: first.id });
+  row = { ...first, id: 'schedule-next', name: '另一原计划' };
+  await panel({ selectedId: row.id });
+  await act(async () => resolve(first));
+  const history = host.querySelector('[aria-label="计划执行历史"]');
+  expect(history?.textContent).toContain(row.name); expect(history?.textContent).not.toContain(first.name);
+  expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
+});
+
+it.each(['resolved', 'rejected'])('ignores a %s manual history refresh after selecting another schedule', async result => {
+  const first = structuredClone(row), next = { ...first, id: 'schedule-next', name: '另一原计划', cron: '0 9 * * *' };
+  const onSelect = vi.fn();
+  await panel({ selectedId: first.id, onSelect });
+  let resolve!: (value: unknown) => void, reject!: (reason: Error) => void;
+  vi.mocked(client.inspect).mockImplementationOnce(() => new Promise((done, fail) => { resolve = done; reject = fail; }));
+  await click('刷新执行历史');
+  row = next; await panel({ selectedId: next.id, onSelect });
+  await act(async () => { if (result === 'resolved') resolve(first); else reject(new Error('Old read failed')); });
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(next.name);
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).not.toContain(first.name);
+  expect(host.querySelector<HTMLInputElement>('[aria-label="Cron表达式"]')?.value).toBe(next.cron);
+  expect(host.querySelector('[role="alert"]')).toBeNull();
+  expect(onSelect).not.toHaveBeenCalled();
+  expect(client.create).not.toHaveBeenCalled(); expect(client.update).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
+});
+
+it('keeps a new selection loading when a previous manual refresh finishes', async () => {
+  const first = structuredClone(row), next = { ...first, id: 'schedule-next', name: '另一原计划' };
+  await panel({ selectedId: first.id, onSelect: vi.fn() });
+  let resolveOld!: (value: unknown) => void, resolveNext!: (value: unknown) => void;
+  vi.mocked(client.inspect).mockImplementationOnce(() => new Promise(done => { resolveOld = done; }));
+  await click('刷新执行历史');
+  row = next;
+  vi.mocked(client.inspect).mockImplementationOnce(() => new Promise(done => { resolveNext = done; }));
+  await panel({ selectedId: next.id, onSelect: vi.fn() });
+  await act(async () => resolveOld(first));
+  expect(host.querySelector('[aria-label="计划执行历史"]')).toBeNull();
+  expect(button('刷新计划任务')?.disabled).toBe(true);
+  await act(async () => resolveNext(next));
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(next.name);
+  expect(button('刷新计划任务')?.disabled).toBe(false);
+});
+
+it('discards an old time preview after selecting another schedule', async () => {
+  const first = structuredClone(row), next = { ...first, id: 'schedule-next', name: '另一原计划' };
+  const preview = await client.preview({ cron: first.cron, timezone: first.timezone });
+  await panel({ selectedId: first.id, onSelect: vi.fn() });
+  let resolve!: (value: unknown) => void;
+  vi.mocked(client.preview).mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+  await click('预览下次执行时间');
+  row = next; await panel({ selectedId: next.id, onSelect: vi.fn() });
+  await act(async () => resolve(preview));
+  expect(host.querySelector('[aria-label="执行时间预览"]')).toBeNull();
+  expect(button('保存执行时间')?.disabled).toBe(true);
+  expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(next.name);
+});
+
+it.each(['confirmed', 'reconciled', 'unknown', 'retried'])('keeps an in-flight %s mutation tied to its original request after navigation', async result => {
+  const first = structuredClone(row), next = { ...first, id: 'schedule-next', name: '另一原计划', cron: '0 9 * * *' };
+  const onSelect = vi.fn();
+  let resolve!: (value: unknown) => void, reject!: (reason: Error) => void;
+  if (result === 'retried') vi.mocked(client.setEnabled).mockRejectedValueOnce(new Error('Synthetic lost acknowledgement'));
+  vi.mocked(client.setEnabled).mockImplementationOnce(() => new Promise((done, fail) => { resolve = done; reject = fail; }));
+  vi.mocked(client.inspect).mockImplementation(async id => id === first.id ? first : next);
+  await panel({ selectedId: first.id, onSelect });
+  await click('恢复后续计划');
+  await settle(() => expect(client.setEnabled).toHaveBeenCalledTimes(1));
+  const requestId = vi.mocked(client.setEnabled).mock.calls[0][1].requestId;
+  if (result === 'retried') await click('显式重试原变更请求');
+  row = next; await panel({ selectedId: next.id, onSelect });
+  expect(localStorage.getItem(pointerKey)).toContain(requestId);
+  await act(async () => {
+    if (result === 'confirmed' || result === 'retried') resolve({ ...first, enabled: true, lastCommandId: requestId });
+    else if (result === 'reconciled') { first.enabled = true; first.lastCommandId = requestId; reject(new Error('Synthetic lost acknowledgement')); }
+    else reject(new Error('Synthetic lost acknowledgement'));
+  });
+  expect(onSelect).not.toHaveBeenCalled();
+  if (result !== 'unknown') {
+    expect(localStorage.getItem(pointerKey)).toBeNull();
+    expect(host.querySelector('[aria-label="计划执行历史"]')?.textContent).toContain(next.name);
+    expect(host.querySelector<HTMLInputElement>('[aria-label="Cron表达式"]')?.value).toBe(next.cron);
+  } else {
+    expect(localStorage.getItem(pointerKey)).toContain(requestId);
+    expect(host.textContent).toContain('原变更请求未确认');
+    expect(host.querySelector('[aria-label="计划执行历史"]')).toBeNull();
+    await click('刷新计划任务');
+    expect(localStorage.getItem(pointerKey)).toContain(requestId);
+  }
+  expect(client.setEnabled).toHaveBeenCalledTimes(result === 'retried' ? 2 : 1);
+  expect(vi.mocked(client.setEnabled).mock.calls.every(([id, input]) => id === first.id && input.requestId === requestId)).toBe(true);
+  expect(client.update).not.toHaveBeenCalled(); expect(client.create).not.toHaveBeenCalled();
+});
+
+it.each(['developer', 'templates'])('opens a new saved-plan seed from %s rather than a schedule left in the previous URL', async tab => {
+  vi.spyOn(api, 'templateCatalog').mockResolvedValue({ items: [], nextCursor: null });
+  window.history.replaceState(null, '', `/?tab=${tab}&templateStart=1&scheduleId=${row.id}`);
+  await act(async () => root.render(createElement(Workspace, { user: owner, logout: vi.fn(), sessionBusy: false, sessionError: '' })));
+  await settle(() => expect(button('合成装配出口：设置新计划')).toBeDefined());
+  await click('合成装配出口：设置新计划');
+  expect(new URL(window.location.href).searchParams.get('scheduleId')).toBeNull();
+  expect(host.textContent).toContain('新的已保存方案');
+  expect(host.textContent).toContain('从本人已保存方案创建计划');
+  expect(host.querySelector('[aria-label="计划执行历史"]')).toBeNull();
+  expect(client.inspect).not.toHaveBeenCalled(); expect(client.create).not.toHaveBeenCalled();
 });

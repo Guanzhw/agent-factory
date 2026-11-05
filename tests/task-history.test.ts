@@ -209,7 +209,7 @@ it('labels finalizing as unconfirmed resource cleanup without completed actions 
   expect(host.textContent).toContain('资源停止与任务收尾仍待服务端确认');
   expect(host.textContent).not.toContain('Use completed material');
   const button = (text: string) => [...host.querySelectorAll('button')].find(value => value.textContent === text)!;
-  expect(button('请求取消').disabled).toBe(true);
+  expect(button('请求停止本次执行').disabled).toBe(true);
   expect(button('核对执行状态').disabled).toBe(false);
   expect(button('确认创建子任务').disabled).toBe(true);
 });

@@ -3,7 +3,7 @@ import { webcrypto } from 'node:crypto';
 import { act, createElement, useState } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { ApplicationComposer, ComposerProposalScope } from '../web/ApplicationComposer.js';
+import { ApplicationComposer, ComposerProposalScope, type ComposerSeed } from '../web/ApplicationComposer.js';
 import { api } from '../web/api.js';
 import type { AssemblyCandidate, AssemblyProposal, ExecutionTarget, FactoryApplication, FactoryMaterial, Plan, PlanAuthorization, UserConnection } from '../web/models.js';
 
@@ -22,11 +22,13 @@ let host: HTMLDivElement; let root: Root; let saved: AssemblyProposal | undefine
 let authorization: PlanAuthorization;
 let executionTargets: ExecutionTarget[];
 let acceptedPlan: Plan;
+let composerSeed: ComposerSeed | undefined;
+const configureResource = vi.fn();
 const onCreated = vi.fn();
 function Harness() {
   const [busy, setBusy] = useState(''); const [error, setError] = useState('');
   return createElement('div', null, error && createElement('p', { role: 'alert' }, error), createElement(ApplicationComposer, {
-    user: owner, busy, materials: [tool], targets: executionTargets, onCreated,
+    seed: composerSeed, onConfigureResource: configureResource, user: owner, busy, materials: [tool], targets: executionTargets, onCreated,
     act: async (name, work) => { setBusy(name); setError(''); try { await work(); } catch (e) { setError(e instanceof Error ? e.message : String(e)); } finally { setBusy(''); } },
   }));
 }
@@ -57,8 +59,10 @@ beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto);
   window.sessionStorage.clear(); window.localStorage.clear();
   host = document.createElement('div'); document.body.appendChild(host); root = createRoot(host);
-  saved = undefined; savedPlan = null; executionTargets = []; acceptedPlan = plan; authorization = structuredClone(baseAuthorization); onCreated.mockReset();
+  composerSeed = undefined; configureResource.mockReset(); saved = undefined; savedPlan = null; executionTargets = []; acceptedPlan = plan; authorization = structuredClone(baseAuthorization); onCreated.mockReset();
   vi.spyOn(api, 'session').mockResolvedValue(owner); vi.spyOn(api, 'applications').mockResolvedValue([application]);
+  vi.spyOn(api, 'templateCatalog').mockResolvedValue({ items: [application], nextCursor: null });
+  vi.spyOn(api, 'inspectApplication').mockResolvedValue({ application, governance: { entry_kind: 'template', state: 'published', author_id: owner.id, bootstrap: false, reason: null, review_id: null }, immutableBodyPreserved: true });
   vi.spyOn(api, 'userConnections').mockResolvedValue([connection]);
   vi.spyOn(api, 'proposalInbox').mockResolvedValue({ schema: 1, ownerId: owner.id, snapshot: false, items: [], nextCursor: null });
   vi.spyOn(api, 'propose').mockImplementation(async input => {
@@ -273,5 +277,65 @@ describe('declared remote application contracts', () => {
     await selectTarget('');
     expect(button('开始任务').disabled).toBe(false);
     expect(api.instantiate).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('ordinary pinned template creation', () => {
+  async function templateTask() {
+    composerSeed = { key: 'template-fixture', kind: 'template', applicationRef };
+    await act(async () => { root.render(createElement(Harness)); });
+    await settle(() => expect(host.querySelector<HTMLTextAreaElement>('#task-goal')?.disabled).toBe(false));
+    await act(async () => {
+      const goal = host.querySelector<HTMLTextAreaElement>('#task-goal')!;
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(goal, candidate.normalizedGoal);
+      goal.dispatchEvent(new Event('input', { bubbles: true }));
+      const select = host.querySelector<HTMLSelectElement>('[aria-label="资源连接 model"]')!;
+      select.value = connection.ref; select.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+  it('fixes the exact template without locking the goal or asking for its only mode; accepts before explicit start', async () => {
+    await templateTask();
+    expect(api.applications).not.toHaveBeenCalled();
+    expect(api.inspectApplication).toHaveBeenCalledWith(application.id, 1, expect.any(AbortSignal));
+    expect(host.querySelector('#application-selector')).toBeNull();
+    expect(host.querySelector('[aria-label="应用执行方式"]')).toBeNull();
+    expect(host.textContent).toContain('任务方式：literature');
+    await click('预览任务方案'); await settle(() => expect(button('确认范围并保存方案').disabled).toBe(false));
+    expect(vi.mocked(api.propose).mock.calls[0][0]).toMatchObject({ goal: candidate.normalizedGoal, applicationRef });
+    expect(api.instantiate).not.toHaveBeenCalled();
+    await click('确认范围并保存方案'); await settle(() => expect(button('开始任务').disabled).toBe(false));
+    expect(api.instantiate).not.toHaveBeenCalled();
+    await click('开始任务'); await settle(() => expect(onCreated).toHaveBeenCalledExactlyOnceWith('created-task'));
+    expect(api.instantiate).toHaveBeenCalledTimes(1);
+  });
+  it('warns before refreshing unsubmitted input and keeps resource configuration an explicit action', async () => {
+    await templateTask();
+    const refresh = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(refresh);
+    expect(refresh.defaultPrevented).toBe(true);
+    await click('配置模型并返回'); expect(configureResource).toHaveBeenCalledExactlyOnceWith('model');
+    expect(api.propose).not.toHaveBeenCalled();
+    await click('预览任务方案'); await settle(() => expect(button('确认范围并保存方案').disabled).toBe(false));
+    const savedRefresh = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(savedRefresh);
+    expect(savedRefresh.defaultPrevented).toBe(false);
+  });
+  it('preserves the original unknown request and key after template presentation changes', async () => {
+    vi.mocked(api.propose).mockRejectedValueOnce(new Error('Synthetic lost acknowledgement'));
+    await templateTask(); await click('预览任务方案');
+    await settle(() => expect(host.textContent).toContain('原装配请求未确认'));
+    const original = structuredClone(vi.mocked(api.propose).mock.calls[0]);
+    vi.mocked(api.inspectApplication).mockResolvedValue({ application, governance: { entry_kind: 'application', state: 'published', author_id: owner.id, bootstrap: false, reason: null, review_id: null }, immutableBodyPreserved: true });
+    await vi.waitFor(async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); expect(host.textContent).toContain('这个版本当前不提供普通模板入口'); }, { timeout: 7000, interval: 50 });
+    expect(button('核对原装配请求').disabled).toBe(false);
+    await click('核对原装配请求'); await settle(() => expect(button('确认范围并保存方案').disabled).toBe(false));
+    expect(vi.mocked(api.propose).mock.calls[1]).toEqual(original);
+    expect(api.instantiate).not.toHaveBeenCalled();
+  });
+  it('keeps the original application-owned goal locked', async () => {
+    composerSeed = { key: 'business-source', applicationRef, goal: '固定业务目标' };
+    await act(async () => { root.render(createElement(Harness)); });
+    await settle(() => expect(host.textContent).toContain('此方案固定已选应用版本与任务输入'));
+    const goal = host.querySelector<HTMLTextAreaElement>('#task-goal')!;
+    expect(goal.value).toBe('固定业务目标'); expect(goal.disabled).toBe(true);
   });
 });

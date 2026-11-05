@@ -68,7 +68,7 @@ describe('schedule management boundaries', () => {
   });
   it('renders no mutation authority until metadata arrives and communicates uncertainty', () => {
     const client = api(); const html = renderToStaticMarkup(createElement(SchedulesPanel, { ownerId: 'alice', canManage: true, api: client, onTask: vi.fn(), seed: { planId: row.planId, planFingerprint: hash, goal: '固定方案' } }));
-    for (const words of ['暂停只停止后续准入', '不会取消', 'UNKNOWN', '不代表研究任务完成']) expect(html).toContain(words);
+    for (const words of ['暂停后续计划不会停止已创建的执行', '停止本次执行需在任务中单独操作', 'UNKNOWN', '不代表研究任务完成']) expect(html).toContain(words);
     expect(html).not.toContain('保存计划任务'); expect(client.create).not.toHaveBeenCalled(); expect(client.setEnabled).not.toHaveBeenCalled();
   });
 });
