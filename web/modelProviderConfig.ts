@@ -10,11 +10,10 @@ export interface ModelProviderPreset {
 }
 
 export const LEGACY_GO_BASE = 'https://opencode.ai/zen/go/v1';
-export const GO_BASE = 'https://opencode.ai/inference/go/v1';
-export const GO_BASES: readonly string[] = [LEGACY_GO_BASE, GO_BASE];
+export const GO_BASE = 'https://opencode.ai/inference/go/openai/v1';
 export const MODEL_PROVIDER_PRESETS: readonly ModelProviderPreset[] = [
   { id: 'gpt-6-luna-responses', label: 'GPT-6 Luna · Responses', provider: 'openai-compatible', baseURL: GO_BASE, model: 'gpt-6-luna', protocol: 'responses' },
-  { id: 'deepseek-flash-chat-completions', label: 'DeepSeek Flash · Chat Completions', provider: 'openai-compatible', baseURL: GO_BASE, model: 'deepseek-flash', protocol: 'chat-completions' },
+  { id: 'deepseek-flash-chat-completions', label: 'DeepSeek V4.1 Flash · Chat Completions', provider: 'openai-compatible', baseURL: GO_BASE, model: 'deepseek-v4.1-flash', protocol: 'chat-completions' },
 ];
 
 export function validModelProtocol(value: unknown): value is ModelProtocol {
