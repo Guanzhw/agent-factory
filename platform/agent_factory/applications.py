@@ -5,22 +5,27 @@ never register code, credentials, adapter factories or permissions themselves.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime
+import json
+import logging
 import re
 from typing import Any
 from uuid import uuid4
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError
-from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, select, text, tuple_
+from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, func, inspect, select, text, tuple_
 
 from .input_schema import validate_input_values
 from .material_governance import MaterialGovernance, PinnedRef
 from .store import canonical, digest, now
 
 MATERIAL_KINDS = {"skill", "tool", "prompt", "knowledge", "model", "environment"}
+logger = logging.getLogger(__name__)
 
 
 # Compatibility exports preserve existing application profile imports.
@@ -101,6 +106,7 @@ class ApplicationService:
         self.states = Table("af_application_states", metadata, Column("id", String, primary_key=True),
             Column("version", Integer, primary_key=True), Column("author_id", String, nullable=False),
             Column("state", String, nullable=False), Column("bootstrap", Boolean, nullable=False),
+            Column("entry_kind", String, nullable=False, server_default="template"),
             Column("review_id", String), Column("reason", String), Column("updated_at", String, nullable=False))
         self.reviews = Table("af_application_reviews", metadata, Column("id", String, primary_key=True),
             Column("application_id", String, nullable=False), Column("version", Integer, nullable=False),
@@ -109,6 +115,11 @@ class ApplicationService:
             Column("reviewer_id", String), Column("created_at", String, nullable=False), Column("decided_at", String))
         self.commands = self.db.command_table("af_application_commands", metadata)
         metadata.create_all(store.engine)
+        with store.engine.begin() as conn:
+            if store.engine.dialect.name == "postgresql":
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": self.db.namespace})
+            if "entry_kind" not in {column["name"] for column in inspect(conn).get_columns("af_application_states")}:
+                conn.execute(text("ALTER TABLE af_application_states ADD COLUMN entry_kind VARCHAR NOT NULL DEFAULT 'template'"))
 
     @staticmethod
     def pin(body):
@@ -266,10 +277,15 @@ class ApplicationService:
                 raise HTTPException(422, "Application connection requirement exceeds the mode scope or duplicates a name")
         return body
 
-    def create_draft(self, actor, definition, request_id, *, parent_ref=None):
+    def create_draft(self, actor, definition, request_id, *, parent_ref=None, entry_kind="template"):
         self._require_write(actor)
+        if entry_kind not in {"template", "application"}:
+            raise ValueError("Application entry kind must be template or application")
         body = self.validate_definition(definition, check_materials=False)
-        fingerprint = digest({"action": "revise" if parent_ref else "draft", "definition": body, "parentRef": parent_ref})
+        intent = {"action": "revise" if parent_ref else "draft", "definition": body, "parentRef": parent_ref}
+        if parent_ref is None and entry_kind != "template":
+            intent["entryKind"] = entry_kind
+        fingerprint = digest(intent)
         with self.db.write() as conn:
             old = self.db.old(conn, self.commands, actor, request_id, fingerprint)
             if old is not None:
@@ -285,7 +301,8 @@ class ApplicationService:
             value["sha256"] = digest(value)
             self._require_write(actor)
             conn.execute(self.versions.insert().values(id=identifier, version=value["version"], body=value, sha=value["sha256"]))
-            conn.execute(self.states.insert().values(id=identifier, version=value["version"], author_id=actor, state="draft", bootstrap=False, updated_at=now()))
+            conn.execute(self.states.insert().values(id=identifier, version=value["version"], author_id=actor,
+                state="draft", bootstrap=False, entry_kind=entry_kind, updated_at=now()))
             return self.db.record(conn, self.commands, actor, request_id, fingerprint, "application.draft", value)
 
     def import_snapshot(self, actor, snapshot, request_id):
@@ -370,7 +387,31 @@ class ApplicationService:
         if definition.get("id", identifier) != identifier:
             raise HTTPException(422, "Application revision cannot change its lineage")
         # Versioned drafts retain all previous immutable bodies and review facts.
-        return self.create_draft(actor, {**definition, "id": identifier}, request_id, parent_ref=self.pin(parent))
+        return self.create_draft(actor, {**definition, "id": identifier}, request_id,
+            parent_ref=self.pin(parent), entry_kind=state["entry_kind"])
+
+    def mark_application_entry(self, ref):
+        """Declare an app-owned exact version without changing its execution contract."""
+        try:
+            pin = PinnedRef.model_validate(ref).model_dump()
+        except ValidationError:
+            logger.warning("Application entry not marked: invalid exact reference")
+            return False
+        with self.db.write() as conn:
+            try:
+                body, state = self._row(conn, pin["id"], pin["version"])
+            except HTTPException as error:
+                if error.status_code not in {404, 409}:
+                    raise
+                logger.warning("Application entry not marked for %s: %s", pin, error.detail)
+                return False
+            if body["sha256"] != pin["sha256"]:
+                logger.warning("Application entry not marked for %s: exact digest differs", pin)
+                return False
+            if state["entry_kind"] != "application":
+                conn.execute(self.states.update().where(self.states.c.id == pin["id"],
+                    self.states.c.version == pin["version"]).values(entry_kind="application"))
+        return True
 
     def publish(self, actor, identifier, version, request_id):
         self.auth.require_member(actor)
@@ -540,6 +581,42 @@ class ApplicationService:
                         raise
         return result
 
+    def _template_query(self):
+        return (select(self.versions.c.id, self.versions.c.version).join(self.states,
+            (self.versions.c.id == self.states.c.id) & (self.versions.c.version == self.states.c.version))
+            .where(self.states.c.state == "published", self.states.c.bootstrap.is_(False),
+                   self.states.c.entry_kind == "template")
+            .order_by(self.versions.c.id, self.versions.c.version.desc()))
+
+    def list_template_candidates(self, actor):
+        self._require_read(actor)
+        with self.db.read() as conn:
+            return [self._row(conn, row.id, row.version)[0] for row in conn.execute(self._template_query())]
+
+    def list_templates(self, actor, *, after=None, limit=50):
+        self._require_read(actor)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise HTTPException(422, "Template page size must be between 1 and 100")
+        query = self._template_query()
+        if after is not None:
+            try:
+                if not isinstance(after, str) or not 1 <= len(after) <= 1024:
+                    raise ValueError("Invalid cursor size")
+                cursor = json.loads(base64.b64decode(after + "=" * (-len(after) % 4), altchars=b"-_", validate=True))
+                if (not isinstance(cursor, list) or len(cursor) != 2 or not isinstance(cursor[0], str)
+                        or not 1 <= len(cursor[0]) <= 100 or type(cursor[1]) is not int or cursor[1] < 1):
+                    raise ValueError("Invalid cursor fields")
+            except (ValueError, binascii.Error, UnicodeError) as error:
+                raise HTTPException(422, "Invalid template page cursor") from error
+            query = query.where((self.versions.c.id > cursor[0]) |
+                ((self.versions.c.id == cursor[0]) & (self.versions.c.version < cursor[1])))
+        with self.db.read() as conn:
+            rows = list(conn.execute(query.limit(limit + 1)))
+            items = [self._row(conn, row.id, row.version)[0] for row in rows[:limit]]
+        cursor = (base64.urlsafe_b64encode(json.dumps([rows[limit - 1].id, rows[limit - 1].version]).encode())
+                  .decode().rstrip("=")) if len(rows) > limit else None
+        return {"items": items, "nextCursor": cursor}
+
     def _deactivate(self, actor, identifier, version, request_id, reason, state):
         self.auth.require_member(actor)
         if not isinstance(reason, str) or len(reason) > 2000:
@@ -588,6 +665,10 @@ def application_router(auth, service):
     @router.get("")
     def active(request: Request):
         return service.list_active(actor(request))
+    @router.get("/templates")
+    def templates(request: Request, after: str | None = Query(default=None, max_length=1024),
+                  limit: int = Query(default=50, ge=1, le=100)):
+        return service.list_templates(actor(request), after=after, limit=limit)
     @router.post("/drafts", status_code=201)
     def draft(body: DraftApplication, request: Request):
         return service.create_draft(actor(request), body.definition, body.requestId)

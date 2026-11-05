@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 import os
 from pathlib import Path
+import sys
 from tempfile import TemporaryDirectory
 from threading import Barrier, Event
 from unittest.mock import AsyncMock, patch
@@ -38,7 +39,8 @@ class ResearchSessionContracts(unittest.TestCase):
         isolated = self.enterContext(IsolatedPostgres(os.environ['FACTORY_TEST_DATABASE_URL']))
         directory = self.enterContext(TemporaryDirectory())
         (Path(directory) / 'coding').mkdir()
-        self.tools = ResearchSessionTools(workspace_root=Path(directory) / 'coding', host_commands=True)
+        self.tools = ResearchSessionTools(workspace_root=Path(directory) / 'coding', host_commands=True,
+            command_path=str(Path(sys.executable).parent))
         app = create_app(Settings(db_url=isolated.url, workspace=Path(directory) / 'factory'), session_tools=self.tools)
         state = factory_state(app)
         self.state = state
@@ -111,6 +113,9 @@ class ResearchSessionContracts(unittest.TestCase):
         self.assertEqual(len(rows), 1, 'Connection selection and total turns must not republish structural materials')
         self.assertEqual(first_config['applicationRef'], third_config['applicationRef'])
         self.assertNotEqual(first_config['connectionRefs'], third_config['connectionRefs'])
+        self.assertEqual(self.store.applications.list_templates('alice')['items'], [])
+        application = self.store.applications.require_current(first_config['applicationRef'])
+        self.assertIn(application, self.store.applications.list_active('alice'))
 
     def test_new_session_uses_configured_timeout_without_rewriting_old_session(self):
         self.store.settings.experiment_timeout_seconds = 60

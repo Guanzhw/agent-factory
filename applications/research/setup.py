@@ -58,6 +58,11 @@ class ResearchSetup:
             Column('intent', JSON, nullable=False), Column('result', JSON, nullable=False))
         self.commands = self.db.command_table('research_setup_commands', metadata)
         metadata.create_all(store.engine)
+        with self.db.read() as conn:
+            references = [result['applicationRef'] for result in conn.execute(select(self.drafts.c.result)).scalars()
+                          if result.get('applicationRef') is not None]
+        for ref in references:
+            self.apps.mark_application_entry(ref)
 
     @staticmethod
     def _controllers():
@@ -268,7 +273,7 @@ class ResearchSetup:
                 research.update(nativeComponent=preview['workflowPin'], inputSchema=INPUT_SCHEMA)
                 default_mode, modes = 'research', {'research': research, 'experiment': mode(generated[:2] + tools)}
             application = self.apps.create_draft(owner, {'contractVersion': 2, 'name': intent['name'],
-                'defaultMode': default_mode, 'modes': modes}, str(uuid4()))
+                'defaultMode': default_mode, 'modes': modes}, str(uuid4()), entry_kind='application')
             self.apps.publish(owner, application['id'], application['version'], str(uuid4()))
             result = {**row['result'], 'state': 'published', 'applicationRef': self.apps.pin(application),
                 'connectionRefs': refs, 'materialRefs': research['materialRefs'], 'mode': default_mode}

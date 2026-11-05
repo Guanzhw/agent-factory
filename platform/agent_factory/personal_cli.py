@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sys
 import tempfile
 import time
 from typing import Any, Callable, Literal, Mapping
@@ -232,6 +233,14 @@ class PersonalCliAdapter:
         for key, value in result.items():
             if key not in {"PATH", "LANG"}:
                 Path(value).mkdir(mode=0o700, parents=True, exist_ok=True)
+        if sys.platform == 'win32':
+            import win32api
+            # Windows loaders require SystemRoot even with an explicit env.
+            # Python/test temp files and user settings stay invocation-owned.
+            result.update({"SystemRoot": win32api.GetWindowsDirectory(),
+                "TEMP": result["TMPDIR"], "TMP": result["TMPDIR"],
+                "USERPROFILE": result["HOME"], "APPDATA": result["XDG_CONFIG_HOME"],
+                "LOCALAPPDATA": result["XDG_CACHE_HOME"], "PYTHONUTF8": "1"})
         return result
 
     def _auth_arguments(self, root: Path) -> tuple[str, ...]:
