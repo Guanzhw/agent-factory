@@ -320,11 +320,28 @@ it('allows editing after a directly rejected withdrawn-application schedule with
   vi.mocked(client.create).mockRejectedValueOnce(new ApiError('INACTIVE_APPLICATION', 409, undefined, true));
   await panel({ seed }); await field('计划任务名称', 'Rejected plan'); await click('预览下次执行时间');
   await click('保存计划任务');
-  await settle(() => expect(button('预览下次执行时间')?.disabled).toBe(false));
+  await settle(() => {
+    expect(host.textContent).toContain('服务端已拒绝此次变更');
+    expect(host.querySelector('fieldset')?.disabled).toBe(false);
+  });
   expect(localStorage.getItem(pointerKey)).toBeNull();
   expect(client.recover).not.toHaveBeenCalled();
-  await field('计划任务名称', 'Corrected plan'); await click('预览下次执行时间'); await click('保存计划任务');
+  await field('计划任务名称', 'Corrected plan'); await click('预览下次执行时间');
+  await settle(() => expect(button('保存计划任务')?.disabled).toBe(false));
+  const digest = webcrypto.subtle.digest.bind(webcrypto.subtle);
+  let finishDigest!: () => void;
+  vi.spyOn(webcrypto.subtle, 'digest').mockImplementationOnce((algorithm, data) => new Promise<ArrayBuffer>((resolve, reject) => {
+    finishDigest = () => { void digest(algorithm, data).then(resolve, reject); };
+  }));
+  await click('保存计划任务');
+  try {
+    expect(client.create).toHaveBeenCalledTimes(1);
+    expect(host.querySelector('fieldset')?.disabled).toBe(true);
+  }
+  finally { await act(async () => finishDigest()); }
+  await settle(() => expect(button('恢复后续计划')?.disabled).toBe(false));
   expect(client.create).toHaveBeenCalledTimes(2);
+  expect(vi.mocked(client.create).mock.calls[1][0].name).toBe('Corrected plan');
   expect(localStorage.getItem(pointerKey)).toBeNull();
 });
 

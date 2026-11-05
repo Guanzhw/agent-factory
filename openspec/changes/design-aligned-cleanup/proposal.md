@@ -14,6 +14,8 @@
 - 修复真实Research终止结构的关联，并核对长期会话与离线QA的简化路径；不把调大常量当成设计修复。
 - 更新Go当前预设说明，保留历史配置；完成针对性回归、独立审查和中文Draft PR，不合并或部署。
 
+- 根据已确认的官方依赖公告，仅升级certifi与OpenTelemetry API两个锁定补丁版本，保持包集合和Agno版本不变。
+
 ## Capabilities
 
 ### New Capabilities
