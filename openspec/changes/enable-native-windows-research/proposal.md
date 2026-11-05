@@ -35,4 +35,8 @@ PR 的 Linux fast 实跑发现原模块选择器包含新增 Windows 专用类�
 
 恢复后的完整 npm audit 在未变更的主干锁文件上失败：开发依赖 `minimatch@10.2.6` 命中 [GHSA-g3hv-75wg-m249](https://github.com/advisories/GHSA-g3hv-75wg-m249)。当前 ESLint 依赖范围未包含修复版；允许在 `package.json` 和锁文件中显式覆盖为公告修复版 `11.0.1`，以完整审计和既有 lint/构建/测试验证兼容性。不降级 ESLint，不扩展业务或升级其他直接依赖。
 
+新 full 的 Linux 浏览器安装步骤失败。当前新 job 的官方 GitHub 日志已成功读取，确认实际为 Ubuntu 26，固定 Playwright 1.58.0 明确拒绝该平台；因此将前端 Linux job 固定到其支持的 Ubuntu 24.04，并拆分工具安装与 Chromium 安装步骤。不升级 Playwright、不减少验证。
+
+同次 Windows PostgreSQL 步骤在 `initdb` 读取测试密码文件时遭遇 Permission denied，测试尚未执行。Python 私有临时目录与 PostgreSQL 的受限 token 不兼容；改用 `RUNNER_TEMP` 下 UUID 命名、继承父目录权限的新 CI 专用目录，仍只清理该目录。不修改系统 ACL、已有 PG 服务或用户配置，SCRAM、loopback 和三项零 skip 门禁保持不变。
+
 不包含 PTY、WSL、远端自由编码、GPU、多团队编排、OS 沙箱保证、安装依赖、新模型/账号/TLS/本机信任、部署或发布。现有工作树和数据库保持原状；本轮云端不操作用户设备或调用外部模型。
