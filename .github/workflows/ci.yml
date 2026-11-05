@@ -94,14 +94,17 @@ jobs:
         run: |
           import os
           from pathlib import Path
+          import shutil
           import socket
           import subprocess
-          import tempfile
+          from uuid import uuid4
 
           pg_bin = Path(os.environ['PGBIN'])
           subprocess.run([str(pg_bin / 'postgres.exe'), '--version'], check=True)
-          with tempfile.TemporaryDirectory(prefix='research-windows-pg-', dir=os.environ['RUNNER_TEMP']) as directory:
-              root = Path(directory)
+          root = Path(os.environ['RUNNER_TEMP']) / ('research-windows-pg-' + uuid4().hex)
+          # Inherit the runner temp ACL so PostgreSQL's restricted token can read its own fixture.
+          root.mkdir()
+          try:
               data = root / 'data'
               password = root / 'password.txt'
               password.write_text('ci-fixture-only\n', encoding='utf-8')
@@ -133,6 +136,8 @@ jobs:
               finally:
                   if (data / 'postmaster.pid').exists():
                       subprocess.run([*pg_ctl, '-m', 'fast', 'stop'], check=True)
+          finally:
+              shutil.rmtree(root)
   postgres:
     needs: scope
     if: needs.scope.outputs.mode != 'docs'
