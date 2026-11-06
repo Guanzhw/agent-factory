@@ -51,7 +51,7 @@ class ModeDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
     materialRefs: list[PinnedRef] = Field(min_length=1, max_length=30)
     materialChoices: dict[str, MaterialChoice] = Field(default_factory=dict, max_length=12)
-    capabilities: list[str] = Field(min_length=1, max_length=30)
+    capabilities: list[str] = Field(default_factory=list, max_length=30)
     budget: LegacyBudget = Field(default_factory=LegacyBudget)
     config: LegacyTaskConfig = Field(default_factory=LegacyTaskConfig)
     toolOrder: list[str] = Field(default_factory=list, max_length=30)

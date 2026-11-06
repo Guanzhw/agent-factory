@@ -7,7 +7,7 @@ All model responses and credentials are synthetic; no live provider is called.
 
 FAST_PYTHON_TESTS = {
     'autonomous_research': (
-        'test_research_autonomous_composition', 'test_research_session_research',
+        'test_research_autonomous_composition', 'test_research_session_research', 'test_research_session_setup',
         'test_delegation_preview_limits', 'test_runtime_contract',
     ),
     'local_login': (
@@ -98,6 +98,11 @@ FAST_POSTGRES_TESTS = {
     'declared_delegation_limits': (
         'test_delegation_postgres.DelegationPostgresTests.test_declared_deep_and_wide_tree_preserves_shared_budget_and_cancellation',
         'test_delegation_postgres.DelegationPostgresTests.test_depth_constraint_upgrade_preserves_existing_links',
+    ),
+    'optional_research_tools': (
+        'test_research_sessions.ResearchSessionContracts.test_conversation_admits_without_workspace_and_new_sessions_select_only_available_tools',
+        'test_research_collaboration.ResearchCollaborationContracts.test_idle_reserves_one_batch_and_repeated_event_reconciles_same_request',
+        'test_research_subagent_probe.ResearchSubagentProbe.test_original_child_and_native_continuation',
     ),
     'local_login': ('test_local_login_postgres.LocalLoginPostgresTests',),
     'ssh_original_native_wait': (

@@ -122,6 +122,19 @@ def attach_fixture_bindings(settings, store, plan):
 
 
 class RuntimeContractTests(unittest.IsolatedAsyncioTestCase):
+    async def test_native_agent_completes_without_exposing_tools(self):
+        store = ContractStore(application='fixture-checksum')
+        store.plan['tools'] = []
+        with patch.object(FixtureModel, '_response', return_value=ModelResponse(
+                role='assistant', content='Explanation based on supplied context.')):
+            agent, output = await self.run_agent(store)
+        self.assertEqual(output.status, RunStatus.completed)
+        self.assertEqual(output.content, 'Explanation based on supplied context.')
+        context = RunContext(run_id=output.run_id, session_id='test-session', user_id='test-user', session_state={})
+        self.assertEqual(agent.tools(context), [])
+        self.assertFalse(store.effects)
+        self.assertFalse(store.artifacts)
+
     async def asyncSetUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.settings = SimpleNamespace(runtime_directory=Path(self.directory.name)/'runtime', max_tool_calls=8, experiment_timeout_seconds=5, experiment_output_bytes=65536)

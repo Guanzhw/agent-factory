@@ -8,6 +8,7 @@ from copy import deepcopy
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
@@ -270,7 +271,7 @@ class ResearchSubagentProbe(unittest.TestCase):
                 if phase == 0:
                     await self.release.wait()
                     name = 'research_run' if command_child else 'research_read_file'
-                    arguments = {'argv': ['python3', 'sleeper.py']} if command_child else {'path': 'evidence.txt'}
+                    arguments = {'argv': [sys.executable, 'sleeper.py']} if command_child else {'path': 'evidence.txt'}
                 else:
                     message = {'role': 'assistant', 'content': 'child-evidence-' + owner}
             elif phase == 0:
@@ -308,7 +309,8 @@ class ResearchSubagentProbe(unittest.TestCase):
                 self.wire_errors.append(repr(error))
                 raise
 
-        self.tools = ResearchSessionTools(workspace_root=workspace, host_commands=True)
+        self.tools = ResearchSessionTools(workspace_root=workspace, host_commands=True,
+            command_path=str(Path(sys.executable).parent))
         self.app_settings = Settings(db_url=isolated.url, workspace=scratch / 'factory',
             owner_model_transport_factory=lambda: httpx.MockTransport(wire))
         self.app = create_app(self.app_settings, session_tools=self.tools)
@@ -395,7 +397,8 @@ class ResearchSubagentProbe(unittest.TestCase):
         self.assertEqual(len(self.store.effects(root['id'])), 1)
         self.assertEqual(len(self.store.effects(child['id'])), 0)
         self.assertEqual((self.workspaces['alice'] / 'parent-note.txt').read_text(), 'investigation-alice')
-        self.assertEqual(self.store.plan(root['plan_id'])['budget']['maxChildren'], 1)
+        budget = self.store.plan(root['plan_id'])['budget']
+        self.assertEqual((budget['maxDepth'], budget['maxChildren']), (2, 4))
         self.assertEqual(self.store.plan(child['plan_id'])['inputValues']['sessionId'], self.identifiers['alice'])
         child_requests = [item['body'] for item in self.calls if item['child']]
         self.assertIn('private-evidence-alice', json.dumps(child_requests))
@@ -534,7 +537,8 @@ class ResearchSubagentProbe(unittest.TestCase):
         self.wait(lambda: self.ticket(child).get('status') == 'completed', 'Original child must finish')
         self.assertEqual(self.ticket(root)['status'], 'paused')
         self.life.close()
-        self.tools = ResearchSessionTools(workspace_root=self.tools.workspace_root, host_commands=True)
+        self.tools = ResearchSessionTools(workspace_root=self.tools.workspace_root, host_commands=True,
+            command_path=str(Path(sys.executable).parent))
         self.app = create_app(self.app_settings, session_tools=self.tools)
         self.state = factory_state(self.app)
         self.store, self.sessions = self.state['store'], self.state['research_sessions']

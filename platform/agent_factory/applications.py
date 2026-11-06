@@ -268,7 +268,7 @@ class ApplicationService:
             materials = self.closure(mode["materialRefs"])
             caps = {cap for item in materials for cap in item["permissions"]}
             tools = [item["content"] for item in materials if item["kind"] == "tool"]
-            if not tools or caps - set(mode["capabilities"]):
+            if caps - set(mode["capabilities"]):
                 raise HTTPException(422, "Application material/tool closure exceeds its approved capability scope")
             if mode["toolOrder"] and (len(set(mode["toolOrder"])) != len(mode["toolOrder"]) or set(mode["toolOrder"]) != set(tools)):
                 raise HTTPException(422, "Application tool order must exactly match approved tools")

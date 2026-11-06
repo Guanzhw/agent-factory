@@ -135,11 +135,21 @@ class WindowsCredentialScopeTests(unittest.TestCase):
         self.assertEqual(list(self.manager.root.iterdir()), [])
 
     def test_capacity_denies_second_carrier_before_resolve(self):
+        received = threading.Event()
+        transfer = self.support.transfer
+        def completed_transfer(*args, **kwargs):
+            result = transfer(*args, **kwargs)
+            if result == b'RECEIVED':
+                received.set()
+            return result
+        self.support.transfer = completed_transfer
         with self.open():
             calls = self.manager._key.call_count
             with self.assertRaisesRegex(Exception, 'SSH_AGENT_CAPACITY'):
                 with self.open(): pass
             self.assertEqual(self.manager._key.call_count, calls)
+            # Finish this fake handshake before scope exit cancels the carrier.
+            self.assertTrue(received.wait(1))
         self.assertEqual(len(self.processes), 1)
 
     def test_guard_rechecked_before_password_release(self):

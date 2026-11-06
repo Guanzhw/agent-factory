@@ -249,11 +249,16 @@ class ResearchSessionResearch:
         self._save(row['id'], body)
 
     async def observe(self, task):
+        run_id = task.get('run_id')
+        if not run_id:
+            # Pending admission has no native run identity or original effects
+            # to reconcile. Do not substitute an empty matching prefix.
+            return
         with self.db.read() as conn:
             rows = list(conn.execute(select(self.experiments).where(
                 self.experiments.c.owner_id == task['owner_id'])).mappings())
         effects = {item['effect_key']: item for item in self.store.effects(task['id'])}
-        prefix = task.get('run_id', '') + ':'
+        prefix = run_id + ':'
 
         def complete(run_id, call_id, output):
             key = 'research-session-tool:' + call_id

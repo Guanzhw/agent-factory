@@ -163,6 +163,18 @@ class ResearchSessionResearchTests(unittest.TestCase):
         self.assertEqual(self.store.sql.call_args.kwargs, {'owner': 'alice', 'parent': self.task['id'],
             'request': 'research-child:' + digest({'run': self.context.run_id, 'call': 'lost-original-child'})})
 
+    def test_observer_leaves_pending_task_without_run_identity_untouched(self):
+        self.direct()
+        before = self.rows()
+        self.store.effects = Mock(side_effect=AssertionError('A pending task has no run effects'))
+        for task in ({**self.task, 'run_id': None}, {**self.task, 'run_id': ''},
+                     {key: value for key, value in self.task.items() if key != 'run_id'}):
+            asyncio.run(self.service.observe(task))
+        self.store.effects.assert_not_called()
+        self.store.effect_complete.assert_not_called()
+        self.store.lifecycle_observer.inspect_subtree.assert_not_called()
+        self.assertEqual(self.rows(), before)
+
     def test_observer_recovers_lost_child_response_and_exact_unknown_effect(self):
         child_id = str(uuid4())
         call_id = 'observer-original-child'

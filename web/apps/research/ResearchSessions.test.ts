@@ -442,8 +442,8 @@ it('prevents repeat stop while pending and replaces feedback when polling confir
 });
 
 it('shows unavailable configuration honestly and clears private drafts on logout while retaining opaque recovery pointers', async () => {
-  vi.mocked(api.options).mockResolvedValue({ ...options, available: false, unavailableCode: 'RESEARCH_WORKSPACE_NOT_CONFIGURED', models: [], workspace: { ...options.workspace, configured: false } });
-  await mount(); expect(button('创建并开始研究').disabled).toBe(true); expect(host.textContent).toContain('服务尚未配置会话工作目录'); expect(button('配置我的模型')).toBeDefined();
+  vi.mocked(api.options).mockResolvedValue({ ...options, available: false, unavailableCode: 'RESEARCH_MODEL_REQUIRED', models: [], workspace: { ...options.workspace, configured: false } });
+  await mount(); expect(button('创建并开始研究').disabled).toBe(true); expect(host.textContent).toContain('RESEARCH_MODEL_REQUIRED'); expect(button('配置我的模型')).toBeDefined();
   await field('研究目标', '私人研究输入');
   window.sessionStorage.setItem(requestKey('alice'), JSON.stringify([{ requestId: 'request-a', action: 'create', sessionId: null }]));
   clearSessionDrafts('alice'); expect(window.sessionStorage.getItem(draftKey('alice'))).toBeNull(); expect(window.sessionStorage.getItem(requestKey('alice'))).toContain('request-a');
@@ -539,4 +539,16 @@ it.each(['0', '-1', '1.5'])('rejects invalid turn budget %s even without an uppe
   await act(async () => button('创建并开始研究').click());
   expect(host.querySelector('.rs-limits input')?.getAttribute('aria-invalid')).toBe('true');
   expect(api.create).not.toHaveBeenCalled();
+});
+
+
+it.each([false, true])('allows model work with workspace=%s when local commands are unavailable', async configured => {
+  vi.mocked(api.options).mockResolvedValue({ ...options, workspace: { ...options.workspace, configured, hostCommands: false } });
+  await mount(); await validDraft();
+  expect(button('创建并开始研究').disabled).toBe(false);
+  expect(host.textContent).toContain('本地命令未启用');
+  expect(host.textContent).toContain(configured ? '可使用会话目录中的文件工具' : '可继续对话与处理可用证据');
+  expect(host.textContent).not.toContain('当前无法开始');
+  await act(async () => button('创建并开始研究').click());
+  expect(api.create).toHaveBeenCalledOnce(); expect(api.turn).toHaveBeenCalledOnce();
 });
