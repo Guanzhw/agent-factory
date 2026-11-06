@@ -34,6 +34,8 @@ The native wrapper reserves the existing durable effect before transport dispatc
 
 `ToolInvocationError` contains a fixed code, business outcome and positive local `stopped` evidence. A failed operation with unresolved cleanup retains UNKNOWN capacity; local process or session closure does not establish that a remote effect stopped. Known secret echoes and oversized results never enter retained output.
 
+Tool output is finite JSON bounded by the descriptor’s `max_output_bytes`, measured after JSON serialization (including escaping). Application-form limits on text length, list length, object width and nesting do not apply to tool results. A valid report inside that byte budget completes and can be read again through its original receipt without another dispatch. Invalid or oversized output after dispatch remains UNKNOWN; relaxing shape limits does not make uncertain operations replayable.
+
 ## CLI
 
 The member adapter starts the member-selected executable once, using argv rather than an implicit shell. It honors the selected working directory and environment, passes JSON stdin by default, maps declared options when selected, and parses JSON or wraps text output. Credential injection is explicit. Independent invocations use independent temporary state, and the adapter leaves the service environment unchanged.

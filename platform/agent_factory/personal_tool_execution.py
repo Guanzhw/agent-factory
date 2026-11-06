@@ -13,9 +13,8 @@ from agno.exceptions import RunCancelledException, StopAgentRun
 from agno.tools.function import Function, FunctionCall
 
 from .execution_bindings import AdapterRegistration, BindingContext, ExecutionBindings
-from .input_schema import bounded_json
 from .personal_remote_provider import SecretLease, reject_credential_echo
-from .personal_tool_contract import PersonalToolAdapter, ToolInvocation, ToolInvocationError, validate_tool_arguments
+from .personal_tool_contract import PersonalToolAdapter, ToolInvocation, ToolInvocationError, validate_tool_arguments, validate_tool_output
 from .store import canonical, digest
 
 
@@ -149,7 +148,7 @@ def personal_tool_registration(adapter: PersonalToolAdapter, *, operation_sha256
                 # Adapters own finally cleanup and positive stop evidence. A
                 # naked cancellation exception is not proof of remote stop.
                 output = await adapter.invoke(invocation)
-                output = bounded_json(output, maximum=descriptor.max_output_bytes)
+                output = validate_tool_output(output, maximum=descriptor.max_output_bytes)
                 for lease in leases:
                     reject_credential_echo(output, lease)
                 receipt = {'outcome': 'completed', 'output': output}
