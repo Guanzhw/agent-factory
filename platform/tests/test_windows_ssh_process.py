@@ -118,11 +118,32 @@ class WindowsSSHProcessTests(unittest.TestCase):
         sentinel = win32event.CreateEvent(attributes, True, False, None)
         try:
             self.assertTrue(win32api.GetHandleInformation(sentinel) & win32con.HANDLE_FLAG_INHERIT)
-            program = ('import ctypes,json,sys; from ctypes import wintypes as w; '
-                       'k=ctypes.WinDLL("kernel32",use_last_error=True); '
-                       'k.SetEvent.argtypes=[w.HANDLE]; k.SetEvent.restype=w.BOOL; '
-                       'ok=bool(k.SetEvent(int(sys.argv[1]))); '
-                       'print(json.dumps({"canaryInherited":ok}))')
+            program = '''
+import ctypes, json, sys
+from ctypes import wintypes as w
+k = ctypes.WinDLL('kernel32', use_last_error=True)
+k.SetEvent.argtypes = [w.HANDLE]
+k.SetEvent.restype = w.BOOL
+target = int(sys.argv[1])
+if len(sys.argv) > 2:
+    k.CloseHandle.argtypes = [w.HANDLE]
+    k.CloseHandle.restype = w.BOOL
+    k.CreateEventW.argtypes = [w.LPVOID, w.BOOL, w.BOOL, w.LPCWSTR]
+    k.CreateEventW.restype = w.HANDLE
+    assert k.CloseHandle(target)
+    # Reuse the closed numeric slot for a different, child-owned event.
+    events = []
+    for _ in range(4096):
+        event = k.CreateEventW(None, True, False, None)
+        assert event
+        events.append(event)
+        if event == target:
+            break
+    else:
+        raise AssertionError('Controlled handle slot was not reused')
+ok = bool(k.SetEvent(target))
+print(json.dumps({'setEventSucceeded': ok}))
+'''
             with self.process(program, str(int(sentinel))) as process:
                 kernel = ctypes.WinDLL('kernel32', use_last_error=True)
                 kernel.GetHandleInformation.argtypes = [wt.HANDLE, ctypes.POINTER(wt.DWORD)]
@@ -134,8 +155,22 @@ class WindowsSSHProcessTests(unittest.TestCase):
                     self.assertEqual(flags.value & win32con.HANDLE_FLAG_INHERIT, 0)
                 process.resume()
                 result = exchange(process, b'', deadline=time.monotonic() + 5, max_output=1024)
-                self.assertFalse(json.loads(result)['canaryInherited'])
+                self.assertIsInstance(json.loads(result)['setEventSucceeded'], bool)
+            # Numeric handle validity in another process does not prove identity.
             self.assertEqual(win32event.WaitForSingleObject(sentinel, 0), win32con.WAIT_TIMEOUT)
+            startup = subprocess.STARTUPINFO()
+            startup.lpAttributeList = {'handle_list': [int(sentinel)]}
+            for replace_handle in (False, True):
+                with self.subTest(control='reused-slot' if replace_handle else 'inherited-event'):
+                    win32event.ResetEvent(sentinel)
+                    args = [sys.executable, '-I', '-S', '-c', program, str(int(sentinel))]
+                    if replace_handle:
+                        args.append('replace')
+                    control = subprocess.run(args, startupinfo=startup, close_fds=True,
+                                             capture_output=True, text=True, timeout=5, check=True)
+                    self.assertTrue(json.loads(control.stdout)['setEventSucceeded'])
+                    expected = win32con.WAIT_TIMEOUT if replace_handle else win32con.WAIT_OBJECT_0
+                    self.assertEqual(win32event.WaitForSingleObject(sentinel, 0), expected)
         finally:
             sentinel.Close()
 
