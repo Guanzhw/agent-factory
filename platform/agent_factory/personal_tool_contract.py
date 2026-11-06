@@ -22,9 +22,8 @@ def validate_tool_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
     Neither declarations nor validation may retrieve an external schema.
     """
     from jsonschema import Draft202012Validator
-    from .input_schema import bounded_json
     try:
-        value = bounded_json(dict(schema), maximum=32768)
+        value = bounded_tool_json(dict(schema), maximum=32768)
         if value.get('type') != 'object' or {'fc', 'run_context', '_agno_run_context'} & set(value.get('properties', {})):
             raise ValueError()
         Draft202012Validator.check_schema(value)
