@@ -10,7 +10,7 @@ The current member workflow is documented in [Member tools](MEMBER_TOOLS.md); [c
 | `personal_tools.py` | Owner resource records, MCP discovery, optional credential references, sharing, immutable runtime declarations and native registry restoration |
 | `personal_tool_execution.py` | Agno Function wrapping, current actor/resource checks and existing durable effect receipts |
 | `personal_cli.py` | Member-configured command execution and specialized installed CLI credential strategies |
-| `_personal_cli_process.py` | POSIX process creation, bounded IO, cancellation and process-group stop evidence |
+| `_personal_cli_process.py` | POSIX/Windows process creation, bounded IO, cancellation and owned-process stop evidence |
 | `personal_mcp.py` | Official SDK discovery and one-call session execution |
 | `PersonalToolConnections.tsx` | Member configuration, token saving, discovery, binding, sharing and original-request recovery |
 
@@ -44,7 +44,7 @@ The member adapter starts the member-selected executable once, using argv rather
 
 Specialized installed `PersonalCliAdapter` integrations retain their declared credential-delivery/probe behavior. Those probes are specific to that integration and are not prerequisites for arbitrary member commands.
 
-The process helper supports POSIX process groups. Windows-hosted CLI execution is rejected explicitly; Windows browsers can manage a Linux deployment. Timeouts and cancellation settle the owned local process group before reporting positive stop evidence. Temporary credentials remain when stop cannot be confirmed. Debug event loops are rejected because low-level pipe diagnostics can precede echo filtering.
+The [process helper](../platform/agent_factory/_personal_cli_process.py) uses POSIX process groups on Linux and owned Job Objects on native Windows. Timeouts and cancellation inspect the original owned processes before reporting positive stop evidence. Linux tests and portable Windows protocol fixtures do not establish native Windows process support; use the [native Windows checks](DEVELOPMENT_CHECKS.md#verify-native-windows-execution) on a Windows host. Temporary credentials remain when stop cannot be confirmed. Debug event loops are rejected because low-level pipe diagnostics can precede echo filtering.
 
 ## MCP
 
@@ -56,4 +56,4 @@ Authorization is owner-scoped for every protocol request and session DELETE. Una
 
 Focused tests use local processes, synthetic credentials and local MCP servers. They cover configuration persistence, real input/output contracts, concurrent owners, credential echoes, cancellation, schema changes, failed cleanup and original-effect recovery. The PostgreSQL restart test starts an independent worker process before member configuration exists, publishes materials/application through authenticated member APIs, then executes the real command through the native queue. Repeating the request and reopening services retain the task/run and execute the command once.
 
-Retained-handle tests prove that disabled callers, withdrawn sharing and revoked owner credentials prevent another command. Vendor model/service compatibility and externally deployed throughput require separate target evidence. See [development checks](DEVELOPMENT_CHECKS.md#personal-cli-and-mcp-verification) for runnable commands.
+Retained-handle tests prove that disabled callers, withdrawn sharing and revoked owner credentials prevent another command. Vendor model/service compatibility and externally deployed throughput require separate target evidence. See [development checks](DEVELOPMENT_CHECKS.md#run-the-checks-relevant-to-the-change) for runnable commands.
