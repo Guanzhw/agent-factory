@@ -1,5 +1,8 @@
 # PR47 installation closure handoff
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 This delivery publishes the previously reviewed installation helpers so another
 machine can obtain them from Git. It does not introduce a new runtime diagnostic,
 change the application, or claim target installation/database/training acceptance.

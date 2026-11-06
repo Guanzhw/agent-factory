@@ -8,7 +8,7 @@ native execution ticket. Default startup installs no remote target or mapping.
 ```mermaid
 flowchart LR
   O[Origin immutable plan and current authority] -->|Original manifest; redacted pins| R[Receiver immutable binding proof]
-  R --> A[Receiver exact-plan approval]
+  R --> A[Receiver owner and plan admission]
   A --> N[One receiver native root ticket]
   N --> C[Receiver children and shared budgets]
   N -->|Current authorization over trusted HTTP| O
@@ -64,21 +64,21 @@ not authority to switch identities.
 
 ## Exact application distribution
 
-The operator imports a complete reviewed source application body with
+The operator imports a complete source application body with
 `ApplicationService.import_snapshot(actor, snapshot, request_id)`. This is a
 trusted in-process operation; there is no user HTTP import endpoint. It preserves
 the source ID/version/creation timestamp/SHA rather than rebuilding a similar
 application with a different digest. Strict canonical schema, size, hash,
-timezone-aware timestamp, manager-authored provenance and current receiver
-administrator/material authority are required. A fresh imported version is a
-receiver-local draft authored by the importer. The receiver then requests
-publication and a different current administrator decides that exact version.
-Source approval grants no receiver permission.
+timezone-aware timestamp, the retained `manager-authored` provenance field, and
+current member authority are required. The field name does not require an
+administrator. A fresh imported version is a receiver-local draft owned by the
+importer. That owner publishes the exact version through member self-service.
+Source publication does not grant receiver resource access.
 
 Identical bodies have an idempotent observation receipt. Existing local author,
 review, publication, withdrawal and archive state is preserved. Changed request
 intent, different bodies at an existing version and non-monotonic new versions
-are rejected. Current administrator authority is required even on receipt replay.
+are rejected. Current member authority is required even on receipt replay.
 
 ## Current source authorization
 
@@ -94,7 +94,7 @@ bounded current capabilities/tools/budgets or a separately verified cancellation
 signal. There is no fixed-success authority response.
 
 The receiver verifies exact response bindings, then intersects scope/budgets with
-its trusted ceilings and current local approval. Timeout, unreachable origin,
+its trusted ceilings and current local execution policy. Timeout, unreachable origin,
 wrong identity/configuration/hash, redirects, malformed/oversized/compressed
 responses or withdrawn authority deny protected work. HTTP guards have finite
 timeouts and no retry or environment proxy. They are synchronous within native

@@ -39,7 +39,7 @@ def main():
     import uvicorn
     settings = Settings.from_env()
     uvicorn.run(create_app(settings, session_tools=_session_tools_from_env()),
-        host=settings.host, port=settings.port, access_log=False)
+        host=settings.host, port=settings.port, access_log=False, timeout_graceful_shutdown=35)
 
 
 if __name__ == '__main__':

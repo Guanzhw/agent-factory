@@ -1,5 +1,8 @@
 # Released original custody and PR50 research continuation
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 This handoff continues the already-authorized research task. It neither starts
 personal-agent roadmap work nor changes the scientific baseline, evaluator,
 dataset, training budget or retry policy. No generic new permission gate is

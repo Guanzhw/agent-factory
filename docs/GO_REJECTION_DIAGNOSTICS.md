@@ -1,5 +1,8 @@
 # Safe Go rejection diagnostics
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 This bounded offline follow-up closes the attribution gap identified in PR19.
 It changes diagnostic metadata only. Parser acceptance, exception messages and
 HTTP status codes, fixed endpoints, TLS/proxy handling, retries, usage settlement,

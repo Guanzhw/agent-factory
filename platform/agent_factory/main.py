@@ -404,7 +404,8 @@ def main():
     import uvicorn
     from .shutdown import shutdown_guard
     settings = Settings.from_env()
-    uvicorn.run(create_app(settings, shutdown_guard=shutdown_guard), host=settings.host, port=settings.port, access_log=False)
+    uvicorn.run(create_app(settings, shutdown_guard=shutdown_guard), host=settings.host, port=settings.port,
+        access_log=False, timeout_graceful_shutdown=35)
 
 
 if __name__ == "__main__":

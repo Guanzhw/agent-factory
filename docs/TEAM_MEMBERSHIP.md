@@ -4,7 +4,7 @@ An existing, enabled Agno directory account is a member. Members can use support
 
 Account administrators additionally manage accounts through `/api/factory/accounts`: list and create accounts, edit names and email addresses, enable or disable accounts, and change the `accountAdmin` flag. Administrator status preserves ordinary session, task, resource and credential ownership boundaries. The identity response's existing `role: "manager"` label means account administrator; `role: "user"` means member.
 
-The account API accepts `GET` with `limit`/`offset`, `POST` with `id`, optional `name`, `email`, and `accountAdmin`, and `PATCH /{id}` with changed `name`, `email`, `disabled` or `accountAdmin` fields. Existing account creation returns 409. Renaming an account does not enable it. Login identity verification remains explicit; external subject mapping applies to the OIDC path. For a few local function-check accounts, use the [controlled new-member command](../README.md#start-with-configured-authentication), which rejects existing owners and grants no administrator role.
+The account API accepts `GET` with `limit`/`offset`, `POST` with `id`, optional `name`, `email`, and `accountAdmin`, and `PATCH /{id}` with changed `name`, `email`, `disabled` or `accountAdmin` fields. Existing account creation returns 409. Renaming an account does not enable it. Login identity verification remains explicit; external subject mapping applies to the OIDC path. For a few local function-check accounts, use the [controlled new-member command](WINDOWS_LOCAL_START.md), which rejects existing owners and grants no administrator role.
 
 ## Existing installations
 

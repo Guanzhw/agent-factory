@@ -10,7 +10,7 @@ not establish every distributed fault combination. Providers, Windows and
 mutable research workloads remain outside this evidence.
 
 The ORX application-specific implementation and reproduction commands below are
-historical checkpoint evidence, not current core setup. General original-operation
+historical checkpoint evidence, not current AutoResearch setup. General original-operation
 recovery, UNKNOWN and cancellation requirements remain applicable; see
 [member execution](MEMBER_EXECUTION.md).
 

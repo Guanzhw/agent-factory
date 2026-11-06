@@ -1,5 +1,8 @@
 # Acceptance ledger
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 ## Current scope — 2026-10-14
 
 See the [current scope reconciliation](V03_SCOPE_RECONCILIATION.md)

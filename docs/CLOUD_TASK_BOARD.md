@@ -1,5 +1,8 @@
 # Active: Windows SSH final verification — 2026-10-26
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 | Scope | Current evidence | Open gate |
 | --- | --- | --- |
 | PR138 integration | Exact `445a2ce89ab2fe38d8269d3f1f6a17bed9a81024`: Windows [40247109502](https://github.com/Guanzhw/agent-factory/actions/runs/40247109502) all three jobs and fast [40247109535](https://github.com/Guanzhw/agent-factory/actions/runs/40247109535) SUCCESS. Installed artifact checked: both consumers, wrong-pin zero release, original cancellation, expiry/revocation and cleanup PASS. | Final full via existing Project checks workflow_dispatch; exact final-head CI and independent complete-diff/simplicity review before merge. |

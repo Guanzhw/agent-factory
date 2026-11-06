@@ -1,5 +1,8 @@
 # Go diagnostics correction — offline only
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 This continuation starts at PR15 head
 `45eeb6b88046a40f8743e01e69d10353be386499`. It does not retry the stopped live
 campaign, contact support, inspect private provider APIs or discover credentials.

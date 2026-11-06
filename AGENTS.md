@@ -1,28 +1,37 @@
 # Project instructions
 
-Start with [ARCHITECTURE.md](ARCHITECTURE.md) for responsibilities and the three acceptance boundaries. [Development checks](docs/DEVELOPMENT_CHECKS.md) gives runnable commands and current limitations. Runtime mechanisms and their existing evidence remain in [RUNTIME_DESIGN.md](docs/RUNTIME_DESIGN.md); they are not extra product approval requirements.
+## Choose the relevant context
 
-The selected platform is Agno AgentOS + PostgreSQL, targeting Agno 3.1.0. Reuse native Registry, components and execution lifecycle. Keep task execution in the native runtime. Existing TypeScript/legacy SDK scaffolding is not the selected engine.
+- Before changing package ownership or composition, read [ARCHITECTURE.md](ARCHITECTURE.md) and the ownership maps linked there.
+- Before changing execution, cancellation, recovery, or resource bindings, read [Runtime design](docs/RUNTIME_DESIGN.md) and its relevant component reference.
+- Before validating a change, read [Development checks](docs/DEVELOPMENT_CHECKS.md). Report executed checks separately from commands that were not run.
+- Before changing research behavior or navigation, read the [autonomous Agent decision](docs/plans/agent-autonomy-20261106.md). The product has one research entry. The Agent chooses its tools and next actions.
+- For older designs and evidence, use the [documentation map](docs/DOCUMENTATION_MAP.md). A historical acceptance report applies to its recorded revision and environment.
 
-Product spine: reusable materials and applications, member-owned resource connections, and observable execution. The core owns general execution and resource interfaces; research concepts and workflows belong to the research application. Credentials belong to resource owners and are not exposed through shared catalog content.
+## Preserve the product boundaries
 
-The product serves a trusted small team. Administrators manage accounts only. Members may create and call components/workflows, publish applications/materials, schedule work and connect resources themselves. Resource connections have no address, host, port or per-resource operator allowlist. Owners manage their resources and choose personal or team sharing; shared use does not expose credentials. These decisions supersede older approval, administrator-only publication/withdrawal and fine-grained capability requirements. Validate inputs at their owning boundary and trust internal contracts. Keep cancellation, resource limits and original-operation recovery for their operational purpose, separate from authorization. Prefer removing obsolete policy paths over adding a permissive-mode switch.
+Use Agno AgentOS 3.1.0 and PostgreSQL. Reuse the installed SDK's Registry, native model and tool loop, queue, and lifecycle before adding a replacement. Record a concrete SDK gap when a replacement is necessary.
 
-Commit only new safe code, public docs and synthetic fixtures. Do not copy private design packages, credentials, personal files or company data into this public repository. Preserve third-party licenses and notices. Paid models/compute, deployment exposure and new access require explicit authorization. Open PRs as drafts; do not merge automatically.
+Core owns execution and resource interfaces. Research concepts belong in `applications/research`. The composition root selects applications and trusted adapters. One product UI does not remove the standalone core package or its programmatic API.
 
-Run `npm run check` and dependency audit for relevant changes. Verify actual runtime/browser behavior when it is available. Label model/ORX integration as unverified until it has run successfully; a client import or synthetic test does not prove live compatibility. Keep the acceptance matrix honest and distinguish planned from implemented features.
+The platform serves a trusted small team. Members create and use components, publish their own content, and connect resources. Account administrators manage accounts. Resource owners choose personal or team sharing. Shared use never exposes their credentials. Input validation belongs at the boundary that owns the operation.
 
-Remote runtime attachment and remote compute are foundational. Implement one selected-runtime adapter first; separate create/attach from environment allocation, reconcile unknown acknowledgements, retain scoped cancellation and artifact provenance. Single-server target profiles are 32 cores/64 GB and 54 cores/192 GB; no cluster or permanent heavy instance per user. Record actual host measurements separately from capacity targets.
+Keep owner isolation, original-operation receipts, explicit budgets, and evidence that owned processes stopped. Missing acknowledgements remain uncertain until the original operation is reconciled. A request timeout or canceled queue ticket is not proof that compute stopped. These operational rules do not require a new approval system or a fixed research workflow.
 
-Make incremental changes with concrete behavior checks. Share helpers when they express a real common responsibility; keep app-specific policy in its app or adapter. Report changed behavior, verification, unverified scope and next step using the short PR template. Development model preferences are task configuration, not permanent product capability bans. Do not add an approval system, long per-change specification, or evidence platform to enforce these instructions.
+## Implement and review
 
-## Bound the development task
+1. Inspect callers and the pinned SDK before changing a shared contract.
+2. Reproduce the user-visible failure or run one small authorized real task.
+3. Make the smallest complete change. New limits, abstractions, or compatibility paths need a present requirement or reproduced failure.
+4. Run relevant checks and review the complete diff. Independent review checks correctness, removable code, and reusable native capabilities.
+5. Open a Draft PR using the repository template. Report behavior, evidence, remaining limitations, and next steps. Merge only with applicable user authorization.
 
-These rules constrain development agents, not the autonomy of product agents.
+For delegated work, state the user outcome, writable files, acceptance check, and non-goals. A discovered dependency requires an explicit scope update.
 
-- Check the pinned SDK's actual APIs and existing project wiring before implementing a replacement. Prefer native capabilities that meet the current task; document a concrete gap when they do not.
-- Make one real end-to-end task run first, fix observed correctness failures next, then optimize. Run a small authorized real-model case early; scripted tests prove contracts, not model/tool usability.
-- Each delegation states the user outcome, permitted files/actions, acceptance check and non-goals. A newly discovered dependency requires a deliberate scope update; it is not permission to build a general framework.
-- New abstractions, compatibility branches, fallbacks and hard limits need a present consumer, requirement or reproduced failure. Remove unsupported future-proofing. Keep owner/credential boundaries, original-operation reconciliation and actual process stopping.
-- In this project, 12KB whole-file limits, eight tool calls and a 30-second model-request wrapper obstructed the public-repository task; a 4096-token response setting truncated the selected model's response. Late real-task and real-model validation exposed these after implementation and caused avoidable rework. Check whether a limit belongs to the application, provider or real resource before treating it as an SDK limitation. The tested larger settings are examples, not universal defaults; repeatedly raising a number is not a substitute for completing the task.
-- Independent review asks which code can be deleted and which native capability can be reused, as well as whether behavior is correct. Keep failures as evidence, but separate real task requirements from QA-only constraints such as banning a harmless `ls` or demanding a terminal newline from the browser clipboard. Do not add product defenses to satisfy an arbitrary test rule, and do not add a new machine gate for this guidance.
+Check limits against the real task. Earlier 12 KB file limits, eight-call tool budgets, short model deadlines, and small output-token settings blocked otherwise valid work. Raising a constant alone does not establish usability. Keep failed runs as evidence and separate product requirements from arbitrary QA restrictions.
+
+## Protect existing work
+
+Commit public code, public documentation, and synthetic fixtures only. Keep credentials, private design packages, personal files, databases, logs, and generated research outside the repository. Preserve third-party notices and existing user changes.
+
+Use the authorization already supplied in the task for models, compute, and deployment. Confirm any new access or security-sensitive change that falls outside it. Source retirement does not authorize deleting stored user data, credentials, or backups.

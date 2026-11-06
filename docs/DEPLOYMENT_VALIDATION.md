@@ -30,7 +30,7 @@ adapter. It does not create child groups, write limits, move tasks, exercise
 
 Linux is the selected target platform. Exact host capacity and production runtime
 remain unspecified. The existing unified-login service is not currently supplied.
-[Explicit local password login](../README.md#start-with-configured-authentication)
+[Explicit local password login](WINDOWS_LOCAL_START.md)
 supports function checks without an IdP; it does not satisfy this manifest's
 external identity declarations or establish production IdP/TLS acceptance.
 Synthetic OIDC peers remain isolated tests. Neither local path unblocks the

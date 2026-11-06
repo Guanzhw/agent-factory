@@ -1,5 +1,8 @@
 # Shared compute admission and production identity integration
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 This milestone follows PR24 exact `d7221e451e7f61c3b9d711788bf17486d6cb5f82`.
 It implements previously missing shared resource admission, actual local workspace
 allocation, stop-only maintenance and an opt-in external access-token identity

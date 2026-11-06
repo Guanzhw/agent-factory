@@ -1,5 +1,8 @@
 # PR47 package-data path repair
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 The target has completed the online install, full-copy and dependency check.
 All95 versions and all135 original PR47 Factory files match. Inventory then
 rejected valid setuptools data names: `script (dev).tmpl`,

@@ -50,7 +50,8 @@ def create_app(settings=None, *, diagnostics=None, applications=None):
 def main():
     import uvicorn
     settings = Settings.from_env()
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, access_log=False)
+    uvicorn.run(create_app(settings), host=settings.host, port=settings.port,
+        access_log=False, timeout_graceful_shutdown=35)
 
 
 if __name__ == '__main__':

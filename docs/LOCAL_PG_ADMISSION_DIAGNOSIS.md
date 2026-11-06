@@ -1,5 +1,8 @@
 # Local remote-process PostgreSQL admission diagnosis
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 ## Scope and result
 
 This closes the investigation of local PG08/10 failures retained with PR43

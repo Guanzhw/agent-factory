@@ -1,9 +1,10 @@
 # Owner BYOK and disabled Factory billing
 
-Save an owner model, then explicitly select its connection in a published application.
-Core uses native Agno execution, immutable bindings and current owner authorization.
-The default application catalog is empty. The former Research/ORX application and
-its `/personal-research` and `/personal-agent` routes are not installed.
+Save an owner model, then select its connection in a research session or published application.
+Core uses native Agno execution, immutable bindings, and current owner authorization.
+The default product starts the autonomous Research application. The standalone
+core composition has no installed research application. Retired ORX routes are
+historical interfaces, not a second product entry.
 
 ## Setup and capabilities
 

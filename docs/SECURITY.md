@@ -1,90 +1,37 @@
 # Security and deployment assumptions
 
-Product startup has no demo identity or synthetic login mode. Existing signing configuration, enabled member accounts and an explicitly configured local password or external identity path are required. [Local accounts](../README.md#start-with-configured-authentication) use a controlled creation command and salted password hashes, with no default credentials or public registration. Old demo database markers are rejected without migration or deletion. Test-only synthetic identity providers are not shipped as runtime authentication.
+Agent Factory serves a trusted small team. Members can publish content, configure resources, and execute work without a separate administrator review. Account administrators manage accounts. The platform retains ownership, credential custody, and operational recovery boundaries.
 
-## Trust boundaries
+## Identity and ownership
 
-Configured local password or external identity verification, the current native directory and owner isolation establish member access. Both browser login paths retain revocable sessions, HTTPS cookies and Origin/CSRF checks. JWT role/scope claims cannot enlarge current rights. Current authorization is read again at protected tool boundaries; user disablement/revocation does not rely on cached admission claims. The factory masks cross-user task/plan/artifact access with 404. Account administrators manage accounts; active members create components and publish their own materials without a separate administrator review. Startup provisions no demo identity or resource grant. Inert imports enforce bounds, licenses/provenance and exact dependencies; archive/withdrawal affects current execution without erasing history.
+Browser access requires configured local password login or external OIDC login. Accounts must be enabled. Browser sessions use HTTPS cookies, revocation, and Origin/CSRF checks. There is no bundled demo account or public self-registration. [Team membership](TEAM_MEMBERSHIP.md) describes account management.
 
-The public executor routes are blocked by an ingress guard. Only the trusted in-process bridge context can call those routes, and native JWT/owner/policy checks still apply. Clients cannot supply a subject, permission set, arbitrary tool, model, executable or server URL to the factory. Goals, retrieved content and tool outputs are untrusted data. Catalog permissions undergo dependency-closure checks and application/task bounds. Snapshots cannot grant authority after current policy is withdrawn.
+A task, session, credential, or personal resource remains owned by its member. Team sharing permits use without transferring the resource's secret. Current account and resource state apply to subsequent calls. [Resource sharing](RESOURCE_SHARING.md) describes the supported changes.
 
-User credentials resolve through trusted connection references. Provider credentials, bearer tokens, raw keys and personal configuration are absent from prompts/materials/artifacts. Production requires operator-configured identity/key/connection provisioning; no setup endpoint creates production users or grants. Signing keys are process configuration; no plaintext key is logged or returned.
+The native executor is reached through Factory's trusted bridge. Public requests cannot bypass Factory task bindings by invoking an unrestricted native run endpoint. This does not prevent members from configuring their own supported model, CLI, MCP, SSH, or remote-service connections.
 
-Missing local/remote acknowledgements and side-effect receipts are UNKNOWN. They retain capacity and refuse automatic replay or reclaim. Cancellation intent is durable; a request acknowledgement, disconnect or lease expiry does not prove compute stopped. Artifacts have owner-scoped download authorization, a content hash and explicit synthetic provenance.
+## Credentials
 
-## Local experiment containment
+The default credential vault stores encrypted values in PostgreSQL. Its persistent key is under `FACTORY_WORKSPACE/runtime/credential-vault.key`. Database backups and that key must remain paired. Losing the key makes stored credentials unreadable. [Operations](OPERATIONS.md) describes backup boundaries.
 
-Only a fixed reviewed fixture program runs. It receives an allowlisted minimal environment and no user source/code. Windows uses a kill-on-close Job Object with CPU-rate, memory and process bounds, plus bounded output/time and verified process cleanup. POSIX uses an owned process group and fixed-program resource limits with final group termination. This does not make arbitrary shell, native dependencies or hostile code safe for departmental tenancy.
+Resource definitions and shared content carry references, not credential values. Goals, retrieved text, and tool output do not grant new identity or resource ownership. Secrets and generated research stay outside the public source repository.
 
-Separate directory roots, HOME/config/cache and ORX_DATA_DIR are useful hygiene but are not tenant security. Production requires approved OS/container/process isolation, separate credentials, controlled egress, workspace ownership, process/resource accounting, artifact scanning and remote identity verification before untrusted execution. The adapter cannot infer these guarantees from an endpoint's existence or advertised version.
+## Local code execution
 
-## Operational gaps
+With host commands enabled, the research Agent can create and run code in its configured workspace. This is not limited to the former fixed reviewed experiment program. User-selected operation budgets, output bounds, and owned process cleanup still apply.
 
-Production OS, remote endpoints/providers, identity source and model budget are not selected. New plans and material publication use member self-service; current membership, ownership and runtime bounds remain enforced. Actual native admission tests cover twenty synthetic users; clean-stop PostgreSQL restore is verified. Secret lifecycle, retention/PITR/RPO/RTO, monitoring and sustained throughput/fairness remain open. Native queue streams are replica-local here; the intended deployment is one application process. Configure verified coordination before any multi-process/replica design; no cluster is assumed. Binding a service beyond loopback, deploying, adding access or invoking paid resources requires explicit authorization.
+Windows commands use Job Objects; POSIX commands use process groups. Those mechanisms support cancellation and cleanup. They do not isolate hostile code from every host file, network destination, or other operating-system resource. Workspace directories are organization, not a tenant-security boundary.
 
-Commit only original safe code, public docs and synthetic samples. Ignore `.env`, `.local`, virtual environments, caches, database/workspaces, browser profiles, logs and generated research. Never copy private source packages, company workflows, credentials or personal files into this public repository.
+Choose a host and service account appropriate for the code you allow the team to run. The current trusted-team deployment is not a claim of hostile multi-tenant isolation.
 
-Signed owner-bound Factory event cursors are application metadata, not native Agno stream claims. Large events fail explicitly; late lower-ID commits require replay. Historical protected failures are queried independently of the bounded display window. Active fixed compute rechecks current authority and cleans up on loss; cancellation intent still requires positive native/effect/group stop evidence before release.
+## Uncertain operations
 
-Trusted lifecycle cleanup uses exact persisted native owner/session/run/executor/envelope/idempotency bindings and public native cancellation APIs. It creates no work, JWT or grant after authority loss. Missing tickets, unknown effects and stale running-ticket evidence retain capacity. Default in-memory native signals are limited to the single application process.
+A missing acknowledgement remains uncertain. Recovery reads the original request and effect instead of silently starting another operation. A disconnected client, expired lease, canceled queue ticket, or application process exit does not independently prove that remote work stopped.
 
+The lifecycle observer reconciles owned work and retained receipts. It does not provision a new environment or grant access after revocation. [Lifecycle](LIFECYCLE.md) and [shutdown](SHUTDOWN.md) explain the different stop observations.
 
-## Governed execution registration
+## Deployment limits
 
-Approved definitions and inert material `runtimeBinding` descriptors do not
-install code. Operators register trusted same-process factories; a fresh Model
-is selected per native response context, with current exact user/task/run and
-connection pins checked before and after provider responses. Scoped tools recheck
-authority even when a callable is retained. Concurrent owners never mutate one
-shared Model or receive another owner's knowledge/handle.
+The intended topology is one application process with PostgreSQL. Current in-process signals and scheduling coordination do not establish a multi-replica deployment. Approximate team size and machine profiles are targets, not load-test results.
 
-The public connection API lists redacted registrations and binds/revokes only
-the caller's narrowed references. It cannot set a secret, URL, subject, adapter or
-grant. Current expiry, role loss, registration removal, revision or handle identity
-change invalidate old references. Rotation requires new explicit binding and plan
-pins; revoked history stays inspectable. Registrations are operator memory/config
-objects, not a production secrets manager or credential-rotation service.
-
-Connection-bearing remote manifests require explicit exact operator mappings to
-receiver-owned connection pins. Immutable proof hashes bind both identities and
-configuration revisions without rewriting the original manifest. Current local
-pins and authenticated current source authority are rechecked; no private handle
-is serialized or sent. Production identity/TLS/host authorization is still pending.
-See REMOTE_BINDINGS.md.
-The ORX registered discovery tool enforces time/output bounds and cancellation
-observation but supplies no hard CPU/memory/PID tenant containment. Do not infer
-that isolation from a selected environment descriptor or isolated directories.
-
-Remote target requests disable ambient proxy routing and redirects and stream
-bounded, uncompressed response bodies. Non-loopback HTTP is rejected unless an
-explicit test transport is provided. Only fixed public protocol codes propagate
-from remote errors; peer/provider details are discarded. Receiver application
-snapshot import is operator-only and does not import source approval or local
-access grants. Origin outage denies protected work while preserving receiver
-native facts and scoped local cleanup; uncertainty alone never releases capacity.
-
-## Actual ORX toy profile and money holds
-
-The optional local profile runs only a sealed four-file original evaluator under
-a pinned upstream binary/source archive. It creates only a fresh task-owned
-home/config/store/repository and registers a local project with GitHub sync
-false; dashboard warm-up, agent spawn/wake and arbitrary commands are excluded.
-The actual Windows Job Object retains detached descendants after a Factory
-process exit. Cleanup requires the original exact task/plan/native/connection
-binding and records positive process-tree stop facts. File or command drift
-denies new execution; cleanup does not renew revoked authority.
-
-Resource containment under one Windows account does not deny network access or
-establish filesystem/identity isolation against hostile code. Production needs
-reviewed distinct identities/ACLs or equivalent OS containment. This application
-has no model/provider/network implementation and is explicitly a toy evaluator.
-
-Ledger holds are durable integer token and currency-micro balances, admitted
-transactionally before provider attempts. Unpriced adapters and changed models,
-rates or currencies cannot reuse approval. Unknown billing retains reservations
-after cancel/restart; a process-stop receipt is not an authoritative usage bill.
-Trusted usage parsers and request guards are required for a future paid adapter;
-synthetic prices and controlled providers verify only the accounting mechanics.
-No paid call, production credential, access grant or deployment is authorized
-or performed by this milestone. Historical isolated fixtures created only their own
-generated native principals and distinct publication reviewer.
+Real identity-provider compatibility, persistent target-host login, remote execution, GPU allocation, backup recovery objectives, and team capacity need explicit acceptance in their actual environment. A synthetic fixture pass does not establish those outcomes.

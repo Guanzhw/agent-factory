@@ -34,11 +34,13 @@ def listener():
 
 def serve(stack, app, sock, certificate, key):
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=sock.getsockname()[1],
-        ssl_certfile=str(certificate), ssl_keyfile=str(key), access_log=False, log_level="error"))
+        ssl_certfile=str(certificate), ssl_keyfile=str(key), access_log=False, log_level="error",
+        timeout_graceful_shutdown=35))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
     def stop():
         server.should_exit = True
-        thread.join(timeout=10)
+        # HTTP drain and application cleanup each have a 35-second budget.
+        thread.join(timeout=75)
         if thread.is_alive():
             raise RuntimeError("Synthetic HTTPS fixture did not stop")
     stack.callback(stop)

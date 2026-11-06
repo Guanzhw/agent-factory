@@ -1,5 +1,8 @@
 # Linux AT10 tree and receiver acceptance
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 Accepted standalone baseline: `4e1f29900080ad6004fd33f55580b9fe5ea75c37`.
 This extension is under active integration in Draft PR11; PR10 remains the earlier checkpoint context. The table distinguishes actual
 observations from implementation; it is not a production or real-provider signoff.

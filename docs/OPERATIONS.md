@@ -67,7 +67,7 @@ revisions, provider/runtime configuration and executable provenance separately
 through the approved secret/configuration channel. Install pinned dependencies
 with `npm ci --ignore-scripts` and `uv sync --frozen`, then restart with
 `npm run start:configured` or `uv run python -m agent_factory_server` as documented
-in the [README](../README.md#start-locally).
+in the [README](WINDOWS_LOCAL_START.md).
 
 If rollback is needed, stop the new process, restore the paired pre-update dump
 with `pg_restore` into a distinct empty database, restore its matching source
