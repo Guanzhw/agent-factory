@@ -231,8 +231,8 @@ def scenario(browser, base, output, name, mode, viewport):
         page.screenshot(path=str(output / f'{name}-{stage}.png'), full_page=True)
 
     try:
-        page.goto(base + '/', wait_until='networkidle')
-        page.get_by_role('button', name='我的资源', exact=True).click()
+        # This fixture covers resource management, not the product's Agent home.
+        page.goto(base + '/?tab=resources', wait_until='networkidle')
         expect(page.get_by_role('heading', name='我的资源', exact=True)).to_be_visible()
         page.get_by_role('button', name='管理工具', exact=True).click()
         expect(page.get_by_role('heading', name='我的工具连接', exact=True)).to_be_visible()

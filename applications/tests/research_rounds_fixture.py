@@ -1,4 +1,4 @@
-"""Research decisions and evidence over original native roots and custody."""
+"""Retired round orchestration for historical execution regression fixtures only."""
 import asyncio
 from contextlib import contextmanager
 from copy import deepcopy
@@ -18,7 +18,7 @@ from agent_factory.delegated_operations import DELEGATED_OPERATION_PIN
 from agent_factory.input_schema import bounded_json
 from agent_factory.store import digest, now
 from agent_factory.workflow_control import WorkflowCommand
-from .projects import Agreement, reject
+from research.projects import Agreement, reject
 
 
 class ResearchRounds:
@@ -42,7 +42,7 @@ class ResearchRounds:
             UniqueConstraint('owner_id', 'factory_request'))
         metadata.create_all(self.db.store.engine)
         self._migrate_attempts()
-        from .evidence import ResearchEvidence
+        from research.evidence import ResearchEvidence
         self.evidence = ResearchEvidence(legacy_runs)
 
     def _migrate_attempts(self):

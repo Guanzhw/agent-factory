@@ -17,7 +17,7 @@ from agent_factory.store import Store
 from research.associations import ResearchAssociations
 from research.peer_sources import ResearchPeerSources
 from research.qa_workflow import Answer
-from research.workflow import Decision
+from research_controller_fixture import Decision
 import test_applications_composition as fixtures
 import test_research_rounds as round_fixtures
 from test_research_workflow_postgres import ResearchModel

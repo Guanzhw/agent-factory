@@ -51,7 +51,7 @@ class ModeDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
     materialRefs: list[PinnedRef] = Field(min_length=1, max_length=30)
     materialChoices: dict[str, MaterialChoice] = Field(default_factory=dict, max_length=12)
-    capabilities: list[str] = Field(min_length=1, max_length=30)
+    capabilities: list[str] = Field(default_factory=list, max_length=30)
     budget: LegacyBudget = Field(default_factory=LegacyBudget)
     config: LegacyTaskConfig = Field(default_factory=LegacyTaskConfig)
     toolOrder: list[str] = Field(default_factory=list, max_length=30)
@@ -119,7 +119,7 @@ def definition_model(value):
 
 
 def budget_limits(settings, contract_version=1):
-    return {"toolCalls": settings.max_tool_calls, "maxDepth": 2, "maxChildren": 4,
+    return {"toolCalls": settings.max_tool_calls, "maxDepth": 8, "maxChildren": 64,
             "operationSeconds" if contract_version == 2 else "experimentSeconds": settings.experiment_timeout_seconds,
             "outputBytes": settings.experiment_output_bytes}
 

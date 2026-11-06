@@ -19,7 +19,7 @@ from sqlalchemy import select
 
 from agent_factory.ssh_process_contract import LAUNCH_TOOL, WAIT_TOOL
 from agent_factory_server.main import factory_state
-from agent_factory_server.research import create_app
+from research_workflow_fixture import create_app
 from fixture_auth import initialize_members
 from fixture_identity import access_token
 import test_ssh_native_postgres as ssh_native

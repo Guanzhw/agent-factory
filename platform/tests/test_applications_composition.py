@@ -156,6 +156,28 @@ class ApplicationCompositionFixture(unittest.TestCase):
 
 
 class ApplicationCompositionTests(ApplicationCompositionFixture):
+    def test_tool_free_application_publishes_and_composes_without_invented_capabilities(self):
+        definition = app_definition(self.store)
+        mode = definition['modes']['literature']
+        mode['materialRefs'] = [ref for ref in mode['materialRefs'] if ref['id'] != 'fixture-checksum-tool']
+        mode['toolOrder'] = []
+        mode['capabilities'] = []
+        application = self.publish(definition)
+        plan = self.composition.create_plan('alice', 'Explain the supplied evidence', 'literature',
+            application_ref=pin(application))
+        self.assertEqual(plan['status'], 'ready')
+        self.assertEqual(plan['tools'], [])
+        self.assertEqual(plan['capabilities'], [])
+        self.applications.require_plan_current(plan)
+
+    def test_declared_delegation_budget_survives_composition_and_current_validation(self):
+        definition = app_definition(self.store)
+        definition['modes']['literature']['budget'] = {'maxDepth': 8, 'maxChildren': 64}
+        application = self.publish(definition)
+        plan = self.composition.create_plan('alice', 'Compose the declared hierarchy', 'literature', application_ref=pin(application))
+        self.assertEqual((plan['budget']['maxDepth'], plan['budget']['maxChildren']), (8, 64))
+        self.applications.require_plan_current(plan)
+
     def test_member_publication_binds_exact_version_and_only_owner_can_manage_it(self):
         definition = app_definition(self.store)
         application = self.applications.create_draft("alice", definition, "member-draft")

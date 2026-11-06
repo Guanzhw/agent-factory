@@ -16,7 +16,7 @@ from agent_factory.byok_model import ADAPTER_ID, OwnerChatModel
 from agent_factory.execution_bindings import BindingContext
 from agent_factory.native_workflows import NativeWorkflows
 from agent_factory.personal_remote_provider import SecretLease
-from research.workflow import Decision, Evaluation, FUNCTION_TOOLS, ResearchWorkflow
+from research_controller_fixture import Decision, Evaluation, FUNCTION_TOOLS, ResearchWorkflow
 
 
 class ResearchOwnerModelTests(unittest.IsolatedAsyncioTestCase):

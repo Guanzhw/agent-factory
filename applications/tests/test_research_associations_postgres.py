@@ -16,7 +16,7 @@ from sqlalchemy import select
 from agent_factory.application_content import ContentPublication
 from fixture_settings import Settings
 from agent_factory_server.main import factory_state
-from agent_factory_server.research import create_app
+from research_workflow_fixture import create_app
 from pg_fixture import IsolatedPostgres
 import test_research_workflow_postgres as workflow_fixture
 

@@ -2,7 +2,7 @@ import { ApiError, factoryRequest } from '../../api.js';
 import type { ResearchQuestion } from './live/assistantClient.js';
 
 export interface SessionLimits { maxTurns: number; toolCallsPerTurn: number; operationSeconds: number }
-type Limit = { min: number; max: number; default: number };
+type Limit = { min: number; max: number | null; default: number };
 export interface SessionOptions {
   available: boolean; unavailableCode: string | null;
   collaboration?: { available: boolean };
@@ -29,6 +29,7 @@ export interface SessionTurn {
   children?: SessionChild[];
 }
 export interface SessionSummary {
+  projectId?: string;
   id: string; assistantId: string; title: string; goal: string; boundaries: string; createdAt: string; updatedAt: string;
   state: 'idle' | 'running' | 'stopping' | 'stopped' | 'blocked';
   collaboration?: { enabled: boolean };
@@ -47,7 +48,7 @@ export interface SessionRequest {
   requestId: string; action: SessionAction; sessionId: string; turnId: string | null;
   session: ResearchSession; createsExecution: false; automaticReplay: false;
 }
-export interface CreateSession { requestId: string; title: string; goal: string; boundaries: string; modelConnectionRef: string; limits: SessionLimits }
+export interface CreateSession { projectId?: string; requestId: string; title: string; goal: string; boundaries: string; modelConnectionRef: string; limits: SessionLimits }
 export interface SessionPage { items: SessionSummary[]; nextCursor: string | null }
 const base = '/research/sessions';
 const path = (id: string) => `${base}/${encodeURIComponent(id)}`;

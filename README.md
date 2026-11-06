@@ -1,8 +1,8 @@
 # Agent Factory
 
-An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Department members create and publish versioned materials and application definitions, compose exact scoped task plans, and inspect native runs. Administrators manage accounts; resource owners control their own sharing, changes, withdrawal and archival. The default deployment contains no installed applications or seeded materials. Members publish explicit application definitions and use the generic composition API and registered executors.
+An original MIT departmental workspace over **Agno AgentOS 3.1.0 + PostgreSQL**. Members work with an autonomous Agent, which chooses tools and experiments from their goals and available resources. Administrators manage accounts; resource owners control their own sharing, changes, withdrawal and archival. Reusable materials, application definitions and the programmatic composition API remain available underneath the workspace.
 
-The default core composition provides login, the application catalog, tasks and owner-managed resources without installing an application. Auto Research is available through the explicit research backend and browser composition described below; it has its own home and research workspace. A new core-only database starts with an empty application catalog. Synthetic native fixtures are installed explicitly by tests, never by default startup.
+The default product starts in one autonomous workspace, with resources and historical research records accessible from it. There is no separate fixed-workflow research start. The independently packaged Core remains application-free; its new database starts with an empty catalog. Synthetic native fixtures are installed explicitly by tests, never by default startup. See the [autonomy decision](docs/plans/agent-autonomy-20261106.md).
 
 Runtime, browser and CI acceptance must be recorded against the exact revision and selected composition; Research results do not establish core-only acceptance. Real external identity providers, paid models, remote hosts and scientific workflows are not validated by local synthetic checks. Historical implementation and acceptance records remain linked below.
 
@@ -65,7 +65,7 @@ npm run build
 uv run agent-factory-local-user your-new-member-id
 # Enter and confirm the password at the hidden prompts, never in arguments or environment variables.
 export FACTORY_LOCAL_LOGIN_ORIGIN=https://127.0.0.1:3100
-uv run python -m uvicorn agent_factory_server.main:create_app --factory \
+uv run python -m uvicorn agent_factory_server.research:create_app --factory \
   --host 127.0.0.1 --port 3100 \
   --ssl-certfile "$FACTORY_TLS_CERT" --ssl-keyfile "$FACTORY_TLS_KEY" --no-access-log
 ```
@@ -80,10 +80,9 @@ account explicitly while the service is stopped.
 
 Open `https://127.0.0.1:3100`, use the username/password form, and use the workspace
 menu to sign out. The origin must exactly match `FACTORY_LOCAL_LOGIN_ORIGIN`;
-HTTPS, Secure cookies and Origin/CSRF checks also apply on loopback. For the
-explicit Research workspace, use `npm run build:research` instead of `npm run build`
-and `agent_factory_server.research:create_app` in the same server command, then
-enter AutoResearch from the application catalog. Login does not configure a model
+HTTPS, Secure cookies and Origin/CSRF checks also apply on loopback. The
+Research workspace is the default `npm run build` and `agent-factory` composition.
+`build:research` is an alias for the same build. Login does not configure a model
 or start research.
 
 Personal Research file tools require an existing absolute

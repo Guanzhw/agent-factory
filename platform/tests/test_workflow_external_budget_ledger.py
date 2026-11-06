@@ -1,7 +1,8 @@
 """Native wait + OperationCustody with actual SQLite delegation budget rows.
 
-Only PostgreSQL advisory locking/ANY syntax are adapted. Native bridge replies
-are synthetic; this is ledger coverage, not queue or physical-stop acceptance.
+PostgreSQL advisory locking/ANY syntax and the depth migration are adapted.
+Native bridge replies are synthetic; this is ledger coverage, not migration,
+queue or physical-stop acceptance.
 """
 from contextlib import nullcontext
 from copy import deepcopy
@@ -26,6 +27,13 @@ class ExternalBudgetLedgerTests(unittest.IsolatedAsyncioTestCase):
         self.store.sql("ALTER TABLE af_tasks ADD COLUMN admission TEXT DEFAULT 'accepted'")
         original_sql = self.store.sql
         def sql(query, **parameters):
+            if ' '.join(query.split()) == ('ALTER TABLE af_delegation_links '
+                    'DROP CONSTRAINT IF EXISTS af_delegation_links_depth_check, '
+                    'ADD CONSTRAINT af_delegation_links_depth_check CHECK(depth BETWEEN 1 AND 8)'):
+                # This fresh SQLite table already has the widened constraint.
+                schema = original_sql("SELECT sql FROM sqlite_master WHERE name='af_delegation_links'")[0]['sql']
+                self.assertIn('CHECK(depth BETWEEN 1 AND 8)', schema)
+                return []
             if 'task_id=ANY(:ids)' in query:
                 identifiers = parameters.pop('ids')
                 names = [f'budget_id_{index}' for index in range(len(identifiers))]

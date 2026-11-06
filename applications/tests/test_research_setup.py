@@ -20,8 +20,8 @@ from agent_factory.execution_bindings import ExecutionBindings
 from agent_factory.material_governance import MaterialGovernance
 from agent_factory.personal_models import PersonalModels
 from test_applications_composition import PortableCompositionStore
-from research.setup import ResearchSetup, PrepareSetup, PublishSetup
-from research.workflow import FUNCTION_TOOLS, WORKFLOW_ID
+from research_setup_fixture import ResearchSetup, PrepareSetup, PublishSetup
+from research_controller_fixture import FUNCTION_TOOLS, WORKFLOW_ID
 
 
 class ResearchSetupTests(unittest.TestCase):

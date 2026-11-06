@@ -9,7 +9,7 @@ from sqlalchemy import func, select
 from core_native_fixture import FixtureModel
 
 import test_applications_composition as fixtures
-from research.public import install
+from research_workflow_fixture import install
 from research.projects import Agreement, ProjectCommand
 from research_history_fixture import seed_legacy_intent
 from agent_factory.store import digest

@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-import { IconArrowLeft, IconArrowRight, IconBook, IconChevronDown, IconDatabase, IconHexagonLetterA, IconHome, IconLogout, IconMessageCircle, IconPlus, IconRobotFace, IconUser } from '@tabler/icons-react';
+import { IconArrowLeft, IconArrowRight, IconBook, IconChevronDown, IconDatabase, IconHexagonLetterA, IconHome, IconLogout, IconMessageCircle, IconRobotFace, IconUser } from '@tabler/icons-react';
 import type { User } from '../../../models.js';
 import type { WorkspaceRoute } from '../../../workspaceNavigation.js';
 import { researchApi } from '../client.js';
-import { useProjectCommand } from '../useProjectCommand.js';
 import type { Page, ResearchProject, ResearchProjectSummary } from '../types.js';
 import { Dialog } from './Dialog.js';
 import { ProjectDetails, projectStates } from './ProjectDetails.js';
@@ -17,18 +16,6 @@ import './workbench.css';
 
 const errorText = (error: unknown) => error instanceof Error ? error.message : '读取失败，请重试。';
 type Props = { user: User; route: WorkspaceRoute; navigate: (patch: Partial<WorkspaceRoute>) => void; onLogout: () => void; sessionBusy: boolean; sessionError: string };
-
-function CreateProject({ ownerId, assistant, onCreated }: { ownerId: string; assistant: ResearchAssistant | null; onCreated: (project: ResearchProject) => void }) {
-  const [title, setTitle] = useState(''); const [assistantId, setAssistantId] = useState('');
-  const command = useProjectCommand(ownerId, undefined, onCreated);
-  return <form className="rw-form" aria-label="新建研究项目" onSubmit={event => { event.preventDefault(); void command.run({ action: 'create', body: { requestId: crypto.randomUUID(), title: title.trim(), assistantId: null, researchAssistantId: assistantId || null } }); }}>
-    <p>建立持续的研究空间，再明确目标、评价标准和停止条件。</p>{command.feedback}
-    <fieldset disabled={command.disabled}><label>项目名称<input required maxLength={120} autoFocus value={title} onChange={event => setTitle(event.target.value)}/></label>
-      <label>关联我的助手<select value={assistantId} onChange={event => setAssistantId(event.target.value)}><option value="">暂不关联</option>{assistant && <option value={assistant.id}>我的研究助手</option>}</select></label>
-      <button className="rw-primary" disabled={!title.trim()}>创建项目</button>
-    </fieldset>
-  </form>;
-}
 
 function AssistantPanel({ project, assistant, onSettings }: { project: ResearchProject | null; assistant: ResearchAssistant | null; onSettings: () => void }) {
   const goal = project?.goals.find(goal => goal.version === project.currentGoalVersion);
@@ -48,7 +35,6 @@ export function ResearchWorkbench({ user, route, navigate, onLogout, sessionBusy
   const [project, setProject] = useState<ResearchProject | null>(null);
   const [listError, setListError] = useState('');
   const [projectError, setProjectError] = useState('');
-  const [createOpen, setCreateOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [assistantOpen, setAssistantOpen] = useState(!!route.researchPeer || !!route.researchQuestion);
   const [myAssistant, setMyAssistant] = useState<ResearchAssistant | null>(null);
@@ -56,13 +42,14 @@ export function ResearchWorkbench({ user, route, navigate, onLogout, sessionBusy
   const [assistantLoading, setAssistantLoading] = useState(true);
   const [assistantRefresh, setAssistantRefresh] = useState(0);
   const [mobile, setMobile] = useState(() => window.matchMedia('(max-width:1100px)').matches);
-  const selectedId = route.project || page?.items[0]?.id;
+  const selectedId = route.project;
   const team = route.researchView === 'team';
   const settings = route.researchView === 'assistant';
-  const sessions = route.researchView === 'sessions';
+  const history = route.researchView === 'history' || !!route.project;
+  const sessions = !team && !settings && !history;
   const tab = route.researchTab || 'overview';
   const home = () => navigate({ tab: 'research', project: '', researchView: '', researchSession: '', researchTab: '', researchSetup: '', researchQASetup: '', researchPeer: '', researchQuestion: '', researchAssociation: '', researchDelivery: '' });
-  const openSessions = (id = route.researchSession ?? '') => navigate({ tab: 'research', project: '', researchView: 'sessions', researchSession: id, researchTab: '', researchSetup: '', researchQASetup: '', researchPeer: '', researchQuestion: '', researchAssociation: '', researchDelivery: '' });
+  const openSessions = (id = route.researchSession ?? '') => navigate({ tab: 'research', project: '', researchView: '', researchSession: id, researchTab: '', researchSetup: '', researchQASetup: '', researchPeer: '', researchQuestion: '', researchAssociation: '', researchDelivery: '' });
   const resources = () => navigate({ tab: 'resources', modelReturn: 'research', project: !team && !settings && !sessions ? selectedId ?? '' : route.project ?? '' });
   const openTask = (task: string) => navigate({ tab: 'tasks', task, taskReturn: 'research', taskReturnTask: task,
     project: !team && !settings && !sessions ? selectedId ?? '' : route.project ?? '' });
@@ -78,10 +65,11 @@ export function ResearchWorkbench({ user, route, navigate, onLogout, sessionBusy
     return () => media.removeEventListener('change', change);
   }, []);
   useEffect(() => {
+    if (!history) return;
     const controller = new AbortController(); setPage(null); setListError('');
     void researchApi.projects(user.id, after, controller.signal).then(result => { if (!controller.signal.aborted) setPage(result); }).catch(reason => { if (!controller.signal.aborted) setListError(errorText(reason)); });
     return () => controller.abort();
-  }, [user.id, after, refresh]);
+  }, [user.id, after, refresh, history]);
   useEffect(() => {
     setProject(null); setProjectError('');
     if (!selectedId) return;
@@ -93,26 +81,27 @@ export function ResearchWorkbench({ user, route, navigate, onLogout, sessionBusy
   const assistant = route.researchQuestion ? <div className="rw-assistant-content"><OriginalQuestion key={`${user.id}:${route.researchQuestion}`} ownerId={user.id} questionId={route.researchQuestion} onTask={openTask} onSettings={openSettings}/></div> : route.researchPeer ? <div className="rw-assistant-content"><AskAssistant key={`${user.id}:${route.researchPeer}`} ownerId={user.id} peerId={route.researchPeer} onQuestion={id => navigate({ researchQuestion: id })}/></div> : <AssistantPanel project={project} assistant={myAssistant} onSettings={openSettings}/>;
   return <div className={`rw-shell${sessions ? ' rw-session-shell' : ''}`}>
     <aside className="rw-sidebar"><div className="rw-brand"><IconHexagonLetterA size={33}/><div><strong>AutoResearch</strong><span>在 Agent Factory</span></div></div>
-      <nav aria-label="研究应用"><button aria-current={!team && !settings && !sessions ? 'page' : undefined} onClick={home}><IconHome/>工作台</button><button aria-current={sessions ? 'page' : undefined} onClick={() => openSessions()}><IconMessageCircle/>研究会话</button><button aria-current={team ? 'page' : undefined} onClick={() => navigate({ tab: 'research', project: '', researchView: 'team', researchTab: '', researchQASetup: '', researchPeer: '', researchQuestion: '', researchAssociation: '', researchDelivery: '' })}><IconBook/>团队经验</button><button onClick={resources}><IconDatabase/>资源</button><button className="rw-platform-return" onClick={() => navigate({ tab: 'catalog', project: '', researchView: '', researchTab: '', researchSetup: '', researchQASetup: '', researchPeer: '', researchQuestion: '', researchAssociation: '', researchDelivery: '', modelReturn: '' })}><IconArrowLeft/>返回平台</button></nav>
+      <nav aria-label="工作区"><button aria-current={sessions ? 'page' : undefined} onClick={home}><IconMessageCircle/>工作</button><button aria-current={team ? 'page' : undefined} onClick={() => navigate({ tab: 'research', project: '', researchView: 'team', researchQuestion: '', researchPeer: '', researchAssociation: '', researchDelivery: '' })}><IconBook/>团队经验</button><button aria-current={history ? 'page' : undefined} onClick={() => navigate({ tab: 'research', project: '', researchView: 'history', researchTab: '', researchDelivery: '' })}><IconHome/>历史项目</button><button onClick={resources}><IconDatabase/>资源</button><button aria-current={settings ? 'page' : undefined} onClick={openSettings}><IconRobotFace/>助手设置</button></nav>
       <footer className="rw-identity"><button aria-expanded={accountOpen} onClick={() => setAccountOpen(value => !value)}><span className="rw-avatar"><IconUser size={20}/></span><span>{user.name}</span><IconChevronDown size={16}/></button>{accountOpen && <div className="rw-account-menu"><p>{user.name}</p><button disabled={sessionBusy} onClick={onLogout}><IconLogout size={18}/>{sessionBusy ? '正在退出…' : '退出登录'}</button></div>}<p>个人研究空间</p></footer>
     </aside>
     <main className="rw-main">{sessionError && <p className="rw-error" role="alert">{sessionError}</p>}
-      <header className="rw-heading"><div>{(route.project || settings) && <button className="rw-back" onClick={home}><IconArrowLeft size={16}/>返回工作台</button>}<h1>{sessions ? '研究会话' : settings ? '助手设置' : team ? '团队经验' : route.project ? '项目详情' : '我的研究'}</h1><p>{sessions ? '与个人助手持续研究，随时补充边界并核对真实执行。' : settings ? '明确身份、模型与有界问答授权。' : team ? '向指定助手私密询问有出处的团队经验。' : '保留研究目标、实验条件与证据。'}</p></div>{!team && !settings && !sessions && <button className="rw-primary" onClick={() => setCreateOpen(true)}><IconPlus size={24}/>新建项目</button>}</header>
+      <header className="rw-heading"><div>{(route.project || settings) && <button className="rw-back" onClick={home}><IconArrowLeft size={16}/>返回工作台</button>}<h1>{sessions ? '我的工作' : settings ? '助手设置' : team ? '团队经验' : route.project ? '项目详情' : '历史项目'}</h1><p>{sessions ? '与个人助手持续研究，随时补充边界并核对真实执行。' : settings ? '明确身份、模型与有界问答授权。' : team ? '向指定助手私密询问有出处的团队经验。' : '保留研究目标、实验条件与证据。'}</p></div></header>
       {sessions ? <ResearchSessions key={user.id} ownerId={user.id} selectedId={route.researchSession} questionId={route.researchQuestion} onQuestion={id => navigate({ researchQuestion: id })} onSelect={openSessions} onModels={() => navigate({ tab: 'models', modelReturn: 'research' })} onTask={openTask}/> : settings ? <>{assistantError && <p role="alert">{assistantError}<button onClick={() => setAssistantRefresh(value => value + 1)}>重读个人助手</button></p>}{assistantLoading && <p role="status">正在读取个人助手…</p>}{((!assistantLoading && !assistantError) || myAssistant) && <AssistantSettings key={user.id} ownerId={user.id} assistant={myAssistant} setupId={route.researchQASetup} onSetup={id => navigate({ researchQASetup: id })} onSaved={setMyAssistant} onReload={() => setAssistantRefresh(value => value + 1)} onResources={resources}/>}</> : team ? <><AssistantInbox key={`${user.id}:inbox`} ownerId={user.id} onSettings={openSettings} onQuestion={id => { navigate({ researchQuestion: id, researchPeer: '' }); setAssistantOpen(true); }}/><AssistantDirectory key={user.id} ownerId={user.id} onAsk={id => { navigate({ researchPeer: id, researchQuestion: '', researchAssociation: '', researchDelivery: '' }); setAssistantOpen(true); }}/><EvidenceDirectory key={`${user.id}:associations`} ownerId={user.id} kind="associations" onSelect={id => navigate({ researchAssociation: id, researchDelivery: '' })}/><EvidenceDirectory key={`${user.id}:deliveries`} ownerId={user.id} kind="deliveries" onSelect={id => navigate({ researchDelivery: id, researchAssociation: '' })}/>{route.researchAssociation && <AssociationDetail key={`${user.id}:${route.researchAssociation}`} ownerId={user.id} id={route.researchAssociation}/>}</> : <>
         <div className="rw-actions"><button onClick={() => setRefresh(value => value + 1)}>刷新项目</button></div>
         {!route.project && <>{listError && <p className="rw-error" role="alert">{listError}</p>}{!page && !listError && <p role="status">正在读取项目…</p>}
-          {page && !page.items.length && <div className="rw-empty"><h2>{after ? '本页没有项目' : '还没有研究项目'}</h2><p>从一个目标开始，再约定评价标准和停止条件。</p><button className="rw-primary" onClick={() => setCreateOpen(true)}>建立研究项目</button><button onClick={resources}>配置模型与资源</button></div>}
+          {page && !page.items.length && <div className="rw-empty"><h2>{after ? '本页没有项目' : '还没有研究项目'}</h2><p>这里保留原项目记录；新工作从助手开始。</p><button onClick={resources}>配置模型与资源</button></div>}
           {!!page?.items.length && <div className="rw-project-table" aria-label="研究项目"><div className="rw-project-header"><span>项目</span><span>当前状态</span><span>下一步</span></div>{page.items.map(item => <button className={`rw-project-row ${selectedId === item.id ? 'selected' : ''}`} key={item.id} onClick={() => navigate({ tab: 'research', project: item.id, researchTab: '', researchView: '', researchSetup: '', researchQASetup: '', researchPeer: '', researchQuestion: '', researchAssociation: '', researchDelivery: '' })}><strong>{item.title}</strong><span className={`rw-state ${item.state}`}>{projectStates[item.state]}</span><span className="rw-next">{item.state === 'draft' ? '明确并确认研究约定' : item.state === 'ended' ? '查看结束依据与历史' : '查看实验与证据'}</span><IconArrowRight size={18}/></button>)}</div>}
           <div className="rw-actions">{after && <button onClick={() => setAfter('')}>返回第一页</button>}{page?.nextCursor && <button onClick={() => setAfter(page.nextCursor!)}>下一页项目</button>}</div>
         </>}
         {projectError && <div className="rw-error" role="alert"><p>{projectError}</p><button onClick={home}>返回研究工作台</button></div>}
         {selectedId && !project && !projectError && <p role="status">正在读取项目详情…</p>}
-        {project && <ProjectDetails onDelivery={id => navigate({ researchDelivery: id, researchAssociation: '' })} setupId={route.researchSetup} onSetup={researchSetup => navigate({ researchSetup })} onMaterials={() => navigate({ tab: 'materials' })} onApplications={() => navigate({ tab: 'applications' })} onResources={resources} onTask={openTask} key={project.id} project={project} tab={tab} onTab={value => navigate({ researchTab: value === 'overview' ? '' : value })} onUpdate={result => { setProject(result); setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === result.id ? result : item) } : previous); }}/>}
+        {project && <ProjectDetails onTask={openTask} key={project.id} project={project} tab={tab} onTab={value => navigate({ researchTab: value === 'overview' ? '' : value })}/>}
+
       </>}
       {route.researchDelivery && <DeliveryDetail key={`${user.id}:${route.researchDelivery}`} ownerId={user.id} id={route.researchDelivery}/>}
     </main>
     {!sessions && !mobile && <aside className="rw-assistant" aria-label="研究助手">{assistant}</aside>}{!sessions && mobile && <button className="rw-mobile-assistant" onClick={() => setAssistantOpen(true)}><IconMessageCircle size={22}/>研究助手</button>}
     {!sessions && assistantOpen && mobile && <Dialog title="研究助手" onClose={() => setAssistantOpen(false)}>{assistant}</Dialog>}
-    {createOpen && <Dialog title="建立研究项目" onClose={() => setCreateOpen(false)}><CreateProject ownerId={user.id} assistant={myAssistant} onCreated={created => { setCreateOpen(false); navigate({ tab: 'research', project: created.id, researchView: '', researchTab: '', researchSetup: '', researchQASetup: '', researchPeer: '', researchQuestion: '', researchAssociation: '', researchDelivery: '' }); setRefresh(value => value + 1); }}/></Dialog>}
+
   </div>;
 }

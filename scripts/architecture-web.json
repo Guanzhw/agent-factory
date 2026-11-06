@@ -19,7 +19,6 @@
   "composition_roots": [
     "web/composition.tsx",
     "web/main.tsx",
-    "web/research-composition.tsx",
-    "web/research-main.tsx"
+    "web/research-composition.tsx"
   ]
 }

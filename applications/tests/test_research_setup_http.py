@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from research.projects import ResearchProjects, projects_router
-from research.setup import setup_router
+from research_setup_fixture import setup_router
 import test_research_setup as fixtures
 
 

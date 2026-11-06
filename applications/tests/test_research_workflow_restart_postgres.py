@@ -16,7 +16,7 @@ from fastapi import HTTPException, Request
 from sqlalchemy import select
 from agent_factory.delegated_operations import DELEGATED_OPERATION_PIN
 from agent_factory_server.main import factory_state
-from agent_factory_server.research import create_app
+from research_workflow_fixture import create_app
 from pg_fixture import IsolatedPostgres
 from test_native_workflow_factory_postgres import WorkflowServer
 from test_research_workflow_postgres import publish, settings_for

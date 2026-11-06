@@ -130,6 +130,35 @@ class ResearchSessionContracts(unittest.TestCase):
             configuration = self.service._row(conn, 'alice', longer)['body']['configuration']
         self.assertEqual(configuration['budget']['operationSeconds'], 60)
 
+    def test_conversation_admits_without_workspace_and_new_sessions_select_only_available_tools(self):
+        _, original = self.reserved('turn-before-capability-change')
+        original_plan = deepcopy(self.store.plan(original['plan_id'], 'alice'))
+        workspace = self.tools.workspace_root
+        self.tools.workspace_root = None
+        self.tools.host_commands = False
+        options = self.service.options('alice')
+        self.assertTrue(options['available'])
+        self.assertFalse(options['workspace']['configured'])
+        self.identifier = self.service.create('alice', self.create.model_copy(update={
+            'requestId': 'create-conversation-without-workspace'}))
+        _, conversation = self.reserved('turn-without-workspace')
+        conversation_plan = self.store.plan(conversation['plan_id'], 'alice')
+        self.assertIn('research_read_shared_evidence', conversation_plan['tools'])
+        self.assertFalse({'research_run', 'research_read_file', 'research_edit_file', 'research_search'}
+                         & set(conversation_plan['tools']))
+        # These are synthetic reservations without native execution. Release
+        # the first one before admitting another; this tests bindings, not quota.
+        self.store.observed(original, 'canceled', True)
+        self.tools.workspace_root = workspace
+        self.identifier = self.service.create('alice', self.create.model_copy(update={
+            'requestId': 'create-files-without-commands'}))
+        _, files = self.reserved('turn-files-without-commands')
+        files_plan = self.store.plan(files['plan_id'], 'alice')
+        self.assertIn('research_read_file', files_plan['tools'])
+        self.assertNotIn('research_run', files_plan['tools'])
+        self.assertNotEqual(files_plan['applicationRef'], conversation_plan['applicationRef'])
+        self.assertEqual(self.store.plan(original['plan_id'], 'alice'), original_plan)
+
     def test_new_tool_default_preserves_existing_plan_and_explicit_lower_budget(self):
         _, original_task = self.reserved()
         original_plan = deepcopy(self.store.plan(original_task['plan_id'], 'alice'))

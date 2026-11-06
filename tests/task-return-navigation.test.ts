@@ -91,7 +91,7 @@ it('records the actually selected project and evidence view at the project task 
 it('clears the source on ordinary sidebar and task-list navigation instead of guessing from old research pointers', async () => {
   vi.mocked(api.jobs).mockResolvedValue({ items: [{ id: 'other-task', ownerId: 'alice', definitionId: 'fixture', definitionVersion: 1, input: { topic: '另一普通任务', mode: 'fixture', scenario: 'normal' }, status: 'running', createdAt: date, updatedAt: date, observedAt: date }], nextCursor: null });
   await mount('/?tab=tasks&task=task-a&taskReturn=research&taskReturnTask=task-a&researchView=sessions&researchSession=session-a&templateId=old-template&templateVersion=1&templateStart=1&scheduleId=old-schedule');
-  await click('我的任务');
+  await click('执行记录');
   expect(button('返回原研究')).toBeUndefined(); expect(button('返回我的任务')).toBeDefined();
   expect(new URL(window.location.href).searchParams.get('taskReturn')).toBeNull();
   for (const key of ['templateId', 'templateVersion', 'templateStart', 'templateReturn', 'taskReturnTask', 'scheduleId']) expect(new URL(window.location.href).searchParams.has(key)).toBe(false);

@@ -130,10 +130,14 @@ class DelegationService:
         self.store.sql("CREATE TABLE IF NOT EXISTS af_delegation_roots (root_id TEXT PRIMARY KEY REFERENCES af_tasks(id), owner_id TEXT NOT NULL, reclaimed BOOLEAN NOT NULL DEFAULT FALSE)")
         self.store.sql("""CREATE TABLE IF NOT EXISTS af_delegation_links (
             owner_id TEXT NOT NULL, parent_id TEXT NOT NULL REFERENCES af_tasks(id), request_id TEXT NOT NULL,
-            root_id TEXT NOT NULL REFERENCES af_tasks(id), depth INTEGER NOT NULL CHECK(depth BETWEEN 1 AND 2),
+            root_id TEXT NOT NULL REFERENCES af_tasks(id), depth INTEGER NOT NULL CHECK(depth BETWEEN 1 AND 8),
             fingerprint TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id),
             child_id TEXT UNIQUE REFERENCES af_tasks(id), created_at TEXT NOT NULL,
             PRIMARY KEY(owner_id,parent_id,request_id))""")
+        # Widen the original constraint atomically; existing links remain valid.
+        self.store.sql("""ALTER TABLE af_delegation_links
+            DROP CONSTRAINT IF EXISTS af_delegation_links_depth_check,
+            ADD CONSTRAINT af_delegation_links_depth_check CHECK(depth BETWEEN 1 AND 8)""")
         self.store.sql("""CREATE TABLE IF NOT EXISTS af_delegation_tool_calls (
             task_id TEXT NOT NULL REFERENCES af_tasks(id), call_id TEXT NOT NULL,
             root_id TEXT NOT NULL REFERENCES af_tasks(id), tool_name TEXT NOT NULL,
@@ -163,7 +167,7 @@ class DelegationService:
         cursor = task
         while (link := self._link(cursor["id"])) is not None:
             cursor = self.store.task(link["parent_id"], task["owner_id"])
-            if cursor["id"] in seen or len(ancestors) >= 2:
+            if cursor["id"] in seen or len(ancestors) >= 8:
                 raise HTTPException(409, "Invalid persisted delegation ancestry")
             seen.add(cursor["id"])
             ancestors.append(cursor)
@@ -310,8 +314,8 @@ class DelegationService:
     def _require_child_budget(self, tasks, plans):
         depth = len(tasks)
         for task, plan in zip(tasks, plans):
-            if (depth > min(2, int(plan['budget'].get('maxDepth', 2)))
-                    or len(self._descendants(task['id'])) >= min(4, int(plan['budget'].get('maxChildren', 4)))):
+            if (depth > int(plan['budget']['maxDepth'])
+                    or len(self._descendants(task['id'])) >= int(plan['budget']['maxChildren'])):
                 raise HTTPException(429, 'Shared delegation budget exhausted')
 
     def delegation_scope(self, owner: str, parentTaskId: str) -> dict[str, Any]:
@@ -324,7 +328,7 @@ class DelegationService:
         used = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE root_id=:root", root=root_id)[0]["n"]
         children = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_links WHERE root_id=:root", root=root_id)[0]["n"]
         shared = {"toolCallsUsed": used, "toolCallsLimit": root_plan["budget"]["toolCalls"], "childrenUsed": children,
-                  "childrenLimit": min(4, int(root_plan["budget"].get("maxChildren", 4))), "maxDepth": min(2, int(root_plan["budget"].get("maxDepth", 2)))}
+                  "childrenLimit": int(root_plan["budget"]["maxChildren"]), "maxDepth": int(root_plan["budget"]["maxDepth"])}
         depth = len(ancestors) + 1
         scope = {"allowed": True, "parentTaskId": parent["id"], "rootTaskId": root_id, "depth": depth,
                  "capabilities": plan["capabilities"], "tools": plan["tools"], "budget": plan["budget"], "sharedBudget": shared}

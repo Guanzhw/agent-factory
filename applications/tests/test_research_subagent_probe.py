@@ -8,6 +8,7 @@ from copy import deepcopy
 import hashlib
 import json
 import os
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import time
@@ -32,6 +33,7 @@ from fixture_auth import initialize_members
 from fixture_identity import access_token
 from fixture_settings import Settings
 from pg_fixture import IsolatedPostgres
+from test_runtime_contract import process_running
 from research.session_subagents import SPAWN, WAIT, ResearchSubagents
 from research.session_tools import ResearchSessionTools
 from research.sessions import ResearchSessions
@@ -270,7 +272,7 @@ class ResearchSubagentProbe(unittest.TestCase):
                 if phase == 0:
                     await self.release.wait()
                     name = 'research_run' if command_child else 'research_read_file'
-                    arguments = {'argv': ['python3', 'sleeper.py']} if command_child else {'path': 'evidence.txt'}
+                    arguments = {'argv': [Path(sys.executable).name, 'sleeper.py']} if command_child else {'path': 'evidence.txt'}
                 else:
                     message = {'role': 'assistant', 'content': 'child-evidence-' + owner}
             elif phase == 0:
@@ -308,7 +310,8 @@ class ResearchSubagentProbe(unittest.TestCase):
                 self.wire_errors.append(repr(error))
                 raise
 
-        self.tools = ResearchSessionTools(workspace_root=workspace, host_commands=True)
+        self.tools = ResearchSessionTools(workspace_root=workspace, host_commands=True,
+            command_path=str(Path(sys.executable).parent))
         self.app_settings = Settings(db_url=isolated.url, workspace=scratch / 'factory',
             owner_model_transport_factory=lambda: httpx.MockTransport(wire))
         self.app = create_app(self.app_settings, session_tools=self.tools)
@@ -395,7 +398,8 @@ class ResearchSubagentProbe(unittest.TestCase):
         self.assertEqual(len(self.store.effects(root['id'])), 1)
         self.assertEqual(len(self.store.effects(child['id'])), 0)
         self.assertEqual((self.workspaces['alice'] / 'parent-note.txt').read_text(), 'investigation-alice')
-        self.assertEqual(self.store.plan(root['plan_id'])['budget']['maxChildren'], 1)
+        budget = self.store.plan(root['plan_id'])['budget']
+        self.assertEqual((budget['maxDepth'], budget['maxChildren']), (2, 4))
         self.assertEqual(self.store.plan(child['plan_id'])['inputValues']['sessionId'], self.identifiers['alice'])
         child_requests = [item['body'] for item in self.calls if item['child']]
         self.assertIn('private-evidence-alice', json.dumps(child_requests))
@@ -534,7 +538,8 @@ class ResearchSubagentProbe(unittest.TestCase):
         self.wait(lambda: self.ticket(child).get('status') == 'completed', 'Original child must finish')
         self.assertEqual(self.ticket(root)['status'], 'paused')
         self.life.close()
-        self.tools = ResearchSessionTools(workspace_root=self.tools.workspace_root, host_commands=True)
+        self.tools = ResearchSessionTools(workspace_root=self.tools.workspace_root, host_commands=True,
+            command_path=str(Path(sys.executable).parent))
         self.app = create_app(self.app_settings, session_tools=self.tools)
         self.state = factory_state(self.app)
         self.store, self.sessions = self.state['store'], self.state['research_sessions']
@@ -553,18 +558,41 @@ class ResearchSubagentProbe(unittest.TestCase):
 
     def test_stop_reaches_actual_child_command_and_descendant_process(self):
         self.boot(command_child=True)
+        # Cleanup addresses only this test's original session/task tree, even
+        # if a process assertion fails before the normal cancellation request.
+        self.addCleanup(self.post, 'alice', '/sessions/' + self.identifiers['alice'] + '/stop',
+                        {'requestId': 'probe-stop-original'})
         path = self.workspaces['alice'] / 'pids.txt'
         self.wait(path.exists, 'Child command must write its actual parent and child PIDs')
         pids = [int(value) for value in path.read_text().split()]
         self.assertEqual(len(pids), 2)
-        self.post('alice', '/sessions/' + self.identifiers['alice'] + '/stop', {'requestId': 'probe-stop-original'})
+        if os.name == 'nt':
+            import ctypes
+            from ctypes import wintypes
+            kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+            kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            kernel.OpenProcess.restype = wintypes.HANDLE
+            kernel.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            kernel.WaitForSingleObject.restype = wintypes.DWORD
+            kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+            handles = {}
+            for pid in pids:
+                handle = kernel.OpenProcess(0x100000, False, pid)  # SYNCHRONIZE only.
+                self.assertTrue(handle, f'Cannot observe original process {pid}: {ctypes.get_last_error()}')
+                self.addCleanup(kernel.CloseHandle, handle)
+                handles[pid] = handle
+                self.assertEqual(kernel.WaitForSingleObject(handle, 0), 258, 'Original process must be running')
 
-        def exited(pid):
-            status = Path(f'/proc/{pid}/stat')
-            try:
-                return status.read_text().split()[2] == 'Z'
-            except FileNotFoundError:
-                return True
+            def exited(pid):
+                state = kernel.WaitForSingleObject(handles[pid], 0)
+                self.assertIn(state, (0, 258), 'Original process handle wait failed')
+                return state == 0
+        else:
+            def exited(pid):
+                return not process_running(pid)  # Includes Linux zombie state.
+            self.assertTrue(all(process_running(pid) for pid in pids))
+
+        self.post('alice', '/sessions/' + self.identifiers['alice'] + '/stop', {'requestId': 'probe-stop-original'})
 
         self.wait(lambda: all(exited(pid) for pid in pids), 'Both actual processes must exit after stop')
         root = self.roots()[0]

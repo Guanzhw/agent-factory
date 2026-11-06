@@ -24,6 +24,7 @@ from agent_factory.personal_cli import PersonalCliAdapter
 from agent_factory.personal_tool_contract import ToolInvocationError, validate_tool_arguments
 from .session_memory import MEMORY_TOOLS, MEMORY_WRITES
 from .session_subagents import SPAWN, WAIT
+from .session_research import RESEARCH_TOOLS, RESEARCH_WRITES
 
 
 PERMISSION = 'research:run'
@@ -44,6 +45,25 @@ def _schema(properties, required):
 
 
 TOOLS = {
+    'research_project': ('Read the linked project agreement, or the session goal when no project is linked. '
+        'This is context, not a required step or an instruction to launch work.', _schema({}, [])),
+    'research_experiment': ('Start an experiment as a native child Agent when independent work is useful. '
+        'Publishes curated hypothesis/conditions and receipt identities to the team; omit private information. '
+        'Uses this session workspace and resources. Use research_wait_child with the returned childTaskId. '
+        'You may instead run commands directly and use research_record_experiment; delegation is optional.',
+        _schema({'hypothesis': MEMORY_TEXT, 'conditions': MEMORY_TEXT,
+                 'goal': {'type': 'string', 'minLength': 2, 'maxLength': 2000}}, ['hypothesis', 'conditions', 'goal'])),
+    'research_record_experiment': ('Record an experiment from actual completed command receipts in this task, without delegating. '
+        'Publishes curated hypothesis/conditions and receipt identities, never raw output. '
+        'Optional effectKeys selects original receipts; omit to use completed command receipts in this task. '
+        'A successful command is not a scientifically verified result.',
+        _schema({'hypothesis': MEMORY_TEXT, 'conditions': MEMORY_TEXT,
+                 'effectKeys': {'type': 'array', 'minItems': 1, 'items': {'type': 'string'}}}, ['hypothesis', 'conditions'])),
+    'research_experiment_result': ('Inspect an original experiment and its evidence identities; never restart unknown work.',
+        _schema({'experimentId': MEMORY_ID}, ['experimentId'])),
+    'research_assess': ('Save an interpretation of an experiment with confirmed execution evidence. '
+        'This remains agent analysis, including negative results; it never changes facts or certifies scientific success.',
+        _schema({'experimentId': MEMORY_ID, 'assessment': MEMORY_TEXT}, ['experimentId', 'assessment'])),
     SPAWN: ('Delegate one independent subtask to a temporary assistant with the same owner, workspace, tools and remaining shared limits. '
         'State the precise subtask, relevant file paths and whether it may edit or only inspect. '
         'Avoid concurrent edits to the same file. This starts a child, not a finished result; use research_wait_child to collect it.',
@@ -80,7 +100,7 @@ TOOLS = {
                  'new': {'type': 'string', 'maxLength': MAX_TEXT}}, ['path', 'old', 'new'])),
     'research_run': ('Run argv without shell expansion in the workspace. Only explicitly enabled host commands. '
         'These run with the configured OS user permissions, not inside a sandbox. '
-        'No automatic dependency installation. Inspect the actual exit code and output.',
+        'Follow the owner goal and boundaries. Inspect the actual exit code and output.',
         _schema({'argv': {'type': 'array', 'minItems': 1, 'maxItems': 32,
             'items': {'type': 'string', 'maxLength': 2000}}, 'cwd': PATH_SCHEMA}, ['argv'])),
     'research_read_shared_evidence': ('Read an explicitly team-published research record by its content ID. '
@@ -279,7 +299,8 @@ class ResearchSessionTools:
     def available_tools(self):
         return [name for name in TOOLS if (getattr(self.sessions, 'memory', None) is not None
             if name in MEMORY_TOOLS else getattr(self.sessions, 'collaboration', None) is not None
-            if name in COLLABORATION_TOOLS else getattr(self.sessions, 'subagents', None) is not None
+            if name in COLLABORATION_TOOLS else getattr(self.sessions, 'research', None) is not None
+            if name in RESEARCH_TOOLS else getattr(self.sessions, 'subagents', None) is not None
             if name in {SPAWN, WAIT} else name == 'research_read_shared_evidence'
             or self.workspace_root is not None and (name != 'research_run' or self.host_commands))]
 
@@ -335,7 +356,7 @@ class ResearchSessionTools:
             effects = store.effects(run_context.session_id)
             for effect in effects:
                 if (EFFECT_PREFIX in effect['effect_key']
-                        and (effect['effect_key'] != full_key or name not in MEMORY_WRITES | {'research_ask_assistant'})
+                        and (effect['effect_key'] != full_key or name not in MEMORY_WRITES | RESEARCH_WRITES | {'research_ask_assistant'})
                         and effect['status'] not in {'DONE', 'CANCELLED'}):
                     raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN')
             event = {'toolName': name, 'callId': call_id, 'operation': name.removeprefix('research_')}
@@ -358,7 +379,7 @@ class ResearchSessionTools:
                     receipt = {'outcome': 'failed', 'stopped': True, 'code': error.code}
                     store.event(identity[1], 'research_tool_finished', '记忆操作未执行', {**event, **receipt})
                     return self._receipt(receipt)
-            mutating = name in MEMORY_WRITES | {'research_edit_file', 'research_run', 'research_ask_assistant'}
+            mutating = name in MEMORY_WRITES | RESEARCH_WRITES | {'research_edit_file', 'research_run', 'research_ask_assistant'}
             if mutating:
                 request = {'ownerId': identity[0], 'taskId': identity[1], 'sessionId': execution['id'],
                     'turnId': execution['turnId'], 'toolName': name, 'callId': call_id, 'arguments': values}
@@ -370,11 +391,12 @@ class ResearchSessionTools:
                     guard()
                     return self._receipt(reservation.get('result'))
                 if reservation['status'] != 'new':
-                    if name not in MEMORY_WRITES | {'research_ask_assistant'}:
+                    if name not in MEMORY_WRITES | RESEARCH_WRITES | {'research_ask_assistant'}:
                         raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN')
                     try:
                         output = (self.sessions.memory.reconcile(identity[0], call_id, memory_operation)
-                            if name in MEMORY_WRITES else self.sessions.collaboration.reconcile(run_context, call_id, values))
+                            if name in MEMORY_WRITES else self.sessions.research.reconcile(run_context, call_id, name, values)
+                            if name in RESEARCH_WRITES else self.sessions.collaboration.reconcile(run_context, call_id, values))
                         if output is None:
                             raise ValueError('Original question is unconfirmed')
                         store.effect_complete(identity[2], key, {'outcome': 'completed', 'output': output})
@@ -389,6 +411,8 @@ class ResearchSessionTools:
                 guard()
                 if name == 'research_find_memories':
                     output = self.sessions.memory.find(identity[0], values)
+                elif name in RESEARCH_TOOLS:
+                    output = await self.sessions.research.invoke(run_context, call_id, name, values)
                 elif name == SPAWN:
                     output = await self.sessions.subagents.start(run_context, call_id, values['goal'])
                 elif name in MEMORY_WRITES:

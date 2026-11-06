@@ -100,7 +100,7 @@ def build_runtime(settings, store, native_db, *, model_dispatch_type=None, catal
 
     executor = Agent(id='factory-executor', name='Factory executor', model=model, db=native_db,
                      instructions=instructions, tools=selected_tools, pre_hooks=[bind_plan], tool_hooks=[protected_boundary],
-                     tool_call_limit=int(getattr(settings, 'max_tool_calls', 8)), add_history_to_context=False,
+                     add_history_to_context=False,
                      telemetry=False)
     registry = Registry(models=[model], dbs=[native_db], tools=list(catalog.values()))
     return executor, registry

@@ -25,9 +25,9 @@ from fixture_settings import Settings
 from agent_factory.execution_bindings import AdapterRegistration, EnvironmentLimits, KnowledgeContext
 from agent_factory.usage_ledger import PricingRevision
 from agent_factory_server.main import factory_state
-from agent_factory_server.research import create_app
+from research_workflow_fixture import create_app
 from pg_fixture import IsolatedPostgres
-from research.workflow import FUNCTION_TOOLS, INPUT_SCHEMA, PERMISSION, WORKFLOW_ID
+from research_controller_fixture import FUNCTION_TOOLS, INPUT_SCHEMA, PERMISSION, WORKFLOW_ID
 
 MODEL = 'research-native-fixture-v1'
 PROVIDER = 'research-controlled-fixture'
