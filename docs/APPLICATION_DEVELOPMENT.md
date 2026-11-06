@@ -447,7 +447,7 @@ uv run python -m unittest discover -s platform/tests -p 'test_native_workflow_fa
 uv run python -m unittest discover -s platform/tests -p 'test_native_workflow_reuse_postgres.py' -v
 ```
 
-这些重型测试串行运行。完整仓库检查见 [README](../README.md#checks)，结果必须记录精确
+这些重型测试串行运行。完整仓库检查见 [README](DEVELOPMENT_CHECKS.md)，结果必须记录精确
 commit、执行环境、运行数、失败和 skip。应覆盖输入拒绝、账号禁用与资源撤回、原 run 新进程恢复、
 重复命令、未知提交不重放、取消未知保留 custody、停止证据后释放，以及原生运行状态与
 业务结果的区分。浏览器 mock、合成模型和合成后端分别标注，不冒充真实 provider 或业务验收。

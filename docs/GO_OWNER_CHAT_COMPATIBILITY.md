@@ -1,5 +1,8 @@
 # Owner Chat Completions and OpenCode Go
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 The owner model settings accept the official Go base URL
 `https://opencode.ai/zen/go/v1`, in addition to reviewed HTTPS `/v1`
 Chat Completions destinations. No arbitrary provider prefix is accepted.

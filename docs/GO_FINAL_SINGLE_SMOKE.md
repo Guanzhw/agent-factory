@@ -1,5 +1,8 @@
 # Final authorized DeepSeek path validation
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 This stage follows accepted managed-egress commit
 `e90de8a9a7ec69e00b5be896a6888216efcc3997`. The operator authorized one final
 independent `deepseek-flash` synthetic coding request. It cannot replay or refund

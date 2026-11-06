@@ -1,5 +1,8 @@
 # Go managed egress compatibility
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 Base: PR17 `4fc83fbe8bddf5e14a7f62d80f82d150de8d6aff` (all ten CI jobs passed).
 Both historical DeepSeek attempts remain UNKNOWN, consuming two slots; Luna
 count remains zero. This stage authorizes no inference or credential access.

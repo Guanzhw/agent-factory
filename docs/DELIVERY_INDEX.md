@@ -1,5 +1,8 @@
 # Current delivery and review index
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 ## Personal CLI / MCP connections — merged PR #88
 
 [The CLI / MCP lifecycle and member setup](PERSONAL_TOOL_CONNECTION_LIFECYCLE.md)
@@ -120,7 +123,7 @@ correction is explicitly distinguished from the earlier exact-SHA CI evidence.
 
 ## Current product boundary
 
-Use [README](../README.md#current-acceptance-and-remaining-work) and the
+Use [README](DEVELOPMENT_CHECKS.md) and the
 [current matrix](ACCEPTANCE.md#current-matrix), not historical pending notes.
 Default AutoResearch remains synthetic; the separately selected pinned local
 baseline now has [real training and independent evaluation acceptance](RESEARCH_BASELINE_ACCEPTANCE.md).

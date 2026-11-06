@@ -1,5 +1,8 @@
 # Actual backend contract acceptance
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 The delivery target is the complete factory/v0.3 scope. This record describes a verified stage and remaining work; synthetic research is not completion of live acceptance.
 
 ## Relationship to the independent cloud checks

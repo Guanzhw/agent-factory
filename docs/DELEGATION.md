@@ -28,8 +28,8 @@ capacity, effects and event interfaces and the public NativeBridge lifecycle.
 
 Wire `authorize_child` into Store tool authorization. Wire `consume_tool_budget`
 into native Function execution using its actual call ID, including standalone
-root tools before the first delegation. The native per-run tool limit remains
-in place; the persisted aggregate limit also prevents children multiplying it.
+root tools before the first delegation. The persisted aggregate limit is authoritative. The duplicate native per-run
+tool-call limit is removed; child tasks cannot multiply the root budget.
 Use public `Function.pre_hook(run_context: RunContext, fc)` and `fc.call_id`.
 On denial, raise `StopAgentRun`: Agno 3.1 tool pre-hooks propagate its
 `AgentRunException` base. `InputCheckError` stops native Agent pre-hooks, but is
@@ -51,9 +51,9 @@ Delegated plans cannot enter the ordinary instance admission route. Every child
 operation independently requires its immutable parent/root/depth binding to
 match persisted links; a reused child plan with an ordinary request ID is denied.
 
-Depth is at most two edges below the root. A root can create at most four
-descendants over its lifetime, including unresolved intents; ancestor budgets
-may lower those limits. Active descendants consume the existing global and
+Depth and descendant count follow the saved `maxDepth` and `maxChildren`
+budgets, including unresolved intents. There is no additional depth-two or
+four-descendant runtime cap. Ancestor budgets can narrow the child scope. Active descendants consume the existing global and
 per-user Store quota. The production default remains two active tasks per user;
 hierarchy tests explicitly raise this to eight. Root and descendants share the
 root plan's total tool execution budget, and every intermediate ancestor also
@@ -99,11 +99,12 @@ stopped root group is marked reclaimed and cannot acquire a new mandate.
 
 Already accepted active children may finish after their parent completed, while
 fresh children from a completed parent are denied. Failed/rejected/canceled
-ancestors and current revocation deny protected child operations. Automatic
-observation of spontaneous parent failure and background cancellation of every
-child is not implemented here. An operator/API reconciliation can inspect facts
-and call cascade cancellation; this limitation must not be advertised as an
-autonomous failure cleanup guarantee.
+ancestors and current revocation deny protected child operations. The delegation service exposes inspection and cascade cancellation; it does
+not own a background polling loop. In the assembled application,
+`FactoryLifecycleObserver` observes parent failure and authority loss and
+requests cleanup of the original task tree. [Lifecycle observation](LIFECYCLE.md)
+describes that integration and its single-process limits. A cancellation request
+still requires positive native and effect evidence before the group is stopped.
 
 ## Verification
 

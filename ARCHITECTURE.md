@@ -1,38 +1,42 @@
 # Architecture
 
-Agent Factory aims to provide reusable identity, tool and workflow execution foundations for a trusted departmental team on Agno AgentOS 3.1.0 and PostgreSQL. Members should be able to use their preferred Agent/client to compose CLI tools, MCP tools and skill materials with explicitly selected personal or shared resource connections. The core owns scoped execution, credential custody and binding continuity; applications package research and other workflows on top. Current identity-binding evidence and remaining acceptance are recorded in the [foundation plan](docs/plans/reusable-tool-identity-bindings.md). Prefer removing unnecessary steps and duplicated responsibilities before introducing new abstractions.
+Agent Factory provides execution and shared resources for a trusted small team. Its default application is AutoResearch: one conversation-oriented interface where an Agent chooses tools, experiments, and collaborators from the user's goal. The application does not impose a fixed research sequence.
 
-| Responsibility | Owns | Dependency direction |
+## Application and platform responsibilities
+
+| Layer | Responsibility | Source |
 | --- | --- | --- |
-| Core | Native runtime integration, current owner/task authority, immutable bindings, budgets, admission, cancellation and effect reconciliation | Generic contracts and shared implementation; never a concrete application, directly or indirectly |
-| Application | User workflow, domain inputs/results, app-specific tools, presets and policy | Core and selected adapters; another app only through an explicitly declared public API |
-| Adapter | A concrete provider, protocol or execution environment behind a trusted contract | Core contracts; application-specific integration belongs with that application |
-| Composition root | Selecting installed applications and wiring trusted registrations at startup | Explicit app entrypoints and core; reusable core/apps must not import it |
+| Core | Native execution, identities, resource ownership, bindings, receipts, cancellation, and shared budgets | `platform/agent_factory` |
+| Research application | Conversations, research context, experiments, interpretations, and research tools | `applications/research` |
+| Adapters | Concrete model, command, MCP, SSH, and remote-service integrations | Registered through core contracts |
+| Composition | Application selection and trusted adapter registration | `deployment/agent_factory_server` and frontend composition files |
 
-The agreed directory contract is encoded in the [Python ownership map](scripts/architecture-python.json) and [frontend ownership map](scripts/architecture-web.json); these are the authoritative paths and exact composition exceptions. The default product command `agent-factory` and browser build select the autonomous research application through the composition root. There is one product browser entry. Core `create_app` and the standalone core wheel remain independent of application code; this packaging boundary is not another user workflow. Members publish application/material definitions, while trusted adapters are registered in the composition. No cross-application API is currently declared. The [2026-11-06 autonomy decision](docs/plans/agent-autonomy-20261106.md) supersedes the fixed research-round product path.
+Core does not import research implementation. Applications use core contracts and declared public application interfaces. The [Python ownership map](scripts/architecture-python.json) and [frontend ownership map](scripts/architecture-web.json) define the checked paths and composition exceptions.
 
-Keep genuinely shared helpers shared. A directory move does not establish these responsibilities. Composition exceptions name individual files, never whole directories. They permit wiring, not a second place for application behavior or a route around core isolation.
+`agent-factory` and `agent-factory-research` both select `agent_factory_server.research:main`. The default browser build uses the research composition. The standalone core factory and package remain available for programmatic assembly and boundary checks. They are not a second product workflow.
 
-Three acceptance boundaries:
+## Execution ownership
 
-1. **Independent core:** build and install the core without app source, then start its real lifecycle against disposable PostgreSQL, check health, and shut down cleanly. Import-only tests do not prove this.
-2. **Dependency direction:** check direct and indirect imports, including package initializers and adapters. Cross-app callers may use declared public APIs; private implementations remain owned by their app. The checker must demonstrate legal, direct-violation and indirect-violation fixtures and report an actionable import chain.
-3. **Ordinary workflow:** deterministic provider fixtures prove the selected model remains selected, owners remain isolated, revoked authority prevents new effects, normal personal submission adds no administrator review, and UNKNOWN acknowledgements do not replay work. Synthetic fixtures do not establish live provider compatibility.
+Agno AgentOS 3.1.0 owns the model and tool loop, durable PostgreSQL queue, native run state, and native cancellation. Factory stores the application records that connect user requests to those runs: plans, owner bindings, tool receipts, resource allocations, and content references.
 
-CI runs both ownership maps, the independent core installation/lifecycle smoke and deterministic application regressions. There is no migration allowlist. Current integration findings and checker limitations are recorded in [development checks](docs/DEVELOPMENT_CHECKS.md); a failing boundary must be repaired before this integration can be accepted.
+Research uses that existing execution path. Reusable practices are callable tools, not mandatory stages. An Agent may answer directly, run a local experiment, or delegate useful independent work. The [autonomy decision](docs/plans/agent-autonomy-20261106.md) supersedes the earlier fixed research controller and parallel project/session entry points.
 
-The product serves a trusted small team. Active members create and use components/workflows and publish their own applications/materials. Resource owners manage personal/team sharing, changes and withdrawal; account administrators manage accounts. Current membership, owner isolation, credential custody and task bounds remain enforced. Historical plan/publication reviews remain owner-readable records while new work uses member self-service. Runtime ownership, known limitations and prior evidence are in [RUNTIME_DESIGN.md](docs/RUNTIME_DESIGN.md); commands are in [DEVELOPMENT_CHECKS.md](docs/DEVELOPMENT_CHECKS.md).
+A missing reply does not authorize a second execution. Recovery reads the original request, task, and effect. Native task completion and confirmed process stopping are separate facts. [Runtime design](docs/RUNTIME_DESIGN.md) describes these contracts.
 
-A new empty database exposes the shared login, empty application catalog, task and
-resource workspace. Test-only native fixtures explicitly install synthetic
-applications; they are not startup defaults. Product demo login and bundled mock
-identity providers are removed. An unconfigured public identity boundary rejects
-authentication; test-only OIDC peers do not prove organization identity-provider
-compatibility. Core-only acceptance is recorded in
-[the exact-revision verification](openspec/changes/remove-research-verify-core/verification.md);
-historical Research evidence does not establish acceptance of the current explicit research composition.
+## Team and resource ownership
 
-Application retirement does not remove old database records, credentials, vault
-keys, artifacts or backups. Old application tasks require their original code to
-resume. Validation uses new isolated databases/workspaces; permanent old-data
-deletion still requires an exact inventory and separate confirmation.
+Members publish and manage their own materials and applications. Administrators manage accounts. Resource owners configure connections and choose personal or team sharing. Another member can use a shared connection without receiving its secret.
+
+The deployment target is one application process with PostgreSQL and a configurable worker pool. The approximate 20-member target is a usage goal, not a measured concurrency guarantee. Remote runtime attachment and remote machine allocation are separate operations. SSH command execution does not imply GPU allocation support.
+
+## Acceptance boundaries
+
+The repository checks three distinct boundaries:
+
+1. The standalone core installs without application source, starts against disposable PostgreSQL, and shuts down.
+2. Dependency checks reject forbidden direct and indirect imports across the ownership maps.
+3. Application checks exercise selected models, owner isolation, original-request recovery, and actual process stopping.
+
+Synthetic provider tests establish these contracts. They do not prove external identity, real-model quality, target-machine capacity, or GPU behavior. Exact execution results belong in the corresponding PR or dated acceptance record. [Development checks](docs/DEVELOPMENT_CHECKS.md) lists the commands and their scope.
+
+Historical ORX and fixed-workflow records remain available in the [documentation map](docs/DOCUMENTATION_MAP.md). Their commands and acceptance results do not establish current AutoResearch behavior.

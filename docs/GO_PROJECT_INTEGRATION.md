@@ -1,5 +1,8 @@
 # Ongoing Go project integration — 2026-10-04
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 This stage continues PR20 (`bcede60aa6b911969d4200d83eda4ad5f2b574ab`).
 The user authorized ongoing DeepSeek/Luna subscription development for this
 project and confirmed balance fallback and auto-reload disabled. Earlier

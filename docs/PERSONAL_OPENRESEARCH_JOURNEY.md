@@ -1,6 +1,6 @@
 # Ordinary OpenResearch research journey
 
-> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current core-only setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
+> **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current AutoResearch setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
 
 The ordinary application now starts from a research goal and optional pasted text or links. With a usable personal project binding and its verified remote session template, **Start research** creates one original native session, waits for its acknowledged ID, then submits the authorized goal on the existing personal-command/Agno queue path. Continuing submits to the same native session. Factory does not install a runtime, run a second research engine, download supplied links, or forward its BYOK model credentials to ORX.
 

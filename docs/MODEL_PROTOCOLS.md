@@ -2,8 +2,9 @@
 
 Agno uses `OwnerChatModel` and its native tool loop. `OwnerRuntimeBroker` retains
 the scoped native-runtime boundary and protocol conversion contracts. The former
-ORX application that used this broker is not installed in the core-only deployment;
-its recorded integration results below are historical, not a default execution path.
+ORX application that used this broker is retired. Its recorded integration results
+are historical. The default Research composition uses the current owner model
+connection and native Agent loop.
 
 | Responsibility | Existing or shared boundary |
 | --- | --- |
@@ -11,7 +12,7 @@ its recorded integration results below are historical, not a default execution p
 | Agno messages and tool lifecycle | `byok_model.py` |
 | Native runtime scope, original call receipts, UNKNOWN recovery | `owner_runtime_broker.py` |
 | Text/function request and response conversion | Pure `model_protocol.py` |
-| Reviewed URL prefixes, Go session headers, legacy model option | Small `model_endpoint_policy.py` |
+| Supported endpoint shapes, Go session headers, legacy model option | Small `model_endpoint_policy.py` |
 | Public DNS pinning, TLS hostname, response size/secret-echo checks | `model_transport.py` |
 | Explicit UI presets and legacy metadata validation | `web/modelProviderConfig.ts` |
 
@@ -23,7 +24,7 @@ is introduced. The adapter's historical name remains an immutable identifier.
 ## Request lifetime and cancellation
 
 `OwnerChatModel` uses the existing `FACTORY_NATIVE_TIMEOUT_SECONDS` setting for
-each HTTP request's total lifetime (default 60 seconds, configurable from 60 to
+each HTTP request's total lifetime (default 300 seconds, configurable from 60 to
 3600). There is no separate 10-second HTTP phase or 30-second request limit.
 This setting is independent of a tool's operation timeout; the total request
 bound covers connection and response reading. Credential lookup and authority

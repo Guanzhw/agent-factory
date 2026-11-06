@@ -1,5 +1,8 @@
 # Complete inventory and prelaunch evidence
 
+> Historical record. The statements below apply to their recorded revision and environment. Current setup is in [Windows local startup](WINDOWS_LOCAL_START.md); current research behavior follows the [autonomous Agent decision](plans/agent-autonomy-20261106.md). This record is not current release acceptance.
+
+
 This stage follows PR49 `fdbc109a6ca59f10b9e985c18890cea6a958ea38`.
 The target worker reported24204 sealed files and a PREPARED custody journal,
 without guardian/child launch evidence, training configuration or evaluation.

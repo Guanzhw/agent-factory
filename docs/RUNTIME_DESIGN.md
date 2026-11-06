@@ -1,90 +1,59 @@
-# Runtime design and existing evidence
+# Runtime design
 
-The current responsibility map and acceptance boundaries live in [ARCHITECTURE.md](../ARCHITECTURE.md). This document preserves implementation history and mechanism details. Historical review defaults below describe existing code, not a requirement to impose additional approvals on ordinary departmental workflows; the current product scope is in [AGENTS.md](../AGENTS.md).
+This reference describes the current Agno integration. [Architecture](../ARCHITECTURE.md) defines package responsibilities. Historical experiments and retired ORX workflows are indexed separately in the [documentation map](DOCUMENTATION_MAP.md).
 
-The engine is Agno AgentOS 3.1.0 with PostgreSQL. The original React UI consumes `/api/factory`; there is no commercial Control Plane code or second agent loop. See [the native envelope decision](decisions/0001-native-plan-envelope.md).
+## State ownership
 
-```mermaid
-flowchart LR
-  UI[Research / material UI] --> API[Scoped factory API]
-  API --> AUTH[Native JWT / managed SQL policy]
-  API --> C[Versioned material catalog]
-  C --> P[Immutable plan + dependency closure]
-  P --> B[User/task binding + fingerprint]
-  B --> Q[Agno durable PostgreSQL queue]
-  Q --> E[Registered factory executor]
-  E --> T[Current authority + trusted material bindings]
-  T --> A[Evidence / metrics / artifacts]
-  API --> R[Remote reference / lease service]
-  R --> RA[Agno runtime attachment]
-  R --> RC[Separate compute provider]
-  R --> AA[Optional A2A interface]
-```
+| Owner | State |
+| --- | --- |
+| Agno AgentOS | Native runs, sessions, queue claims, model and tool execution, and native cancellation |
+| Factory core | Immutable plans, owner and resource bindings, admission records, effect receipts, and resource custody |
+| Research application | User conversations, goals, research context, experiments, interpretations, and shared research content |
 
-Factory metadata stores material versions, immutable plan snapshots, trusted owner/session/native-run bindings, admission fingerprints, application events, effect receipts and artifact bytes. Agno owns run/session state, queue claims, heartbeat/recovery, model/tool loop, native HITL and cancellation. Application status derives from native state plus explicit effect/domain evidence; it is not a replacement scheduler. Unknown receipts/effects retain capacity.
+The native queue executes registered Factory operations. Factory application state derives from native state and recorded effects. A second application scheduler does not replace the queue.
 
-Native explicit-version and factory-resolved runs did not obtain durable tickets in the verified upstream revision. One static executor closes this gap through public callable instructions/tools and hooks. Serializable queue session state references the server-owned persisted plan. Snapshot integrity and owner/session/run identities are checked; later catalog publication cannot mutate a running plan. Ordinary pre-hook exceptions are insufficient. Agent pre-hooks use native InputCheckError; Function tool pre-hooks require StopAgentRun (AgentRunException), because they swallow InputCheckError. Actual native side-effect spies verify denial precedes compute and artifact writes. Every protected tool independently rechecks current native rights and task authority.
+## Requests and receipts
 
-Admission serializes semantic fingerprints and shared task budgets transactionally. Plan construction shares its metadata transaction connection, avoiding nested pool acquisition while holding an advisory lock. A native receipt is bound to the pre-existing task. If a process dies after reservation or a response is missing, inspect/reconcile authoritative state; never automatically resubmit or free capacity after a timeout.
+A request records its identity before dispatch. Repeating that identity reads the existing receipt. A missing reply or an uncertain effect remains `UNKNOWN`; it does not authorize replay or release occupied capacity.
 
-Questions and confirmations are distinct native requirements. UI actions carry actual requirement IDs plus a canonical version token. Stale, cross-owner, canceled or wrong-type decisions are rejected. Continuation sends native tool execution objects, preserving their IDs. A canceled ticket is not proof remote/experiment work stopped; bounded local tools settle cancellation only after owned compute cleanup.
+Plans retain their selected material and connection revisions. Later catalog changes do not rewrite a running plan. Current ownership and resource availability still apply to new calls. [Control commands](CONTROL_COMMANDS.md) and [event replay](EVENT_REPLAY.md) describe the persisted interfaces.
 
-Approved immutable application definitions drive bounded composition and exact permitted material choices. One stable native model dispatcher creates a fresh registered Model per response context; model, tool, knowledge and environment bindings come from the persisted plan, with current owner connections and authority rechecked. No shared executor Model mutation, application-ID branch, installer or fallback grants execution. Demo adapters replace only provider responses and use invented literature. Experiments execute one reviewed fixed Python program; user/model text cannot become executable code. ORX discovery is registered through an operator-provided task adapter; controlled native integration passes, while live model research and production isolation remain unverified. The opt-in actual ORX application uses the real pinned CLI with a task-exclusive local project/store, four sealed original toy files and a persistent single-launch intent; see ORX_LOCAL_EXPERIMENTS.md. See MATERIAL_ASSEMBLY.md.
+## Autonomous research
 
-Remote attachment does not allocate a machine. Resource references resolve through operator configuration and current owner grants, with target fingerprints, lease heartbeats, remote IDs and snapshot reconciliation. No native durable cursor/boot epoch is invented. A2A is a future interoperability adapter, not environment provisioning. The remote lease and trusted prepare/dispatch APIs are implemented. A selected receiver owns the entire task tree and one native ticket; the origin holds metadata only. Separate local native services and databases verify routing/cancellation/evidence. Production provider/TLS/identity/endpoint acceptance remains open.
+`ResearchSessions` submits work through the existing native Agent. The Agent selects tool order and whether an experiment or delegation is useful. Research context, experiment records, and interpretation tools are available without requiring a fixed sequence.
 
-Deploy one application process and its bounded native worker pool on the proposed single server. Initial limits: two workers, two held tasks per user, twelve held tasks globally, twenty queued tickets, eight tool calls, bounded experiment time/output. Paused/UNKNOWN work retains its reservation. There is no permanent heavy environment per user. Local fixed compute has hard Windows job bounds and cleanup; full tenant isolation, aggregate CPU/RAM/PID measurement and sustained fair throughput remain deployment work. Twenty-user concurrent admission/cancel/revoke/UNKNOWN tests and clean-stop restore have passed. Fact queries use the API/database directly.
+Local research tools read, search, create, and edit files in their workspace. Host commands require explicit deployment configuration. The tools return exit codes, output, and file hashes. A command's nonzero exit is an observation the Agent can use, not an automatic failure of the entire conversation.
 
-Child tickets share persisted root and ancestor tool budgets, plus a four-descendant lifetime cap and depth two. Their immutable scope cannot become a standalone new root. A bounded trusted lifecycle observer performs existing-work cleanup without UI reads; it validates original native bindings and uses public native cancellation APIs. Pre-ACK children stay uncertain, and completed tickets are not re-authorized as active execution. Default running signals are single-process only; see LIFECYCLE.md. Group capacity is held until native terminal facts and known effect cleanup agree.
+[Personal research sessions](PERSONAL_RESEARCH_SESSIONS.md) describes the user journey. The [autonomy decision](plans/agent-autonomy-20261106.md) records why the fixed controller and second product entry were removed.
 
-Scheduling composes Agno SchedulePoller with a guarded public executor interface, while AgentOS scheduler=False disables its unguarded executor. Native schedule ingress is blocked. The owner-scoped wrapper accepts only an immutable top-level plan reference and cron/timezone; occurrence receipts enter the same Store/native queue admission. Native polling and queue ownership remain upstream. See SCHEDULING.md for tested recovery and remaining lease/restart acceptance.
+## Delegation and budgets
 
-Worker concurrency defaults to two and accepts any positive operator-selected
-integer; the same configured capacity reaches the native queue and schedule
-poller. Task/resource reservations remain independent admission budgets. Both
-official launchers share the existing 35-second process shutdown policy; see
-[SHUTDOWN.md](SHUTDOWN.md) for exit behavior and portable checks.
+Each child has its own native task and a persisted parent/root relationship. Root and ancestor budgets bound the subtree. The task's explicit `maxDepth`, `maxChildren`, and tool budget apply; the former hidden depth-two and four-descendant caps no longer define the runtime.
 
-Material governance separates immutable content from publication state and review
-receipts. The default requires a distinct current administrator. Catalog discovery,
-admission, native tools and delegated ancestor guards require current approved
-versions; the version remains available as historical evidence after withdrawal.
-Factory event replay uses persisted task stream IDs, signed owner/task positions
-and one SQL snapshot. Late lower-ID commits explicitly invalidate the prefix;
-display history limits never erase application failure facts.
+Persistent tool accounting is authoritative. The former duplicate native per-run tool-call limit was removed. Native workflow support remains available for applications that choose it. It is not a mandatory research framework. [Delegation](DELEGATION.md) describes the shared interfaces.
 
-Governed remote execution persists a separate receiver binding proof instead of
-rewriting source bindings or forwarding credentials. An exact operator mapping
-selects receiver-owned adapters/connections; both current policies and source
-authority over bounded authenticated HTTP gate execution. Receiver review occurs
-before native admission, and descendants narrow the same root proof. Loopback
-process/database acceptance and external-host production acceptance remain
-distinct. See REMOTE_BINDINGS.md.
+## Credentials and shared resources
 
-## Actual local experiment and usage accounting
+Connections belong to members. Owners configure them and choose personal or team visibility. Shared use resolves credentials inside the service and retains the caller's task identity. Credentials are not catalog material or prompt content.
 
-The `local-orx-v1` contract adds five narrow registered tools for inspect, run,
-wait, cancel and logs. One operator connection group resolves their exact
-owner-bound handle; materials never contain paths, commands or credentials.
-The no-provider workflow model selects only these approved native Functions.
-After plan review, inspect binds the actual task/project/experiment/source and
-native run intent. Native HITL separately confirms the sealed experiment launch.
-Only real CLI operations create experiment/run records. Missing launch replies
-reconcile the old run instead of submitting again. Downloaded result JSON and
-the four-file recipe archive are integrity checked by the browser.
+The normal owner-model path supports the protocols in [model compatibility](MODEL_PROTOCOLS.md). [Owner BYOK](owner-byok-api.md) distinguishes provider billing from Factory accounting. [Resource sharing](RESOURCE_SHARING.md) defines visibility and revocation.
 
-Lifecycle cleanup validates the original native ticket, immutable effect,
-operator handle and environment limits even after a current execution grant
-ends. It calls only reclaim, never provisioning or launch. Native terminal
-state plus a Windows Job Object active-process count of zero establish stop;
-unknown outcomes retain capacity. The selected profile applies job CPU,
-memory, time and process limits, but is not hostile-code tenant isolation.
+## Stopping and recovery
 
-The usage ledger serializes admission across task/root/ancestor/user accounts
-before each provider primitive. Approved currency, token/amount ceiling,
-provider/model and price revision remain immutable. Actual trusted usage settles
-even when authority ends after the response; partial/error/unknown usage keeps
-its hold. Remote execution allocates the same original cap before dispatch and
-requires authenticated original-grant attestation; cumulative authoritative
-statements reclaim only proven unused allocation. Separate migrations preserve
-legacy/source plan hashes. No paid adapter or real credentials are configured.
+Cancellation records intent and requests native cancellation. The lifecycle observer inspects the original task tree and existing effects. It does not start replacement work. Capacity is released when native state and effect/process evidence establish that the owned work stopped.
+
+Windows commands use owned Job Objects. POSIX commands use owned process groups. Directory separation and process cleanup do not establish hostile-code isolation. [Lifecycle observation](LIFECYCLE.md), [process leases](PROCESS_LEASE_RUNTIME.md), and [security assumptions](SECURITY.md) describe the separate guarantees.
+
+HTTP shutdown has two stages: Uvicorn drains network work, then application lifespan cleanup stops workers and releases services. Official launchers give each stage a 35-second budget. These are sequential budgets, not a single 35-second deadline. See [shutdown behavior](SHUTDOWN.md), including the Windows TCP/TLS reset limitation.
+
+## Remote execution and scheduling
+
+A runtime attachment identifies an existing receiver. Allocation chooses an execution environment. Neither operation implies cloud provisioning. The SSH helper reports `gpuAllocation=false` and `scheduler=false`; its provider rejects `gpuBinding`. Remote GPU execution therefore needs more than model or host credentials.
+
+Agno's schedule poller supplies the clock and queue integration. Factory validates occurrence admission and retains original receipts. Current deployment coordination assumes one application process. [Remote resources](REMOTE_RESOURCES.md) and [scheduling](SCHEDULING.md) define these interfaces.
+
+## Evidence limits
+
+A native Windows CPU research acceptance used a real model, produced executable code and reproducible result files, and confirmed original-task stop. With the transport shutdown deadline configured, the application completed lifespan cleanup and exited after the observed TCP/TLS reset. This does not certify every research task or normal socket cleanup. Registered artifact downloads, persistent user login on the target installation, remote GPU allocation, and sustained team capacity require their own acceptance.
+
+Earlier Linux, ORX, fixed-program, and synthetic-user results remain evidence for their recorded revisions. They are not current deployment certification.
