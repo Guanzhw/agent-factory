@@ -1,5 +1,7 @@
 # Original research custody recovery
 
+Source links below are pinned to `615a23f0`, the last revision before the Research package split. This preserves a readable source snapshot; it does not change the exact revisions or outcomes in the historical acceptance records.
+
 > **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current AutoResearch setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
 
 ## Latest reported state — 2026-10-07
@@ -141,9 +143,9 @@ recovery, not a request for new credentials or additional user approval.
 
 ## Code references
 
-- [Original process inspection and never-dispatched stop proof](../platform/agent_factory/process_enforcement.py)
-- [Provider identity checks, inspection and reclaim](../platform/agent_factory/process_provider.py)
-- [Research GPU release branch](../platform/agent_factory/research_local_provider.py)
-- [Original-custody observation and unknown-ACK handling](../platform/agent_factory/process_runtime.py)
-- [Validated lease reconciliation](../platform/agent_factory/resources.py)
-- [GPU release evidence contract](../platform/agent_factory/gpu_custody.py)
+- [Original process inspection and never-dispatched stop proof](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/process_enforcement.py)
+- [Provider identity checks, inspection and reclaim](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/process_provider.py)
+- [Research GPU release branch](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/research_local_provider.py)
+- [Original-custody observation and unknown-ACK handling](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/process_runtime.py)
+- [Validated lease reconciliation](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/resources.py)
+- [GPU release evidence contract](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/gpu_custody.py)

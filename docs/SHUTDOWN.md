@@ -36,3 +36,17 @@ The network deadline prevents that wait from blocking application cleanup indefi
 Process exit does not rewrite original-operation records. Recovery still inspects the original task, run, and effect. Unknown operations retain their existing uncertainty until reconciliation establishes an outcome.
 
 The shutdown regression uses real Uvicorn with synthetic local behavior. A separate Windows real-model research acceptance confirmed original-task stop, application lifespan completion, and temporary-resource cleanup with the transport deadline configured. The observed connection-reset errors remained; bounded shutdown does not repair that runtime defect. PostgreSQL recovery, real-model research, and target-host process stopping are separate checks. [Development checks](DEVELOPMENT_CHECKS.md) lists their entrypoints. Passing a no-model idle shutdown does not certify shutdown after a real research task.
+
+## Run the shutdown regression
+
+From the repository root with the locked dependencies installed:
+
+```sh
+uv run --frozen python -m unittest discover -s platform/tests -p test_shutdown.py -v
+```
+
+The same command works in PowerShell. It runs three tests, including twelve real
+Uvicorn subprocess cases: normal cleanup, cleanup failure, blocked application
+cleanup, and blocked network close for each official launcher implementation.
+The fixtures shorten the blocked waits and assert the production 35-second
+settings. They do not reproduce Windows TLS/RST or start a database or model.
