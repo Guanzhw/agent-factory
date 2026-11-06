@@ -1,9 +1,11 @@
 # 本地受管 baseline：准备 → 训练 → 独立评价
 
+Source links below are pinned to `615a23f0`, the last revision before the Research package split. This preserves a readable source snapshot; it does not change the exact revisions or outcomes in the historical acceptance records.
+
 > **Historical — application not installed.** This document records the retired Research/ORX application and earlier acceptance. Its routes, source paths, configuration and commands are not current AutoResearch setup instructions. Original evidence, failures and UNKNOWN outcomes below are preserved; they do not certify the current revision. Source retirement does not authorize deleting old data, credentials, vault keys, artifacts or backups.
 
 本交接用于已经授权的本地开发训练。入口是
-[`scripts/run_research_baseline.py`](../scripts/run_research_baseline.py)；一次调用顺序执行三个阶段，
+[`scripts/run_research_baseline.py`](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/scripts/run_research_baseline.py)；一次调用顺序执行三个阶段，
 复用 Factory 的成员素材发布、直接计划执行、原生任务、进程租约及证据存储。
 它不安装依赖、不创建数据库、不开放远程服务，也不购买模型或计算资源。
 
@@ -68,7 +70,7 @@ clone 只处理一棵无符号链接的普通文件树，不是整个 uv venv �
 完整环境使用 `complete-venv-32768-v1`，不能裁剪库、dist-info、顶层模块、`.pth` 或字节码
 来压低计数：最多 32768 文件、65536 树条目、1 GiB/文件、8 GiB 全站文件字节；
 完整 interpreter contract 还独立限制目录数与序列化大小。
-[`research_bootstrap_inventory.py`](../platform/agent_factory/research_bootstrap_inventory.py)
+[`research_bootstrap_inventory.py`](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/research_bootstrap_inventory.py)
 只静态读取 METADATA、源码字面量及全部 site 文件，生成私有 inventory/kernel；
 随后才写入证据并调用原 `capture_interpreter_contract`。
 完整 hash、observer 与 guardian 的复核会占用实际时间和内存，均不能从训练预算中隐去。
@@ -83,7 +85,7 @@ clone 只处理一棵无符号链接的普通文件树，不是整个 uv venv �
 上游固定为 `karpathy/autoresearch` commit
 `228791fb499afffb54b46200aca536f79142f117`。
 `upstreamRoot` 必须具有下列原始字节文件；runner 会调用
-[`verify_upstream_source`](../platform/agent_factory/research_profile.py)，不会执行上游下载脚本。
+[`verify_upstream_source`](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/research_profile.py)，不会执行上游下载脚本。
 
 | 文件 | SHA256 |
 | --- | --- |
@@ -250,11 +252,11 @@ controller 仍标记 `scientificConclusionVerified: false`，不能据此宣称�
   仍需分别核验。当前没有自动候选接受指针变更或自动搜索循环。
 
 实现锚点：
-[assembly](../platform/agent_factory/research_bootstrap_assembly.py)、
-[inventory](../platform/agent_factory/research_bootstrap_inventory.py)、
-[inputs](../platform/agent_factory/research_bootstrap_inputs.py)、
-[controller](../platform/agent_factory/research_bootstrap_controller.py)、
-[preparation custody](../platform/agent_factory/research_preparation_store.py)。
+[assembly](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/research_bootstrap_assembly.py)、
+[inventory](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/research_bootstrap_inventory.py)、
+[inputs](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/research_bootstrap_inputs.py)、
+[controller](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/research_bootstrap_controller.py)、
+[preparation custody](https://github.com/Guanzhw/agent-factory/blob/615a23f06039dcfa9e55b93c6913c691b3693bc3/platform/agent_factory/research_preparation_store.py)。
 
 ### Read-only preparation validation (after PR45 diagnostic)
 
