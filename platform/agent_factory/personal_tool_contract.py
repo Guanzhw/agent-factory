@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+import json
 import re
 from typing import Any, Callable, Literal, Mapping, Protocol
 
@@ -30,6 +31,30 @@ def validate_tool_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
         return value
     except Exception:
         raise ValueError('PERSONAL_TOOL_DESCRIPTOR_INVALID') from None
+
+
+def validate_tool_output(value: Any, *, maximum: int) -> Any:
+    """Use the tool's byte budget, not application-form shape limits."""
+    def check(item):
+        if type(item) is dict:
+            if any(type(key) is not str for key in item):
+                raise ValueError()
+            for child in item.values():
+                check(child)
+        elif type(item) is list:
+            for child in item:
+                check(child)
+        elif item is not None and type(item) not in (str, bool, int, float):
+            raise ValueError()
+
+    try:
+        check(value)
+        encoded = json.dumps(value, allow_nan=False)
+        if len(encoded.encode()) > maximum:
+            raise ValueError()
+        return json.loads(encoded)
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        raise ValueError('PERSONAL_TOOL_OUTPUT_INVALID') from None
 
 
 def validate_tool_arguments(schema: Mapping[str, Any], arguments: Mapping[str, Any]) -> dict[str, Any]:

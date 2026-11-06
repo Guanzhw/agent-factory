@@ -684,7 +684,10 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.assertIsNone(self.effect(call_id='echo-' + str(index))['result'])
 
     async def test_invalid_or_oversized_json_cannot_be_persisted(self):
-        for index, value in enumerate((b'bytes', float('nan'), {'large': 'x' * 16001})):
+        cycle = []
+        cycle.append(cycle)
+        for index, value in enumerate((b'bytes', float('nan'), float('inf'), {1: 'key'},
+                ('tuple',), cycle, {'large': 'x' * 65536})):
             async def behavior(invocation):
                 return value
             self.adapter.behavior = behavior
@@ -692,6 +695,27 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
             with self.assertRaises(StopAgentRun):
                 await self.invoke(fc)
             self.assertIsNone(self.effect(call_id='invalid-' + str(index))['result'])
+
+    async def test_output_obeys_exact_serialized_budget_and_is_detached(self):
+        value = {'text': '"' * 16001}
+        size = len(json.dumps(value, allow_nan=False).encode())
+        async def behavior(invocation):
+            return value
+        self.adapter.behavior = behavior
+        for limit in (size, size - 1):
+            self.adapter.descriptor = replace(self.adapter.descriptor, max_output_bytes=limit)
+            self.registration = personal_tool_registration(self.adapter)
+            fc, _, _ = self.call(call_id='budget-' + str(limit))
+            if limit == size:
+                self.assertEqual(await self.invoke(fc), value)
+                self.assertEqual(self.effect(call_id=fc.call_id)['status'], 'DONE')
+            else:
+                with self.assertRaises(StopAgentRun):
+                    await self.invoke(fc)
+                self.assertIsNone(self.effect(call_id=fc.call_id)['result'])
+        value['text'] = 'changed after dispatch'
+        self.assertEqual(self.effect(call_id='budget-' + str(size))['result']['output'],
+            {'text': '"' * 16001})
 
     async def test_tool_payload_cannot_forge_cancelled_effect(self):
         async def behavior(invocation):

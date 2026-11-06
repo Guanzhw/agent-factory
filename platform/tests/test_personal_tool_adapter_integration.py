@@ -11,7 +11,7 @@ from agno.run import RunContext
 from agno.tools.function import FunctionCall
 
 from agent_factory.execution_bindings import BindingContext
-from agent_factory.personal_cli import CliCredentialDelivery, PersonalCliAdapter
+from agent_factory.personal_cli import CliCredentialDelivery, PersonalCliAdapter, MemberCliAdapter
 from agent_factory.personal_mcp import MCPToolAdapter
 from agent_factory.personal_remote_provider import SecretLease
 from agent_factory.personal_tool_contract import ToolDescriptor
@@ -87,6 +87,31 @@ class PersonalToolAdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(list(private.iterdir()), [])
             self.assert_done(store, expected, lease)
 
+    @unittest.skipUnless(os.name == 'posix', 'CLI process groups require POSIX')
+    async def test_member_cli_large_report_completes_and_replays_without_process(self):
+        schema = {'type': 'object', 'properties': {}, 'additionalProperties': False}
+        descriptor = ToolDescriptor('report-cli', 'v1', 'fixture_query', 'Synthetic report',
+            schema, 'cli', 'synthetic-cli', 'synthetic-service', ('tool:query',),
+            permission='fixture:query')
+        expected = {'text': 'x' * 16001, 'rows': list(range(257)),
+            'columns': {str(i): i for i in range(65)}}
+        with TemporaryDirectory(prefix='personal-report-') as temporary:
+            marker = Path(temporary) / 'dispatches'
+            program = ("import json; from pathlib import Path; "
+                f"p=Path({str(marker)!r}); p.write_text(p.read_text()+'x' if p.exists() else 'x'); "
+                "print(json.dumps({'text':'x'*16001,'rows':list(range(257)),"
+                "'columns':{str(i):i for i in range(65)}}))")
+            adapter = MemberCliAdapter(descriptor, {'executable': sys.executable,
+                'arguments': ['-I', '-c', program]})
+            call, store, _ = native_call(adapter, None, {})
+            self.assertEqual((await call.aexecute()).status, 'success')
+            self.assertEqual(call.result, expected)
+            self.assertEqual(next(iter(store.effects.values()))['status'], 'DONE')
+            replay = FunctionCall(function=call.function, call_id=call.call_id, arguments={})
+            self.assertEqual((await replay.aexecute()).status, 'success')
+            self.assertEqual(replay.result, expected)
+            self.assertEqual(marker.read_text(), 'x')
+
     async def test_mcp_standard_schema_native_call_completes_once_and_replays_private_receipt(self):
         # Ordinary MCP schema has neither maxLength nor additionalProperties.
         schema = {'type': 'object', 'properties': {'value': {'type': 'string'}}, 'required': ['value']}
@@ -96,10 +121,12 @@ class PersonalToolAdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with MCPProtocolServer() as server:
             adapter = MCPToolAdapter(descriptor, url=server.url, remote_tool_name='echo')
             lease = SecretLease('synthetic-mcp', ALICE_TOKEN)
-            call, store, handle = native_call(adapter, lease, {'value': 'native-mcp'})
+            value = 'x' * 15990
+            call, store, handle = native_call(adapter, lease, {'value': value})
             self.assertEqual(call.function.parameters, schema)
             self.assertEqual((await call.aexecute()).status, 'success')
-            self.assertEqual(call.result['structuredContent'], {'owner': 'alice', 'value': 'native-mcp'})
+            self.assertEqual(call.result['structuredContent'], {'owner': 'alice', 'value': value})
+            self.assertGreater(len(call.result['content'][0]['text']), 16000)
             original = call.result
             self.assert_done(store, original, lease)
             self.assertEqual(server.calls, [('echo', 'alice')])
