@@ -58,10 +58,23 @@ class PersonalToolContractTests(unittest.TestCase):
             validate_tool_arguments(schema, values)
         self.assertEqual(result, {'text': '"' * 32762})
 
+    def test_schema_declaration_obeys_exact_serialized_budget(self):
+        schema = {'type': 'object', '$comment': ''}
+        overhead = len(json.dumps(schema).encode())
+        schema['$comment'] = '"' * ((32768 - overhead) // 2) + 'x' * ((32768 - overhead) % 2)
+        self.assertEqual(len(json.dumps(schema).encode()), 32768)
+        frozen = validate_tool_schema(schema)
+        self.assertEqual(frozen, schema)
+        schema['$comment'] += 'x'
+        with self.assertRaisesRegex(ValueError, '^PERSONAL_TOOL_DESCRIPTOR_INVALID$'):
+            validate_tool_schema(schema)
+        self.assertEqual(len(json.dumps(frozen).encode()), 32768)
+
     def test_invalid_or_oversized_declarations_do_not_enter_registry(self):
         original = {'type': 'object', 'properties': {'value': {'type': 'string'}}}
         for schema in ({'type': 'array'}, {'type': 'object', 'properties': {'fc': {}}},
                 {'type': 'object', 'required': True},
-                {**copy.deepcopy(original), '$comment': 'x' * 16001}):
+                {**copy.deepcopy(original), '$comment': 'x' * 32768},
+                {**copy.deepcopy(original), 'default': float('nan')}):
             with self.subTest(schema_keys=list(schema)), self.assertRaisesRegex(ValueError, '^PERSONAL_TOOL_DESCRIPTOR_INVALID$'):
                 validate_tool_schema(schema)

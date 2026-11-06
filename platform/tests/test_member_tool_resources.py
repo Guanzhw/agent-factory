@@ -220,6 +220,10 @@ class MemberMCPResources(unittest.TestCase):
     def test_real_discovery_configuration_native_invocation_and_credential_isolation(self):
         async def run():
             async with MCPProtocolServer() as server:
+                choices = [f'category-{i}' for i in range(257)]
+                schema = {'type': 'object', 'properties': {'value': {'type': 'string', 'enum': choices}},
+                    'required': ['value']}
+                server.tool_schemas['echo'] = schema
                 self.vault._policies['member-mcp'] = MCPPolicy()
                 saved = self.vault.create(owner='alice', provider_id='member-mcp', destination=server.url,
                     username='bearer', password=ALICE_TOKEN)
@@ -227,14 +231,23 @@ class MemberMCPResources(unittest.TestCase):
                     credentialRef=saved['credentialRef'], credentialRevision=saved['credentialRevision']))
                 self.assertEqual(server.calls, [])
                 echo = next(tool for tool in discovered['tools'] if tool['name'] == 'echo')
-                resource = self.service.configure_resource('alice', ConfigureResourceRequest(transport='mcp',
-                    toolName='member_echo', remoteToolName='echo', url=server.url, inputSchema=echo['inputSchema'],
-                    credentialRef=saved['credentialRef'], credentialRevision=saved['credentialRevision'], requestId='mcp-resource'))
-                call, context = self.native_call(resource, self.service.adapters[resource['adapterId']], values={'value': 'local'})
-                output = await call.function.entrypoint(run_context=context, fc=call, **call.arguments)
-                self.assertEqual(output['structuredContent'], {'owner': 'alice', 'value': 'local'})
-                repeated = await call.function.entrypoint(run_context=context, fc=call, **call.arguments)
-                self.assertEqual(output, repeated)
+                self.assertEqual(echo['inputSchema'], schema)
+                response = self.client.post('/api/factory/personal-tools/resources', headers=self.headers,
+                    json={'transport': 'mcp', 'toolName': 'member_echo', 'remoteToolName': 'echo',
+                        'url': server.url, 'inputSchema': echo['inputSchema'],
+                        'credentialRef': saved['credentialRef'], 'credentialRevision': saved['credentialRevision'],
+                        'requestId': 'mcp-resource'})
+                self.assertEqual(response.status_code, 201, response.text)
+                resource = response.json()
+                call, context = self.native_call(resource, self.service.adapters[resource['adapterId']], values={'value': choices[-1]})
+                self.assertEqual((await call.aexecute()).status, 'success')
+                output = call.result
+                self.assertEqual(output['structuredContent'], {'owner': 'alice', 'value': choices[-1]})
+                self.assertEqual((await call.aexecute()).status, 'success')
+                self.assertEqual(output, call.result)
+                invalid = FunctionCall(function=call.function, call_id='invalid-enum',
+                    arguments={'value': 'not-declared'})
+                self.assertEqual((await invalid.aexecute()).error, 'PERSONAL_TOOL_INPUT_INVALID')
                 self.assertEqual(server.calls, [('echo', 'alice')])
                 self.assertNotIn(ALICE_TOKEN, json.dumps(self.service.list('alice')))
                 self.assertEqual(self.service.list('bob'), [])
