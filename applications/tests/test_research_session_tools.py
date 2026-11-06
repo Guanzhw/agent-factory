@@ -37,6 +37,8 @@ class ResearchSessionConfigurationTests(unittest.TestCase):
         limits = ResearchSessionTools._environment(SimpleNamespace(plan={
             'budget': {'operationSeconds': 60, 'outputBytes': 65536}}))
         self.assertEqual(limits.timeout_seconds, 60)
+        self.assertEqual(ResearchSessionTools._environment(SimpleNamespace(plan={
+            'budget': {'outputBytes': 131072}})).output_bytes, 131072)
         self.assertEqual(EnvironmentLimits().timeout_seconds, 8)
         self.assertEqual(EnvironmentLimits(timeout_seconds=.15).timeout_seconds, .15)
         with self.assertRaises(ValueError):
@@ -234,10 +236,10 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.tools.bind(self.sessions, self.content)
         self.sequence = 0
 
-    def call(self, name, arguments, *, owner='alice', call_id=None, run_id=None):
+    def call(self, name, arguments, *, owner='alice', call_id=None, run_id=None, output_bytes=65536):
         self.sequence += 1
         ctx = RunContext(user_id=owner, session_id='task-' + owner, run_id=run_id or 'run-' + owner, session_state={})
-        binding = BindingContext(None, self.store, {'budget': {'operationSeconds': self.sessions.seconds, 'outputBytes': 65536}},
+        binding = BindingContext(None, self.store, {'budget': {'operationSeconds': self.sessions.seconds, 'outputBytes': output_bytes}},
             ctx, {})
         registration = next(item for item in self.tools.tool_registrations if item.tool_name == name)
         function = registration.factory(binding)
@@ -658,7 +660,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_output_limit_and_stale_native_identity_do_not_dispatch_replacement(self):
         call = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
-            'import sys;sys.stdout.write("x"*50000);sys.stdout.flush()']})
+            'import sys;sys.stdout.write("x"*70000);sys.stdout.flush()']})
         with self.assertRaises(StopAgentRun):
             await call.aexecute()
         self.assertEqual(self.store.events[-1]['data']['code'], 'PERSONAL_CLI_OUTPUT_LIMIT')
@@ -668,6 +670,35 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         other.function._run_context.user_id = 'alice'
         self.assertEqual((await other.aexecute()).status, 'failure')
         self.assertEqual(len(self.store.receipts), 1)
+
+    async def test_command_uses_declared_budget_for_combined_output_and_json_envelope(self):
+        for index, (text, count, budget) in enumerate((('x', 13000, 65536), ('x', 70000, 131072),
+                                                       ('\\n', 13000, 65536))):
+            with self.subTest(text=text, count=count, budget=budget):
+                command = [Path(sys.executable).name, '-c',
+                    f'import sys;sys.stdout.write({text!r}*{count});sys.stderr.write("diagnostic")']
+                result = await self.invoke('research_run', {'argv': command}, output_bytes=budget,
+                    call_id='within-budget-' + str(index))
+                self.assertEqual(result['stdout'], text * count)
+                self.assertEqual(result['stderr'], 'diagnostic')
+                self.assertLessEqual(len(json.dumps(result, ensure_ascii=False).encode()), budget)
+        escaped = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
+            'import sys;sys.stdout.write(chr(0)*12000)']})
+        with self.assertRaises(StopAgentRun):
+            await escaped.aexecute()
+        self.assertEqual(self.store.effects('task-alice')[-1]['status'], 'UNKNOWN')
+        self.assertEqual(self.store.events[-1]['data']['code'], 'RESEARCH_TOOL_OUTPUT_TOO_LARGE')
+        self.assertTrue(self.store.events[-1]['data']['stopped'])
+
+    async def test_stderr_and_stdout_share_one_finite_command_budget(self):
+        call = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
+            'import sys;sys.stdout.write("x"*33000);sys.stdout.flush();'
+            'sys.stderr.write("y"*33000);sys.stderr.flush()']})
+        with self.assertRaises(StopAgentRun):
+            await call.aexecute()
+        self.assertEqual(self.store.events[-1]['data']['code'], 'PERSONAL_CLI_OUTPUT_LIMIT')
+        self.assertTrue(self.store.events[-1]['data']['stopped'])
+        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'UNKNOWN')
 
     async def test_file_error_unknown_preserves_original_effect_and_blocks_next_tool(self):
         call = self.call('research_edit_file', {'path': 'created', 'old': '', 'new': 'data'})

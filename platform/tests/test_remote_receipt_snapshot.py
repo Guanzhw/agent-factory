@@ -11,8 +11,11 @@ import unittest
 from unittest.mock import AsyncMock, Mock, patch
 
 from fastapi import HTTPException
+from sqlalchemy import Column, JSON, MetaData, String, Table, create_engine
 
+from agent_factory.remote_bindings import RemoteBindingService
 from agent_factory.remote_handoff import PreparedHandoffService
+from agent_factory.store import digest
 
 
 class RemoteReceiptSnapshotTests(unittest.IsolatedAsyncioTestCase):
@@ -149,6 +152,156 @@ class RemoteReceiptSnapshotTests(unittest.IsolatedAsyncioTestCase):
         self.ledger.remote_statement.assert_not_called()
         self.assertTrue(all(call.args[0].startswith('SELECT ') for call in self.service.store.sql.call_args_list))
         self.assert_no_dispatch()
+
+    def original_cleanup(self):
+        # Keep the real origin mapping/configuration checks while making all
+        # execution-authorized reads fail as they do for a disabled receiver.
+        self.row.update(remote_owner='bob', origin_ref='original-origin', origin_owner='alice',
+                        origin_task='origin-task', request_id='original-request', manifest_hash='original-manifest',
+                        configuration_hash='original-configuration')
+        self.row['body']['manifest'] = {'plan': {}}
+        self.row['body']['remotePlan'] = {'id': self.task['plan_id'], 'syntheticFixture': True}
+        self.row['body']['usageGrant']['sha256'] = 'c' * 64
+        self.service.origins = {'original-origin': SimpleNamespace(
+            identity_map={'alice': 'bob'}, fingerprint='original-configuration')}
+        self.service.auth = SimpleNamespace(require_member=Mock(side_effect=HTTPException(403, 'disabled')))
+        self.service._check_row = PreparedHandoffService._check_row.__get__(self.service)
+        self.service.bridge.find_run.side_effect = HTTPException(403, 'disabled')
+        self.service.bridge.detail.side_effect = HTTPException(403, 'disabled')
+        self.service.bridge.find_original_run = AsyncMock(return_value={'run_id': 'original-run'})
+        self.child = {**self.task, 'id': 'original-child', 'plan_id': 'child-plan', 'run_id': 'child-run'}
+        self.service.store.task.side_effect = lambda identifier, owner: deepcopy(
+            {'original-task': self.task, 'original-child': self.child}[identifier]) if owner == 'bob' else None
+        self.service.store.lifecycle_observer = SimpleNamespace(_binding=Mock(side_effect=lambda task: {
+            'id': task['run_id'], 'status': self.phase, 'requirements': []}))
+        self.service.store.has_failures = Mock(return_value=False)
+        self.service.store.process_runtime = self.service.store.workflow = None
+        # Exercise the actual receipt projection and persisted proof read; a
+        # stubbed _public previously hid its repeated active-member check.
+        engine = create_engine('sqlite://')
+        self.addCleanup(engine.dispose)
+        bindings = object.__new__(RemoteBindingService)
+        bindings.store, bindings.auth = SimpleNamespace(engine=engine), self.service.auth
+        metadata = MetaData()
+        bindings.proofs = Table('proofs', metadata,
+            Column('receipt_id', String, primary_key=True), Column('receiver_owner', String),
+            Column('receiver_plan_id', String), Column('sha', String), Column('body', JSON))
+        metadata.create_all(engine)
+        proof = {'schema': 1, 'originRef': self.row['origin_ref'], 'receiptId': self.row['id'],
+            'originTaskId': self.row['origin_task'], 'originOwner': 'alice', 'receiverOwner': 'bob',
+            'receiverPlanId': self.task['plan_id'], 'manifestHash': self.row['manifest_hash'],
+            'sourceConfiguration': {'revision': '1', 'sha256': 'a' * 64},
+            'receiverConfiguration': {'revision': '1', 'sha256': 'b' * 64}, 'entries': []}
+        with engine.begin() as conn:
+            conn.execute(bindings.proofs.insert().values(receipt_id=self.row['id'], receiver_owner='bob',
+                receiver_plan_id=self.task['plan_id'], sha=digest(proof), body=proof))
+        self.service.store.remote_bindings = bindings
+        self.service._public = PreparedHandoffService._public.__get__(self.service)
+        from agent_factory.delegation import DelegationService
+        delegation = object.__new__(DelegationService)
+        delegation.store, delegation.auth = self.service.store, self.service.auth
+        delegation.bridge = self.service.bridge
+        delegation._descendants = Mock(return_value=[{'child_id': self.child['id'], 'owner_id': 'bob'}])
+        self.service.store.delegation = delegation
+
+    async def test_disabled_receiver_internal_settlement_uses_original_facts_without_member_http(self):
+        self.original_cleanup()
+        self.phase = 'completed'
+        recovered = await self.service._receipt('bob', 'original-receipt', reconcile=True, trusted_cleanup=True)
+        self.assertTrue(recovered['allStopped'])
+        self.assertEqual(recovered['usageStatement'], {'sequence': 2, 'allStopped': True})
+        self.assertEqual(self.ledger_state, 'CLOSED')
+        self.assertEqual(recovered['receiverBindingProof']['receiverOwner'], 'bob')
+        self.service.bridge.find_original_run.assert_awaited_once_with('original-task', 'bob')
+        self.assertEqual([call.args[0]['id'] for call in self.service.store.lifecycle_observer._binding.call_args_list],
+                         ['original-task', 'original-child', 'original-task'])
+        self.service.auth.require_member.assert_not_called()
+        self.service.bridge.find_run.assert_not_awaited()
+        self.service.bridge.detail.assert_not_awaited()
+        with self.assertRaises(HTTPException) as caught:
+            await self.service.receipt('bob', 'original-receipt')
+        self.assertEqual(caught.exception.status_code, 403)
+        with self.assertRaises(HTTPException) as caught:
+            await self.service.store.delegation.inspect_group('bob', 'original-task')
+        self.assertEqual(caught.exception.status_code, 403)
+        with self.assertRaises(HTTPException) as caught:
+            self.service.store.remote_bindings.inspect('original-receipt', 'bob')
+        self.assertEqual(caught.exception.status_code, 403)
+        with self.assertRaises(HTTPException) as caught:
+            self.service.store.remote_bindings._inspect('original-receipt', 'alice')
+        self.assertEqual(caught.exception.status_code, 404)
+        self.assert_no_dispatch()
+
+    async def test_original_proof_integrity_failure_cannot_close_receiver_grant(self):
+        self.original_cleanup()
+        self.phase = 'completed'
+        bindings = self.service.store.remote_bindings
+        with bindings.store.engine.begin() as conn:
+            conn.execute(bindings.proofs.update().values(sha='different-proof'))
+        with self.assertRaises(HTTPException) as caught:
+            await self.service._receipt('bob', 'original-receipt', reconcile=True, trusted_cleanup=True)
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertIn('REMOTE_BINDING_INTEGRITY', caught.exception.detail)
+        self.assertEqual(self.ledger_state, 'IMPORTED')
+        self.ledger.remote_statement.assert_not_called()
+        self.assert_no_dispatch()
+
+    async def test_missing_or_invalid_child_binding_holds_original_grant(self):
+        for missing in (True, False):
+            with self.subTest(missing=missing):
+                self.original_cleanup()
+                self.phase = 'completed'
+                def binding(task):
+                    if task['id'] == 'original-child':
+                        if missing:
+                            return None
+                        raise ValueError('Different child envelope')
+                    return {'id': task['run_id'], 'status': self.phase, 'requirements': []}
+                self.service.store.lifecycle_observer._binding.side_effect = binding
+                result = await self.service._receipt('bob', 'original-receipt', reconcile=True, trusted_cleanup=True)
+                self.assertFalse(result['allStopped'])
+                self.assertTrue(result['group']['unknown'])
+                self.assertEqual(self.ledger_state, 'IMPORTED')
+                self.service.bridge.detail.assert_not_awaited()
+                self.assert_no_dispatch()
+
+    async def test_original_stop_proof_failure_cannot_close_receiver_grant(self):
+        self.original_cleanup()
+        self.phase = 'completed'
+        self.service.store.lifecycle_observer._binding.side_effect = ValueError('Wrong native envelope')
+        with self.assertRaises(ValueError):
+            await self.service._receipt('bob', 'original-receipt', reconcile=True, trusted_cleanup=True)
+        self.assertEqual(self.ledger_state, 'IMPORTED')
+        self.ledger.remote_statement.assert_not_called()
+        self.assert_no_dispatch()
+
+    async def test_missing_original_stop_binding_cannot_close_receiver_grant(self):
+        self.original_cleanup()
+        self.phase = 'completed'
+        self.service.store.lifecycle_observer._binding.side_effect = None
+        self.service.store.lifecycle_observer._binding.return_value = None
+        with self.assertRaises(HTTPException) as caught:
+            await self.service._receipt('bob', 'original-receipt', reconcile=True, trusted_cleanup=True)
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(self.ledger_state, 'IMPORTED')
+        self.ledger.remote_statement.assert_not_called()
+        self.assert_no_dispatch()
+
+    async def test_lost_admission_ack_is_bound_before_original_stop_read(self):
+        self.original_cleanup()
+        self.phase = 'completed'
+        self.row['state'] = 'UNKNOWN'
+        self.task['run_id'] = None
+        def accept(task, run):
+            self.assertEqual((task, run), ('original-task', 'original-run'))
+            self.task['run_id'] = run
+        self.service.store.accept.side_effect = accept
+        recovered = await self.service._receipt('bob', 'original-receipt', reconcile=True, trusted_cleanup=True)
+        self.assertTrue(recovered['allStopped'])
+        self.service.store.accept.assert_called_once_with('original-task', 'original-run')
+        self.assertEqual(self.service.store.lifecycle_observer._binding.call_args.args[0]['run_id'], 'original-run')
+        self.service.bridge.submit.assert_not_awaited()
+        self.service.dispatch.assert_not_awaited()
 
 
 class OriginReceiptMonotonicityTests(unittest.TestCase):

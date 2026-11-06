@@ -187,7 +187,10 @@ class DelegatedOperationsPostgresTests(unittest.TestCase):
                             release.set()
                         with self.assertRaises(HTTPException):
                             created.result(10)
-                        cancelled.result(10)
+                        cancelled_record = cancelled.result(10)
+                        self.assertEqual(cancelled_record['observation']['state'],
+                            'CANCELLED' if creation_first else 'UNKNOWN')
+                        self.assertEqual(cancelled_record['closed'], creation_first)
                 links = self.store.sql('SELECT child_id FROM af_delegation_links WHERE parent_id=:id', id=parent['id'])
                 self.assertEqual(len(links), int(creation_first))
                 for link in links:

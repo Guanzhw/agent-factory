@@ -1,5 +1,6 @@
 """Impossible child previews deny locally; viable previews still recheck authority."""
 import asyncio
+from contextlib import nullcontext
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -25,6 +26,7 @@ class DelegationPreviewLimitsTests(unittest.TestCase):
         settings = SimpleNamespace(max_total_tasks=20, max_user_tasks=4)
         service = DelegationService(settings, store, Mock(), Mock())
         service._ancestry = Mock(return_value=('root', [task] * (depth - 1)))
+        service._descendants = Mock(return_value=[{'child_id': str(index)} for index in range(children)])
         remote_authority = Mock(return_value=('root', [plan]))
         service._mandate = Mock(side_effect=remote_authority)
         return service, remote_authority
@@ -100,6 +102,35 @@ class DelegationPreviewLimitsTests(unittest.TestCase):
         authority.side_effect = asyncio.CancelledError()
         with self.assertRaises(asyncio.CancelledError):
             service.delegation_scope('alice', 'root')
+
+    def test_narrow_intermediate_count_and_depth_deny_preview_and_creation(self):
+        for budget in ({'maxChildren': 1, 'maxDepth': 2}, {'maxChildren': 4, 'maxDepth': 1}):
+            with self.subTest(budget=budget):
+                service, _ = self.fixture()
+                root = {'id': 'root', 'owner_id': 'alice', 'plan_id': 'root-plan'}
+                parent = {'id': 'parent', 'owner_id': 'alice', 'plan_id': 'child-plan'}
+                root_plan = {'id': 'root-plan', 'tools': ['inspect'], 'capabilities': ['research:read'],
+                    'budget': {'toolCalls': 8, 'maxChildren': 4, 'maxDepth': 2}}
+                child_plan = {**root_plan, 'id': 'child-plan', 'budget': {**root_plan['budget'], **budget}}
+                service.store.task.side_effect = lambda key, owner: {'root': root, 'parent': parent}[key]
+                service.store.plan.side_effect = lambda key, owner: {'root-plan': root_plan, 'child-plan': child_plan}[key]
+                service._ancestry.return_value = ('root', [root])
+                service._mandate = Mock(return_value=('root', [child_plan, root_plan]))
+                service._root_lock = Mock(side_effect=lambda _: nullcontext(None))
+                links = [{'child_id': 'parent'}, {'child_id': 'grandchild'}]
+                service._descendants.side_effect = lambda key: links if key == 'root' else links[1:]
+                service.store.sql.side_effect = lambda query, **_: ([{'n': 0}] if 'af_delegation_tool_calls' in query
+                    else [] if 'SELECT * FROM af_delegation_links' in query
+                    else [{'n': 2}] if 'af_delegation_links' in query else [{'total': 3, 'owned': 3}])
+                preview = service.delegation_scope('alice', 'parent')
+                self.assertFalse(preview['allowed'])
+                self.assertEqual(preview['reason'], 'Shared delegation budget exhausted')
+                with self.assertRaises(HTTPException) as denied:
+                    asyncio.run(service.create('alice', 'parent', 'inspect another result', 'literature', 'original-child-request'))
+                self.assertEqual(denied.exception.status_code, 429)
+                self.assertEqual(denied.exception.detail, preview['reason'])
+                service.store.admit_plan.assert_not_called()
+                service.store.reserve_task.assert_not_called()
 
 
 if __name__ == '__main__':

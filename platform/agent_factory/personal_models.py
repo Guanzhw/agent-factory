@@ -115,7 +115,7 @@ class PersonalModels:
         self.auth.require_member(owner)
         with self.db.read() as conn:
             refs = conn.execute(select(self.models.c.reference).where(or_(self.models.c.owner_id == owner,
-                self.models.c.reference.in_(self.connections.sharing.visible_refs(conn, owner)))).limit(100)).scalars()
+                self.models.c.reference.in_(self.connections.sharing.visible_refs(conn, owner))))).scalars()
             return [self._public(conn, owner, ref) for ref in refs]
 
     def recover(self, owner, request_id):

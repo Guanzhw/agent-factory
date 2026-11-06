@@ -59,6 +59,15 @@ class NativeIngress:
         await self.app(scope, receive, send)
 
 
+async def http_error(request: Request, error: HTTPException):
+    detail = error.detail
+    if isinstance(detail, dict):
+        return JSONResponse(detail, status_code=error.status_code, headers=error.headers)
+    message = str(detail)
+    return JSONResponse({"message": message, "code": message.split(":", 1)[0] if ":" in message else "REQUEST_REJECTED"},
+                        status_code=error.status_code, headers=error.headers)
+
+
 def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                storage_governance_type=None, lifecycle_observer_type=None,
                model_dispatch_type=None, handoff_client_type=None, handoff_receiver_type=None,
@@ -98,8 +107,6 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
         review_mode="member-self-service", revision=settings.material_policy_revision,
         tool_contract=cast(ToolContract, settings.runtime_tool_contract)))
     store.material_governance = governance
-    store.register_execution_guard("material-governance",
-        lambda owner, plan, context, tool: governance.require_materials_current(plan), tool_independent=True)
     at('PREPARATION_APP_CONNECTIONS')
     from .local_credentials import local_credential_vault
     credential_vault = (settings.credential_vault_factory(store.engine) if settings.credential_vault_factory
@@ -156,8 +163,6 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     from .local_budget_scopes import LocalBudgetScopes
     store.local_budget_scopes = LocalBudgetScopes(store, getattr(store, 'usage_ledger', None))
     store.register_execution_guard('local-budget-scopes', store.local_budget_scopes.require_current)
-    from .owner_submission import OwnerSubmissions
-    store.owner_submissions = OwnerSubmissions(store)
     at('PREPARATION_APP_REMOTE_BINDINGS')
     remote_bindings = RemoteBindingService(store, auth, bindings, connections, settings.remote_binding_mappings)
     store.remote_bindings = remote_bindings
@@ -281,13 +286,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     base.include_router(resource_router(auth, resources, resource_maintenance))
     base.include_router(storage_router(auth, store.storage))
 
-    @base.exception_handler(HTTPException)
-    async def http_error(request: Request, error: HTTPException):
-        detail = error.detail
-        if isinstance(detail, dict):
-            return JSONResponse(detail, status_code=error.status_code)
-        message = str(detail)
-        return JSONResponse({"message": message, "code": message.split(":", 1)[0] if ":" in message else "REQUEST_REJECTED"}, status_code=error.status_code)
+    base.exception_handler(HTTPException)(http_error)
 
     @base.exception_handler(RequestValidationError)
     async def validation_error(request: Request, error: RequestValidationError):
@@ -403,8 +402,9 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
 
 def main():
     import uvicorn
+    from .shutdown import shutdown_guard
     settings = Settings.from_env()
-    uvicorn.run(create_app(settings), host=settings.host, port=settings.port, access_log=False)
+    uvicorn.run(create_app(settings, shutdown_guard=shutdown_guard), host=settings.host, port=settings.port, access_log=False)
 
 
 if __name__ == "__main__":

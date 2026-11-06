@@ -46,6 +46,7 @@ async function restore(overrides: Partial<ComponentProps<typeof ApplicationCompo
 }
 
 beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Unexpected HTTP request')));
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto);
   sessionStorage.clear(); localStorage.clear(); sessionStorage.setItem('factory-proposal-v1:alice', proposalId);
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
@@ -57,7 +58,6 @@ beforeEach(() => {
   vi.spyOn(api, 'recoverProposal').mockImplementation(async () => ({ proposal, plan }));
   vi.spyOn(api, 'planAuthorization').mockImplementation(async () => authorization);
   vi.spyOn(api, 'instantiate').mockRejectedValue(new Error('This flow must not start a task'));
-  vi.spyOn(api, 'requestPlanReview').mockRejectedValue(new Error('This flow must not request review'));
 });
 afterEach(async () => {
   await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals();
@@ -69,7 +69,7 @@ it('lets an ordinary member open scheduling with the exact authorized saved plan
   expect(button(scheduleLabel).disabled).toBe(false);
   await click(scheduleLabel);
   expect(onSchedule).toHaveBeenCalledExactlyOnceWith(plan);
-  expect(api.instantiate).not.toHaveBeenCalled(); expect(api.requestPlanReview).not.toHaveBeenCalled();
+  expect(api.instantiate).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
 });
 
 it('keeps scheduling locked until the server authorization is resolved', async () => {

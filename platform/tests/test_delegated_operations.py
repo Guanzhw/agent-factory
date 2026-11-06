@@ -102,6 +102,64 @@ class DelegatedOperationsTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result['state'], state)
                 self.assertIsNone(result['output'])
 
+    async def test_rejected_child_without_native_dispatch_preserves_cancel_and_failure(self):
+        self.child.update(admission='rejected', run_id=None, cancel_requested=True)
+        self.facts.update(nativeStatus=None, content=None)
+        for cancel_requested, child_cancelled, failed, stopped, state in (
+                (True, True, False, True, 'CANCELLED'),
+                (False, False, False, True, 'FAILED'),
+                (False, True, False, True, 'FAILED'),
+                (True, True, True, True, 'FAILED'),
+                (True, True, False, False, 'UNKNOWN')):
+            with self.subTest(cancel=cancel_requested, child_cancel=child_cancelled, failed=failed, stopped=stopped):
+                self.body['cancelRequested'] = cancel_requested
+                self.child['cancel_requested'] = child_cancelled
+                self.facts['failed'] = failed
+                self.group.update(allStopped=stopped, unknown=not stopped)
+                result = await self.adapter.lookup(self.context, self.body['id'])
+                self.assertEqual(result['state'], state)
+                self.assertEqual(result['allStopped'], stopped)
+                self.assertIsNone(result['output'])
+        self.delegation.create.assert_not_awaited()
+
+    async def test_cancellation_committed_while_subtree_read_waited_uses_original_fresh_records(self):
+        for stopped in (False, True):
+            with self.subTest(stopped=stopped):
+                pending = {**self.child, 'admission': 'pending', 'run_id': None, 'cancel_requested': False}
+                stored = {**deepcopy(self.body), 'cancelRequested': False}
+                self.store.workflow._load.side_effect = lambda *_: deepcopy(stored)
+                self.store.task.return_value = pending
+                self.store.task.reset_mock()
+                self.group.update(allStopped=stopped, unknown=not stopped)
+                self.facts.update(nativeStatus=None, content=None)
+
+                async def observed(*_):
+                    stored['cancelRequested'] = True
+                    self.store.task.return_value = {**pending, 'admission': 'rejected', 'cancel_requested': True}
+                    return self.group
+
+                self.observer.inspect_subtree.side_effect = observed
+                result = await self.adapter.lookup(self.context, self.body['id'])
+                self.assertEqual(result['state'], 'CANCELLED' if stopped else 'UNKNOWN')
+                self.assertEqual(result['allStopped'], stopped)
+                self.assertIsNone(result['output'])
+                self.assertEqual(self.store.task.call_count, 2 if stopped else 1)
+                self.assertTrue(all(call.args == ('child', 'alice') for call in self.store.task.call_args_list))
+        self.delegation.create.assert_not_awaited()
+
+    async def test_original_native_binding_committed_while_subtree_read_waited_is_returned(self):
+        self.store.task.return_value = {**self.child, 'admission': 'pending', 'run_id': None}
+
+        async def observed(*_):
+            self.store.task.return_value = {**self.child, 'admission': 'accepted'}
+            return self.group
+
+        self.observer.inspect_subtree.side_effect = observed
+        result = await self.adapter.lookup(self.context, self.body['id'])
+        self.assertEqual(result['state'], 'COMPLETED')
+        self.assertEqual(result['output']['runId'], 'child-run')
+        self.delegation.create.assert_not_awaited()
+
     async def test_cleanup_error_is_not_hidden_as_running(self):
         handle = {'adapterId': PIN['adapterId'], 'revision': '1', 'id': self.body['id']}
         self.body['handle'] = handle

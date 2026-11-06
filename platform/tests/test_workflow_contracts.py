@@ -67,17 +67,32 @@ class WorkflowContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, ERROR):
                 WorkflowContext('work','run',owner,'step','a'*64)
 
-    def test_output_is_bounded_inert_and_detached(self):
+    def test_output_accepts_bounded_ordinary_json_and_is_detached(self):
         value = observation()
+        value['output'] = {'endpoint': 'https://example.invalid/report', 'token': 'ordinary business data',
+            'command': 'reported text\nnext line', '报告 标题': '结果', 'data': 'x' * 4097,
+            'items': list(range(65)), 'integer': 2**60}
         copied = validate(value)
-        copied['output']['score'] = 9
-        self.assertEqual(value['output']['score'], .5)
-        for output in ({'endpoint':'https://example.invalid'}, {'api_key':'synthetic'},
-                       {'data':'x'*4097}, {'score':float('nan')}, {'items':list(range(65))}):
+        self.assertEqual(copied, value)
+        copied['output']['items'].append('detached')
+        self.assertEqual(len(value['output']['items']), 65)
+        for output in ({'score': float('nan')}, {'score': float('inf')}, {'data': 'x' * 16384},
+                       {1: 'non-string key'}, {'items': (1, 2)}):
             value = observation(); value['output'] = output
             with self.assertRaisesRegex(ValueError, ERROR):
                 validate(value)
         value = observation(); value['authorityGranted'] = True
+        with self.assertRaisesRegex(ValueError, ERROR):
+            validate(value)
+
+    def test_ordinary_output_retains_the_shared_json_depth_bound(self):
+        value = observation()
+        content = 'leaf'
+        for _ in range(64):
+            content = {'data': content}
+        value['output'] = content
+        self.assertEqual(validate(value), value)
+        value['output'] = {'data': content}
         with self.assertRaisesRegex(ValueError, ERROR):
             validate(value)
 
@@ -91,8 +106,13 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertEqual(checked, value)
         checked['output']['result']['values'].append('detached')
         self.assertEqual(len(value['output']['result']['values']), 100)
+        artifact = {'taskId': 'child', 'artifactId': 'artifact', 'sha256': 'a' * 64}
+        value['output']['artifacts'] = [artifact]
+        self.assertEqual(validate_runtime_observation(value, 'original-operation', adapter, revision), value)
         for patch in ({'host': 'not data'}, {'taskId': 'https://example.invalid'},
                       {'artifacts': [{'url': 'https://example.invalid'}]},
+                      {'artifacts': [{**artifact, 'taskId': 'other'}]},
+                      {'artifacts': [{**artifact, 'sha256': 'invalid'}]},
                       {'artifacts': ['x' * 4096] * 5}, {'result': 'x' * 1048575}):
             changed = deepcopy(value); changed['output'].update(patch)
             with self.subTest(patch=list(patch)), self.assertRaisesRegex(ValueError, ERROR):

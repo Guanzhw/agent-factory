@@ -100,37 +100,33 @@ def run(browser, args, mode):
         try:
             page.goto(origin + '/?tab=research&researchView=assistant')
             login('bob')
-            expect(page.get_by_role('button', name='创建我的研究助手', exact=True)).to_be_visible()
+            expect(page.get_by_role('heading', name='启用离线经验问答', exact=True)).to_be_visible()
             assert state['research_assistants'].me('bob')['assistant'] is None
-            page.get_by_role('button', name='创建我的研究助手', exact=True).click()
-            expect(page.get_by_role('button', name='准备新的QA配置', exact=True)).to_be_visible()
-            bob_id = state['research_assistants'].me('bob')['assistant']['id']
             model = post('/personal-models', {'requestId': str(uuid4()), 'provider': 'openai-compatible', 'baseURL': 'http://localhost:9/v1', 'model': 'synthetic-browser-qa'}, 201)
-            page.get_by_role('button', name='准备新的QA配置', exact=True).click()
-            page.get_by_label('QA配置名称', exact=True).fill('浏览器明确发布的问答配置')
+            page.get_by_role('button', name='重新读取模型', exact=True).click()
             page.get_by_role('combobox', name=re.compile('^个人模型连接')).select_option(model['connectionRef'])
-            page.get_by_role('button', name='保存私人QA草稿', exact=True).click()
-            expect(page.get_by_role('heading', name='私人QA草稿 · 尚未发布', exact=True)).to_be_visible()
-            assert not calls and not store.tasks('bob')
-            page.get_by_role('button', name='明确发布QA配置', exact=True).click()
-            expect(page.get_by_role('heading', name='QA配置已发布', exact=True)).to_be_visible()
-            setup_id = page.evaluate("new URL(location.href).searchParams.get('researchQASetup')")
-            published = context.request.get(origin + '/api/factory/research/setup/' + setup_id).json()
-            page.get_by_role('button', name='使用此版本设置操作额度', exact=True).click()
             page.get_by_label('最多回答问题数', exact=True).fill('2')
             page.get_by_label('总工具操作额度', exact=True).fill('8')
             page.get_by_label('每问工具操作上限', exact=True).fill('4')
             deadline = (datetime.now() + timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M')
             page.get_by_label('问答授权截止时间', exact=True).fill(deadline)
+            assert not calls and not store.tasks('bob')
+            page.get_by_role('button', name='按修订 0 启用离线问答', exact=True).click()
+            expect(page.get_by_text('配置修订：1', exact=True)).to_be_visible()
+            saved = state['research_assistants'].me('bob')['assistant']
+            bob_id = saved['id']
+            assert saved['qa']['associations'] == {'enabled': True, 'maxRecipients': 2}
+            assert not calls and not store.tasks('bob')
+            page.get_by_role('button', name='修改离线问答设置', exact=True).click()
             caps = {'rounds': 2, 'toolCalls': 8, 'tokenLimit': None, 'amountMicros': None, 'currency': None}
-            post('/research/assistants/me/configurations', {'requestId': str(uuid4()), 'expectedRevision': 0, 'applicationRef': published['applicationRef'], 'connectionRefs': published['connectionRefs'], 'budget': {'caps': caps, 'perQuestionCaps': {**caps, 'rounds': 1, 'toolCalls': 4}, 'deadline': time.time() + 300}})
-            page.get_by_role('button', name='按修订 0 确认问答配置', exact=True).click()
+            post('/research/assistants/me/configurations', {'requestId': str(uuid4()), 'expectedRevision': 1, 'applicationRef': saved['qa']['applicationRef'], 'connectionRefs': saved['qa']['connectionRefs'], 'budget': {'caps': caps, 'perQuestionCaps': {**caps, 'rounds': 1, 'toolCalls': 4}, 'deadline': time.time() + 300}})
+            page.get_by_role('button', name='按修订 1 启用离线问答', exact=True).click()
             expect(page.get_by_role('alert')).to_be_visible()
             expect(page.get_by_label('最多回答问题数', exact=True)).to_have_value('2')
             page.get_by_role('button', name='读取最新助手配置', exact=True).click()
-            page.get_by_role('button', name='按修订 1 确认问答配置', exact=True).click()
-            expect(page.get_by_text('配置修订：2', exact=True)).to_be_visible()
-            assert state['research_assistants'].me('bob')['assistant']['configurationRevision'] == 2
+            page.get_by_role('button', name='按修订 2 启用离线问答', exact=True).click()
+            expect(page.get_by_text('配置修订：3', exact=True)).to_be_visible()
+            assert state['research_assistants'].me('bob')['assistant']['configurationRevision'] == 3
             assert not calls and not store.tasks('bob')
             page.screenshot(path=str(output / 'assistant-configured.png'), full_page=True)
             for name in ('first', 'second', 'private-canary'):
@@ -180,7 +176,7 @@ def run(browser, args, mode):
             assert len(store.tasks('bob')) == 1 and store.tasks('alice') == []
             assert store.sql('SELECT * FROM af_delegation_links') == []
             assert not errors and not console_errors, (errors, console_errors)
-            return {'mode': mode, 'database': db.name, 'assistantId': bob_id, 'questionId': question_id, 'taskId': result['delivery']['taskId'], 'sourceIds': source_ids, 'configurationRevision': 2, 'modelCalls': len(calls), 'trainingDispatches': 0, 'childLinks': 0, 'pageErrors': errors, 'consoleErrors': console_errors, 'expectedConsole': expected_console, 'apiResponses': api, 'businessAPIsMocked': False, 'modelConfiguredVia': 'actual core HTTP fixture, not model configuration UI', 'evidenceCreatedVia': 'actual content service fixture, not research publication UI', 'identity': 'local synthetic HTTPS OIDC', 'realProviderOrGPU': False, 'lateResponseOwnerIsolation': 'deterministic UI tests; not timing-injected into browser'}
+            return {'mode': mode, 'database': db.name, 'assistantId': bob_id, 'questionId': question_id, 'taskId': result['delivery']['taskId'], 'sourceIds': source_ids, 'configurationRevision': 3, 'modelCalls': len(calls), 'trainingDispatches': 0, 'childLinks': 0, 'pageErrors': errors, 'consoleErrors': console_errors, 'expectedConsole': expected_console, 'apiResponses': api, 'businessAPIsMocked': False, 'modelConfiguredVia': 'actual core HTTP fixture, not model configuration UI', 'evidenceCreatedVia': 'actual content service fixture, not research publication UI', 'identity': 'local synthetic HTTPS OIDC', 'realProviderOrGPU': False, 'lateResponseOwnerIsolation': 'deterministic UI tests; not timing-injected into browser'}
         except BaseException:
             page.screenshot(path=str(output / 'first-failure.png'), full_page=True)
             (output / 'failure-page.txt').write_text(page.locator('body').inner_text())

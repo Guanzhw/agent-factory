@@ -45,6 +45,14 @@ class CredentialVaultTests(unittest.TestCase):
         return dict(owner="alice", provider_id=PROVIDER_ID, destination=DESTINATION,
                     reference=created["credentialRef"], revision=created["credentialRevision"])
 
+    def test_flat_credential_list_returns_every_owned_reference_without_secrets(self):
+        created = [self.create() for _ in range(101)]
+        listed = self.vault.list(owner='alice')
+        self.assertEqual({item['credentialRef'] for item in listed},
+            {item['credentialRef'] for item in created})
+        self.assertEqual(self.vault.list(owner='bob'), [])
+        self.assertNotIn(PASSWORD, json.dumps(listed))
+
     def test_disabled_invalid_key_and_redacted_repr(self):
         for key in (None, b"", b"s" * 31, "s" * 32):
             with self.assertRaisesRegex(CredentialVaultError, "^CREDENTIAL_UNAVAILABLE$"):

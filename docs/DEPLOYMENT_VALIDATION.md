@@ -111,9 +111,9 @@ Policy validation reuses `PlanPolicyConfig` and `GovernanceConfig`. Both
 Members publish and execute directly. Retired review modes and the removed
 `planReviewTtlSeconds` field fail validation. The revision fields identify the
 current configuration; historical approval records remain readable by their
-owners and do not gate startup or execution. Worker concurrency retains the
-implemented 1–4 bound. Declaration validity does not establish host capacity or
-production acceptance.
+owners and do not gate startup or execution. Worker concurrency accepts a positive
+integer selected by the operator, with the existing default of two. Declaration
+validity does not establish host capacity or production acceptance.
 
 Both compute backends require `kind`, `configurationRevision`, `owners`, `pool`
 and `limits`. `pool` requires `poolId`, `cpu`, `memoryMb`, `diskMb`, `maxLeases`,

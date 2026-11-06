@@ -136,8 +136,8 @@ class Settings:
             raise ValueError("Production requires an explicitly configured JWT key of at least 32 bytes")
         if self.material_review_mode != "member-self-service":
             raise ValueError("Material review modes were removed; members publish their own materials")
-        if not 1 <= self.max_workers <= 4:
-            raise ValueError("Worker concurrency must be 1–4 until a capacity benchmark is approved")
+        if type(self.max_workers) is not int or self.max_workers < 1:
+            raise ValueError("Worker concurrency must be a positive integer")
         if self.temporary_policy != "member-self-service":
             raise ValueError("Plan approval modes were removed; members execute their own plans")
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", self.policy_revision):

@@ -359,6 +359,9 @@ class RemoteBindingService:
         observable when an operator withdraws a map or user connection.
         """
         self.auth.require_member(remote_owner)
+        return self._inspect(receipt_id, remote_owner)
+
+    def _inspect(self, receipt_id, remote_owner):
         with self._read() as conn:
             row = conn.execute(select(self.proofs).where(self.proofs.c.receipt_id == receipt_id,
                 self.proofs.c.receiver_owner == remote_owner)).mappings().first()

@@ -235,7 +235,7 @@ class PersonalTools:
                 'PERSONAL_TOOL_ADAPTER_CHANGED': 'adapter_changed'}.get(str(code), 'unavailable')
         descriptor = body['descriptor']
         actions = ['inspect'] + ([] if status == 'revoked' or row['owner_id'] != owner else ['revoke', 'sharing'])
-        if status == 'configured' and self.connections._can_bind(owner):
+        if status == 'configured':
             actions.append('bind')
         public_fields = ['registrationRef', 'ownerId', 'adapterId', 'revision', 'createdAt']
         if body.get('operationRef'): public_fields.append('operationRef')
@@ -267,7 +267,7 @@ class PersonalTools:
         with self.connections._read() as conn:
             refs = conn.execute(select(self.tools.c.registration_ref).where(or_(self.tools.c.owner_id == owner,
                 self.tools.c.registration_ref.in_(self.connections.sharing.visible_refs(conn, owner))))
-                .order_by(self.tools.c.registration_ref).limit(100)).scalars()
+                .order_by(self.tools.c.registration_ref)).scalars()
             return [self._projection(conn, owner, ref) for ref in refs]
 
     def inspect(self, owner, reference):

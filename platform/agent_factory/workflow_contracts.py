@@ -81,30 +81,6 @@ def _encoded(value, maximum):
     return raw
 
 
-def _inert(value, depth=0):
-    _require(depth <= 6)
-    if type(value) is dict:
-        _require(len(value) <= 64)
-        for key, item in value.items():
-            _require(_identifier(key))
-            normalized = re.sub('[^a-z]', '', key.lower())
-            _require(normalized not in {'url', 'endpoint', 'baseurl', 'host', 'port', 'headers',
-                'authorization', 'credential', 'credentials', 'password', 'secret', 'token', 'apikey',
-                'command', 'cmd', 'exec', 'executable', 'shell', 'python', 'module', 'callable', 'factory'})
-            _inert(item, depth + 1)
-    elif type(value) is list:
-        _require(len(value) <= 64)
-        for item in value:
-            _inert(item, depth + 1)
-    elif type(value) is str:
-        _require(len(value) <= 4096 and all(char.isprintable() for char in value)
-                 and re.search(r'(?i)(?:https?|wss?|file|ssh)://', value) is None)
-    elif type(value) in {int, float}:
-        _require(math.isfinite(value) and abs(value) <= 2**53 - 1)
-    else:
-        _require(value is None or type(value) is bool)
-
-
 def delegated_result_bytes(value):
     """Lossless JSON data, sized separately from the control envelope."""
     def data(item, depth=0):
@@ -167,10 +143,17 @@ def validate_runtime_observation(value, operation_id, adapter_id, revision, prev
             output = value['output']
             if (adapter_id, revision) == DELEGATED_OPERATION_ADAPTER:
                 _keys(output, 'taskId runId result artifacts')
+                _require(_identifier(output['taskId']) and _identifier(output['runId'])
+                         and type(output['artifacts']) is list)
+                for artifact in output['artifacts']:
+                    _keys(artifact, 'taskId artifactId sha256')
+                    _require(artifact['taskId'] == output['taskId'] and _identifier(artifact['artifactId'])
+                             and type(artifact['sha256']) is str
+                             and re.fullmatch('[a-f0-9]{64}', artifact['sha256']) is not None)
                 _require(delegated_result_bytes(output['result']) <= DELEGATED_RESULT_MAX_BYTES)
                 output = {key: item for key, item in output.items() if key != 'result'}
                 envelope = {**value, 'output': output}
-            _inert(output); _encoded(output, 16384)
+            delegated_result_bytes(output); _encoded(output, 16384)
         else:
             _require(value['output'] is None)
             if state == 'FAILED':

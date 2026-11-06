@@ -73,7 +73,6 @@ class Store:
         self.remote_bindings: Any = None
         self.personal_models: Any = None
         self.personal_tools: Any = None
-        self.owner_submissions: Any = None
         self.usage_ledger: Any = None
         self.local_budget_scopes: Any = None
         self.assistant_events: Any = None
@@ -509,14 +508,13 @@ class Store:
         else:
             self.tool_independent_execution_guards.pop(name, None)
 
-    def require_plan_execution(self, owner, plan, *, run_context=None, scientific_child_id=None, tool_name=None):
+    def require_plan_execution(self, owner, plan, *, run_context=None, tool_name=None):
         if run_context is not None:
             task = self.task(run_context.session_id, owner)
             if task['body'].get('stoppedStatus') is not None:
                 raise HTTPException(409, 'NATIVE_EXECUTION_STOPPED: original run cannot start new work')
         if self.plan_policy is not None:
-            self.plan_policy.require_execution(owner, plan, run_context=run_context,
-                **({'scientific_child_id': scientific_child_id} if scientific_child_id is not None else {}))
+            self.plan_policy.require_execution(owner, plan, run_context=run_context)
         elif self.auth is not None:
             self.auth.require_member(owner)
             self.plan(plan["id"], owner)

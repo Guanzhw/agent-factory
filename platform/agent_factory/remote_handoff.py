@@ -603,7 +603,7 @@ class PreparedHandoffService:
                 "manifestHash": row["manifest_hash"], "remotePlanId": row["body"]["remotePlan"]["id"],
                 "remoteTaskId": task_id, "remoteRunId": task.get("run_id") if task else None,
                 "state": row["state"], "native": native,
-                "receiverBindingProof": self.store.remote_bindings.inspect(row["id"], row["remote_owner"]),
+                "receiverBindingProof": self.store.remote_bindings._inspect(row["id"], row["remote_owner"]),
                 "syntheticFixture": row["body"]["remotePlan"]["syntheticFixture"],
                 **({"receiverPlanSha256": digest(row["body"]["remotePlan"]),
                     "receiverUsageCommitment": copy.deepcopy(row["body"]["receiverUsageCommitment"])}
@@ -658,7 +658,8 @@ class PreparedHandoffService:
             task = self.store.task(task["id"], remote_owner)
         native = None
         if row["state"] in {"UNKNOWN", "ACCEPTED"}:
-            native = await self.bridge.find_run(task["id"], remote_owner)
+            lookup = self.bridge.find_original_run if trusted_cleanup else self.bridge.find_run
+            native = await lookup(task["id"], remote_owner)
             if native:
                 if not task.get("run_id") and reconcile:
                     self.store.accept(task["id"], native["run_id"])
@@ -667,14 +668,24 @@ class PreparedHandoffService:
                 # Recovery preserves terminal state and rejected-admission cause.
                 if reconcile:
                     self.store.sql("UPDATE af_remote_handoffs SET state='ACCEPTED' WHERE id=:id AND state IN ('UNKNOWN','ACCEPTED')", id=identifier)
-                try:
-                    native = await self.bridge.detail(native["run_id"], task["id"], remote_owner)
-                except HTTPException as error:
-                    if error.status_code not in {404, 503}:
-                        raise
-                    # Queue commit can precede the session row. A failed detail
-                    # read never erases a positively identified admission ticket.
-                    native = {**native, "detailUnavailable": True}
+                if trusted_cleanup:
+                    # Reuse the observer's strict original ticket/envelope read.
+                    # Revocation must not send internal cleanup through a member
+                    # HTTP reader or grant a replacement submission authority.
+                    task = self.store.task(task["id"], remote_owner)
+                    ticket = self.store.lifecycle_observer._binding(task)
+                    if ticket is None:
+                        raise HTTPException(503, "Original receiver native binding is unavailable")
+                    native = {**native, "queue": ticket, "requirements": ticket["requirements"]}
+                else:
+                    try:
+                        native = await self.bridge.detail(native["run_id"], task["id"], remote_owner)
+                    except HTTPException as error:
+                        if error.status_code not in {404, 503}:
+                            raise
+                        # Queue commit can precede the session row. A failed detail
+                        # read never erases a positively identified admission ticket.
+                        native = {**native, "detailUnavailable": True}
             # No matching ticket is not proof that admission/effects did not run.
         # A first recovered acknowledgement can change the persisted binding;
         # project its current admission/cancellation facts in this same read.

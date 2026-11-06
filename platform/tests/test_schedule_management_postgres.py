@@ -97,6 +97,8 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
             self.assertEqual(stale_pending['status'], 'pending')
             by_command = self.request('GET', '/schedule-management/commands/' + body['requestId'])
             self.assertFalse(by_command['enabled'])
+            self.assertEqual(by_command['commandId'], body['requestId'])
+            self.assertEqual(by_command['commandStatus'], 'complete')
             self.request('GET', '/schedule-management/commands/' + body['requestId'], owner='bob', status=404)
             listed = self.request('GET', '/schedule-management')
             self.assertEqual(len(listed['items']), 1)
@@ -263,3 +265,70 @@ class ScheduleManagementPostgresTests(unittest.TestCase):
         self.assertEqual(self.store.sql('SELECT count(*) AS count FROM af_tasks')[0]['count'], 1)
         pending = self.store.sql("SELECT status FROM af_schedule_editor_commands WHERE schedule_id=:id ORDER BY request_id", id=schedule['id'])
         self.assertIn('pending', [row['status'] for row in pending])
+
+    def test_prewrite_rejection_has_no_command_but_native_boundary_failure_remains_unknown(self):
+        application = self.plan['applicationRef']
+        self.state['applications'].withdraw('manager', application['id'], application['version'],
+            'withdraw-before-schedule', 'Owned test withdrawal')
+        body = self.command(planId=self.plan['id'], name='rejected-' + uuid4().hex,
+            cron='0 0 1 1 *', timezone='Etc/UTC')
+        response = self.client.post('/api/factory/schedule-management', json=body,
+            headers={'Authorization': 'Bearer ' + self.tokens['manager']})
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.headers.get('X-Factory-Command-Rejected'), 'true', response.text)
+        self.request('GET', '/schedule-management/commands/' + body['requestId'], status=404)
+        self.assertFalse(self.store.sql('SELECT * FROM af_schedule_editor_commands WHERE request_id=:request',
+            request=body['requestId']))
+        self.plan = self.post('/plans', {'topic': 'Another scheduled fixture',
+            'application': 'fixture-text', 'mode': 'literature', 'requestId': str(uuid4())}, status=201)
+        body = {**body, 'planId': self.plan['id'], 'requestId': str(uuid4())}
+        with patch.object(self.service.db, 'create_schedule', side_effect=HTTPException(409, 'INACTIVE_APPLICATION')):
+            response = self.client.post('/api/factory/schedule-management', json=body,
+                headers={'Authorization': 'Bearer ' + self.tokens['manager']})
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertNotIn('X-Factory-Command-Rejected', response.headers)
+        self.assertEqual(response.json(), {'message': 'SCHEDULE_EDITOR_UNKNOWN', 'code': 'REQUEST_REJECTED'})
+        self.request('GET', '/schedule-management/commands/' + body['requestId'], status=409)
+        self.assertEqual(self.store.sql('SELECT status FROM af_schedule_editor_commands WHERE request_id=:request',
+            request=body['requestId'])[0]['status'], 'pending')
+
+    def test_completed_edit_and_enable_recover_after_later_changes(self):
+        schedule, _ = self.create()
+        path = '/schedule-management/' + schedule['id']
+        edit = self.command(cron='0 2 1 1 *', timezone='Etc/UTC',
+            expectedDefinitionFingerprint=schedule['definitionFingerprint'])
+        changed = self.request('PATCH', path, edit)
+        conflict = self.client.patch('/api/factory' + path, json={**edit, 'cron': '0 3 1 1 *'},
+            headers={'Authorization': 'Bearer ' + self.tokens['manager']})
+        self.assertEqual(conflict.status_code, 409)
+        self.assertNotIn('X-Factory-Command-Rejected', conflict.headers)
+        enable = self.command(enabled=True, expectedDefinitionFingerprint=changed['definitionFingerprint'])
+        enabled = self.post(path + '/enabled', enable)
+        paused = self.enabled(enabled, False)
+        for command in (edit, enable):
+            receipt = self.request('GET', '/schedule-management/commands/' + command['requestId'])
+            self.assertEqual(receipt['commandId'], command['requestId'])
+            self.assertEqual(receipt['commandStatus'], 'complete')
+            self.assertEqual(receipt['id'], schedule['id'])
+            self.assertEqual(receipt['lastCommandId'], paused['lastCommandId'])
+            self.assertFalse(receipt['enabled'])
+            self.request('GET', '/schedule-management/commands/' + command['requestId'], owner='bob', status=404)
+
+    def test_completed_command_receipt_survives_a_later_unknown_editor_command(self):
+        schedule, _ = self.create()
+        path = '/schedule-management/' + schedule['id']
+        a = self.command(cron='0 2 1 1 *', timezone='Etc/UTC',
+            expectedDefinitionFingerprint=schedule['definitionFingerprint'])
+        changed = self.request('PATCH', path, a)
+        b = self.command(cron='0 3 1 1 *', timezone='Etc/UTC',
+            expectedDefinitionFingerprint=changed['definitionFingerprint'])
+        with patch.object(self.service.manager, 'update', side_effect=TimeoutError('Unknown B write')):
+            self.request('PATCH', path, b, status=409)
+        receipt = self.request('GET', '/schedule-management/commands/' + a['requestId'])
+        self.assertEqual(receipt, {'ownerId': 'manager', 'scheduleId': schedule['id'],
+            'commandId': a['requestId'], 'commandStatus': 'complete', 'schedule': None})
+        self.request('GET', '/schedule-management/commands/' + b['requestId'], status=409)
+        self.request('GET', path, status=409)
+        states = self.store.sql('SELECT request_id,status FROM af_schedule_editor_commands WHERE schedule_id=:id',
+            id=schedule['id'])
+        self.assertEqual({row['request_id']: row['status'] for row in states}[b['requestId']], 'pending')

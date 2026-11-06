@@ -119,7 +119,14 @@ class ScheduleManagement:
         command = rows[0]
         with self.service._lock(command["schedule_id"]):
             self._recover(owner, command)
-        return self._project(owner, command["schedule_id"])
+        receipt = {"ownerId": owner, "scheduleId": command["schedule_id"],
+                   "commandId": request_id, "commandStatus": "complete"}
+        try:
+            return {**self._project(owner, command["schedule_id"]), **receipt}
+        except HTTPException as error:
+            if error.status_code not in {404, 409}:
+                raise
+            return {**receipt, "schedule": None}
 
     def inspect(self, owner, identifier):
         self.auth.require_member(owner)
@@ -152,66 +159,72 @@ class ScheduleManagement:
         request = body["requestId"]
         fingerprint = digest({"kind": kind, "scheduleId": identifier, "body": body})
         identifier = identifier or str(uuid5(NAMESPACE_URL, canonical({"owner": owner, "request": request, "scope": "schedule-editor-v1"})))
-        with self.service._lock(identifier):
-            old = self.store.sql("SELECT * FROM af_schedule_editor_commands WHERE owner_id=:owner AND request_id=:request",
-                                 owner=owner, request=request)
-            if old:
-                _require(old[0]["fingerprint"] == fingerprint, 409, "IDEMPOTENCY_CONFLICT")
-                self._recover(owner, old[0])
-                return self._project(owner, identifier)
-            _require(not self._pending(owner, identifier), 409, "SCHEDULE_EDITOR_UNKNOWN")
-            if kind == "create":
-                preview = preview_schedule(body["cron"], body["timezone"])
-                plan = self.service._plan(body["planId"], owner)
-                _require(not self.service.db.get_schedule_by_name(body["name"].strip(), user_id=owner), 409,
-                         "SCHEDULE_NAME_EXISTS")
-                target = Schedule(id=identifier, name=body["name"].strip(), cron_expr=preview["cron"],
-                    timezone=body["timezone"], endpoint=ENDPOINT, enabled=False, user_id=owner,
-                    payload={"planId": plan["id"], "planHash": digest(plan)}, max_retries=0, timeout_seconds=30,
-                    next_run_at=preview["nextRuns"][0]["epoch"], managed_by=MANAGED_BY,
-                    target_type="agent", target_id=EXECUTOR_ID)
-                revision = 1
-            else:
-                current, binding = self.service._bound(identifier, owner)
-                _require(self._version(current) == body["expectedDefinitionFingerprint"], 409, "SCHEDULE_EDITOR_STALE")
-                plan = self.store.plan(binding["plan_id"], owner)
-                target = Schedule.from_dict(current.to_dict())
-                if kind == "update":
-                    self.service._plan(plan["id"], owner)
-                    preview = preview_schedule(body["cron"], body["timezone"])
-                    target.cron_expr, target.timezone = preview["cron"], body["timezone"]
-                    target.next_run_at = preview["nextRuns"][0]["epoch"]
-                else:
-                    _require(type(body["enabled"]) is bool, 422)
-                    if body["enabled"]:
-                        self.service._plan(plan["id"], owner)
-                    target.enabled = body["enabled"]
-                revision = self._editor(identifier)["revision"] + 1
-            intent = {"kind": kind, "target": target.to_dict(), "planId": plan["id"],
-                      "planHash": digest(plan), "revision": revision, "createdAt": now()}
-            self.store.sql("""INSERT INTO af_schedule_editor_commands VALUES
-                (:owner,:request,:id,:fp,:intent,'pending')""", owner=owner, request=request,
-                id=identifier, fp=fingerprint, intent=canonical(intent))
-            # No automatic retry after this durable intent. A lost native ACK is reconciled by exact ID.
-            self.service._require_write(owner)
-            if kind != "enabled" or target.enabled:
-                self.service._plan(plan["id"], owner)
-            try:
+        prewrite = False
+        try:
+            with self.service._lock(identifier):
+                old = self.store.sql("SELECT * FROM af_schedule_editor_commands WHERE owner_id=:owner AND request_id=:request",
+                                     owner=owner, request=request)
+                if old:
+                    _require(old[0]["fingerprint"] == fingerprint, 409, "IDEMPOTENCY_CONFLICT")
+                    self._recover(owner, old[0])
+                    return self._project(owner, identifier)
+                _require(not self._pending(owner, identifier), 409, "SCHEDULE_EDITOR_UNKNOWN")
+                # Only pre-intent validation proves this request was rejected.
+                prewrite = True
                 if kind == "create":
-                    self.service.db.create_schedule(target.to_dict())
-                elif kind == "update":
-                    self.service.manager.update(identifier, user_id=owner, cron_expr=target.cron_expr,
-                        timezone=target.timezone, next_run_at=target.next_run_at)
+                    preview = preview_schedule(body["cron"], body["timezone"])
+                    plan = self.service._plan(body["planId"], owner)
+                    _require(not self.service.db.get_schedule_by_name(body["name"].strip(), user_id=owner), 409,
+                             "SCHEDULE_NAME_EXISTS")
+                    target = Schedule(id=identifier, name=body["name"].strip(), cron_expr=preview["cron"],
+                        timezone=body["timezone"], endpoint=ENDPOINT, enabled=False, user_id=owner,
+                        payload={"planId": plan["id"], "planHash": digest(plan)}, max_retries=0, timeout_seconds=30,
+                        next_run_at=preview["nextRuns"][0]["epoch"], managed_by=MANAGED_BY,
+                        target_type="agent", target_id=EXECUTOR_ID)
+                    revision = 1
                 else:
-                    (self.service.manager.enable if target.enabled else self.service.manager.disable)(identifier, user_id=owner)
-            except Exception:
-                # A committed native write may have lost its response. Never repeat it here.
-                raise HTTPException(409, "SCHEDULE_EDITOR_UNKNOWN") from None
-            command = self.store.sql("SELECT * FROM af_schedule_editor_commands WHERE owner_id=:owner AND request_id=:request",
-                                     owner=owner, request=request)[0]
-            self._recover(owner, command)
-            self.store.audit(owner, "schedule.editor." + kind, identifier, {"requestId": request})
-            return self._project(owner, identifier)
+                    current, binding = self.service._bound(identifier, owner)
+                    _require(self._version(current) == body["expectedDefinitionFingerprint"], 409, "SCHEDULE_EDITOR_STALE")
+                    plan = self.store.plan(binding["plan_id"], owner)
+                    target = Schedule.from_dict(current.to_dict())
+                    if kind == "update":
+                        self.service._plan(plan["id"], owner)
+                        preview = preview_schedule(body["cron"], body["timezone"])
+                        target.cron_expr, target.timezone = preview["cron"], body["timezone"]
+                        target.next_run_at = preview["nextRuns"][0]["epoch"]
+                    else:
+                        _require(type(body["enabled"]) is bool, 422)
+                        if body["enabled"]:
+                            self.service._plan(plan["id"], owner)
+                        target.enabled = body["enabled"]
+                    revision = self._editor(identifier)["revision"] + 1
+                intent = {"kind": kind, "target": target.to_dict(), "planId": plan["id"],
+                          "planHash": digest(plan), "revision": revision, "createdAt": now()}
+                prewrite = False
+                self.store.sql("""INSERT INTO af_schedule_editor_commands VALUES
+                    (:owner,:request,:id,:fp,:intent,'pending')""", owner=owner, request=request,
+                    id=identifier, fp=fingerprint, intent=canonical(intent))
+                # No automatic retry after this durable intent. A lost native ACK is reconciled by exact ID.
+                try:
+                    if kind == "create":
+                        self.service.db.create_schedule(target.to_dict())
+                    elif kind == "update":
+                        self.service.manager.update(identifier, user_id=owner, cron_expr=target.cron_expr,
+                            timezone=target.timezone, next_run_at=target.next_run_at)
+                    else:
+                        (self.service.manager.enable if target.enabled else self.service.manager.disable)(identifier, user_id=owner)
+                except Exception:
+                    # A committed native write may have lost its response. Never repeat it here.
+                    raise HTTPException(409, "SCHEDULE_EDITOR_UNKNOWN") from None
+                command = self.store.sql("SELECT * FROM af_schedule_editor_commands WHERE owner_id=:owner AND request_id=:request",
+                                         owner=owner, request=request)[0]
+                self._recover(owner, command)
+                self.store.audit(owner, "schedule.editor." + kind, identifier, {"requestId": request})
+                return self._project(owner, identifier)
+        except HTTPException as error:
+            if prewrite and error.status_code < 500:
+                error.headers = {**(error.headers or {}), "X-Factory-Command-Rejected": "true"}
+            raise
 
     def occurrences(self, owner, identifier, after=None):
         self.auth.require_member(owner)

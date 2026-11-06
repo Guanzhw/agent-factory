@@ -39,7 +39,7 @@ class SchedulingService:
         self.lock_engine = create_engine(store.engine.url, pool_size=1, max_overflow=0, pool_timeout=.01)
         self.poller = SchedulePoller(native_db, self,
             poll_interval=getattr(settings, "schedule_poll_seconds", 15),
-            max_concurrent=min(settings.max_workers, 4), stop_timeout=2)
+            max_concurrent=settings.max_workers, stop_timeout=2)
 
     def initialize(self) -> None:
         self.store.sql("""CREATE TABLE IF NOT EXISTS af_schedule_bindings (

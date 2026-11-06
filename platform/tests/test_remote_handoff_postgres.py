@@ -1326,6 +1326,38 @@ class RemoteHandoffPostgresTests(unittest.TestCase):
             self.call(self.origin["lifecycle_observer"].start)
             self.call_remote(self.remote["lifecycle_observer"].start)
 
+    def test_disabled_receiver_internal_observer_closes_original_imported_grant(self):
+        row = self.reserve()
+        self.call(self.handoff.prepare, "alice", row["task_id"])
+        receipt = self.call(self.handoff.dispatch, "alice", row["task_id"])
+        self.wait_native(receipt, {"paused"})
+        self.remote["auth"].directory.set_disabled("bob", True)
+        try:
+            # Native/member HTTP stays revoked; internal observation must use
+            # the exact original ticket and envelope rather than issue a token.
+            with self.assertRaises(HTTPException) as denied:
+                self.call_remote(self.receiver.receipt, "bob", receipt["id"])
+            self.assertEqual(denied.exception.status_code, 403)
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                remote = self.remote["store"].task(receipt["remoteTaskId"], "bob")
+                grants = self.remote["store"].sql("SELECT state,statement FROM af_usage_remote_grants WHERE id=:id",
+                    id=receipt["id"])
+                if remote["terminal"] and grants[0]["state"] == "CLOSED":
+                    break
+                time.sleep(.03)
+            self.assertTrue(remote["terminal"], remote)
+            self.assertTrue(remote["cancel_requested"], remote)
+            self.assertEqual(grants[0]["state"], "CLOSED")
+            self.assertTrue(grants[0]["statement"]["allStopped"])
+            original = self.call_remote(lambda: self.receiver._receipt("bob", receipt["id"],
+                reconcile=False, trusted_cleanup=True))
+            self.assertTrue(original["allStopped"], original)
+            self.assertEqual(remote["run_id"], receipt["remoteRunId"])
+            self.assertEqual(self.ticket_count(self.remote, receipt["remoteTaskId"]), 1)
+        finally:
+            self.remote["auth"].directory.set_disabled("bob", False)
+
     def test_disabled_origin_owner_still_settles_original_receiver_stop(self):
         row = self.reserve()
         self.call(self.handoff.prepare, "alice", row["task_id"])

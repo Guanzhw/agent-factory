@@ -31,6 +31,7 @@ async function click(text: string) { expect(button(text)).toBeDefined(); await a
 async function settle(check: () => void) { await vi.waitFor(async () => { await act(async () => { await new Promise(resolve => setTimeout(resolve, 0)); }); check(); }); }
 async function mount(page: 'applications' | 'materials' | 'history', user = member) { vi.mocked(api.session).mockResolvedValue(user); await act(async () => root.render(createElement(Harness, { page, user }))); }
 beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Unexpected HTTP request')));
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true); vi.stubGlobal('crypto', webcrypto); sessionStorage.clear(); notice.mockReset();
   listedMaterials = [material];
   host = document.createElement('div'); document.body.append(host); root = createRoot(host);
@@ -40,15 +41,13 @@ beforeEach(() => {
   vi.spyOn(api, 'applicationReviews').mockRejectedValue(new Error('old review service unavailable'));
   vi.spyOn(api, 'materialReviews').mockRejectedValue(new Error('old review service unavailable'));
   vi.spyOn(api, 'materialPolicy').mockRejectedValue(new Error('old review policy unavailable'));
-  vi.spyOn(api, 'requestApplicationPublication'); vi.spyOn(api, 'decideApplicationReview');
-  vi.spyOn(api, 'requestMaterialPublication'); vi.spyOn(api, 'decideMaterialReview');
   vi.spyOn(publicationApi, 'publishApplication').mockResolvedValue(application);
   const { governance: _governance, ...materialBody } = material;
   void _governance;
   vi.spyOn(publicationApi, 'publishMaterial').mockResolvedValue({ ...materialBody, published: true });
   vi.spyOn(api, 'archiveApplication').mockResolvedValue({}); vi.spyOn(api, 'withdrawApplication').mockResolvedValue({});
   vi.spyOn(api, 'archiveMaterial').mockResolvedValue({}); vi.spyOn(api, 'withdrawMaterial').mockResolvedValue({});
-  vi.spyOn(api, 'planReviews').mockResolvedValue([history]); vi.spyOn(api, 'decidePlanReview');
+  vi.spyOn(api, 'planReviews').mockResolvedValue([history]);
 });
 afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -58,7 +57,7 @@ it('lets a member publish an exact application version without loading legacy re
   expect(api.applicationVersions).toHaveBeenCalledWith(true, expect.any(AbortSignal)); expect(api.applicationReviews).not.toHaveBeenCalled();
   await click('发布此版本'); await settle(() => expect(notice).toHaveBeenCalled()); expect(publicationApi.publishApplication).toHaveBeenCalledWith(member.id, application.id, 2, expect.any(String));
   expect(notice).toHaveBeenCalledWith(expect.stringContaining('已有任务继续保留原固定版本与个人绑定'));
-  expect(api.requestApplicationPublication).not.toHaveBeenCalled(); expect(api.decideApplicationReview).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
 });
 it('lets a member publish an exact material version while legacy review APIs are unavailable', async () => {
   await mount('materials'); expect(button('新建材料')?.disabled).toBe(false); expect(button('发布此版本')?.disabled).toBe(false);
@@ -66,7 +65,7 @@ it('lets a member publish an exact material version while legacy review APIs are
   expect(api.materialPolicy).not.toHaveBeenCalled(); expect(api.materialReviews).not.toHaveBeenCalled();
   await click('发布此版本'); await settle(() => expect(notice).toHaveBeenCalled()); expect(publicationApi.publishMaterial).toHaveBeenCalledWith(member.id, material.id, 2, expect.any(String));
   expect(notice).toHaveBeenCalledWith(expect.stringContaining('已有任务继续保留原固定版本'));
-  expect(api.requestMaterialPublication).not.toHaveBeenCalled(); expect(api.decideMaterialReview).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
 });
 it('retains the exact publication idempotency key after an unknown reply', async () => {
   vi.mocked(publicationApi.publishApplication).mockRejectedValueOnce(new Error('UNKNOWN synthetic lost reply'));
@@ -91,7 +90,7 @@ it('shows old pending plan evidence without decisions, polling, or dispatch', as
     await mount('history', member); expect(host.textContent).toContain('历史待审查');
     expect(button('同意方案')).toBeUndefined(); expect(button('拒绝方案')).toBeUndefined();
     await act(async () => vi.advanceTimersByTimeAsync(15000));
-    expect(api.planReviews).toHaveBeenCalledTimes(1); expect(api.decidePlanReview).not.toHaveBeenCalled();
+    expect(api.planReviews).toHaveBeenCalledTimes(1); expect(fetch).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
 });
 
@@ -100,7 +99,7 @@ it('reads old material evidence when task approval is no longer a separate requi
   await mount('materials'); await click('读取历史记录');
   expect(host.textContent).toContain('等待审核'); expect(host.querySelector('[role="alert"]')).toBeNull();
   expect(button('同意发布此版本')).toBeUndefined(); expect(button('拒绝发布')).toBeUndefined();
-  expect(publicationApi.publishMaterial).not.toHaveBeenCalled(); expect(api.decideMaterialReview).not.toHaveBeenCalled();
+  expect(publicationApi.publishMaterial).not.toHaveBeenCalled(); expect(fetch).not.toHaveBeenCalled();
 });
 
 async function setReason(page: 'applications' | 'materials', reason: string) {

@@ -28,6 +28,7 @@ from .ssh_credentials import PROVIDER_ID, endpoint
 from .ssh_exchange import SSHExchangeCleanupError, exchange as pipe_exchange
 from .ssh_identity import SSHAgentLease, SSHServer, pinned_ssh
 from .resource_sharing import SharingCommand
+from .store import digest
 
 CODES = frozenset({'SSH_CONTROLLER_PLATFORM_UNSUPPORTED', 'SSH_SYSTEM_CLIENT_UNAVAILABLE', 'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTHON_MISSING',
     'SSH_PYTHON_VERSION_REQUIRED', 'SSH_DOCKER_MISSING', 'SSH_DOCKER_PERMISSION', 'SSH_DOCKER_UNAVAILABLE',
@@ -261,6 +262,38 @@ class PersonalSSHServers:
                 return replace(self.profile(body['ownerId'], reference, body['revision'], body['configuration']), actor=owner)
         raise HTTPException(409, 'SSH_SERVER_NOT_ENABLED')
 
+    def _original_servers(self, owner, pin, task_id):
+        """Original execution configuration candidates; never a new binding."""
+        with self.connections._read() as conn:
+            row = self.connections._row(conn, owner, pin['ref'])
+            body = row['body']
+            if (row['version'] != pin['version'] or row['fingerprint'] != pin['fingerprint']
+                    or body['revision'] != pin['revision'] or body['kind'] != 'environment'
+                    or 'ssh:execute' not in body['capabilities'] or body['taskId'] not in (None, task_id)):
+                raise HTTPException(409, 'SSH_CONFIGURATION_CHANGED')
+            configs = self.connections.personal.configs
+            rows = conn.execute(select(configs).where(
+                configs.c.registration_ref == body['registrationRef'])).mappings().all()
+            servers = []
+            for config in rows:
+                original = config['body']
+                if (digest(original) != config['fingerprint'] or original['ownerId'] != config['owner_id']
+                        or original['registrationRef'] != body['registrationRef']
+                        or original['revision'] != config['revision']):
+                    raise HTTPException(409, 'SSH_CONFIGURATION_CHANGED')
+                if original['providerId'] == PROVIDER_ID:
+                    servers.append(self.profile(original['ownerId'], body['registrationRef'],
+                        original['revision'], original['configuration']))
+            return servers
+
+    def _cleanup_lease(self, server):
+        destination = endpoint(server.address, server.port, server.username, server.host_key)['origin']
+        def guard():
+            if not self.vault.authorize(owner=server.owner, reference=server.credential_ref,
+                    revision=server.credential_revision, provider_id=PROVIDER_ID, destination=destination):
+                raise RemoteConnectionError('SSH_CREDENTIAL_UNAVAILABLE')
+        return self.agents.acquire(server, destination, guard)
+
     def inspect(self, owner, reference):
         self.auth.require_member(owner)
         with self.connections._read() as conn:
@@ -288,7 +321,7 @@ class PersonalSSHServers:
             refs = conn.execute(select(self.connections.personal.resources.c.registration_ref).where(
                 or_(self.connections.personal.resources.c.owner_id == owner,
                     self.connections.personal.resources.c.registration_ref.in_(
-                        self.connections.sharing.visible_refs(conn, owner)))).limit(100)).scalars().all()
+                        self.connections.sharing.visible_refs(conn, owner))))).scalars().all()
             matching = [r for r in refs if self.connections.personal._row(conn, owner, r, shared=True)[1]['providerId'] == PROVIDER_ID]
         return [self.inspect(owner, r) for r in matching]
 

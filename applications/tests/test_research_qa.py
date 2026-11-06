@@ -91,8 +91,11 @@ class ResearchQATests(fixtures.ApplicationCompositionFixture):
         original = {'id': self.message, 'reply': saved}
         self.messages.read.return_value = original
         self.messages.reply_for_task.return_value = original
+        self.assistants.require_question_budget.reset_mock()
+        self.assistants.require_question_budget.side_effect = HTTPException(422, 'RESEARCH_QA_BUDGET_INSUFFICIENT')
         with patch.object(self.service, '_select', side_effect=AssertionError('Do not select new inputs')):
             self.assertEqual(self.service.context(self.ctx), {'savedReply': original})
+        self.assistants.require_question_budget.assert_not_called()
         args = self.messages.reply_for_task.call_args
         self.assertEqual(args.args, ('alice', self.task, saved['text']))
         self.assertEqual(set(args.kwargs['content_ids']), {first['id'], second['id']})

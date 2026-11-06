@@ -70,11 +70,15 @@ agreement 可包含 execution；缺失时仍可保存约定，但不能 start。
 
 研究部署显式安装 `ResearchQAWorkflow`：三个顶层步骤读取原消息上下文、调用所选 owner 模型、在本地验证 JSON 文本答案后写回原 core message。不使用 provider structured-output 选项、应用答案表、反向消息或 GPU/CLI/MCP 工具。
 
+工作台在同一张表单中选择个人模型、有限回答额度、截止时间和主动关联范围，点击“启用离线问答”后完成稳定身份、内部定义发布和准确版本绑定；新定义的单次操作额度采用本次明确授权的每问上限，设置不调用模型。已有配置的额度和关联选择不会因打开页面而扩大；旧版本上限不足时须降低额度或明确选择生成新配置。失去响应时保留整次授权及各步骤原 requestId，使用“重试原操作”恢复原收据；旧版本留下的待确认创建、草稿或发布请求也保留恢复入口。配置修订冲突须读取最新修订，再明确提交保留的输入。
+
 - POST `/assistants`：`{requestId}` 创建 owner 唯一稳定身份；GET `/assistants/me` 读自己的身份/配置，GET `/assistants` 读目录。
 - POST `/assistants/me/configurations`：`{requestId,expectedRevision,applicationRef,connectionRefs,budget,associations?}`。budget 包含 caps/perQuestionCaps/deadline，使用已发布 QA 应用和个人连接。配置替换保留历史 endpoint 与身份关系，以恢复原问题；旧 endpoint 不接收新问题。
 - POST `/assistants/{id}/questions`：`{requestId,text}`，text 为 2–2000 字符，返回 202；GET `/assistant-questions/{messageId}`：读取原消息/答案。原 request 的恢复先于读取当前配置，不因对方改配置而重派。
 
 QA 的 BYOK 不进入平台账务：有限 rounds/toolCalls/deadline 必填，tokenLimit/amountMicros/currency 必须为 null，配置明确显示“操作额度受限，token/费用未计量”。不支持的 token/费用硬限额请求会被拒绝。
+
+每次问答所需的最低处理额度由已安装 QA 能力目录提供，包含读取上下文与保存回答。总操作额度和每问操作额度都须满足该值；不足时拒绝启用，不自动增加授权。历史不足配置也标为不可用；原问题生成新回答前按其原配置和原任务预算检查，不借用新配置的额度。已经保存的回答仍可按原来源授权恢复。未安装 QA 的部署不能启用离线问答。
 
 上下文最多扫描 50 个候选、提供 8 条当前共享研究记录（16 KiB），不包含私有聊天或 raw artifact。core reply 的 contentIds 绑定模型看到的全部证据输入，不只是所选引用；缺来源时返回证据不足，撤回任意输入会使整份派生答案在 core 读取路径不可用。
 

@@ -240,7 +240,7 @@ class ApplicationRuns:
                         factory_request_id(body.requestId), delivery_id=delivery_id)
             await asyncio.to_thread(bind)
         plan, key = await asyncio.to_thread(self._prepare, owner, body)
-        # This existing admission path scopes ordinary OwnerSubmissions, rechecks
+        # This existing admission path rechecks
         # current policy, reserves the original task before dispatch, and never
         # re-admits a task whose acknowledgement is unknown. No new approval or
         # retry policy is implemented here.

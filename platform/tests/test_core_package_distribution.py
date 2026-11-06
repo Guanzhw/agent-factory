@@ -3,10 +3,11 @@ from email.parser import Parser
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import sysconfig
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, gettempdir
 import unittest
 import zipfile
 
@@ -117,7 +118,10 @@ print('CORE_DISTRIBUTION_SMOKE=' + json.dumps(snapshots))
 class CorePackageDistributionTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.temporary = TemporaryDirectory(prefix='factory-core-distribution-')
+        # The dependency tree includes long stub paths. Use the Windows long
+        # path namespace for both the fixture and its ordinary-file cleanup.
+        directory = '\\\\?\\' + os.path.abspath(gettempdir()) if os.name == 'nt' else None
+        cls.temporary = TemporaryDirectory(prefix='factory-core-distribution-', dir=directory)
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.root = Path(cls.temporary.name).resolve()
         result = subprocess.run([sys.executable, '-I', '-B', '-c',
@@ -140,7 +144,16 @@ class CorePackageDistributionTests(unittest.TestCase):
                     continue
                 target = cls.dependencies / source.name
                 if not target.exists():
-                    target.symlink_to(source, target_is_directory=source.is_dir())
+                    if os.name == 'nt':
+                        # Isolated wheel imports must not require Windows
+                        # developer mode or the symlink creation privilege.
+                        original = Path('\\\\?\\' + str(source))
+                        if source.is_dir():
+                            shutil.copytree(original, target, ignore=shutil.ignore_patterns('__pycache__'))
+                        else:
+                            shutil.copy2(original, target)
+                    else:
+                        target.symlink_to(source, target_is_directory=source.is_dir())
 
     def test_wheel_contains_only_core_sources_and_no_application_dependency(self):
         source = {path.relative_to(ROOT / 'platform').as_posix(): path.read_bytes()

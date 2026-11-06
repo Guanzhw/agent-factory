@@ -23,8 +23,9 @@ def terms(value):
 
 def research_terms(body):
     experiment = body.get('experiment') or {}
+    agreement = body.get('agreement') or {}
     values = [body.get('objective'), body.get('conditions'), body.get('hypothesis'),
-              experiment.get('hypothesis'), experiment.get('conditions')]
+              agreement.get('objective'), experiment.get('hypothesis'), experiment.get('conditions')]
     def strings(value):
         if isinstance(value, dict):
             return ' '.join(strings(item) for item in value.values())

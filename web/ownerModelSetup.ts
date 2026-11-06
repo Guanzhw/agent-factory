@@ -52,7 +52,8 @@ export function readModelSetup(raw: string | null, owner: string): ModelSetup | 
     if (s.owner !== owner || !['openai', 'openai-compatible'].includes(s.provider)
         || !['credential', 'model', 'default'].includes(s.stage) || typeof s.chooseDefault !== 'boolean'
         || !['credentialRequest', 'modelRequest', 'defaultRequest'].every(key => /^[a-zA-Z0-9_.:-]{8,100}$/.test(String(s[key as keyof ModelSetup])))
-        || typeof s.model !== 'string' || !s.model || s.model.length > 120 || modelEndpoint(s.baseURL) !== s.baseURL) return null;
+        || typeof s.model !== 'string' || !s.model || s.model.length > 120) return null;
+    modelEndpoint(s.baseURL);
     return setupMetadata(s);
   } catch { return null; }
 }

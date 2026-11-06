@@ -24,7 +24,7 @@ Factory hard external money limit**.
   "protocol": "chat-completions-text-functions-v1",
   "protocols": ["chat-completions", "responses"],
   "baseURLPath": "/v1",
-  "additionalBaseURLs": ["https://opencode.ai/inference/go/v1", "https://opencode.ai/zen/go/v1"],
+  "additionalBaseURLs": ["https://opencode.ai/inference/go/openai/v1", "https://opencode.ai/inference/go/v1", "https://opencode.ai/zen/go/v1"],
   "credentialInput": "/api/factory/personal-credentials",
   "credentialUsername": "api-key",
   "platformBillingEnabled": false,

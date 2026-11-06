@@ -1,3 +1,4 @@
+import { ApiError } from './api.js';
 export interface ScheduleSummary { id: string; ownerId: string; requestId: string | null; lastCommandId: string | null; name: string; cron: string; timezone: string; enabled: boolean; planId: string; planFingerprint: string; planDigest: string; definitionFingerprint: string; nextRunAt: string | null; allowedActions: ('edit' | 'enable' | 'disable')[] }
 export interface ScheduleMetadata { schema: 1; ownerId: string; canManage: boolean; policy: { singlePoller: true; overlap: 'allow-with-current-budget-admission'; missed: 'coalesce'; pauseCancelsRunning: false; timeSemantics: 'cron-iana-timezone'; maxUserTasks: number; maxTotalTasks: number } }
 export interface SchedulePage { schema: 1; ownerId: string; items: ScheduleSummary[]; nextCursor: string | null; snapshot: false }
@@ -78,7 +79,12 @@ export function scheduleReply(value: unknown, owner: string, intent: ScheduleMut
       || intent.kind === 'enabled' && row.enabled !== intent.enabled) throw fail();
   return row;
 }
-export async function sendScheduleOnce(api: ScheduleApi, owner: string, intent: ScheduleMutation): Promise<ScheduleSummary> {
+export function scheduleCommand(value: unknown, owner: string, requestId: string, scheduleId?: string | null): ScheduleSummary | null {
+  if (!record(value) || value.ownerId !== owner || value.commandId !== requestId || value.commandStatus !== 'complete'
+      || !id(value.scheduleId) || scheduleId != null && value.scheduleId !== scheduleId) throw fail();
+  return value.schedule === null ? null : scheduleSummary(value, owner, value.scheduleId);
+}
+export async function sendScheduleOnce(api: ScheduleApi, owner: string, intent: ScheduleMutation): Promise<ScheduleSummary | null> {
   try {
     let result: unknown;
     if (intent.kind === 'create') { const { planId, name, cron, timezone, requestId } = intent; result = await api.create({ planId, name, cron, timezone, requestId }); }
@@ -86,13 +92,9 @@ export async function sendScheduleOnce(api: ScheduleApi, owner: string, intent: 
     else { const { enabled, requestId, expectedDefinitionFingerprint } = intent; result = await api.setEnabled(intent.scheduleId, { enabled, requestId, expectedDefinitionFingerprint }); }
     return scheduleReply(result, owner, intent);
   } catch (error) {
-    try { const value = intent.kind === 'create' ? await api.recover(intent.requestId) : await api.inspect(intent.scheduleId);
-      if (intent.kind === 'create') {
-        const row = scheduleSummary(value, owner);
-        if (row.requestId !== intent.requestId || row.planId !== intent.planId || row.planFingerprint !== intent.planFingerprint || row.name !== intent.name) throw fail();
-        return row; // Later edits may have changed time/enabled/lastCommandId.
-      }
-      return scheduleReply(value, owner, intent); } catch { /* Retain original operation; never repeat a mutation automatically. */ }
+    if (error instanceof ApiError && error.rejected) throw error;
+    try { return scheduleCommand(await api.recover(intent.requestId), owner, intent.requestId, intent.kind === 'create' ? null : intent.scheduleId); }
+    catch { /* Retain original operation; never repeat a mutation automatically. */ }
     throw error;
   }
 }

@@ -8,7 +8,7 @@ import { remoteHandoffState } from './remoteHandoffState.js';
 import type { ControlReceipt, UserConnection, ConnectionRegistration, FactoryApplication, ApplicationVersion, ApplicationReview, CompositionInput, AssemblyProposal, EventPage, MaterialGovernancePolicy, MaterialReview, ExecutionTarget, PlanAuthorization, PlanReview, ChildReceipt, DelegationGroup, JobPage, FactoryJob, FactoryMaterial, FactoryStatus, JobDetail, MaterialDraft, Plan, User } from './models.js';
 
 export class ApiError extends Error {
-  constructor(message: string, public readonly status: number, public readonly code?: string) { super(message); }
+  constructor(message: string, public readonly status: number, public readonly code?: string, public readonly rejected = false) { super(message); }
 }
 const base = '/api/factory';
 async function request<T>(path: string, method = 'GET', body?: unknown, signal?: AbortSignal, expectedOwner?: string): Promise<T> {
@@ -38,7 +38,7 @@ async function request<T>(path: string, method = 'GET', body?: unknown, signal?:
     const detail = value.detail && typeof value.detail === 'object' ? value.detail as Record<string, unknown> : {};
     const message = value.message ?? nested.message ?? detail.message ?? (typeof value.detail === 'string' ? value.detail : undefined) ?? value.error;
     const code = value.code ?? nested.code ?? detail.code;
-    throw new ApiError(typeof message === 'string' ? message : `服务返回 ${response.status}，操作未确认。`, response.status, typeof code === 'string' ? code : undefined);
+    throw new ApiError(typeof message === 'string' ? message : `服务返回 ${response.status}，操作未确认。`, response.status, typeof code === 'string' ? code : undefined, response.headers.get('X-Factory-Command-Rejected') === 'true');
   }
   if (response.status === 204) return undefined as T;
   if (data === undefined) throw new ApiError('服务未返回可识别的数据，请重试。', response.status, 'INVALID_RESPONSE');
@@ -343,8 +343,6 @@ export const api = {
   proposalInbox: (after?: string, signal?: AbortSignal) => request<unknown>(`/compositions/proposals${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal),
   draftApplication: async (definition: Record<string, unknown>, requestId: string) => application(await request('/applications/drafts', 'POST', { definition, requestId })),
   reviseApplication: async (id: string, version: number, definition: Record<string, unknown>, requestId: string) => application(await request(`${versionPath(id, version)}/revise`, 'POST', { definition, requestId })),
-  requestApplicationPublication: async (id: string, version: number, requestId: string) => applicationReview(await request(`${versionPath(id, version)}/review`, 'POST', { requestId })),
-  decideApplicationReview: async (id: string, approved: boolean, requestId: string) => applicationReview(await request(`/applications/reviews/${segment(id)}/decision`, 'POST', { approved, requestId })),
   archiveApplication: (id: string, version: number, reason: string, requestId: string) => request(`${versionPath(id, version)}/archive`, 'POST', { reason, requestId }),
   withdrawApplication: (id: string, version: number, reason: string, requestId: string) => request(`${versionPath(id, version)}/withdraw`, 'POST', { reason, requestId }),
   rejectProposal: async (id: string, requestId: string) => proposal(await request(`/compositions/proposals/${segment(id)}/reject`, 'POST', { requestId })),
@@ -363,17 +361,13 @@ export const api = {
   governanceDraft: (definition: Record<string, unknown>, requestId: string) => request<FactoryMaterial>('/material-governance/drafts', 'POST', { definition, requestId }),
   importMaterials: (definitions: Record<string, unknown>[], requestId: string) => request<{ materials: FactoryMaterial[]; outcomeSource: string; executesCode: boolean }>('/material-governance/imports', 'POST', { definitions, requestId }),
   materialPolicy: (signal?: AbortSignal) => request<MaterialGovernancePolicy>('/material-governance/policy', 'GET', undefined, signal),
-  requestMaterialPublication: (materialId: string, version: number, requestId: string) => request<MaterialReview>('/material-governance/reviews', 'POST', { materialId, version, requestId }),
   materialReviews: (allAuthors = false, signal?: AbortSignal) => request<MaterialReview[]>(`/material-governance/reviews?allAuthors=${allAuthors}`, 'GET', undefined, signal),
-  decideMaterialReview: (id: string, approved: boolean, requestId: string) => request<MaterialReview>(`/material-governance/reviews/${segment(id)}/decision`, 'POST', { approved, requestId }),
   archiveMaterial: (id: string, version: number, reason: string, requestId: string) => request(`/material-governance/versions/${segment(id)}/${version}/archive`, 'POST', { reason, requestId }),
   withdrawMaterial: (id: string, version: number, reason: string, requestId: string) => request(`/material-governance/versions/${segment(id)}/${version}/withdraw`, 'POST', { reason, requestId }),
   executionTargets: (signal?: AbortSignal) => request<ExecutionTarget[]>('/execution-targets', 'GET', undefined, signal),
   planAuthorization: (id: string, signal?: AbortSignal) => request<PlanAuthorization>(`/plans/${segment(id)}/authorization`, 'GET', undefined, signal),
   inspectPlanReview: (id: string, signal?: AbortSignal) => request<PlanReview>(`/plan-reviews/${segment(id)}`, 'GET', undefined, signal),
-  requestPlanReview: (planId: string, requestId: string) => request<PlanReview>('/plan-reviews', 'POST', { planId, requestId }),
   planReviews: (allOwners = false, signal?: AbortSignal, planId?: string) => request<PlanReview[]>(`/plan-reviews?allOwners=${allOwners}${planId ? `&planId=${segment(planId)}` : ''}`, 'GET', undefined, signal),
-  decidePlanReview: (id: string, approved: boolean, requestId: string) => request<PlanReview>(`/plan-reviews/${segment(id)}/decision`, 'POST', { approved, requestId }),
   jobs: (signal?: AbortSignal, cursor?: string) => request<JobPage>(`/jobs?limit=50${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`, 'GET', undefined, signal),
   detail: (id: string, signal?: AbortSignal) => request<JobDetail>(`/jobs/${segment(id)}`, 'GET', undefined, signal),
   cancel: (id: string) => request<FactoryJob>(`/jobs/${segment(id)}/cancel`, 'POST'),

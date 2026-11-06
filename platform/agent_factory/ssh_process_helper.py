@@ -76,62 +76,56 @@ def handle(value):
                 'processCustody': sys.platform == 'linux' and fork and proc and rlimits,
                 'isolation': {'aggregateQuota': False, 'hostileCodeSandbox': False, 'networkIsolation': False},
                 'scheduler': False, 'gpuAllocation': False, 'automaticInstallation': False}
-    import fcntl
     binding, root, action = value['binding'], Path(value['root']), value['action']
     descriptor = {key: value[key] for key in ('protocol', 'binding', 'root', 'spec', 'limits')}
     descriptor_raw = encoded(descriptor, MAX_REQUEST_BYTES)
     with directory(root) as root_fd:
         info = os.fstat(root_fd)
         require(info.st_uid == os.getuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0)
-        # Lock the existing root inode; read/cancel do not create lock files.
-        fcntl.flock(root_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         created = False
-        try:
-            if action == 'submit':
-                try:
-                    os.mkdir(binding['leaseId'], 0o700, dir_fd=root_fd)
-                    created = True
-                    os.fsync(root_fd)
-                except FileExistsError:
-                    pass
-            with directory(root / binding['leaseId']) as run_fd:
-                run_info = os.fstat(run_fd)
-                require(run_info.st_uid == os.getuid() and stat.S_IMODE(run_info.st_mode) & 0o077 == 0)
-                if created:
-                    fd = os.open('binding.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
-                                 0o600, dir_fd=run_fd)
-                    with os.fdopen(fd, 'wb') as stream:
-                        stream.write(descriptor_raw)
-                        stream.flush()
-                        os.fsync(stream.fileno())
-                    os.fsync(run_fd)
-                require(read_file(run_fd, 'binding.json', MAX_REQUEST_BYTES) == descriptor_raw)
-                path = root / binding['leaseId'] / 'custody.sqlite'
-                if created:
-                    spec, limits = specification(value['spec'], value['limits'])
-                    adapter = BoundedProcessAdapter.create(path, owner_id=binding['ownerId'],
-                        task_id=binding['taskId'], request_id=binding['requestId'], spec=spec, limits=limits)
-                    # The authenticated caller committed admission before this single submit.
-                    # Only the create instance has launch authority; reopened journals never do.
-                    observation = adapter.launch(owner_id=binding['ownerId'], before_effect=lambda: None)
-                else:
-                    adapter = BoundedProcessAdapter(path)
-                    observation = adapter.inspect(owner_id=binding['ownerId'])
-                    original(observation, binding, value)
-                    if action == 'cancel':
-                        observation = adapter.cancel(owner_id=binding['ownerId'])
+        if action == 'submit':
+            try:
+                os.mkdir(binding['leaseId'], 0o700, dir_fd=root_fd)
+                created = True
+                os.fsync(root_fd)
+            except FileExistsError:
+                pass
+        with directory(root / binding['leaseId']) as run_fd:
+            run_info = os.fstat(run_fd)
+            require(run_info.st_uid == os.getuid() and stat.S_IMODE(run_info.st_mode) & 0o077 == 0)
+            if created:
+                fd = os.open('binding.json', os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                             0o600, dir_fd=run_fd)
+                with os.fdopen(fd, 'wb') as stream:
+                    stream.write(descriptor_raw)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.fsync(run_fd)
+            require(read_file(run_fd, 'binding.json', MAX_REQUEST_BYTES) == descriptor_raw)
+            path = root / binding['leaseId'] / 'custody.sqlite'
+            if created:
+                spec, limits = specification(value['spec'], value['limits'])
+                adapter = BoundedProcessAdapter.create(path, owner_id=binding['ownerId'],
+                    task_id=binding['taskId'], request_id=binding['requestId'], spec=spec, limits=limits)
+                # The authenticated caller committed admission before this single submit.
+                # Only the create instance has launch authority; reopened journals never do.
+                observation = adapter.launch(owner_id=binding['ownerId'], before_effect=lambda: None)
+            else:
+                adapter = BoundedProcessAdapter(path)
+                observation = adapter.inspect(owner_id=binding['ownerId'])
                 original(observation, binding, value)
-                result = {'protocol': PROTOCOL, 'binding': binding, 'observation': observation}
-                if action == 'output':
-                    require(observation['stoppedProof'] is True
-                            and observation['state'] in {'COMPLETED', 'FAILED', 'CANCELLED', 'LIMIT_STOPPED'})
-                    raw = read_file(run_fd, 'custody.output', OUTPUT_BYTES)
-                    result['output'] = {'base64': base64.b64encode(raw).decode(), 'bytes': len(raw),
-                                        'sha256': hashlib.sha256(raw).hexdigest()}
-                encoded(result, MAX_RESPONSE_BYTES)
-                return result
-        finally:
-            fcntl.flock(root_fd, fcntl.LOCK_UN)
+                if action == 'cancel':
+                    observation = adapter.cancel(owner_id=binding['ownerId'])
+            original(observation, binding, value)
+            result = {'protocol': PROTOCOL, 'binding': binding, 'observation': observation}
+            if action == 'output':
+                require(observation['stoppedProof'] is True
+                        and observation['state'] in {'COMPLETED', 'FAILED', 'CANCELLED', 'LIMIT_STOPPED'})
+                raw = read_file(run_fd, 'custody.output', OUTPUT_BYTES)
+                result['output'] = {'base64': base64.b64encode(raw).decode(), 'bytes': len(raw),
+                                    'sha256': hashlib.sha256(raw).hexdigest()}
+            encoded(result, MAX_RESPONSE_BYTES)
+            return result
 
 
 def main():

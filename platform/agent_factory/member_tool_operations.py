@@ -5,6 +5,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, select
 
+from .accounts import AccountCreate
 from .store import digest, now
 from .tool_operations import normalize_operation, operation_hash, instantiate_operation_adapter, _descriptor
 
@@ -34,8 +35,8 @@ class MemberToolOperations:
         try:
             data = dict(row)
             fingerprint = data.pop('fingerprint')
-            for name in ('operation_id', 'owner_id'):
-                self.connections._key(data[name])
+            self.connections._key(data['operation_id'])
+            AccountCreate(id=data['owner_id'])
             created = data['created_at']
             if type(created) is not str or not 1 <= len(created) <= 64 or any(ord(c) < 32 for c in created):
                 raise ValueError()

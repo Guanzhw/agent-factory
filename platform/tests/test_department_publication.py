@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest.mock import patch
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
@@ -17,6 +18,8 @@ from sqlalchemy import select
 from fixture_settings import Settings
 from core_native_fixture import create_fixture_app as create_app
 from agent_factory.material_governance import GovernanceConfig, MaterialGovernance
+from agent_factory.plan_policy import PlanPolicyService
+from agent_factory.store import Store
 from pg_fixture import IsolatedPostgres
 from test_applications_composition import ApplicationCompositionFixture, app_definition, pin
 
@@ -206,6 +209,29 @@ class DepartmentPublicationTests(DepartmentPublicationCases, ApplicationComposit
         # Safe startup changes only the publication workflow, preserving seeds.
         self.governance = MaterialGovernance(self.store, self.auth, GovernanceConfig())
         self.store.material_governance = self.governance
+
+    def test_application_guard_checks_materials_once_and_rejects_withdrawn_transitive_leaf(self):
+        leaf = self.material(id='transitive-leaf')
+        self.governance.publish('alice', leaf['id'], 1, 'publish-leaf')
+        root = self.material(id='transitive-root', dependencies=[pin(leaf)])
+        self.governance.publish('alice', root['id'], 1, 'publish-root')
+        definition = app_definition(self.store, 'transitive-application')
+        definition['modes']['literature']['materialRefs'].append(pin(root))
+        app = self.applications.create_draft('alice', definition, 'draft-transitive-app')
+        self.applications.publish('alice', app['id'], 1, 'publish-transitive-app')
+        plan = self.composition.create_plan('alice', 'Text audit transitive material', 'literature',
+            application_ref=pin(app))
+        self.store.plan_policy = PlanPolicyService(self.store, self.auth)
+        self.store.execution_guards = {'application-governance':
+            lambda owner, value, context, tool: self.applications.require_plan_current(value)}
+        with patch.object(self.governance, 'require_materials_current',
+                wraps=self.governance.require_materials_current) as check:
+            Store.require_plan_execution(self.store, 'alice', plan)
+            self.assertEqual(check.call_count, 1)
+            self.governance.withdraw('alice', leaf['id'], 1, 'withdraw-transitive-leaf')
+            with self.assertRaises(HTTPException):
+                Store.require_plan_execution(self.store, 'alice', plan)
+            self.assertEqual(check.call_count, 2)
 
     def test_service_restart_does_not_restore_review_mutations(self):
         material, application = self.material(), self.application()

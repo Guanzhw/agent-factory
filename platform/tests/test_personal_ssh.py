@@ -241,6 +241,7 @@ class PersonalSSHTests(unittest.TestCase):
         execution = self.service.server('bob', reference, required_capability='ssh:execute')
         execution_lease = self.service.lease(execution, required_capability='ssh:execute')
         execution_lease.validate()
+        execution_pin = self.connections.request_result('bob', 'bob-explicit-execution')['connection']
         self.assertFalse(self.service.inspect('alice', reference)['executionEnabled'])
         for action in ('verify', 'revoke'):
             response = self.client.post(f'{self.root}/{reference}/{action}', headers=bob,
@@ -252,6 +253,11 @@ class PersonalSSHTests(unittest.TestCase):
         with self.assertRaises(HTTPException): lease.validate()
         with self.assertRaises(HTTPException): execution_lease.validate()
         self.assertEqual(self.client.get(self.root, headers=bob).json(), [])
+        self.auth.disabled = True
+        originals = self.service._original_servers('bob', execution_pin, 'original-bob-task')
+        original = next(item for item in originals if item.pin() == execution.pin())
+        self.service._cleanup_lease(original).validate()
+        self.assertEqual(self.acquire.call_args.args[0].owner, 'alice')
 
     def test_parser_supported_rsa_ecdsa_ed25519_keys_roundtrip_in_encrypted_vault(self):
         for key in (rsa.generate_private_key(public_exponent=65537, key_size=4096),
@@ -306,6 +312,46 @@ class PersonalSSHTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200); self.assertEqual(response.json()['server']['reference'], server['reference'])
         self.assertEqual(self.client.get(self.root, headers=self.headers).status_code, 200)
         self.assertEqual(self.acquire.call_count, 0); self.service.probe.assert_not_called()
+
+    def test_ssh_discovery_is_not_hidden_behind_other_resource_types(self):
+        from agent_factory.store import digest
+        personal = self.connections.personal
+        with self.engine.begin() as conn:
+            for index in range(101):
+                reference = f'other-resource-{index}'
+                body = {'registrationRef': reference, 'ownerId': 'alice', 'revision': '1',
+                    'providerId': 'http-fixture', 'kind': 'environment', 'configuration': {}}
+                conn.execute(personal.configs.insert().values(registration_ref=reference,
+                    revision='1', owner_id='alice', body=body, fingerprint=digest(body)))
+                conn.execute(personal.resources.insert().values(registration_ref=reference,
+                    owner_id='alice', config_revision='1', state='CONFIGURED',
+                    created_at='2026-11-05', updated_at='2026-11-05'))
+        server, _, _ = self.registered()
+        self.assertEqual([item['reference'] for item in self.service.list('alice')], [server['reference']])
+
+    def test_original_cleanup_survives_binding_revoke_disable_and_configuration_change(self):
+        server, credential, values = self.enabled()
+        _, request = self.command(server, 'bind-execution')
+        pin = self.connections.request_result('alice', request)['connection']
+        profile = self.service.server('alice', server['reference'], required_capability='ssh:execute')
+        self.connections.revoke('alice', pin['ref'], 'revoke-original-execute')
+        self.client.post(f"{self.root}/{server['reference']}/configure", headers=self.headers,
+            json=values | {'allowedRoot': '/tmp/replacement-root', 'requestId': 'replacement-config'})
+        self.auth.disabled = True
+        originals = self.service._original_servers('alice', pin, 'original-task')
+        self.assertIn(profile.pin(), [item.pin() for item in originals])
+        with self.assertRaises(HTTPException):
+            self.service.server('alice', server['reference'], required_capability='ssh:execute')
+        cleanup = self.service._cleanup_lease(profile)
+        cleanup.validate()
+        self.assertEqual(self.acquire.call_args.args[:2], (profile, self.identity['origin']))
+        self.auth.disabled = False
+        self.vault.revoke(owner='alice', reference=credential['credentialRef'],
+            revision=credential['credentialRevision'])
+        with self.assertRaisesRegex(RemoteConnectionError, 'SSH_CREDENTIAL_UNAVAILABLE'):
+            cleanup.validate()
+        with self.assertRaises(HTTPException):
+            self.service._original_servers('bob', pin, 'original-task')
 
     def test_cross_owner_read_key_binding_verify_enable_and_revoke_are_denied(self):
         server, credential, values = self.registered(); bob = {'x-fixture-owner': 'bob'}
