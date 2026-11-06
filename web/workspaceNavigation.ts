@@ -10,6 +10,7 @@ export type WorkspaceTab = string;
 export type WorkspaceRoute = { tab: WorkspaceTab; task: string; modelReturn?: string; taskReturn?: string; taskReturnTask?: string; scheduleId?: string; [key: string]: string | undefined };
 export interface WorkspaceNavigation {
   tabs: Readonly<Record<string, string>>;
+  homeTab?: string;
   applicationTabs?: readonly string[];
   advancedTabs?: readonly string[];
   modelReturns?: readonly string[];
@@ -21,7 +22,7 @@ export const routePointer = (value: string | null) => value && /^[A-Za-z0-9][A-Z
 /** URL pointers are navigation only. Every record still needs server authorization. */
 export function readWorkspaceRoute(url: URL, administrator: boolean, navigation = defaultNavigation): WorkspaceRoute {
   const requested = url.searchParams.get('tab');
-  const tab = requested && Object.hasOwn(navigation.tabs, requested) && (requested !== 'accounts' || administrator) ? requested : 'catalog';
+  const tab = requested && Object.hasOwn(navigation.tabs, requested) && (requested !== 'accounts' || administrator) ? requested : navigation.homeTab ?? 'catalog';
   const modelReturn = url.searchParams.get('modelReturn');
   const modelReturns = navigation.modelReturns ?? ['catalog', 'resources', 'connections'];
   const templateId = routePointer(url.searchParams.get('templateId'));

@@ -14,7 +14,7 @@ from agent_factory.application_content import ContentPublication
 from research.delivery import ResearchDelivery
 from research.evidence import EvidenceSelection, _valid_value
 from research.projects import ProjectCommand
-from research.workflow import Decision
+from research_controller_fixture import Decision
 import test_research_rounds as fixtures
 
 

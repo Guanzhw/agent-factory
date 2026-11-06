@@ -1,4 +1,4 @@
-"""One bounded native research round; Agno owns routing and continuation."""
+"""Retired fixed controller used only by explicit historical regression fixtures."""
 import asyncio
 import hashlib
 import json
@@ -95,8 +95,11 @@ class ResearchWorkflow:
         self.tool_registrations += (AdapterRegistration('tool', 'research-wait-operations-v1', '1',
             lambda ctx: factory_wait_operations, tool_name='factory_wait_operations', permissions=(PERMISSION,)),)
         implementation = hashlib.sha256()
-        for source in ('workflow.py', 'rounds.py', 'peer_sources.py', 'associations.py'):
-            implementation.update(source.encode() + b'\0' + Path(__file__).with_name(source).read_bytes())
+        sources = [Path(__file__), Path(__file__).with_name('research_rounds_fixture.py'),
+            Path(__file__).parents[1] / 'research' / 'peer_sources.py',
+            Path(__file__).parents[1] / 'research' / 'associations.py']
+        for source in sources:
+            implementation.update(source.name.encode() + b'\0' + source.read_bytes())
         self.registration = NativeWorkflowRegistration(self._workflow(), '1', FUNCTION_TOOLS,
             implementation.hexdigest())
 

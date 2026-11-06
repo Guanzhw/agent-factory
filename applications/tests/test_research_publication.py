@@ -5,7 +5,7 @@ from uuid import uuid4
 from sqlalchemy import select
 
 from fixture_content_artifacts import install_artifacts
-from research.workflow import Decision
+from research_controller_fixture import Decision
 from test_research_rounds import ResearchRoundsFixture
 
 

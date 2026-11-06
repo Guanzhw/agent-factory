@@ -15,7 +15,7 @@ from fixture_content_artifacts import artifact_ref, install_artifacts
 from research.delivery import delivery_router, ResearchDelivery
 from research.peer_sources import ResearchPeerSources
 from research.projects import EndProject, ProjectCommand
-from research.workflow import Decision
+from research_controller_fixture import Decision
 import test_research_rounds as fixtures
 
 

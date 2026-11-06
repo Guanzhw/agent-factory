@@ -1,12 +1,11 @@
 """Explicit optional installation; the deployment owns ApplicationAssembly."""
-from types import SimpleNamespace
 from agent_factory.application_runs import ApplicationRuns
-from .runs import ResearchRuns, runs_router
+from .runs import ResearchRuns
 from .records import ResearchRecords
 from .projects import ResearchProjects, projects_router
 
 
-def install(state, *, workflow=None, qa_workflow=None, session_tools=None):
+def install(state, *, qa_workflow=None, session_tools=None):
     assistants = None
     if qa_workflow is not None:
         from .assistants import ResearchAssistants, assistants_router
@@ -51,35 +50,27 @@ def install(state, *, workflow=None, qa_workflow=None, session_tools=None):
     state['research_projects'] = projects
     records = ResearchRecords(state['application_content'], state.get('research_associations'))
     runs = ResearchRuns(projects, ApplicationRuns(state['factory_api']), state['local_budget_scopes'], state['applications'], records)
-    if workflow is not None:
-        from .rounds import ResearchRounds
+    from .history import ResearchHistory, history_router
+    history = ResearchHistory(runs, events=state['assistant_events'], custody=state['store'].workflow,
+        associations=state.get('research_associations'))
+    projects.peer_sources = history.peer_sources
+    state['research_history'] = history
+    state['http_app'].include_router(history_router(state['auth'], history))
+    from .delivery import ResearchDelivery, delivery_router
+    delivery = ResearchDelivery(history)
+    state['research_delivery'] = delivery
+    router = delivery_router(state['auth'], delivery)
+    router.routes = [route for route in router.routes if 'GET' in getattr(route, 'methods', set())]
+    state['http_app'].include_router(router)
+    if qa_workflow is not None:
         from .setup import ResearchSetup, setup_router
-        from .workflow import WORKFLOW_ID
-        store = state['store']
-        pin = store.native_workflows.pin(WORKFLOW_ID)
-        setup = ResearchSetup(store, state['auth'], state['connections'], store.personal_models,
-            controller_registrations=workflow.tool_registrations, qa_workflow=qa_workflow)
+        setup = ResearchSetup(state['store'], state['auth'], state['connections'], state['store'].personal_models,
+            qa_workflow=qa_workflow)
         state['research_setup'] = setup
         state['http_app'].include_router(setup_router(state['auth'], setup))
-        rounds = ResearchRounds(runs, events=state['assistant_events'],
-            endpoints=state['assistant_endpoints'], custody=store.workflow,
-            control=store.workflow_control, pin=pin, associations=state.get('research_associations'))
-        projects.peer_sources = rounds.peer_sources
-        workflow.bind(rounds)
-        store.application_runtime.register('research-round', rounds,
-            native_components=(tuple(pin[key] for key in ('kind', 'id', 'revision', 'sha256')),),
-            finalizes=True)
-        # Baseline 62614177 stopped tasks need their original completion responsibility.
-        store.application_runtime.register('research-round-62614177-completion',
-            SimpleNamespace(finalization_context=rounds.finalization_context), native_components=((
-                'workflow', 'research-round', '1', '2c1fcb5650d8473d2171f6d374035b8d4db452b53603337e2b13f3b43f661c54'),),
-            finalizes=True)
-        projects.execution = rounds
-        state['research_rounds'] = rounds
-        from .delivery import ResearchDelivery, delivery_router
-        delivery = ResearchDelivery(rounds)
-        state['research_delivery'] = delivery
-        state['http_app'].include_router(delivery_router(state['auth'], delivery))
-        runs = rounds
-    state['http_app'].include_router(runs_router(state['auth'], runs))
+    runs = history
+    if session_tools is not None:
+        from .session_research import ResearchSessionResearch
+        sessions.projects = projects
+        sessions.research = ResearchSessionResearch(sessions, projects, records)
     state['research_runs'] = runs

@@ -10,7 +10,7 @@ from .projects import Reference, RequestId
 
 class SessionLimits(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    maxTurns: int = Field(strict=True, ge=1, le=20)
+    maxTurns: int = Field(strict=True, ge=1)
     toolCallsPerTurn: int = Field(strict=True, ge=1, le=128)
     operationSeconds: int = Field(strict=True, ge=1, le=600)
 
@@ -23,6 +23,7 @@ class CreateSession(BaseModel):
     boundaries: str = Field(min_length=1, max_length=2000)
     modelConnectionRef: Reference
     limits: SessionLimits
+    projectId: Reference | None = None
 
 
 class SessionText(BaseModel):

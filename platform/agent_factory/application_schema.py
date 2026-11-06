@@ -119,7 +119,7 @@ def definition_model(value):
 
 
 def budget_limits(settings, contract_version=1):
-    return {"toolCalls": settings.max_tool_calls, "maxDepth": 2, "maxChildren": 4,
+    return {"toolCalls": settings.max_tool_calls, "maxDepth": 8, "maxChildren": 64,
             "operationSeconds" if contract_version == 2 else "experimentSeconds": settings.experiment_timeout_seconds,
             "outputBytes": settings.experiment_output_bytes}
 

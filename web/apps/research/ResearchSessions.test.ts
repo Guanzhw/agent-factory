@@ -8,7 +8,7 @@ import { researchSessionsApi as api, type ResearchSession, type SessionOptions, 
 import { clearSessionDrafts, draftKey, requestKey } from './researchSessionStorage.js';
 import { assistantApi, type ResearchQuestion } from './live/assistantClient.js';
 
-const options: SessionOptions = { available: true, unavailableCode: null, models: [{ connectionRef: 'model-a', provider: 'configured', model: 'research-model', available: true }], limits: { maxTurns: { min: 1, max: 20, default: 8 }, toolCallsPerTurn: { min: 1, max: 12, default: 8 }, operationSeconds: { min: 1, max: 120, default: 60 }, contextCharacters: 12000 }, workspace: { configured: true, hostCommands: true, isolation: 'host-user-not-os-sandbox' }, accounting: { tokenMetered: false, costMetered: false } };
+const options: SessionOptions = { available: true, unavailableCode: null, models: [{ connectionRef: 'model-a', provider: 'configured', model: 'research-model', available: true }], limits: { maxTurns: { min: 1, max: null, default: 8 }, toolCallsPerTurn: { min: 1, max: 12, default: 8 }, operationSeconds: { min: 1, max: 120, default: 60 }, contextCharacters: 12000 }, workspace: { configured: true, hostCommands: true, isolation: 'host-user-not-os-sandbox' }, accounting: { tokenMetered: false, costMetered: false } };
 const session: ResearchSession = { id: 'session-a', assistantId: 'assistant-a', title: '保留研究目标', goal: '检查测试程序', boundaries: '测试通过后停止', createdAt: '2026-10-28T08:00:00Z', updatedAt: '2026-10-28T08:00:00Z', state: 'idle', model: { connectionRef: 'model-a', provider: 'configured', model: 'research-model' }, limits: { maxTurns: 8, toolCallsPerTurn: 8, operationSeconds: 60 }, context: { characters: 15, maximumCharacters: 12000 }, allowedActions: ['start'], blockReason: null, sharedSourceIds: [], turns: [] };
 const completedTurn: SessionTurn = { id: 'turn-a', sequence: 1, requestId: 'start-id', taskId: 'task-a', runId: 'run-a', status: 'completed', createdAt: session.createdAt, completedAt: session.updatedAt, result: '原始回复和证据仍可查。', failure: null, messages: [], events: [], toolResults: [] };
 let host: HTMLDivElement; let root: Root; let current: ResearchSession;
@@ -208,7 +208,7 @@ it('focuses and scrolls the first invalid field and opens collapsed invalid limi
   const goal = host.querySelector('textarea')!;
   expect(document.activeElement).toBe(goal); expect(goal.getAttribute('aria-invalid')).toBe('true');
   expect(scroll.mock.contexts.at(-1)).toBe(goal.closest('label')); expect(scroll).toHaveBeenLastCalledWith({ block: 'center' });
-  await field('研究目标', '检查测试程序'); await field('自动续轮停止边界', '99');
+  await field('研究目标', '检查测试程序'); await field('自动续轮停止边界', '0');
   const limits = host.querySelector<HTMLDetailsElement>('.rs-limits')!; limits.open = false;
   await act(async () => button('创建并开始研究').click());
   const input = limits.querySelector('input')!;
@@ -506,4 +506,37 @@ it('permits stopping an idle collaboration and never posts a new turn for a late
   await act(async () => button('刷新会话').click());
   expect(api.stop).toHaveBeenCalledOnce(); expect(api.turn).not.toHaveBeenCalled(); expect(api.create).not.toHaveBeenCalled();
   expect(button('请求停止')).toBeUndefined(); expect(button('开始这一轮')).toBeDefined();
+});
+
+
+it('folds healthy execution detail but keeps UNKNOWN operations visible beside the result', async () => {
+  current.turns = [{ ...completedTurn, toolResults: [{ effectKey: 'operation-a', status: 'DONE', result: { outcome: 'succeeded' } }] }];
+  await mount('session-a');
+  expect(host.querySelector<HTMLDetailsElement>('.rs-execution')?.open).toBe(false);
+  expect(host.querySelector('.rs-reply')?.closest('.rs-execution')).toBeNull();
+  current.turns[0].toolResults[0].status = 'UNKNOWN';
+  await act(async () => button('刷新会话').click());
+  expect(host.querySelector<HTMLDetailsElement>('.rs-execution')?.open).toBe(true);
+  expect(host.querySelector('[role="alert"]')?.textContent).toContain('结果未知');
+});
+it('submits an optional project reference through the same work composer', async () => {
+  await mount(); await field('会话名称', 'Linked work'); await field('研究目标', 'Inspect existing project'); await field('停止边界', 'Stop after result'); await field('项目标识', 'project-a');
+  await act(async () => button('创建并开始研究').click());
+  expect(api.create).toHaveBeenCalledWith('alice', expect.objectContaining({ projectId: 'project-a' }));
+});
+
+
+it('uses a finite user-selected turn budget without an arbitrary upper ceiling', async () => {
+  await mount(); await validDraft(); await field('自动续轮停止边界', '99');
+  const turnBudget = host.querySelector<HTMLInputElement>('.rs-limits input')!;
+  expect(turnBudget.hasAttribute('max')).toBe(false);
+  expect(host.querySelectorAll<HTMLInputElement>('.rs-limits input')[1].max).toBe('12');
+  await act(async () => button('创建并开始研究').click());
+  expect(api.create).toHaveBeenCalledWith('alice', expect.objectContaining({ limits: expect.objectContaining({ maxTurns: 99 }) }));
+});
+it.each(['0', '-1', '1.5'])('rejects invalid turn budget %s even without an upper ceiling', async value => {
+  await mount(); await validDraft(); await field('自动续轮停止边界', value);
+  await act(async () => button('创建并开始研究').click());
+  expect(host.querySelector('.rs-limits input')?.getAttribute('aria-invalid')).toBe('true');
+  expect(api.create).not.toHaveBeenCalled();
 });

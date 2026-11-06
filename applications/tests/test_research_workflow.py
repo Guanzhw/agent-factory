@@ -3,7 +3,7 @@ import unittest
 
 from pydantic import ValidationError
 from agent_factory.native_workflows import _configuration
-from research.workflow import Decision, Evaluation, ResearchWorkflow, decision
+from research_controller_fixture import Decision, Evaluation, ResearchWorkflow, decision
 
 
 class ResearchWorkflowTests(unittest.TestCase):

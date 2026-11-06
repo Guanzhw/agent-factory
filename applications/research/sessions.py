@@ -33,6 +33,8 @@ class ResearchSessions:
         self.content, self.tools = content, tools
         self.conversations: Any = None
         self.collaboration: Any = None
+        self.projects: Any = None
+        self.research: Any = None
         self.memory = ResearchSessionMemory(self)
         self.subagents = ResearchSubagents(self)
         self.setup = ResearchSessionSetup(store, connections, models, tools)
@@ -145,6 +147,8 @@ class ResearchSessions:
     def create(self, owner, request):
         self.auth.require_member(owner)
         value = request.model_dump(exclude={'requestId'})
+        if value.get('projectId') is None:
+            value.pop('projectId', None)
         fingerprint = digest({'action': 'create', **value})
         with self._write() as conn:
             old = self.db.old(conn, self.commands, owner, request.requestId, fingerprint)
@@ -155,6 +159,13 @@ class ResearchSessions:
                 requestId='session-identity:' + digest({'owner': owner, 'request': request.requestId})[:32]))
             identifier, stamp = str(uuid4()), now()
             body = {key: value[key] for key in ('title', 'goal', 'boundaries', 'limits')}
+            if value.get('projectId') is not None:
+                if self.projects is None:
+                    raise rejected('RESEARCH_PROJECTS_UNAVAILABLE', 'Research projects are unavailable.')
+                project = self.projects.read(owner, value['projectId'])
+                if project['state'] != 'ready' or project.get('sourceUnavailable'):
+                    raise rejected('RESEARCH_CONFIRMED_GOAL_REQUIRED', 'Select an available confirmed project.')
+                body.update(projectId=project['id'], projectGoalVersion=project['currentGoalVersion'])
             body.update(configuration=configuration, createdAt=stamp, updatedAt=stamp,
                         stopped=False, stopRequestId=None, sharedSourceIds=[])
             self._bounded(self._context({'body': body}, []))
@@ -189,6 +200,8 @@ class ResearchSessions:
                 continue
             task = self.store.task(task['id'], owner)
             children = await self.subagents.children(task)
+            if self.research is not None:
+                await self.research.observe(task)
             status, snapshot = detail['job']['status'], detail['snapshot']
             run = snapshot.get('run', snapshot)
             result = None
@@ -430,6 +443,12 @@ class ResearchSessions:
             row, turn, _ = self._execution(conn, context)
             self._sources(context.user_id, row['body']['sharedSourceIds'])
             self._replies(context.user_id, row['id'], self._turns(conn, row['id']))
+            if row['body'].get('projectId') and tool_name in {
+                    'research_run', 'research_edit_file', 'research_delegate', 'research_experiment'}:
+                project = self.projects.read(context.user_id, row['body']['projectId'])
+                if (project['state'] != 'ready' or project.get('sourceUnavailable')
+                        or project['currentGoalVersion'] != row['body']['projectGoalVersion']):
+                    raise StopAgentRun('RESEARCH_CONFIRMED_GOAL_REQUIRED')
             self.store.authorize_tool(context, tool_name)
             return {'id': row['id'], 'ownerId': row['owner_id'], 'turnId': turn['id'],
                     'limits': deepcopy(row['body']['limits']), 'workspaceRef': row['id']}
@@ -618,6 +637,8 @@ class ResearchSessions:
         if turn is not None and root['request_id'] == factory_request_id(turn['application_request_id']):
             await asyncio.to_thread(self.memory.observe, task['owner_id'], turn, task, EFFECT_PREFIX)
         await self.subagents.observe_waits(observer, task)
+        if self.research is not None:
+            await self.research.observe(task)
 
     def mark_cancel(self, store, task_id, *, reason: str):
         task = store.task(task_id)
@@ -703,6 +724,7 @@ class ResearchSessions:
             if not safe or not body['stopped']:
                 actions.append('stop')
             return {'id': row['id'], 'assistantId': row['assistant_id'],
+                'projectId': body.get('projectId'),
                 **{key: deepcopy(body[key]) for key in ('title', 'goal', 'boundaries', 'createdAt', 'updatedAt', 'limits', 'sharedSourceIds')},
                 'model': deepcopy(body['configuration']['model']), 'state': state, 'allowedActions': actions,
                 'capabilities': {'memory': body['configuration'].get('personalMemory') is True},

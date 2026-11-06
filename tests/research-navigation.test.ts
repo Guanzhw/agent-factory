@@ -4,10 +4,10 @@ import { readWorkspaceRoute, workspaceUrl } from '../web/workspaceNavigation.js'
 
 describe('explicit research navigation', () => {
   const navigation = researchNavigation;
-  it('keeps the platform as the default and ignores application routes in core-only composition', () => {
+  it('opens autonomous work by default while keeping core-only composition independent', () => {
     const url = new URL('https://factory.example/?tab=research&project=inference');
     expect(readWorkspaceRoute(url, false).tab).toBe('catalog');
-    expect(readWorkspaceRoute(new URL('https://factory.example/'), false, navigation).tab).toBe('catalog');
+    expect(readWorkspaceRoute(new URL('https://factory.example/'), false, navigation).tab).toBe('research');
     expect(readWorkspaceRoute(url, false, navigation)).toMatchObject({ tab: 'research', project: 'inference' });
   });
   it('preserves project and evidence deep links without accepting arbitrary view state', () => {

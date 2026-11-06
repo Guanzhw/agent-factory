@@ -24,7 +24,7 @@ class ResearchSubagents:
             return task
         links = self.store.sql('SELECT * FROM af_delegation_links WHERE owner_id=:owner AND child_id=:child',
             owner=owner, child=task['id'])
-        if len(links) != 1 or links[0]['parent_id'] != links[0]['root_id']:
+        if len(links) != 1:
             raise PermissionError('RESEARCH_CHILD_ORIGINAL_ROOT_REQUIRED')
         link = links[0]
         if (link['plan_id'] != task['plan_id'] or plan['delegation'] != {

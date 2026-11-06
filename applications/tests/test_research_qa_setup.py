@@ -6,7 +6,7 @@ import httpx
 from agent_factory.byok_model import OwnerChatModel
 from research.qa_workflow import ResearchQAWorkflow
 from research.qa import ResearchQA
-from research.setup import PrepareQASetup, PublishSetup
+from research.setup import ResearchSetup, PrepareQASetup, PublishSetup
 from research.assistants import ConfigureAssistant, CreateAssistant, ResearchAssistants
 from contextlib import nullcontext
 from unittest.mock import Mock, patch
@@ -17,7 +17,10 @@ import test_research_setup as fixtures
 
 
 class ResearchQASetupTests(unittest.TestCase):
-    setUp = fixtures.ResearchSetupTests.setUp
+    def setUp(self):
+        fixtures.ResearchSetupTests.setUp(self)
+        self.setup = ResearchSetup(self.store, self.auth, self.connections, self.models)
+
     database = fixtures.ResearchSetupTests.database
     no_dispatch = fixtures.ResearchSetupTests.no_dispatch
 

@@ -6,6 +6,10 @@ All model responses and credentials are synthetic; no live provider is called.
 """
 
 FAST_PYTHON_TESTS = {
+    'autonomous_research': (
+        'test_research_autonomous_composition', 'test_research_session_research',
+        'test_delegation_preview_limits', 'test_runtime_contract',
+    ),
     'local_login': (
         'test_local_login',
         'test_credential_vault.CredentialVaultTests.test_browser_bridge_rejects_missing_csrf_before_body_or_vault',
@@ -91,6 +95,10 @@ FAST_PYTHON_TESTS = {
 }
 
 FAST_POSTGRES_TESTS = {
+    'declared_delegation_limits': (
+        'test_delegation_postgres.DelegationPostgresTests.test_declared_deep_and_wide_tree_preserves_shared_budget_and_cancellation',
+        'test_delegation_postgres.DelegationPostgresTests.test_depth_constraint_upgrade_preserves_existing_links',
+    ),
     'local_login': ('test_local_login_postgres.LocalLoginPostgresTests',),
     'ssh_original_native_wait': (
         'test_ssh_native_postgres.SSHNativePostgresTests.test_original_native_wait_resumes_once_after_controller_restart',

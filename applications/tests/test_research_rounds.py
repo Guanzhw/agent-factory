@@ -18,9 +18,9 @@ from agent_factory.resource_sharing import ResourceSharing
 from agent_factory.store import Store
 from research.projects import CreateProject, ProjectCommand, ResearchProjects, ReviseGoal
 from research.records import ResearchRecords
-from research.rounds import ResearchRounds
+from research_rounds_fixture import ResearchRounds
 from research.runs import ResearchRuns
-from research.workflow import Decision
+from research_controller_fixture import Decision
 import test_applications_composition as fixtures
 from test_research_runs import executable_agreement
 

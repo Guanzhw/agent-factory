@@ -9,10 +9,13 @@ import tempfile
 import threading
 from types import SimpleNamespace
 import unittest
+from unittest.mock import patch
 
 from agno.db.sqlite import SqliteDb
 from agno.run import RunContext
 from agno.run.base import RunStatus
+from agno.models.response import ModelResponse
+from core_native_fixture import FixtureModel
 from agent_factory.runtime import build_runtime
 from core_native_fixture import SEEDS, FIXTURE_BINDINGS
 from agent_factory.store import digest
@@ -192,6 +195,28 @@ class RuntimeContractTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(store.delegation.calls, 1)
         self.assertEqual(store.artifacts, [])
         self.assertTrue(any(e['type'] == 'protected_denied' for e in store.events))
+
+    async def test_durable_hook_is_the_only_native_tool_count_limit(self):
+        store = ContractStore(application='fixture-checksum', tools=['checksum'])
+        self.settings.max_tool_calls = 1
+        class Budget:
+            calls = 0
+            def consume_tool_budget(self, ctx, call_id, name):
+                self.calls += 1
+                if self.calls > 2:
+                    raise PermissionError('Saved shared tool budget exhausted')
+        store.delegation = Budget()
+        def response(model, messages):
+            count = sum(message.role == 'tool' for message in messages)
+            if count >= 3:
+                return ModelResponse(role='assistant', content='finished')
+            return ModelResponse(role='assistant', tool_calls=[{'id': 'count-' + str(count), 'type': 'function',
+                'function': {'name': 'checksum', 'arguments': json.dumps({'text': str(count)})}}])
+        with patch.object(FixtureModel, '_response', response):
+            await self.run_agent(store)
+        self.assertEqual(store.delegation.calls, 3)
+        self.assertEqual(len(store.artifacts), 2)
+        self.assertTrue(any(event['type'] == 'protected_denied' for event in store.events))
 
 
 if __name__ == '__main__': unittest.main()

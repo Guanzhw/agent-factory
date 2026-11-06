@@ -63,6 +63,8 @@ def project(row, turns, instruction=None, *, raw=False, protected=False):
     if instruction is not None:
         entries.append({'sequence': len(turns) + 1, 'instruction': instruction})
     result = {key: row['body'][key] for key in ('goal', 'boundaries')}
+    if row['body'].get('projectId'):
+        result.update(projectId=row['body']['projectId'], projectGoalVersion=row['body']['projectGoalVersion'])
     result['sharedSourceIds'] = row['body']['sharedSourceIds'] if raw else (
         turns[-1]['body'].get('sharedSourceIds', row['body']['sharedSourceIds']) if turns else [])
     if correction and not raw:

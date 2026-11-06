@@ -53,6 +53,34 @@ class DelegationPreviewLimitsTests(unittest.TestCase):
         self.assertEqual(service._mandate.call_count, 2)
         self.assertTrue(all(call.kwargs == {'creating': True} for call in service._mandate.call_args_list))
 
+    def test_declared_depth_and_children_above_old_limits_are_honored(self):
+        service, authority = self.fixture(depth=3, children=4)
+        plan = service.store.plan.return_value
+        plan['budget'].update(maxDepth=3, maxChildren=5)
+        result = service.delegation_scope('alice', 'root')
+        self.assertTrue(result['allowed'], result)
+        self.assertEqual(result['sharedBudget']['maxDepth'], 3)
+        self.assertEqual(result['sharedBudget']['childrenLimit'], 5)
+        authority.assert_called_once()
+        # Creation uses this same aggregate check, including each ancestor.
+        service._require_child_budget([service.store.task.return_value] * 3, [plan] * 3)
+        service._descendants.return_value.append({'child_id': 'fifth'})
+        with self.assertRaises(HTTPException) as exhausted:
+            service._require_child_budget([service.store.task.return_value] * 3, [plan] * 3)
+        self.assertEqual(exhausted.exception.status_code, 429)
+
+    def test_deep_persisted_ancestry_remains_cycle_checked(self):
+        service, _ = self.fixture()
+        tasks = {str(index): {'id': str(index), 'owner_id': 'alice'} for index in range(9)}
+        service.store.task.side_effect = lambda key, owner: tasks[key]
+        service._link = Mock(side_effect=lambda key: {'parent_id': str(int(key) - 1)} if int(key) else None)
+        root, ancestors = DelegationService._ancestry(service, tasks['8'])
+        self.assertEqual(root, '0')
+        self.assertEqual(len(ancestors), 8)
+        service._link.side_effect = lambda key: {'parent_id': '8'}
+        with self.assertRaises(HTTPException):
+            DelegationService._ancestry(service, tasks['8'])
+
     def test_local_ceiling_denial_does_not_bypass_owner_lookup(self):
         service, authority = self.fixture(children=1)
         service.store.task.side_effect = HTTPException(404, 'Task not found')

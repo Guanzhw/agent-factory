@@ -24,7 +24,7 @@ from agno.run import RunContext
 
 from fixture_settings import Settings
 from agent_factory.delegation import DelegationService, application_group_status
-from core_native_fixture import create_fixture_app as create_app
+from core_native_fixture import create_fixture_app as create_app, fixture_definitions
 from agent_factory.runtime import build_runtime
 
 
@@ -71,8 +71,8 @@ class DelegationPostgresTests(unittest.TestCase):
     def call(self, function, *args):
         return self.client.portal.call(function, *args)
 
-    def parent(self, mode="literature"):
-        response = self.client.post("/api/factory/plans", json={"topic": "sort", "application": "fixture-text", "mode": mode, "requestId": str(uuid4())})
+    def parent(self, mode="literature", application="fixture-text"):
+        response = self.client.post("/api/factory/plans", json={"topic": "sort", "application": application, "mode": mode, "requestId": str(uuid4())})
         self.assertEqual(response.status_code, 201, response.text)
         plan = response.json()
         response = self.client.post("/api/factory/instances", json={"planId": plan["id"], "requestId": str(uuid4())})
@@ -158,6 +158,46 @@ class DelegationPostgresTests(unittest.TestCase):
         group = self.call(self.service.inspect_group, "alice", root["id"])
         self.assertEqual(len(group["children"]), 4)
         self.assertEqual(sorted(entry["link"]["depth"] for entry in group["children"]), [1, 1, 2, 2])
+
+    def test_declared_deep_and_wide_tree_preserves_shared_budget_and_cancellation(self):
+        # This fixture exercises hierarchy limits, independently of task admission.
+        capacity = mock.patch.multiple(self.settings, max_user_tasks=32, max_total_tasks=32)
+        capacity.start()
+        self.addCleanup(capacity.stop)
+        definition = fixture_definitions({item['id']: item for item in self.store.materials()})[0]
+        definition['id'] = 'hierarchy-' + uuid4().hex
+        definition['defaultForDiscovery'] = False
+        definition['modes']['literature']['budget'].update(maxDepth=3, maxChildren=5)
+        apps = self.state['applications']
+        application = apps.create_draft('alice', definition, str(uuid4()))
+        apps.publish('alice', application['id'], application['version'], str(uuid4()))
+        root = self.parent(application=application['id'])
+        first = self.child(root)['childTask']
+        second = self.child(first)['childTask']
+        third = self.child(second)['childTask']
+        self.child(root)
+        self.child(root)
+        self.assertEqual(len(self.service._ancestry(third)[1]), 3)
+        self.denied(429, self.service.create, 'alice', root['id'], 'sort', 'literature', str(uuid4()))
+        self.store.request_cancel(root['id'])
+        with self.assertRaises(PermissionError):
+            self.service.authorize_child(SimpleNamespace(run_id=third['run_id'], session_id=third['id'], user_id='alice'))
+        self.call(self.service.cascade_cancel, 'alice', root['id'])
+        group = self.wait_group(root['id'])
+        self.assertEqual(len(group['children']), 5)
+        self.assertTrue(group['allStopped'])
+
+    def test_depth_constraint_upgrade_preserves_existing_links(self):
+        root = self.parent()
+        self.child(root)
+        # NOT VALID accommodates unrelated deeper fixture history while
+        # recreating the old insertion constraint for this upgrade test.
+        self.store.sql('ALTER TABLE af_delegation_links DROP CONSTRAINT af_delegation_links_depth_check, '
+                       'ADD CONSTRAINT af_delegation_links_depth_check CHECK(depth BETWEEN 1 AND 2) NOT VALID')
+        before = self.store.sql('SELECT * FROM af_delegation_links ORDER BY child_id')
+        self.service.initialize()
+        self.service.initialize()
+        self.assertEqual(self.store.sql('SELECT * FROM af_delegation_links ORDER BY child_id'), before)
 
     def test_03_owner_mode_subset_and_current_revocation(self):
         root = self.parent()

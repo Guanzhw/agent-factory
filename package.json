@@ -18,8 +18,8 @@
     "check": "npm run lint && npm run typecheck && npm test && npm run build",
     "start:configured": "uv run agent-factory",
     "check:python": "uv run ruff check platform deployment applications scripts && uv run pyright && uv run python scripts/check_python.py",
-    "build:research": "vite build --mode research",
-    "dev:research": "vite --mode research --host 127.0.0.1"
+    "build:research": "npm run build",
+    "dev:research": "npm run dev:web"
   },
   "dependencies": {
     "react": "19.1.1",
