@@ -112,6 +112,35 @@ class PersonalToolAdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(replay.result, expected)
             self.assertEqual(marker.read_text(), 'x')
 
+    @unittest.skipUnless(os.name == 'posix', 'CLI process groups require POSIX')
+    async def test_member_cli_accepts_declared_large_input_once_and_rejects_schema_violation(self):
+        schema = {'type': 'object', 'additionalProperties': False, 'required': ['text', 'rows'],
+            'properties': {'text': {'type': 'string', 'maxLength': 25000},
+                'rows': {'type': 'array', 'items': {'type': 'integer'}, 'maxItems': 300}}}
+        descriptor = ToolDescriptor('input-cli', 'v1', 'fixture_query', 'Synthetic input report',
+            schema, 'cli', 'synthetic-cli', 'synthetic-service', ('tool:query',),
+            permission='fixture:query')
+        with TemporaryDirectory(prefix='personal-input-') as temporary:
+            marker = Path(temporary) / 'dispatches'
+            program = ("import json,sys; from pathlib import Path; data=json.load(sys.stdin); "
+                f"p=Path({str(marker)!r}); p.write_text(p.read_text()+'x' if p.exists() else 'x'); "
+                "print(json.dumps({'characters':len(data['text']),'rows':len(data['rows'])}))")
+            adapter = MemberCliAdapter(descriptor, {'executable': sys.executable,
+                'arguments': ['-I', '-c', program]})
+            arguments = {'text': 'x' * 20000, 'rows': list(range(257))}
+            call, store, _ = native_call(adapter, None, arguments)
+            self.assertEqual((await call.aexecute()).status, 'success')
+            self.assertEqual(call.result, {'characters': 20000, 'rows': 257})
+            replay = FunctionCall(function=call.function, call_id=call.call_id, arguments=arguments)
+            self.assertEqual((await replay.aexecute()).status, 'success')
+            for invalid in ({**arguments, 'text': 'x' * 25001},
+                    {**arguments, 'rows': list(range(301))}, {**arguments, 'rows': ['wrong type']}):
+                rejected = FunctionCall(function=call.function, call_id='rejected', arguments=invalid)
+                self.assertEqual((await rejected.aexecute()).error, 'PERSONAL_TOOL_INPUT_INVALID')
+            self.assertEqual(marker.read_text(), 'x')
+            self.assertEqual(len(store.effects), 1)
+            self.assertEqual(next(iter(store.effects.values()))['status'], 'DONE')
+
     async def test_mcp_standard_schema_native_call_completes_once_and_replays_private_receipt(self):
         # Ordinary MCP schema has neither maxLength nor additionalProperties.
         schema = {'type': 'object', 'properties': {'value': {'type': 'string'}}, 'required': ['value']}
@@ -121,7 +150,7 @@ class PersonalToolAdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
         async with MCPProtocolServer() as server:
             adapter = MCPToolAdapter(descriptor, url=server.url, remote_tool_name='echo')
             lease = SecretLease('synthetic-mcp', ALICE_TOKEN)
-            value = 'x' * 15990
+            value = 'x' * 20000
             call, store, handle = native_call(adapter, lease, {'value': value})
             self.assertEqual(call.function.parameters, schema)
             self.assertEqual((await call.aexecute()).status, 'success')
