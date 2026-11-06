@@ -103,6 +103,7 @@ FAST_POSTGRES_TESTS = {
         'test_research_sessions.ResearchSessionContracts.test_conversation_admits_without_workspace_and_new_sessions_select_only_available_tools',
         'test_research_collaboration.ResearchCollaborationContracts.test_idle_reserves_one_batch_and_repeated_event_reconciles_same_request',
         'test_research_subagent_probe.ResearchSubagentProbe.test_original_child_and_native_continuation',
+        'test_research_subagent_probe.ResearchSubagentProbe.test_stop_reaches_actual_child_command_and_descendant_process',
     ),
     'local_login': ('test_local_login_postgres.LocalLoginPostgresTests',),
     'ssh_original_native_wait': (

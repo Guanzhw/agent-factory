@@ -38,4 +38,8 @@
 - 可选工具补充检查：隔离 PostgreSQL 会话、便携装配和无工具原生 Agent 共 26 项通过。完整 PostgreSQL CI 在提交 `42389286` 发现待启动任务 `run_id=None` 的观察错误及旧子任务预算断言；已修复，实际 Windows PostgreSQL 上两项回归均通过，并纳入 daily PostgreSQL 必跑选择。该次完整 CI 历史结果仍为失败；最终提交的 CI 状态以 PR 为准，不能把定向通过写成完整 PostgreSQL 全量通过。
 - 用户授权的 OpenCode `opencode-go/deepseek-v4.1-flash` 完成一次真实只读设计复核，没有执行模型工具或改文件。它不等于产品内真实模型、浏览器登录或完整研究链路验收。
 
+后续完整检查还暴露两项测试问题：Windows 句柄数值可被另一事件复用，不能以 `SetEvent` 成功判断继承；现以父事件信号为准，并加入真实继承和数值复用对照。子 Agent 取消测试曾传入 Python 绝对路径而非工具契约要求的命令名，命令未启动；修正夹具并将该取消用例纳入快速 PostgreSQL 必跑组。历史失败不计作通过，最终提交的完整矩阵结果以 PR 所链接运行及原始摘要为准。
+
+取消夹具修复后，原生 Windows 隔离 PostgreSQL 的 `ResearchSubagentProbe` 整类 8 项通过、零跳过；停止前确认两个原进程句柄仍运行，停止后确认同一句柄退出。独立复核通过，临时数据库和凭据已清理。
+
 未部署。约 20 人容量、远端 GPU、真实实验产物复现和完整浏览器旅程仍未验收。DSH 任务工具不可用，本机 headless profile 写入遇到 EPERM，未改动其全局配置。
