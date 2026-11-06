@@ -491,17 +491,25 @@ class PersonalToolHandle:
             if row['fingerprint'] != digest(dict(self.configuration)) or self.service._current(self.owner, row, conn) is not self.adapter:
                 raise HTTPException(409, 'PERSONAL_TOOL_CHANGED')
 
-    def resolve_credential(self) -> SecretLease | None:
-        self.check_authorized()
+    def resolve_credential(self, *, check_execution: Callable[[], None] | None = None) -> SecretLease | None:
+        # Join the native task check to this existing credential boundary. Each
+        # side of vault I/O checks task and handle once, without a cached grant.
+        def check():
+            if check_execution is not None:
+                check_execution()
+            self.check_authorized()
+
+        check()
         if (self.configuration.get('resource') or self.configuration.get('operationRef')) and self.configuration['credentialRef'] is None:
-            return None
-        try:
-            lease = self.service.vault.resolve(**self.service._scope(self.owner, self.configuration))
-            if not isinstance(lease, SecretLease):
-                raise ValueError()
-        except Exception:
-            raise HTTPException(409, 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE') from None
-        self.check_authorized()
+            lease = None
+        else:
+            try:
+                lease = self.service.vault.resolve(**self.service._scope(self.owner, self.configuration))
+                if not isinstance(lease, SecretLease):
+                    raise ValueError()
+            except Exception:
+                raise HTTPException(409, 'PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE') from None
+        check()
         return lease
 
 

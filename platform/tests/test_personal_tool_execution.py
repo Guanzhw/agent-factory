@@ -89,10 +89,19 @@ class Handle:
         if not self.valid:
             raise PermissionError('fixture revoked')
 
-    def resolve_credential(self):
+    def read_credential(self):
+        return self.lease
+
+    def resolve_credential(self, *, check_execution=None):
+        if check_execution is not None:
+            check_execution()
         self.check_authorized()
         self.resolutions += 1
-        return self.lease
+        lease = self.read_credential()
+        if check_execution is not None:
+            check_execution()
+        self.check_authorized()
+        return lease
 
 
 class Store:
@@ -444,12 +453,12 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_revocation_during_credential_resolution_withholds_lease(self):
         fc, handle, _ = self.call()
-        resolve = handle.resolve_credential
+        resolve = handle.read_credential
         def revoke_while_reading():
             lease = resolve()
             self.store.plan_allowed = False
             return lease
-        handle.resolve_credential = revoke_while_reading
+        handle.read_credential = revoke_while_reading
         with self.assertRaises(StopAgentRun):
             await self.invoke(fc)
         self.assertEqual(handle.resolutions, 1)

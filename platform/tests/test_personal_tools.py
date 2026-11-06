@@ -328,6 +328,48 @@ class PersonalToolTests(unittest.TestCase):
                 guarded.resolve_credential()
             resolve.assert_not_called()
 
+    def test_execution_revocation_during_vault_read_withholds_credential(self):
+        handle = self.binding(self.configure()).opaque_handle
+        allowed = True
+
+        def check_execution():
+            if not allowed:
+                raise PermissionError('synthetic-task-revoked')
+
+        original = self.vault.resolve
+
+        def read_then_revoke(**scope):
+            nonlocal allowed
+            lease = original(**scope)
+            allowed = False
+            return lease
+
+        with patch.object(self.vault, 'resolve', side_effect=read_then_revoke) as resolve:
+            with self.assertRaisesRegex(PermissionError, 'synthetic-task-revoked'):
+                handle.resolve_credential(check_execution=check_execution)
+            resolve.assert_called_once()
+            # A later call must check again before touching the vault.
+            with self.assertRaisesRegex(PermissionError, 'synthetic-task-revoked'):
+                handle.resolve_credential(check_execution=check_execution)
+            resolve.assert_called_once()
+
+    def test_execution_check_cannot_replace_current_handle_authority(self):
+        handle = self.binding(self.configure()).opaque_handle
+        original = self.vault.resolve
+
+        def read_then_disable(**scope):
+            lease = original(**scope)
+            self.auth.disabled = True
+            return lease
+
+        with patch.object(self.vault, 'resolve', side_effect=read_then_disable) as resolve:
+            with self.assertRaises(HTTPException):
+                handle.resolve_credential(check_execution=lambda: None)
+            resolve.assert_called_once()
+            with self.assertRaises(HTTPException):
+                handle.resolve_credential(check_execution=lambda: None)
+            resolve.assert_called_once()
+
     def test_current_membership_allows_configuration_and_disabled_member_denies_retained_handle(self):
         row = self.configure()
         handle = self.binding(row).opaque_handle
