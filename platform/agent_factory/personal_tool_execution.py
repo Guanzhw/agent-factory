@@ -77,7 +77,7 @@ def personal_tool_registration(adapter: PersonalToolAdapter, *, operation_sha256
                     or any(ord(char) < 32 for char in call_id)):
                 raise PermissionError('PERSONAL_TOOL_CONTEXT_DENIED')
 
-            def check_authorized():
+            def check_execution():
                 try:
                     if ((run_context.user_id, run_context.session_id, run_context.run_id) != expected
                             or fc.call_id != call_id or fc.function.name != descriptor.tool_name
@@ -92,6 +92,14 @@ def personal_tool_registration(adapter: PersonalToolAdapter, *, operation_sha256
                     plan = store.authorize_tool(run_context, descriptor.tool_name)
                     if (plan['id'], plan['ownerId']) != (binding.plan['id'], expected[0]):
                         raise PermissionError()
+                except RunCancelledException:
+                    raise RunCancelledException('PERSONAL_TOOL_CANCELLED') from None
+                except Exception:
+                    raise PermissionError('PERSONAL_TOOL_AUTHORIZATION_DENIED') from None
+
+            def check_authorized():
+                check_execution()
+                try:
                     handle.check_authorized()
                 except RunCancelledException:
                     raise RunCancelledException('PERSONAL_TOOL_CANCELLED') from None
@@ -127,16 +135,14 @@ def personal_tool_registration(adapter: PersonalToolAdapter, *, operation_sha256
             leases: list[SecretLease] = []
 
             def resolve_credential():
-                check_authorized()
                 try:
-                    lease = handle.resolve_credential()
+                    lease = handle.resolve_credential(check_execution=check_execution)
                     if lease is not None and not isinstance(lease, SecretLease):
                         raise ValueError()
                 except RunCancelledException:
                     raise RunCancelledException('PERSONAL_TOOL_CANCELLED') from None
                 except Exception:
                     raise PermissionError('PERSONAL_TOOL_CREDENTIAL_UNAVAILABLE') from None
-                check_authorized()
                 if lease is not None:
                     leases.append(lease)
                 return lease
