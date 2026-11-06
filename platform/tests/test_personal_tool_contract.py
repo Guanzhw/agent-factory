@@ -1,5 +1,6 @@
 """Bounded standard tool schemas keep MCP semantics without network retrieval."""
 import copy
+import json
 import socket
 import unittest
 from unittest.mock import patch
@@ -36,10 +37,26 @@ class PersonalToolContractTests(unittest.TestCase):
         nested = {}
         for _ in range(14):
             nested = {'next': nested}
-        for values in ({'query': 'x' * 16001}, {'rows': list(range(257))}, nested,
+        for values in ({'query': 'x' * 20000}, {'rows': list(range(257))}, nested):
+            self.assertEqual(validate_tool_arguments(schema, values), values)
+        cycle = []
+        cycle.append(cycle)
+        for values in ({'query': 'x' * 65536}, {'value': float('nan')}, {'value': b'bytes'},
+                {'value': cycle}, {'value': {1: 'key'}},
                 {'fc': 'forged'}, {'run_context': {}}, {'_agno_run_context': {}}):
             with self.subTest(values=list(values)), self.assertRaisesRegex(ValueError, '^PERSONAL_TOOL_INPUT_INVALID$'):
                 validate_tool_arguments(schema, values)
+
+    def test_arguments_enforce_serialized_byte_budget_and_detach_values(self):
+        schema = validate_tool_schema({'type': 'object'})
+        values = {'text': '"' * 32762}
+        self.assertEqual(len(json.dumps(values).encode()), 65536)
+        result = validate_tool_arguments(schema, values)
+        self.assertEqual(result, values)
+        values['text'] += '"'
+        with self.assertRaisesRegex(ValueError, '^PERSONAL_TOOL_INPUT_INVALID$'):
+            validate_tool_arguments(schema, values)
+        self.assertEqual(result, {'text': '"' * 32762})
 
     def test_invalid_or_oversized_declarations_do_not_enter_registry(self):
         original = {'type': 'object', 'properties': {'value': {'type': 'string'}}}

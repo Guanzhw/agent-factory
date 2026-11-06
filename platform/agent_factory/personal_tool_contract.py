@@ -33,7 +33,7 @@ def validate_tool_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError('PERSONAL_TOOL_DESCRIPTOR_INVALID') from None
 
 
-def validate_tool_output(value: Any, *, maximum: int) -> Any:
+def bounded_tool_json(value: Any, *, maximum: int) -> Any:
     """Use the tool's byte budget, not application-form shape limits."""
     def check(item):
         if type(item) is dict:
@@ -54,15 +54,14 @@ def validate_tool_output(value: Any, *, maximum: int) -> Any:
             raise ValueError()
         return json.loads(encoded)
     except (TypeError, ValueError, OverflowError, RecursionError):
-        raise ValueError('PERSONAL_TOOL_OUTPUT_INVALID') from None
+        raise ValueError('PERSONAL_TOOL_JSON_INVALID') from None
 
 
 def validate_tool_arguments(schema: Mapping[str, Any], arguments: Mapping[str, Any]) -> dict[str, Any]:
     from jsonschema import Draft202012Validator
     from referencing import Registry
-    from .input_schema import bounded_json
     try:
-        value = bounded_json(dict(arguments))
+        value = bounded_tool_json(dict(arguments), maximum=65536)
         if {'fc', 'run_context', '_agno_run_context'} & set(value):
             raise ValueError()
         Draft202012Validator(dict(schema), registry=Registry()).validate(value)

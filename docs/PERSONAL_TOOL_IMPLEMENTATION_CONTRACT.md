@@ -34,6 +34,8 @@ The native wrapper reserves the existing durable effect before transport dispatc
 
 `ToolInvocationError` contains a fixed code, business outcome and positive local `stopped` evidence. A failed operation with unresolved cleanup retains UNKNOWN capacity; local process or session closure does not establish that a remote effect stopped. Known secret echoes and oversized results never enter retained output.
 
+Tool arguments follow the tool’s declared JSON Schema and the existing 64 KB serialized JSON budget. The wrapper does not impose application-form text, list or nesting limits on those arguments. Declared field constraints, reserved native context fields, and rejection of external schema retrieval still apply before effects or credentials are reserved. Tool schema declarations retain their separate validation limits.
+
 Tool output is finite JSON bounded by the descriptor’s `max_output_bytes`, measured after JSON serialization (including escaping). Application-form limits on text length, list length, object width and nesting do not apply to tool results. A valid report inside that byte budget completes and can be read again through its original receipt without another dispatch. Invalid or oversized output after dispatch remains UNKNOWN; relaxing shape limits does not make uncertain operations replayable.
 
 ## CLI
