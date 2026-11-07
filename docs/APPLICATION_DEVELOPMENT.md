@@ -1,5 +1,7 @@
 # 新应用开发指南
 
+> Historical reference: the structural simplification on 2026-11-07 retires the former manual Factory/governance APIs described here. See [current architecture](../ARCHITECTURE.md) and [current implementation record](reviews/structural-simplification-20261107.md). Examples below apply to their original revision.
+
 本指南是新应用从代码、素材到受治理任务的入口。底座使用 Agno 3.1.0、
 PostgreSQL 和已安装的可信适配器。应用定义是不可变的配置与素材引用，不能安装代码、
 扩大权限或保存凭据。普通应用复用注册执行器；需要多步骤、分支或人工审查时，注册

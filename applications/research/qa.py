@@ -1,12 +1,25 @@
 """Persist only original QA inputs; core owns replies and current source authority."""
+import asyncio
 import json
 import re
 from contextlib import contextmanager
+from typing import Literal
+
+from agno.tools import tool
+from pydantic import BaseModel, ConfigDict, Field
 
 from fastapi import HTTPException
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
 from agent_factory.applications import GovernedStorage
+
+
+class Answer(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    answer: str = Field(min_length=1)
+    citations: list[str]
+    evidenceLevel: Literal['agent_analysis'] = 'agent_analysis'
+    relation: Literal['related', 'conditions_differ', 'not_related'] | None = None
 
 
 class ResearchQA:
@@ -20,6 +33,24 @@ class ResearchQA:
             Column('run_id', String, nullable=False), Column('message_id', String, nullable=False),
             Column('configuration', JSON, nullable=False), Column('content_ids', JSON, nullable=False))
         metadata.create_all(store.engine)
+
+    def functions(self, context):
+        @tool(name='research_qa_context')
+        async def read_shared_sources():
+            """Read the original question and research sources shared with both participants."""
+            return await asyncio.to_thread(self.context, context)
+
+        @tool(name='research_qa_record')
+        async def save_reply(answer: str, citations: list[str],
+                             relation: Literal['related', 'conditions_differ', 'not_related'] | None = None):
+            """Save the answer to the original question. Cite only retrieved source IDs.
+
+            For a source association, supply the relation and cite both sources.
+            """
+            value = Answer(answer=answer, citations=citations, relation=relation)
+            return await asyncio.to_thread(self.record, context, value)
+
+        return [read_shared_sources, save_reply]
 
     @contextmanager
     def _write(self):

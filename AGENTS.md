@@ -2,7 +2,7 @@
 
 ## Choose the relevant context
 
-- Before changing package ownership or composition, read [ARCHITECTURE.md](ARCHITECTURE.md) and the ownership maps linked there.
+- Before changing package ownership or composition, read [ARCHITECTURE.md](ARCHITECTURE.md).
 - Before changing execution, cancellation, recovery, or resource bindings, read [Runtime design](docs/RUNTIME_DESIGN.md) and its relevant component reference.
 - Before validating a change, read [Development checks](docs/DEVELOPMENT_CHECKS.md). Report executed checks separately from commands that were not run.
 - Before changing research behavior or navigation, read the [autonomous Agent decision](docs/plans/agent-autonomy-20261106.md). The product has one research entry. The Agent chooses its tools and next actions.
@@ -12,9 +12,9 @@
 
 Use Agno AgentOS 3.1.0 and PostgreSQL. Reuse the installed SDK's Registry, native model and tool loop, queue, and lifecycle before adding a replacement. Record a concrete SDK gap when a replacement is necessary.
 
-Core owns execution and resource interfaces. Research concepts belong in `applications/research`. The composition root selects applications and trusted adapters. One product UI does not remove the standalone core package or its programmatic API.
+Keep the service thin: Agno owns execution, while research concepts belong in `applications/research`. The composition root installs the application. Do not restore retired governance, budget, lease, approval or duplicate execution layers.
 
-The platform serves a trusted small team. Members create and use components, publish their own content, and connect resources. Account administrators manage accounts. Resource owners choose personal or team sharing. Shared use never exposes their credentials. Input validation belongs at the boundary that owns the operation.
+The platform serves a trusted small team. Members chat, configure resources and share selected content. Account administrators manage accounts. Resource owners choose personal or team sharing. Shared use never exposes their credentials. Input validation belongs at the boundary that owns the operation.
 
 Start with a working chat experience and an Agent that completes real tasks. Put model and tool configuration in Settings and show understandable progress and results. Do not use safety design, execution boundaries, receipts, approvals or budgets as the starting point for product design. Remove extra layers that obstruct execution or add user steps. Preserve functional truth: report real failures, keep each user's data associated with that user, and make Stop actually stop owned work.
 
@@ -35,3 +35,5 @@ Check limits against the real task. Earlier 12 KB file limits, eight-call tool b
 Commit public code, public documentation, and synthetic fixtures only. Keep credentials, private design packages, personal files, databases, logs, and generated research outside the repository. Preserve third-party notices and existing user changes.
 
 Use the authorization already supplied in the task for models, compute, and deployment. Confirm any new access or security-sensitive change that falls outside it. Source retirement does not authorize deleting stored user data, credentials, or backups.
+
+Keep repository source below 25,000 physical lines, including comments and blank lines, scripts and archived executable code. Reach this through deletion and native reuse, not compressed formatting or moving code out of the count.

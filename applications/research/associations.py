@@ -97,8 +97,7 @@ class ResearchAssociations:
         event_id = None
         if selected:
             event = self.events.emit(conn, owner, ContentEvent(namespace='research', eventType='evidence.available',
-                contentId=content_id, candidates=[item['endpointId'] for item in selected],
-                deadline=configuration['budget']['deadline']), 'research-associate:' + content_id)
+                contentId=content_id, candidates=[item['endpointId'] for item in selected]), 'research-associate:' + content_id)
             event_id = event['id']
         conn.execute(self.intents.insert().values(content_id=content_id, owner_id=owner,
             event_id=event_id, candidates=selected))
@@ -170,57 +169,6 @@ class ResearchAssociations:
             if row is None:
                 raise HTTPException(404, 'RESEARCH_ASSOCIATION_NOT_FOUND')
             return self._projection(actor, row)
-
-    def _all_associations(self, owner):
-        after = ''
-        while True:
-            page = self.list(owner, after=after)
-            yield from page['items']
-            after = page.get('nextCursor')
-            if not after:
-                break
-
-    def for_round(self, owner, round_id, project_id, agreement):
-        bound = self.sources.bound(round_id)
-        if bound is None:
-            words = terms(agreement.objective + ' ' + agreement.evaluation + ' ' + agreement.stopConditions)
-            ranked = []
-            for source in self._content(owner):
-                if source['ownerId'] == owner or source['visibility'] != 'team' or source['source']['application'] != 'research':
-                    continue
-                score = len(words & research_terms(source['content']))
-                if score:
-                    item = {'id': source['id'], 'kind': 'original_record', 'sources': [source],
-                            'sourceIds': self.sources.source_dependencies(source['id'], actor=owner)}
-                    ranked.append((-score, source['id'], item))
-            for item in self._all_associations(owner):
-                original = [self.content.read(owner, identifier) for identifier in item['sourceIds']]
-                score = len(words & set().union(*(research_terms(source['content']) for source in original)))
-                if score:
-                    ranked.append((-score, item['id'], {**item, 'kind': 'association', 'sources': original}))
-            selected = [item for _, _, item in sorted(ranked)]
-            dependencies = set(self.sources.project_dependencies(project_id))
-            dependencies.update(identifier for item in selected for identifier in item['sourceIds'])
-            self.sources.bind(round_id, project_id, dependencies,
-                [item['id'] for item in selected if item['kind'] == 'association'],
-                [item['id'] for item in selected if item['kind'] == 'original_record'])
-        return self.round_inputs(owner, round_id)
-
-    def round_inputs(self, owner, round_id):
-        bound = self.sources.bound(round_id)
-        if bound is None:
-            return []
-        self.sources.require(owner, bound['source_ids'])
-        result = []
-        for identifier in bound['content_ids']:
-            result.append({'id': identifier, 'kind': 'original_record', 'sources': [self.content.read(owner, identifier)],
-                           'sourceIds': self.sources.source_dependencies(identifier, actor=owner)})
-        for identifier in bound['association_ids']:
-            item = self.read(owner, identifier)
-            item['kind'] = 'association'
-            item['sources'] = [self.content.read(owner, source_id) for source_id in item['sourceIds']]
-            result.append(item)
-        return result
 
     def list(self, actor, *, after='', limit=50):
         self.assistants.auth.require_member(actor)

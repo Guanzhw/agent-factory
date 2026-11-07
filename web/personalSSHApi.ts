@@ -29,11 +29,12 @@ async function call<T>(owner: string, path: string, method = 'GET', body?: unkno
   catch (e) { throw new RemoteRequestError(e instanceof ApiError && (definitivelyRejected(e.status) || !!e.code && !!sshMessages[e.code]), e instanceof ApiError ? e.code : undefined); }
 }
 const ref = encodeURIComponent;
+const profilePayload = <T extends SSHIdentityInput>({ hostKey, ...input }: T) => ({ ...input, ...(hostKey ? { hostKey } : {}) });
 export const personalSSHApi = {
   capabilities: (owner: string, signal?: AbortSignal) => call<{ enabled: boolean; controllerDiagnostic?: string | null }>(owner, '/capabilities', 'GET', undefined, signal),
   list: (owner: string, signal?: AbortSignal) => call<PersonalSSHServer[]>(owner, '', 'GET', undefined, signal),
-  identity: (owner: string, input: SSHIdentityInput) => call<SSHIdentity>(owner, '/identity', 'POST', input),
-  configure: (owner: string, input: SSHIdentityInput & { credentialRef: string; credentialRevision: string; confirmedHostKey: true; requestId: string }, reference?: string) => call<PersonalSSHServer>(owner, reference ? `/${ref(reference)}/configure` : '', 'POST', input),
+  identity: (owner: string, input: SSHIdentityInput) => call<SSHIdentity>(owner, '/identity', 'POST', profilePayload(input)),
+  configure: (owner: string, input: SSHIdentityInput & { credentialRef: string; credentialRevision: string; requestId: string }, reference?: string) => call<PersonalSSHServer>(owner, reference ? `/${ref(reference)}/configure` : '', 'POST', profilePayload(input)),
   inspect: (owner: string, reference: string) => call<PersonalSSHServer>(owner, `/${ref(reference)}`),
   command: (owner: string, server: string, action: Exclude<SSHAction, 'configure' | 'sharing'>, requestId: string) => call<PersonalSSHServer>(owner, `/${ref(server)}/${action}`, 'POST', { requestId }),
   share: (owner: string, reference: string, visibility: 'personal' | 'team', requestId: string) => call<PersonalSSHServer>(owner, `/${ref(reference)}/sharing`, 'POST', { visibility, requestId }),

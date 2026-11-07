@@ -1,5 +1,7 @@
 # Chat experience and autonomous execution — 2026-11-07
 
+> Work in progress: the structural simplification following PR #177 removes the command-child workflow and its UI. Verification below records the earlier candidate and must not be used as acceptance of the current working tree. Current evidence is tracked in [structural simplification](structural-simplification-20261107.md). The PR remains unmerged.
+
 Implementation baseline: `6a1dd4b7bc3e8134778d1aa25109df9aa38a7ecc`. The user selected the existing Agno architecture, not a Hermes migration. This change combines the UI rebuild, removal of obstructive project restrictions, Codex comparison, and reuse of installed Agno capabilities.
 
 The reference is the open-source Codex client at [`0ed34eb9ceddc759e283f0d657be9339afc6b25a`](https://github.com/openai/codex/tree/0ed34eb9ceddc759e283f0d657be9339afc6b25a), not a claim about every hosted Codex deployment. Agno remains pinned to **3.1.0**. Defaults only transfer where units and scope match.
@@ -21,7 +23,7 @@ The rows follow the original audit's autonomous-session inventory. See the linke
 | Original restriction | Implementation and effect | Reference / distinction |
 | --- | --- | --- |
 | Shared tool count 32, schema 128 | Remove task/ancestor count rejection and schema ceiling; no forced stop at these counts. | Codex [turn loop](https://github.com/openai/codex/blob/0ed34eb9ceddc759e283f0d657be9339afc6b25a/codex-rs/core/src/session/turn.rs#L529); Agno `tool_call_limit=None`. Optional Codex rollout-token policies are separate. |
-| Command 120 seconds / maximum 600 | No implicit command deadline; user stop still stops owned processes. | Codex interactive yield is 10 seconds, not process death. Agno native command children yield a durable handle and release the parent worker through native wait; continued reads use the original process. |
+| Command 120 seconds / maximum 600 | No implicit command deadline; user stop still stops owned processes. | Codex interactive yield is 10 seconds, not process death. Factory uses the existing command execution path without a default deadline. The previously added command-child workflow is removed; Codex-only capabilities are not added to this project. |
 | Native task/model total 300 seconds | Agno queue timeout defaults to `None`; model transport uses a 300-second **read-idle** timeout. | Codex [provider idle timeout](https://github.com/openai/codex/blob/0ed34eb9ceddc759e283f0d657be9339afc6b25a/codex-rs/model-provider-info/src/lib.rs#L73). |
 | Hidden child depth 2 | Remove entry budget and runtime depth rejection, including database depth ceiling. | Codex V1 depth 1; V2 ignores depth. No universal hosted default is asserted. |
 | Hidden cumulative descendants 4 | Remove lifetime descendant rejection. | V1 6 open children; V2 4 total concurrent threads including root. Neither is cumulative work count. Agno's process-wide worker pool is not a per-root Codex slot. |
@@ -57,7 +59,7 @@ Model settings expose optional context-window and compaction-threshold metadata 
 
 - Default startup and native tool assembly: `deployment/agent_factory_server/research.py`, `applications/research/session_setup.py`, `session_personal_tools.py`.
 - Input, per-turn configuration and context: `applications/research/sessions.py`, `session_context.py`, `session_routes.py`; `platform/agent_factory/input_schema.py`.
-- File tools and yielding commands: `applications/research/session_tools.py`, `session_commands.py`, `session_subagents.py`; `platform/agent_factory/_personal_cli_process.py`, `tool_output.py`.
+- File tools and commands: `applications/research/session_tools.py`, `session_subagents.py`; `platform/agent_factory/_personal_cli_process.py`, `tool_output.py`.
 - Delegation and lifecycle: `platform/agent_factory/delegation.py`, `lifecycle_observer.py`, `store.py`, `local_budget_scopes.py`.
 - Model streaming and metadata: `platform/agent_factory/byok_model.py`, `model_stream.py`, `model_transport.py`, `owner_runtime_broker.py`, `personal_models.py`.
 - Chat and settings: `web/research-composition.tsx`, `web/composition.tsx`, `web/apps/research/ResearchSessions.tsx`, `SessionActivity.tsx`, `chat.css`, `web/ModelSettings.tsx`.

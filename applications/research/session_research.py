@@ -21,8 +21,8 @@ def rejected(code):
 
 
 class ResearchSessionResearch:
-    def __init__(self, sessions, projects, records):
-        self.sessions, self.projects, self.records = sessions, projects, records
+    def __init__(self, sessions, projects, content):
+        self.sessions, self.projects, self.content = sessions, projects, content
         self.store, self.db = sessions.store, sessions.db
         metadata = MetaData()
         self.experiments = Table('research_session_experiments', metadata,
@@ -79,7 +79,7 @@ class ResearchSessionResearch:
         publication = ContentPublication(source=ContentSource(application='research', record=row['id'], revision=revision),
             content=content, visibility='team', sourceContentIds=(body.get('sourceContentIds', [])
                 if source_ids is None else source_ids))
-        return self.records.content.publish(row['owner_id'], publication,
+        return self.content.publish(row['owner_id'], publication,
             'session-experiment:' + row['id'] + ':' + revision)['id']
 
     @staticmethod
@@ -176,7 +176,7 @@ class ResearchSessionResearch:
                 raise rejected('RESEARCH_ORIGINAL_RESULT_REQUIRED')
             dependencies = set(row['body'].get('sourceContentIds', []))
             for identifier in session['body'].get('sharedSourceIds', []):
-                source = self.records.content.read(context.user_id, identifier)
+                source = self.content.read(context.user_id, identifier)
                 dependencies.update([identifier, *source.get('sourceContentIds', [])])
             with self.db.write() as conn:
                 row = conn.execute(select(self.experiments).where(self.experiments.c.id == row['id'])).mappings().one()
@@ -190,13 +190,13 @@ class ResearchSessionResearch:
                 body['assessments'][key] = old or item
                 conn.execute(self.experiments.update().where(self.experiments.c.id == row['id']).values(body=body))
             return self._assessment_receipt(self._row(context.user_id, session['id'], row['id']), key)
-        if project and (project['state'] != 'ready' or project['currentGoalVersion'] != session['body']['projectGoalVersion']):
-            raise rejected('RESEARCH_CONFIRMED_GOAL_REQUIRED')
+        if project and project['state'] == 'ended':
+            raise rejected('RESEARCH_PROJECT_ENDED')
         identifier = self._identifier(context, call_id)
         direct = self._direct(context, values) if name == 'research_record_experiment' else None
         source_ids = set()
         for source_id in session['body'].get('sharedSourceIds', []):
-            source = self.records.content.read(context.user_id, source_id)
+            source = self.content.read(context.user_id, source_id)
             source_ids.update([source_id, *source.get('sourceContentIds', [])])
         with self.db.write() as conn:
             existing = conn.execute(select(self.experiments).where(self.experiments.c.id == identifier)).mappings().first()

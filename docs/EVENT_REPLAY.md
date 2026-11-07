@@ -1,5 +1,7 @@
 # Durable Factory event replay
 
+> Historical reference: the structural simplification on 2026-11-07 retires the former manual Factory/governance APIs described here. See [current architecture](../ARCHITECTURE.md) and [current implementation record](reviews/structural-simplification-20261107.md). Examples below apply to their original revision.
+
 `GET /api/factory/jobs/{id}/events?limit=100&cursor=...` is an owner-scoped,
 current-read-authorized view of `af_events`. It is a Factory application stream;
 `nativeCursor=false` explicitly distinguishes it from native Agno streams.

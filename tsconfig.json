@@ -19,7 +19,6 @@
     ]
   },
   "include": [
-    "server",
     "shared",
     "web",
     "vite.config.ts"

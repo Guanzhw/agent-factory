@@ -20,7 +20,7 @@ from agent_factory.control_commands import ControlCommand
 from agent_factory.runtime_hooks import effect_unresolved, runtime_custody_held
 from agent_factory.store import digest, now
 from .assistants import CreateAssistant
-from .session_setup import MODE, ResearchSessionSetup, rejected
+from .session_setup import INSTRUCTIONS, MODE, ResearchSessionSetup, rejected
 from .session_memory import ResearchSessionMemory
 from .session_tools import EFFECT_PREFIX
 from . import session_context
@@ -50,16 +50,13 @@ class ResearchSessions:
             UniqueConstraint('session_id', 'sequence'))
         self.commands = self.db.command_table('research_session_commands', metadata)
         metadata.create_all(store.engine)
-        registrations = [('environment', tools.environment_registration),
-                         *[('tool', entry) for entry in tools.tool_registrations]]
-        store.application_runtime.register('research-session', self,
-            bindings=tuple((kind, entry.adapter_id, entry.revision) for kind, entry in registrations))
+        store.research_instructions = [INSTRUCTIONS]
+        store.research_sessions = self
+        store.research_tools = tools
 
     @contextmanager
     def _write(self):
         with self.store.transaction() as conn:
-            if self.store.engine.dialect.name == 'postgresql':
-                self.store.local_budget_scopes.admission_lock(conn)
             with self.db.write():
                 yield conn
 
@@ -145,17 +142,17 @@ class ResearchSessions:
             old = self.db.old(conn, self.commands, owner, request.requestId, fingerprint)
             if old is not None:
                 return old['sessionId']
-            configuration = self.setup.prepare(owner, value['modelConnectionRef'], value['limits'])
+            configuration = self.setup.prepare(owner, value['modelConnectionRef'])
             assistant = self.assistants.create(owner, CreateAssistant(
                 requestId='session-identity:' + digest({'owner': owner, 'request': request.requestId})[:32]))
             identifier, stamp = str(uuid4()), now()
-            body = {key: value[key] for key in ('title', 'goal', 'boundaries', 'limits')}
+            body = {key: value[key] for key in ('title', 'goal', 'boundaries')}
             if value.get('projectId') is not None:
                 if self.projects is None:
                     raise rejected('RESEARCH_PROJECTS_UNAVAILABLE', 'Research projects are unavailable.')
                 project = self.projects.read(owner, value['projectId'])
-                if project['state'] != 'ready' or project.get('sourceUnavailable'):
-                    raise rejected('RESEARCH_CONFIRMED_GOAL_REQUIRED', 'Select an available confirmed project.')
+                if project['state'] == 'ended' or project.get('sourceUnavailable'):
+                    raise rejected('RESEARCH_PROJECT_UNAVAILABLE', '所选项目已结束或来源不可用。')
                 body.update(projectId=project['id'], projectGoalVersion=project['currentGoalVersion'])
             body.update(configuration=configuration, createdAt=stamp, updatedAt=stamp,
                         stopped=False, stopRequestId=None, sharedSourceIds=[])
@@ -247,7 +244,12 @@ class ResearchSessions:
                     if status == 'completed':
                         body['failure'] = None
                     elif status == 'failed':
-                        body['failure'] = body.get('failure') or '本轮执行失败，请查看原任务与工具记录。'
+                        error = (snapshot.get('queue') or {}).get('error') or snapshot.get('error')
+                        if isinstance(error, str) and error.startswith('PERSONAL_MODEL_HTTP_'):
+                            status_code = error.removeprefix('PERSONAL_MODEL_HTTP_')
+                            body['failure'] = f'模型服务返回 HTTP {status_code}，本轮未完成。请检查模型服务或设置中的连接。'
+                        else:
+                            body['failure'] = str(error or body.get('failure') or '本轮执行失败，请查看工具记录。')
                 self._save_turn(conn, current, body)
 
     def _safe(self, owner, turn):
@@ -264,20 +266,18 @@ class ResearchSessions:
     def _start(row, turn):
         configuration = turn['body'].get('configuration', row['body']['configuration'])
         return ApplicationStart(requestId=turn['application_request_id'],
-            application=configuration['applicationRef']['id'], applicationRef=configuration['applicationRef'],
             mode=MODE, goal=row['body']['goal'], connectionRefs=configuration['connectionRefs'],
             inputValues={'sessionId': row['id'], 'turnId': turn['id'], 'sessionContext': turn['body']['context']})
 
     def _prepare_turn_configuration(self, conn, owner, row, turns):
         previous = row['body']['configuration']
-        limits = {'maxTurns': None, 'toolCallsPerTurn': None, 'operationSeconds': None}
-        configuration = self.setup.prepare(owner, previous['connectionRefs']['model'], limits)
+        configuration = self.setup.prepare(owner, previous['connectionRefs']['model'])
         # Pin each original turn before refreshing the session's selected tools.
         # Native plans and request identities remain unchanged for recovery.
         for prior in turns:
             if 'configuration' not in prior['body']:
                 self._save_turn(conn, prior, {**prior['body'], 'configuration': deepcopy(previous)})
-        row = {**row, 'body': {**row['body'], 'configuration': configuration, 'limits': limits}}
+        row = {**row, 'body': {**row['body'], 'configuration': configuration}}
         return row
 
     def _reserve(self, owner, identifier, request):
@@ -422,12 +422,8 @@ class ResearchSessions:
             raise PermissionError('RESEARCH_SESSION_ORIGINAL_TURN_REQUIRED')
         row = self._row(conn, context.user_id, turn['session_id'])
         expected = turn['body'].get('configuration', row['body']['configuration'])
-        if plan.get('applicationRef') != expected['applicationRef'] or plan.get('mode') not in {MODE, 'command'}:
+        if plan.get('connectionRefs', {}).get('model') != expected['connectionRefs']['model'] or plan.get('mode') != MODE:
             raise PermissionError('RESEARCH_SESSION_PLAN_MISMATCH')
-        if plan.get('mode') == 'command' and (task['id'] == original_task['id']
-                or not expected.get('commandWorkflow')
-                or plan.get('nativeComponent') != expected['commandWorkflow']):
-            raise PermissionError('RESEARCH_COMMAND_WORKFLOW_MISMATCH')
         if ((plan.get('inputValues') or {}).get('turnId') != turn['id']
                 or (plan.get('inputValues') or {}).get('sessionId') != row['id']):
             raise PermissionError('RESEARCH_SESSION_INPUT_MISMATCH')
@@ -455,12 +451,11 @@ class ResearchSessions:
             if row['body'].get('projectId') and tool_name in {
                     'research_run', 'research_edit_file', 'research_delegate', 'research_experiment'}:
                 project = self.projects.read(context.user_id, row['body']['projectId'])
-                if (project['state'] != 'ready' or project.get('sourceUnavailable')
-                        or project['currentGoalVersion'] != row['body']['projectGoalVersion']):
-                    raise StopAgentRun('RESEARCH_CONFIRMED_GOAL_REQUIRED')
+                if project['state'] == 'ended' or project.get('sourceUnavailable'):
+                    raise StopAgentRun('RESEARCH_PROJECT_UNAVAILABLE')
             self.store.authorize_tool(context, tool_name)
             return {'id': row['id'], 'ownerId': row['owner_id'], 'turnId': turn['id'],
-                    'limits': deepcopy(row['body']['limits']), 'workspaceRef': row['id']}
+                    'workspaceRef': row['id']}
 
     def record_source(self, context, identifier):
         with self._write() as conn:
@@ -731,7 +726,7 @@ class ResearchSessions:
                 actions.append('stop')
             return {'id': row['id'], 'assistantId': row['assistant_id'],
                 'projectId': body.get('projectId'),
-                **{key: deepcopy(body[key]) for key in ('title', 'goal', 'boundaries', 'createdAt', 'updatedAt', 'limits', 'sharedSourceIds')},
+                **{key: deepcopy(body[key]) for key in ('title', 'goal', 'boundaries', 'createdAt', 'updatedAt', 'sharedSourceIds')},
                 'model': deepcopy(body['configuration']['model']), 'state': state, 'allowedActions': actions,
                 'capabilities': {'memory': body['configuration'].get('personalMemory') is True},
                 'collaboration': {'enabled': body['configuration'].get('autonomousCollaboration') is True},

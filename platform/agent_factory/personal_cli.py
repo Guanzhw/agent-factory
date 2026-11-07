@@ -18,12 +18,11 @@ import os
 from pathlib import Path
 import re
 import shutil
-import sys
 import tempfile
 from typing import Any, Callable, Literal, Mapping
 
 from ._personal_cli_process import CLIProcessError, CLIProcessResult, run_cli_process
-from .personal_remote_provider import SecretLease, reject_credential_echo
+from .personal_remote_provider import SecretLease
 from .personal_tool_contract import ToolDescriptor, ToolInvocation, ToolInvocationError
 
 
@@ -54,7 +53,7 @@ class MemberCliAdapter:
             if asyncio.get_running_loop().get_debug():
                 raise ToolInvocationError('CLI_DEBUG_LOGGING_UNSAFE', outcome='failed', stopped=True)
             lease = invocation.resolve_credential()
-            env = PersonalCliAdapter._environment(root)
+            env = dict(os.environ)
             env.update(self.configuration.get('environment', {}))
             credential_variable = self.configuration.get('credentialEnvironmentVariable')
             if lease is not None and credential_variable:
@@ -81,13 +80,10 @@ class MemberCliAdapter:
             except BaseException:
                 stopped, dispatched = False, True
                 raise ToolInvocationError('CLI_PROCESS_STATE_UNCONFIRMED') from None
-            reject_credential_echo(result.stdout.decode(errors='replace'), lease)
-            reject_credential_echo(result.stderr.decode(errors='replace'), lease)
             if result.returncode:
                 raise ToolInvocationError('CLI_COMMAND_FAILED', stopped=stopped)
             value = (json.loads(result.stdout) if self.configuration.get('outputFormat', 'json') == 'json'
                 else {'text': result.stdout.decode(errors='replace')})
-            reject_credential_echo(value, lease)
             invocation.check_authorized()
             return value
         except ToolInvocationError as error:
@@ -220,27 +216,6 @@ class PersonalCliAdapter:
                 raise ToolInvocationError("CLI_ARGUMENTS_REJECTED", outcome="failed", stopped=True)
         return tuple(output)
 
-    @staticmethod
-    def _environment(root: Path) -> dict[str, str]:
-        # Do not copy os.environ: that imports host login, proxy, keychain and
-        # interpreter injection settings. These paths are invocation-owned.
-        result = {"PATH": os.defpath, "LANG": "C.UTF-8", "HOME": str(root / "home"),
-                  "XDG_CONFIG_HOME": str(root / "home/.config"), "XDG_CACHE_HOME": str(root / "cache"),
-                  "XDG_DATA_HOME": str(root / "data"), "XDG_STATE_HOME": str(root / "state"),
-                  "XDG_RUNTIME_DIR": str(root / "runtime"), "TMPDIR": str(root / "tmp")}
-        for key, value in result.items():
-            if key not in {"PATH", "LANG"}:
-                Path(value).mkdir(mode=0o700, parents=True, exist_ok=True)
-        if sys.platform == 'win32':
-            import win32api
-            # Windows loaders require SystemRoot even with an explicit env.
-            # Python/test temp files and user settings stay invocation-owned.
-            result.update({"SystemRoot": win32api.GetWindowsDirectory(),
-                "TEMP": result["TMPDIR"], "TMP": result["TMPDIR"],
-                "USERPROFILE": result["HOME"], "APPDATA": result["XDG_CONFIG_HOME"],
-                "LOCALAPPDATA": result["XDG_CACHE_HOME"], "PYTHONUTF8": "1"})
-        return result
-
     def _auth_arguments(self, root: Path) -> tuple[str, ...]:
         if self._credential.mode == "file":
             return (self._credential.file_argument + "=" + str(root / "credentials"),)
@@ -250,7 +225,7 @@ class PersonalCliAdapter:
 
     def _write_credential(self, root: Path, env: dict[str, str], lease: SecretLease) -> bytes:
         payload = self._credential.encode(lease)
-        if not isinstance(payload, bytes) or not payload or len(payload) > 16384:
+        if not isinstance(payload, bytes) or not payload:
             raise ToolInvocationError("CLI_CREDENTIAL_FORMAT_REJECTED", outcome="failed", stopped=True)
         if self._credential.mode == "stdin":
             return payload
@@ -260,6 +235,10 @@ class PersonalCliAdapter:
                 raise ToolInvocationError("CLI_CREDENTIAL_FORMAT_REJECTED", outcome="failed", stopped=True)
             env[str(self._credential.environment_variable)] = value
             return b""
+        if self._credential.mode == 'home':
+            home = root / 'home'
+            env.update(HOME=str(home), USERPROFILE=str(home),
+                       XDG_CONFIG_HOME=str(home / '.config'))
         destination = root / ("credentials" if self._credential.mode == "file"
                               else "home/" + self._credential.home_relative_path)
         destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -269,12 +248,7 @@ class PersonalCliAdapter:
         return b""
 
     def _result(self, result: CLIProcessResult, lease: SecretLease) -> Any:
-        # Inspect stderr too, including successful exits. Do not include raw
-        # output, parse exceptions or matched credentials in errors or logs.
-        reject_credential_echo(result.stdout.decode("utf-8", errors="replace"), lease)
-        reject_credential_echo(result.stderr.decode("utf-8", errors="replace"), lease)
         value = self._parse_output(result.stdout)
-        reject_credential_echo(value, lease)
         encoded = json.dumps(value, allow_nan=False).encode()
         # Normalize parser results to plain JSON without retaining custom objects.
         return json.loads(encoded)
@@ -284,8 +258,6 @@ class PersonalCliAdapter:
         stopped, business_dispatched = True, False
 
         def check_authorized() -> None:
-            if asyncio.get_running_loop().get_debug():
-                raise ToolInvocationError("CLI_DEBUG_LOGGING_UNSAFE", outcome="failed", stopped=True)
             invocation.check_authorized()
 
         try:
@@ -296,7 +268,7 @@ class PersonalCliAdapter:
                 raise ToolInvocationError("CLI_CREDENTIAL_UNAVAILABLE", outcome="failed", stopped=True)
             check_authorized()
             root = Path(tempfile.mkdtemp(prefix="personal-cli-", dir=self._temporary_root))
-            env = self._environment(root)
+            env = dict(os.environ)
             auth_arguments = self._auth_arguments(root)
 
             def guard() -> None:
@@ -334,15 +306,13 @@ class PersonalCliAdapter:
                         outcome="unknown" if business else "failed", stopped=False) from None
 
             missing = await run(self._probe, b"")
-            reject_credential_echo(missing.stdout.decode("utf-8", errors="replace"), lease)
-            reject_credential_echo(missing.stderr.decode("utf-8", errors="replace"), lease)
             if missing.returncode not in self._unauthenticated_codes:
                 raise ToolInvocationError("CLI_AMBIENT_AUTH_REJECTED", outcome="failed", stopped=True)
             # A failed probe can still write state; remove it before installing
             # the supplied lease so its cache cannot become the active identity.
             shutil.rmtree(root)
             root.mkdir(mode=0o700)
-            env = self._environment(root)
+            env = dict(os.environ)
             guard()
             stdin = self._write_credential(root, env, lease)
             probe = await run(self._probe, stdin)

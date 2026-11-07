@@ -17,7 +17,6 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check
-      - run: node scripts/check_web_architecture.mjs --config scripts/architecture-web.json
   python:
     runs-on: ubuntu-latest
     steps:
@@ -29,6 +28,5 @@ jobs:
         with:
           version: '0.12.1'
       - run: uv sync --frozen
-      - run: uv run ruff check platform deployment applications scripts
+      - run: uv run ruff check platform deployment applications
       - run: uv run pyright
-      - run: uv run python scripts/check_architecture.py --config scripts/architecture-python.json

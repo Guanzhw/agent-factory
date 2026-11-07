@@ -5,7 +5,6 @@ https://www.rfc-editor.org/rfc/rfc7636.html#section-4
 """
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass, field
 import hmac
 import hashlib
@@ -18,7 +17,7 @@ from urllib.parse import urlsplit
 import httpx
 import jwt
 
-from .oidc_identity import (MAX_TOKEN_BYTES, OIDCAccessTokenVerifier, OIDCIdentityConfig,
+from .oidc_identity import (OIDCAccessTokenVerifier, OIDCIdentityConfig,
                             VerifiedIdentity, _json_segment, _text, _unbase64, _unique_object)
 
 
@@ -51,7 +50,6 @@ class BrowserOIDCConfig:
     jwks: Mapping[str, Any]
     subject_owners: Mapping[tuple[str, str], str]
     clock_skew_seconds: int = 30
-    max_token_lifetime_seconds: int = 3600
     max_auth_age_seconds: int | None = None
     app_origin: str = field(init=False)
     fingerprint: str = field(init=False)
@@ -65,9 +63,9 @@ class BrowserOIDCConfig:
             callback, app_origin = _origin(self.redirect_uri)
             _check(callback.path == "/api/factory/auth/callback")
             _check(self.max_auth_age_seconds is None or
-                   (type(self.max_auth_age_seconds) is int and 0 <= self.max_auth_age_seconds <= 86400))
+                   (type(self.max_auth_age_seconds) is int and 0 <= self.max_auth_age_seconds))
             identity = OIDCIdentityConfig(self.issuer, self.client_id, self.jwks, self.subject_owners,
-                                         self.clock_skew_seconds, self.max_token_lifetime_seconds)
+                                         self.clock_skew_seconds)
             OIDCAccessTokenVerifier(identity)  # Validate all pinned RSA keys at configuration time.
             object.__setattr__(self, "_identity", identity)
             object.__setattr__(self, "jwks", identity.jwks)
@@ -80,7 +78,7 @@ class BrowserOIDCConfig:
                 "jwks": [{k: list(v) if isinstance(v, tuple) else v for k, v in key.items()}
                          for key in identity.jwks["keys"]],
                 "subjects": sorted((issuer, subject, owner) for (issuer, subject), owner in identity.subject_owners.items()),
-                "skew": self.clock_skew_seconds, "lifetime": self.max_token_lifetime_seconds,
+                "skew": self.clock_skew_seconds,
                 "maxAge": self.max_auth_age_seconds,
             }
             object.__setattr__(self, "fingerprint", hashlib.sha256(json.dumps(
@@ -97,9 +95,9 @@ class BrowserIDTokenVerifier:
     def verify(self, token: str, *, nonce: str) -> VerifiedIdentity:
         try:
             _check(_text(nonce, 256) and type(token) is str and token.isascii()
-                   and 1 <= len(token) <= MAX_TOKEN_BYTES)
+                   and bool(token))
             parts = token.split(".")
-            _check(len(parts) == 3 and len(parts[0]) <= 2048)
+            _check(len(parts) == 3)
             header, claims = _json_segment(parts[0]), _json_segment(parts[1])
             _unbase64(parts[2])
             _check(set(header) == {"alg", "typ", "kid"} and header["alg"] == "RS256"
@@ -112,7 +110,7 @@ class BrowserIDTokenVerifier:
             if type(aud) is str:
                 _check(aud == self.config.client_id)
             else:
-                _check(type(aud) is list and 1 <= len(aud) <= 8 and all(_text(a, 512) for a in aud)
+                _check(type(aud) is list and bool(aud) and all(_text(a, 512) for a in aud)
                        and len(set(aud)) == len(aud) and self.config.client_id in aud)
                 if len(aud) > 1:
                     _check(claims.get("azp") == self.config.client_id)
@@ -122,7 +120,6 @@ class BrowserIDTokenVerifier:
             iat, exp = claims["iat"], claims["exp"]
             now, skew = time.time(), self.config.clock_skew_seconds
             _check(type(iat) is int and type(exp) is int and 0 <= iat < exp <= 2**53
-                   and exp - iat <= self.config.max_token_lifetime_seconds
                    and iat <= now + skew and exp > now - skew)
             if "nbf" in claims:
                 nbf = claims["nbf"]
@@ -147,27 +144,25 @@ class BrowserCodeExchanger:
 
     async def exchange(self, code: str, *, code_verifier: str, nonce: str) -> VerifiedIdentity:
         try:
-            _check(_text(code, 2048) and _text(nonce, 256) and type(code_verifier) is str
+            _check((type(code) is str and bool(code) and code.isascii()) and _text(nonce, 256) and type(code_verifier) is str
                    and re.fullmatch(r"[A-Za-z0-9._~-]{43,128}", code_verifier) is not None)
 
             async def guard(request):
                 _check(request.method == "POST" and str(request.url) == self.config.token_endpoint
                        and "authorization" not in request.headers and "cookie" not in request.headers)
 
-            async with asyncio.timeout(10):
-                async with httpx.AsyncClient(transport=self._transport, verify=True, trust_env=False,
-                    follow_redirects=False, timeout=10, auth=None, event_hooks={"request": [guard]}) as client:
-                    async with client.stream("POST", self.config.token_endpoint, data={
-                        "grant_type": "authorization_code", "code": code, "client_id": self.config.client_id,
-                        "redirect_uri": self.config.redirect_uri, "code_verifier": code_verifier},
-                        headers={"Accept": "application/json", "Accept-Encoding": "identity",
-                                 "User-Agent": "agent-factory-browser-oidc/1"}) as response:
-                        _check(response.status_code == 200 and response.headers.get("content-encoding", "identity") == "identity"
-                               and response.headers.get("content-type", "").split(";")[0].strip() == "application/json")
-                        body = bytearray()
-                        async for chunk in response.aiter_bytes():
-                            _check(len(body) + len(chunk) <= 65536)
-                            body.extend(chunk)
+            async with httpx.AsyncClient(transport=self._transport, verify=True, trust_env=False,
+                follow_redirects=False, timeout=None, auth=None, event_hooks={"request": [guard]}) as client:
+                async with client.stream("POST", self.config.token_endpoint, data={
+                    "grant_type": "authorization_code", "code": code, "client_id": self.config.client_id,
+                    "redirect_uri": self.config.redirect_uri, "code_verifier": code_verifier},
+                    headers={"Accept": "application/json", "Accept-Encoding": "identity",
+                             "User-Agent": "agent-factory-browser-oidc/1"}) as response:
+                    _check(response.status_code == 200 and response.headers.get("content-encoding", "identity") == "identity"
+                           and response.headers.get("content-type", "").split(";")[0].strip() == "application/json")
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        body.extend(chunk)
             payload = json.loads(body, object_pairs_hook=_unique_object,
                                  parse_constant=lambda _: (_ for _ in ()).throw(BrowserOIDCError()))
             _check(type(payload) is dict and "error" not in payload and type(payload.get("id_token")) is str)

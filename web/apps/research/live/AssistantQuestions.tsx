@@ -27,7 +27,7 @@ export function AskAssistant({ ownerId, peerId, onQuestion }: { ownerId: string;
   </form>;
 }
 
-export function OriginalQuestion({ ownerId, questionId, onUse, onTask, onSettings }: { ownerId: string; questionId: string; onUse?: (id: string) => void; onTask?: (id: string) => void; onSettings?: () => void }) {
+export function OriginalQuestion({ ownerId, questionId, onUse, onSettings }: { ownerId: string; questionId: string; onUse?: (id: string) => void; onSettings?: () => void }) {
   const [question, setQuestion] = useState<ResearchQuestion | null>(null);
   const [source, setSource] = useState<ResearchSource | null>(null);
   const [error, setError] = useState(''); const [busy, setBusy] = useState(false);
@@ -69,7 +69,7 @@ export function OriginalQuestion({ ownerId, questionId, onUse, onTask, onSetting
   return <section aria-label="原私密问题"><h3>原私密问题</h3><p className="rw-id">问题：{questionId}</p><button disabled={recovering.current} onClick={() => void read()}>核对原问题</button>{busy && <p role="status">正在核对当前读权与回答…</p>}{error && <p role="alert">{error}</p>}
     {question && <><p>{question.text}</p><p>原回执：{question.delivery.state}</p><p className="rw-id">原任务：{question.delivery.taskId ?? '尚未确认'}</p>
       {!question.reply && <p>尚未取得回答。任务状态不代表已产生答案，请核对原问题。</p>}
-      {question.recipientId === ownerId && <div className="rw-actions">{question.allowedActions?.includes('recover') && <button disabled={busy} onClick={() => void recover()}>接续原问题</button>}{question.delivery.taskId && onTask && <button onClick={() => onTask(question.delivery.taskId!)}>查看我的原任务</button>}{onSettings && <button onClick={onSettings}>设置我的助手</button>}</div>}
+      {question.recipientId === ownerId && <div className="rw-actions">{question.allowedActions?.includes('recover') && <button disabled={busy} onClick={() => void recover()}>接续原问题</button>}{onSettings && <button onClick={onSettings}>设置我的助手</button>}</div>}
       {question.recipientId === ownerId && question.allowedActions?.includes('recover') && <p>沿用这个问题原有的配置和额度接续；不会改用新配置。</p>}
       {question.recipientId === ownerId && question.recoveryCode && !question.allowedActions?.includes('recover') && <p>{question.recoveryCode === 'ASSISTANT_EVENT_RECOVERY_MANAGED' ? '此消息由原通知投递处理，请核对原投递状态。' : question.delivery.taskId ? '已有原任务，请查看实际任务状态；不会再次启动。' : '当前不能接续，请核对原配置与额度。'}<small> {question.recoveryCode}</small></p>}
       {question.reply?.state === 'source_unavailable' && <p role="status">输入依据已不可用；整个派生回答与依据已隐藏。</p>}

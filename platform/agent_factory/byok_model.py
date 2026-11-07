@@ -1,7 +1,7 @@
 """Native Agno execution for the shared text/function-tool protocols.
 
-No SDK environment key lookup, redirects, proxies, retry, discovery or billing.
-Each invocation resolves the exact owner/vault revision and pins public DNS.
+Owner credentials are selected explicitly; HTTPX uses its normal environment configuration.
+Each invocation resolves the selected owner credential; HTTPX owns DNS and TLS.
 """
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from threading import Thread
 from typing import Callable
-from urllib.parse import urlsplit
 from uuid import uuid4
 
 import httpx
@@ -33,9 +32,7 @@ from .model_protocol import (
     assistant_message_matches, decode_response, encode_request, function_call as function_call,
     protocol_name, protocol_path,
 )
-from .model_transport import MAX_BYTES as MAX_BYTES, PinnedChatTransport as PinnedChatTransport
 from .model_stream import read_model_stream
-from .personal_remote_provider import PinnedHTTPSProbe as PinnedHTTPSProbe
 
 PROVIDER_ID = 'byok-chat-v1'
 ADAPTER_ID = 'owner-chat-completions-v1'
@@ -47,8 +44,8 @@ def rejected(code='PERSONAL_MODEL_RESPONSE_REJECTED'):
 
 
 class OwnerChatModel(Model):
-    def __init__(self, configuration, credential: Callable, *, transport_factory=None, recheck=None, session_id=None,
-            trusted_proxy=None, timeout_seconds=300, on_text=None):
+    def __init__(self, configuration, credential: Callable, *, recheck=None, session_id=None,
+            timeout_seconds=300, on_text=None):
         super().__init__(id=model_id(configuration['model']), provider=configuration['provider'],
             name='Owner Model', retries=0)
         self._base = base_url(configuration['baseURL'])
@@ -63,16 +60,6 @@ class OwnerChatModel(Model):
         self.context_window = configuration.get("contextWindow")
         self.auto_compact_token_limit = configuration.get("autoCompactTokenLimit")
         self.factory_wire_stream = True
-        self._transport_factory = transport_factory
-        if transport_factory is not None and trusted_proxy is not None:
-            raise ValueError('TRUSTED_MODEL_PROXY_CONFIGURATION_INVALID')
-        if trusted_proxy is not None:
-            from .trusted_model_proxy import TrustedModelProxy
-            if (not isinstance(trusted_proxy, TrustedModelProxy)
-                    or trusted_proxy.select(configuration.get('ownerId'), configuration,
-                        trusted_proxy.environment_id) is not trusted_proxy):
-                raise ValueError('TRUSTED_MODEL_PROXY_SCOPE_CHANGED')
-        self._trusted_proxy = trusted_proxy
         self._recheck = recheck
         self._session_id = session_id or 'af-agent-' + uuid4().hex
 
@@ -137,26 +124,18 @@ class OwnerChatModel(Model):
                 await on_text(text)
         try:
             body = self._body(messages, **kwargs)
-            if self._trusted_proxy is not None and self.id != self._trusted_proxy.model_id:
-                raise ValueError('TRUSTED_MODEL_PROXY_SCOPE_CHANGED')
             # Resolve on every call. Rotation/revocation never leaves a cached key.
             lease = await asyncio.to_thread(self._credential)
-            transport = self._transport_factory() if self._transport_factory else PinnedChatTransport(
-                model_origin(self._base), base_path=urlsplit(self._base).path, before_send=self._recheck,
-                trusted_proxy=self._trusted_proxy, protocol=self._protocol)
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
-            async with httpx.AsyncClient(transport=transport, trust_env=False,
-                    follow_redirects=False, timeout=self._timeout_seconds, auth=None) as client:
+            async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
                 request = client.build_request('POST', self._base + protocol_path(self._protocol), json=body,
                     headers=chat_headers(self._base, lease, self._session_id))
-                async with asyncio.timeout(self._timeout_seconds):
-                    response = await client.send(request, stream=True)
+                response = await client.send(request, stream=True)
                 try:
                     if response.status_code != 200:
                         raise rejected('PERSONAL_MODEL_HTTP_' + str(response.status_code))
-                    value = await read_model_stream(response, lease, self._protocol, progress,
-                        idle_seconds=self._timeout_seconds)
+                    value = await read_model_stream(response, self._protocol, progress)
                 finally:
                     await response.aclose()
             if self._recheck is not None:
@@ -171,22 +150,17 @@ class OwnerChatModel(Model):
             code = str(error)
             known = {'REMOTE_DNS_FAILED', 'REMOTE_CREDENTIAL_ECHO_REJECTED', 'REMOTE_RESPONSE_REJECTED',
                 'REMOTE_CREDENTIAL_UNAVAILABLE', 'REMOTE_ORIGIN_DENIED', 'REMOTE_PATH_DENIED', 'REMOTE_DEADLINE',
-                'TRUSTED_MODEL_PROXY_REQUEST_DENIED', 'PERSONAL_MODEL_STREAM_INCOMPLETE'}
+                'PERSONAL_MODEL_STREAM_INCOMPLETE'}
             raise rejected(code if code in known else
                 'PERSONAL_MODEL_REQUEST_FAILED_' + type(error).__name__.upper()) from None
-        result = self._parse_provider_response(value)
-        declared_tools = {tool['function']['name'] if self._protocol == 'chat-completions' else tool['name']
-            for tool in body.get('tools', [])}
-        if any(call['function']['name'] not in declared_tools for call in result.tool_calls or []):
-            raise rejected('PERSONAL_MODEL_TOOL_NOT_DECLARED')
-        return result
+        return self._parse_provider_response(value)
 
     def invoke(self, messages, **kwargs):
         with ThreadPoolExecutor(max_workers=1) as executor:
-            return self._parse_provider_response(executor.submit(lambda: asyncio.run(self._request(messages, **kwargs))).result())
+            return executor.submit(lambda: asyncio.run(self._request(messages, **kwargs))).result()
 
     async def ainvoke(self, messages, **kwargs):
-        return self._parse_provider_response(await self._request(messages, **kwargs))
+        return await self._request(messages, **kwargs)
 
     def invoke_stream(self, messages, **kwargs):
         values = Queue()

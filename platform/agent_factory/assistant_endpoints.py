@@ -8,8 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool
 from sqlalchemy import Boolean, Column, JSON, MetaData, String, Table, or_, select, text
 
 from .applications import GovernedStorage
-from .local_budget_scopes import _caps
-from .material_governance import MaterialGovernance, PinnedRef
 from .store import digest, now
 
 
@@ -17,21 +15,11 @@ Identifier = Annotated[str, Field(min_length=1, max_length=200, pattern=r'^[A-Za
 EndpointRequestId = Annotated[str, Field(min_length=8, max_length=80, pattern=r'^[A-Za-z0-9][A-Za-z0-9_.:-]+$')]
 
 
-class AutomaticBudget(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    scopeId: Identifier
-    caps: dict
-    deadline: float | None = Field(default=None, allow_inf_nan=False)
-
-
 class EndpointConfiguration(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    automaticBudget: AutomaticBudget | None = None
-    name: str = Field(min_length=1, max_length=100)
-    applicationRef: PinnedRef
+    name: str = Field(min_length=1)
     mode: str = Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_.:-]+$')
-    materialChoices: dict[Identifier, PinnedRef] = Field(default_factory=dict, max_length=30)
-    connectionRefs: dict[Identifier, Identifier] = Field(default_factory=dict, max_length=30)
+    connectionRefs: dict[Identifier, Identifier] = Field(default_factory=dict)
 
 
 class ConfigureEndpoint(EndpointConfiguration):
@@ -45,8 +33,8 @@ class EndpointState(BaseModel):
 
 
 class AssistantEndpoints:
-    def __init__(self, store, auth, applications):
-        self.store, self.auth, self.applications = store, auth, applications
+    def __init__(self, store, auth):
+        self.store, self.auth = store, auth
         self.db = GovernedStorage(store, 'af_assistant_endpoints_v1')
         metadata = MetaData()
         self.endpoints = Table('af_assistant_endpoints', metadata,
@@ -66,60 +54,31 @@ class AssistantEndpoints:
     def _summary(row):
         configuration = row['configuration']
         return {'id': row['id'], 'ownerId': row['owner_id'], 'name': configuration['name'],
-            'applicationRef': deepcopy(configuration['applicationRef']), 'mode': configuration['mode'],
+            'mode': configuration['mode'],
             'enabled': row['enabled'], 'createdAt': row['created_at']}
 
     @classmethod
     def _owned(cls, row):
         configuration = row['configuration']
         return {**cls._summary(row),
-            **({'automaticBudget': deepcopy(configuration['automaticBudget'])} if configuration.get('automaticBudget') else {}),
-            'defaults': {
-            'application': configuration['applicationRef']['id'],
-            **{key: deepcopy(configuration[key]) for key in
-               ('applicationRef', 'mode', 'materialChoices', 'connectionRefs')}}}
+            'defaults': {key: deepcopy(configuration[key]) for key in ('mode', 'connectionRefs')}}
 
-    def _current(self, configuration):
-        application = self.applications.require_current(configuration['applicationRef'])
-        mode = application['modes'].get(configuration['mode'])
-        if mode is None:
-            raise HTTPException(422, 'ASSISTANT_MODE_NOT_FOUND')
-        self.applications.chosen_refs(mode, configuration['materialChoices'])
-        schema = mode.get('inputSchema')
-        if schema is not None and (schema['properties'].get('goal', {}).get('type') != 'string'
-                or set(schema.get('required', [])) - {'goal'}):
-            raise HTTPException(422, 'ASSISTANT_TEXT_INPUT_INCOMPATIBLE')
-        return schema is not None
-
-    def require_budget(self, conn, owner, budget):
-        caps = _caps(budget['caps'])
-        if caps['rounds'] != 1:
-            raise HTTPException(422, 'LOCAL_BUDGET_ONE_ROUND_REQUIRED')
-        scope = self.store.local_budget_scopes._scope(conn, owner, budget['scopeId'])
-        if (scope['state'] != 'ACTIVE'):
-            raise HTTPException(409, 'LOCAL_BUDGET_CLOSED_OR_EXPIRED')
-        total = scope['body']['caps']
-        if ((caps['tokenLimit'] is None) != (total['tokenLimit'] is None)
-                or caps['currency'] != total['currency']):
-            raise HTTPException(409, 'LOCAL_BUDGET_METERING_MISMATCH')
-        if any(caps[key] is not None and total[key] is not None and caps[key] > total[key]
-               for key in ('tokenLimit', 'amountMicros')):
-            raise HTTPException(422, 'LOCAL_BUDGET_CAPS_INVALID')
+    def _current(self, configuration, owner):
+        reference = configuration['connectionRefs'].get('model')
+        if not reference:
+            raise HTTPException(422, 'ASSISTANT_MODEL_REQUIRED')
+        self.store.connections.preflight(owner, reference, 'model', required_capabilities=['model:invoke'])
+        return True
 
     def configure(self, owner, configuration: EndpointConfiguration, request_id):
         self.auth.require_member(owner)
         value = configuration.model_dump()
-        if value["automaticBudget"] is None:
-            value.pop("automaticBudget")
-        MaterialGovernance._safe_data(value)
         fingerprint = digest({'action': 'configure', 'configuration': value})
         with self.db.write() as conn:
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
             if old is not None:
                 return old
-            self._current(value)
-            if value.get("automaticBudget"):
-                self.require_budget(conn, owner, value["automaticBudget"])
+            self._current(value, owner)
             identifier = str(uuid4())
             conn.execute(self.endpoints.insert().values(id=identifier, owner_id=owner,
                 configuration=value, enabled=True, created_at=now()))
@@ -167,7 +126,7 @@ class AssistantEndpoints:
             self.auth.require_member(row['owner_id'])
             if not row['enabled']:
                 raise HTTPException(409, 'ASSISTANT_ENDPOINT_DISABLED')
-            text_input = self._current(row['configuration'])
+            text_input = self._current(row['configuration'], row['owner_id'])
             return {**self._owned(row), 'textInput': text_input}
 
     def set_enabled(self, owner, endpoint_id, enabled, request_id):
@@ -184,7 +143,7 @@ class AssistantEndpoints:
                 if old is not None:
                     return old
                 if enabled:
-                    self._current(row['configuration'])
+                    self._current(row['configuration'], row['owner_id'])
                 conn.execute(self.endpoints.update().where(self.endpoints.c.id == endpoint_id).values(enabled=enabled))
                 return self.db.record(conn, self.commands, owner, request_id, fingerprint,
                     'assistant.state', self._owned(self._row(conn, endpoint_id)))

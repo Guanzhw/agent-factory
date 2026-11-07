@@ -22,23 +22,22 @@ from .store import digest, now
 
 ConnectionKind = Literal["model", "tool", "knowledge", "environment", "orx"]
 KINDS = frozenset({"model", "tool", "knowledge", "environment", "orx"})
-IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$")
-SECRET_PREFIX = re.compile(r"^(?:sk-|github_pat_|gh[pousr]_|AKIA|ASIA|Bearer[ :])", re.I)
-CAPABILITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$")
+IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+CAPABILITY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 _ABSENT = object()
 
 
 def _identifier(value):
-    if not isinstance(value, str) or not IDENTIFIER.fullmatch(value) or SECRET_PREFIX.match(value):
-        raise ValueError("An opaque bounded identifier is required")
+    if not isinstance(value, str) or not IDENTIFIER.fullmatch(value):
+        raise ValueError("An opaque identifier is required")
     return value
 
 
 def _capabilities(values):
     if isinstance(values, (str, bytes)):
-        raise ValueError("Capabilities must be a bounded collection")
+        raise ValueError("Capabilities must be a collection")
     normalized = frozenset(values)
-    if len(normalized) > 30 or any(not isinstance(cap, str) or not CAPABILITY.fullmatch(cap) or SECRET_PREFIX.match(cap) for cap in normalized):
+    if any(not isinstance(cap, str) or not CAPABILITY.fullmatch(cap) for cap in normalized):
         raise ValueError("Unsupported capability identifier")
     return normalized
 
@@ -63,7 +62,7 @@ class TrustedConnectionBinding:
     handle_ref: str | None = field(default=None, repr=False)
 
     def __post_init__(self):
-        if not isinstance(self.owner, str) or not 1 <= len(self.owner) <= 200 or any(ord(char) < 32 for char in self.owner):
+        if not isinstance(self.owner, str) or not self.owner or any(ord(char) < 32 for char in self.owner):
             raise ValueError("A trusted owner identity is required")
         if self.kind not in KINDS or type(self.available) is not bool:
             raise ValueError("Unsupported trusted connection kind or availability")
@@ -510,15 +509,15 @@ class ConnectionService:
 
 class BindConnectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    registrationRef: str = Field(min_length=1, max_length=200)
-    requestId: str = Field(min_length=1, max_length=200)
-    capabilities: list[str] | None = Field(default=None, max_length=30)
-    taskId: str | None = Field(default=None, min_length=1, max_length=200)
+    registrationRef: str = Field(min_length=1)
+    requestId: str = Field(min_length=1)
+    capabilities: list[str] | None = Field(default=None)
+    taskId: str | None = Field(default=None, min_length=1)
 
 
 class RevokeConnectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    requestId: str = Field(min_length=1, max_length=200)
+    requestId: str = Field(min_length=1)
 
 
 def connection_router(auth, service):

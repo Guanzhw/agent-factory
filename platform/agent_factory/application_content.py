@@ -12,7 +12,6 @@ from sqlalchemy import Column, JSON, MetaData, String, Table, or_, select, text
 
 from .applications import GovernedStorage
 from .input_schema import bounded_json
-from .material_governance import MaterialGovernance
 from .resource_sharing import SharingCommand
 from .store import digest, now
 
@@ -117,8 +116,6 @@ class ApplicationContent:
             task=reference['taskId'], id=reference['artifactId'])
         if not sizes:
             raise HTTPException(404, 'Artifact not found')
-        if self.store.settings.experiment_output_bytes is not None and sizes[0]['size'] > self.store.settings.experiment_output_bytes:
-            raise HTTPException(409, 'APPLICATION_CONTENT_ARTIFACT_TOO_LARGE')
         metadata, raw = self.store.artifact(reference['taskId'], reference['artifactId'])
         if metadata['sha256'] != reference['sha256']:
             raise HTTPException(409, 'APPLICATION_CONTENT_ARTIFACT_CHANGED')
@@ -134,10 +131,10 @@ class ApplicationContent:
             content = json.loads(raw.decode('utf-8'))
             if not isinstance(content, dict):
                 raise ValueError('Content must be an object')
-            bounded_json(content, maximum=self.store.settings.experiment_output_bytes, ensure_ascii=False)
+            bounded_json(content, ensure_ascii=False)
         except (ValueError, RecursionError) as error:
             raise HTTPException(422, 'APPLICATION_CONTENT_INVALID') from error
-        MaterialGovernance._safe_data(content)
+        bounded_json(content)
         return content
 
     def publish(self, owner, body: ContentPublication, request_id):
@@ -146,7 +143,7 @@ class ApplicationContent:
         value.pop('contentArtifact' if body.contentArtifact is None else 'content')
         if not value['sourceContentIds']:
             value.pop('sourceContentIds')
-        MaterialGovernance._safe_data(value)
+        bounded_json(value)
         try:
             if 'content' in value:
                 bounded_json(value['content'])

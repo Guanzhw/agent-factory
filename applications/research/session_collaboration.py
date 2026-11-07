@@ -343,7 +343,7 @@ class ResearchCollaboration:
                 raise rejected('RESEARCH_SESSION_STOP_REQUESTED', '协作继续已停止或被后续轮次取代。')
             if ('application-start:' + turn['application_request_id'] != request_id
                     or turn['body'].get('collaborationEventId') != event_id
-                    or plan.get('applicationRef') != turn['body'].get('configuration', row['body']['configuration'])['applicationRef']
+                    or plan.get('connectionRefs') != turn['body'].get('configuration', row['body']['configuration'])['connectionRefs']
                     or plan.get('inputValues') != service._start(row, turn).inputValues):
                 raise rejected('RESEARCH_COLLABORATION_BINDING_MISMATCH', '原协作继续请求绑定不一致。')
             original = self.store.sql('SELECT fingerprint FROM af_plan_requests WHERE owner_id=:owner '

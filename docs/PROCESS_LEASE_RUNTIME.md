@@ -1,5 +1,7 @@
 # Native bounded-process / shared-lease integration
 
+> Historical reference: the structural simplification on 2026-11-07 retires the former manual Factory/governance APIs described here. See [current architecture](../ARCHITECTURE.md) and [current implementation record](reviews/structural-simplification-20261107.md). Examples below apply to their original revision.
+
 Continuation of [Draft PR26](https://github.com/Guanzhw/agent-factory/pull/26),
 exact base `ce0c06f21ced442344f46b36587297f2518100e9`.
 Branch: `coord/process-lease-runtime-20261004`. This stage connects the existing

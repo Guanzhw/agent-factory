@@ -6,13 +6,11 @@ import { clearSessionDrafts } from './apps/research/researchSessionStorage.js';
 import { authEpoch } from './browserAuth.js';
 import { routePointer, workspaceTabs, type WorkspaceNavigation } from './workspaceNavigation.js';
 
-const applications = [{ id: 'research', name: 'AutoResearch', description: '持续研究项目、目标约定、实验与证据。', entry: { tab: 'research', project: '', researchView: '', researchTab: '', researchSetup: '', researchQASetup: '', researchPeer: '', researchQuestion: '', researchAssociation: '', researchDelivery: '', modelReturn: '' } }];
 export const researchNavigation: WorkspaceNavigation = {
   homeTab: 'research',
-  tabs: { ...workspaceTabs, research: 'AutoResearch' }, applicationTabs: ['research'],
-  modelReturns: ['catalog', 'resources', 'connections', 'research'],
-  queryKeys: ['project', 'researchView', 'researchSession', 'researchTab', 'researchSetup', 'researchQASetup', 'researchPeer', 'researchQuestion', 'researchAssociation', 'researchDelivery'],
-  readQuery: url => ({ researchSession: routePointer(url.searchParams.get('researchSession')), researchAssociation: routePointer(url.searchParams.get('researchAssociation')), researchDelivery: routePointer(url.searchParams.get('researchDelivery')), researchQASetup: routePointer(url.searchParams.get('researchQASetup')), researchPeer: routePointer(url.searchParams.get('researchPeer')), researchQuestion: routePointer(url.searchParams.get('researchQuestion')), researchSetup: routePointer(url.searchParams.get('researchSetup')), project: routePointer(url.searchParams.get('project')), researchView: ['team', 'assistant', 'history', 'sessions'].includes(url.searchParams.get('researchView') ?? '') ? url.searchParams.get('researchView')! : '', researchTab: ['experiments', 'evidence', 'delivery'].includes(url.searchParams.get('researchTab') ?? '') ? url.searchParams.get('researchTab')! : '' }),
+  tabs: { ...workspaceTabs, research: 'AutoResearch' },
+  queryKeys: ['project', 'researchView', 'researchSession', 'researchPeer', 'researchQuestion', 'researchAssociation'],
+  readQuery: url => ({ researchSession: routePointer(url.searchParams.get('researchSession')), researchAssociation: routePointer(url.searchParams.get('researchAssociation')), researchPeer: routePointer(url.searchParams.get('researchPeer')), researchQuestion: routePointer(url.searchParams.get('researchQuestion')), project: routePointer(url.searchParams.get('project')), researchView: ['team', 'assistant', 'history', 'sessions'].includes(url.searchParams.get('researchView') ?? '') ? url.searchParams.get('researchView')! : '' }),
 };
 function ResearchSession(props: WorkspaceSessionProps) {
   useEffect(() => {
@@ -24,9 +22,8 @@ function ResearchSession(props: WorkspaceSessionProps) {
   return <Workspace {...props} navigation={researchNavigation} applicationView={context =>
     <ResearchWorkbench key={context.user.id} user={context.user} route={context.route} navigate={context.navigate} onTab={context.selectTab}
       onLogout={props.logout} sessionBusy={props.sessionBusy} sessionError={props.sessionError}
-      workspaceContent={context.route.tab === 'research' ? undefined : <>{context.feedback}<Pages context={context} applications={applications}
-        taskReturn={context.route.task && context.route.taskReturn === 'research' && context.route.taskReturnTask === context.route.task ? { label: '原研究', onBack: () => context.navigate({ tab: 'research' }) } : undefined}
-        resourceReturn={{ label: '对话', onBack: () => context.navigate({ tab: 'research', modelReturn: '' }) }}/></>}/>
+      workspaceContent={context.route.tab === 'research' ? undefined : <>{context.feedback}<Pages context={context}
+        resourceReturn={{ label: '对话', onBack: () => context.navigate({ tab: 'research' }) }}/></>}/>
   }/>;
 }
 export default function ResearchApp() { return <App workspace={ResearchSession}/>; }

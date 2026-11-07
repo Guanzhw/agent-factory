@@ -7,9 +7,9 @@ export function credentialDestination(value: string, providerId?: string): strin
   if (providerId === SSH_CREDENTIAL_PROVIDER) {
     const username = decodeURIComponent(url.username);
     const encodedUsername = encodeURIComponent(username).replace(/[!'()*]/g, character => '%' + character.charCodeAt(0).toString(16).toUpperCase());
-    if (url.protocol !== 'ssh:' || !username || Array.from(username).length > 128 || Array.from(username).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 || character === ':') || url.password ||
+    if (url.protocol !== 'ssh:' || !username || Array.from(username).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127 || character === ':') || url.password ||
         !url.port || !/^[1-9][0-9]{0,4}$/.test(url.port) || Number(url.port) > 65535 || !url.hostname || url.pathname || url.hash ||
-        !/^\?hostkey=[a-f0-9]{64}$/.test(url.search) || value !== `ssh://${encodedUsername}@${url.hostname}:${url.port}${url.search}`) throw new Error('Invalid SSH destination');
+        (!!url.search && !/^\?hostkey=[a-f0-9]{64}$/.test(url.search)) || value !== `ssh://${encodedUsername}@${url.hostname}:${url.port}${url.search}`) throw new Error('Invalid SSH destination');
     return value;
   }
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash || url.pathname !== '/' || value !== url.origin) throw new Error('Invalid destination');
@@ -51,7 +51,7 @@ export function matchCredentialReceipt(value: unknown, command: CredentialComman
 export function readUnresolvedCommands(raw: string | null, owner: string): CredentialCommand[] {
   try {
     const values: unknown = JSON.parse(raw ?? '[]');
-    if (!Array.isArray(values) || values.length > 100) return [];
+    if (!Array.isArray(values)) return [];
     return values.map(value => readCredentialCommand(JSON.stringify(value), owner)).filter((value): value is CredentialCommand => value !== null);
   } catch { return []; }
 }

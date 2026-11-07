@@ -2,19 +2,16 @@ import { authEpoch, assertAuthEpoch, expireBrowserSession } from '../../browserA
 import { ApiError, factoryRequest } from '../../api.js';
 import type { ResearchQuestion } from './live/assistantClient.js';
 
-export interface SessionLimits { maxTurns: number | null; toolCallsPerTurn: number | null; operationSeconds: number | null }
-type Limit = { min: number; max: number | null; default: number | null };
 export interface SessionOptions {
   available: boolean; unavailableCode: string | null;
   collaboration?: { available: boolean };
   models: { connectionRef: string; provider: string; model: string; available: boolean }[];
-  limits: { maxTurns: Limit; toolCallsPerTurn: Limit; operationSeconds: Limit; contextCharacters: number | null };
   workspace: { configured: boolean; hostCommands: boolean; isolation: 'host-user-not-os-sandbox' };
   accounting: { tokenMetered: boolean; costMetered: boolean };
 }
 export interface SessionMessage { id: string; kind: 'instruction' | 'correction'; text: string; state: 'pending' | 'included'; createdAt: string; includedAt: string | null }
 export interface SessionEvent { id: number; jobId: string; type: string; message: string; data: Record<string, unknown>; createdAt: string }
-export interface SessionChild { mode?: string; commandResult?: Record<string, unknown>; childTaskId: string; runId: string | null; goal: string; status: string; result: string | null }
+export interface SessionChild { childTaskId: string; runId: string | null; goal: string; status: string; result: string | null }
 export type SessionAssistantReply = { questionId: string; state: 'unavailable'; code: string } | {
   questionId: string; state: 'available'; senderId: string; recipientId: string; endpointId: string;
   questionText: string; reply: Extract<ResearchQuestion['reply'], { state: 'available' }>; delivery: ResearchQuestion['delivery'];
@@ -35,7 +32,7 @@ export interface SessionSummary {
   state: 'idle' | 'running' | 'stopping' | 'stopped' | 'blocked';
   collaboration?: { enabled: boolean };
   capabilities?: { memory: boolean };
-  model: { connectionRef: string; provider: string; model: string }; limits: SessionLimits;
+  model: { connectionRef: string; provider: string; model: string };
   context: {
     characters: number; maximumCharacters: number | null; rawCharacters?: number;
     compaction?: { status: 'needed' | 'preparing' | 'ready' | 'failed' | 'unknown'; throughSequence: number; code?: string };
@@ -49,7 +46,7 @@ export interface SessionRequest {
   requestId: string; action: SessionAction; sessionId: string; turnId: string | null;
   session: ResearchSession; createsExecution: false; automaticReplay: false;
 }
-export interface CreateSession { projectId?: string; requestId: string; title: string; goal: string; boundaries: string; modelConnectionRef: string; limits: SessionLimits }
+export interface CreateSession { projectId?: string; requestId: string; title: string; goal: string; boundaries: string; modelConnectionRef: string }
 export interface SessionPage { items: SessionSummary[]; nextCursor: string | null }
 const base = '/research/sessions';
 const path = (id: string) => `${base}/${encodeURIComponent(id)}`;

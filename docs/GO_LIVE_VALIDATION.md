@@ -1,3 +1,5 @@
+> Current status: the standalone Go development campaigns and private runtime broker are retired and removed. Personal models, including Go endpoints, use the normal owner model connection and Agno loop. Historical limits, runners and broker behavior below are not current configuration. HTTPX now supplies model transport directly.
+
 > Historical record: the demo/development runtime entrypoints described below were removed by `remove-product-demo-modes`. These commands are not current deployment instructions. Existing evidence and UNKNOWN records remain preserved.
 
 # Bounded Go validation — 2026-10-03

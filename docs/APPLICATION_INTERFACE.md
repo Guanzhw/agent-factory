@@ -1,5 +1,7 @@
 # Public application interface v1
 
+> Historical reference: the structural simplification on 2026-11-07 retires the former manual Factory/governance APIs described here. See [current architecture](../ARCHITECTURE.md) and [current implementation record](reviews/structural-simplification-20261107.md). Examples below apply to their original revision.
+
 This interface gives published applications a small Factory boundary. It does
 not replace Agno, AgentOS, or an executor's native continuation.
 It is independent of the existing application definition contracts v1 and v2;

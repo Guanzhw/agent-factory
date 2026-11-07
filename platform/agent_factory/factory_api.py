@@ -1,15 +1,12 @@
 import asyncio
 import hashlib
-from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
-from .control_commands import ControlCommand, ControlCommands, legacy_command, COMMAND_ID
-from .catalog import create_plan
+from .control_commands import ControlCommands
 from .delegation import application_group_status
-from .remote_handoff import FactoryPublicRoute
+from fastapi.routing import APIRoute as FactoryPublicRoute
 from .store import effect_unresolved, canonical
-from .billing_mode import ledger_for_plan
 from .runtime_hooks import execution_classification
 from .task_status import finalized_status
 
@@ -18,58 +15,10 @@ class Body(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class PlanRequest(Body):
-    topic: str = Field(min_length=1)
-    mode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
-    application: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
-    applicationRef: dict | None = None
-    materialChoices: dict = Field(default_factory=dict)
-    connectionRefs: dict = Field(default_factory=dict)
-    inputValues: dict | None = None
-    requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
-
-
 class InstanceRequest(Body):
     planId: str = Field(max_length=100)
     requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
     executionTargetRef: str | None = Field(default=None, min_length=1, max_length=100)
-
-
-class ChildRequest(Body):
-    goal: str = Field(min_length=1)
-    mode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
-    requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
-
-
-class MaterialRequest(Body):
-    requestId: str | None = Field(default=None, min_length=1, max_length=200)
-    id: str | None = Field(default=None, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
-    kind: Literal["skill", "tool", "prompt", "knowledge", "model", "environment"]
-    name: str = Field(min_length=1)
-    description: str
-    content: str
-    dependencies: list[dict] = Field(default_factory=list)
-    permissions: list[str] = Field(default_factory=list)
-
-
-class PublicationRequest(Body):
-    requestId: str = Field(min_length=1, max_length=200)
-
-
-class Cancel(Body):
-    commandId: str | None = Field(default=None, pattern=COMMAND_ID)
-
-
-class Answer(Cancel):
-    questionId: str
-    version: int
-    answer: str = Field(min_length=1)
-
-
-class Approval(Cancel):
-    requirementId: str
-    version: int
-    approved: bool
 
 
 def requirement_version(requirement):
@@ -117,7 +66,6 @@ class FactoryAPI:
     def __init__(self, settings, store, auth, bridge):
         self.settings, self.store, self.auth, self.bridge = settings, store, auth, bridge
         self.delegation = getattr(store, "delegation", None)
-        self.remote = getattr(store, "remote_execution", None)
         self.commands = self.command_type(self)
         self.router = APIRouter(prefix="/api/factory", route_class=FactoryPublicRoute)
         self.routes()
@@ -130,9 +78,6 @@ class FactoryAPI:
         if plan["status"] != "ready":
             raise HTTPException(409, "Plan preflight is blocked: " + "; ".join(plan["missing"]))
         self.store.require_plan_execution(owner, plan)
-        if body.executionTargetRef:
-            if self.remote is None:
-                raise HTTPException(503, "Trusted remote execution is unavailable")
         return plan
 
     async def instantiate(self, owner, body: InstanceRequest, *, allocation_id=None, delivery_id=None, private_event_id=None):
@@ -142,22 +87,12 @@ class FactoryAPI:
         # Trusted owner resources can require a synchronous remote health
         # check. Preserve fresh checks without blocking other ASGI requests.
         plan = await asyncio.to_thread(self._instantiate_preflight, owner, body)
-        if body.executionTargetRef:
-            if allocation_id is not None or delivery_id is not None or private_event_id is not None:
-                raise HTTPException(409, 'LOCAL_BUDGET_ORIGINAL_ROOT_REQUIRED')
-            if self.remote is None:
-                raise HTTPException(503, "Trusted remote execution is unavailable")
-            return await self.remote.instantiate(owner, plan["id"], body.executionTargetRef, body.requestId)
         options = {}
-        if allocation_id is not None:
-            options['allocation_id'] = allocation_id
         if delivery_id is not None:
             options['delivery_id'] = delivery_id
         if private_event_id is not None:
             options['private_event_id'] = private_event_id
         task, fresh = self.store.reserve_task(plan, body.requestId, **options)
-        if self.remote and self.remote.placed(task):
-            raise HTTPException(409, "IDEMPOTENCY_CONFLICT: request already selected a remote execution server")
         if fresh:
             try:
                 receipt = await self.bridge.submit({**plan, "task_id": task["id"]}, owner, body.requestId)
@@ -179,11 +114,9 @@ class FactoryAPI:
         return user
 
     def scoped_task(self, identifier, owner):
-        return self.remote.resolve(identifier, owner) if self.remote else (self.store.task(identifier, owner), None)
+        return self.store.task(identifier, owner), None
 
     async def detail(self, task, remote_child=None):
-        if self.remote and self.remote.placed(task):
-            return await self.remote.detail(task, remote_child)
         snapshot = {}
         if task.get("run_id"):
             snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
@@ -191,9 +124,6 @@ class FactoryAPI:
         effects = self.store.effects(task["id"])
         events = self.store.events(task["id"])
         status = status_of({**task, "protected_failed": self.store.has_failures(task["id"])}, snapshot, effects, events, self.store)
-        control_wait, waiting_inference = self._waiting_control(task, snapshot)
-        if waiting_inference:
-            status = "waiting_approval"
         group = None
         if self.delegation:
             group = await self.delegation.inspect_group(task["owner_id"], task["id"])
@@ -206,20 +136,9 @@ class FactoryAPI:
                 status = "unknown" if group["unknown"] else "canceling"
             elif task["cancel_requested"] and group["allStopped"]:
                 status = "failed" if self.store.failure_cleanup_requested(task["id"]) else "canceled"
-            elif waiting_inference and not self.store.has_failures(task["id"]):
-                status = "waiting_approval"
         plan = self.store.plan(task["plan_id"], task["owner_id"])
-        application_ref = plan.get("applicationRef", {"id": plan["application"], "version": 1})
         stopped_status = task["body"].get("stoppedStatus")
         status = (stopped_status if task["terminal"] else "finalizing") if stopped_status else finalized_status(status, task["terminal"])
-        model_binding = (plan.get("executionBindings") or {}).get("model", {})
-        selected_model = next((event["data"] for event in reversed(events) if event["type"] == "model_binding_selected"), {})
-        definition = {"id": application_ref["id"], "version": application_ref["version"], "name": plan["application"],
-            "description": "Governed immutable application over native Agno", "instructions": "\n".join(plan["instructions"]),
-            "skills": [], "tools": plan["tools"], "knowledge": [], "materialRefs": plan["materialRefs"],
-            "modelPolicy": {"providerId": selected_model.get("provider", "factory-registered"), "modelId": selected_model.get("modelId", "pending-selection"),
-                "adapterId": model_binding.get("adapterId"), "revision": model_binding.get("revision"), "maxSteps": None},
-            "runtimePolicy": {"timeoutSeconds": getattr(self.settings, "native_timeout_seconds", None)}, "published": False, "createdAt": plan["createdAt"]}
         delegation_scope = await asyncio.to_thread(self.delegation.delegation_scope, task["owner_id"], task["id"]) if self.delegation else None
         actions = ["inspect"]
         if delegation_scope and delegation_scope["allowed"]:
@@ -228,8 +147,8 @@ class FactoryAPI:
             actions.append("cancel")
         if status in {"unknown", "finalizing"}:
             actions.append("reconcile")
-        job = {"id": task["id"], "ownerId": task["owner_id"], "planId": plan["id"], "definitionId": definition["id"], "definitionVersion": definition["version"],
-            "definition": definition, "binding": plan.get("bindingManifest", {}), "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
+        job = {"id": task["id"], "ownerId": task["owner_id"], "planId": plan["id"],
+            "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
             "status": status, "createdAt": task["body"]["createdAt"], "updatedAt": task["body"]["updatedAt"],
             "runtime": "live", "attempt": (snapshot.get("queue") or {}).get("attempt", 0),
             "allowedActions": actions, "validationStatus": "执行与结论需按产物证据分别验证",
@@ -261,7 +180,6 @@ class FactoryAPI:
                 job.update(approvalDetail=approval, approval={"scope": approval["scope"], "requestedAt": requirement.get("created_at", plan["createdAt"])})
                 if status == "waiting_approval":
                     actions.append("approve")
-        evidence, evaluation = await self._project_detail(task, plan, snapshot, events, job, control_wait)
         if delegation_scope and delegation_scope.get("executionUnavailable"):
             job["allowedActions"] = [action for action in actions if action in {"inspect", "cancel", "reconcile"}]
         try:
@@ -270,260 +188,29 @@ class FactoryAPI:
             if error.status_code != 403:
                 raise
             job["allowedActions"] = ["inspect"]
-        ledger = ledger_for_plan(self.store, plan)
-        usage = ledger.inspect(task["owner_id"], task["id"]) if ledger is not None else None
-        return {**evidence, "usageLedger": usage, "job": job,
+        return {"job": job,
                 "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
                 "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope,
-                    "evaluation": evaluation, "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"),
+                    "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"),
                     "planFingerprint": plan["fingerprint"], "effects": effects,
                     "syntheticFixture": execution_classification(plan)["syntheticFixture"]}}
 
-    def _waiting_control(self, task, snapshot):
-        registry = getattr(self.store, 'application_runtime', None)
-        if registry is not None:
-            return registry.waiting_control(self, task, snapshot)
-        return None, False
-
-    async def _project_detail(self, task, plan, snapshot, events, job, control_wait):
-        registry = getattr(self.store, 'application_runtime', None)
-        if registry is not None:
-            return await registry.project_detail(self, task, plan, snapshot, events, job, control_wait)
-        return {}, None
-
     def routes(self):
         router = self.router
-        from .application_runs import application_runs_router
-        router.include_router(application_runs_router(self))
 
-        @router.get("/status")
-        def status():
-            rows = self.store.sql("SELECT body->>'lastStatus' AS state,COUNT(*) AS n FROM af_tasks WHERE NOT terminal GROUP BY state")
-            counts = {row["state"]: row["n"] for row in rows}
-            return {"mode": "live", "integration": "Agno AgentOS 3.1.0 + PostgreSQL",
-                    "maxWorkers": self.settings.max_workers, "activeWorkers": counts.get("running", 0), "queuedJobs": counts.get("queued", 0),
-                    "liveEnabled": True, "liveIntegrationVerified": False,
-                    "deploymentMode": "production", "verificationStatus": "unverified",
-                    "admissionMode": "per-plan-preflight", "observedMetrics": True,
-                    "feeManagementEnabled": self.settings.fee_management_enabled,
-                    "platformPaidModelsEnabled": self.settings.platform_paid_models_enabled,
-                    "personalModelSetup": "/api/factory/personal-models"}
-
-        @router.get("/session")
+        @router.get('/session')
         def session(request: Request):
             return self.auth.user(request)
 
-        @router.get("/materials")
-        def materials(request: Request):
-            user = self.user(request)
-            service = self.store.material_governance
-            if service is None:
-                raise HTTPException(503, "Material governance is unavailable")
-            # Inspection keeps another owner's drafts private while allowing a
-            # member to resume their own draft after refreshing the catalog.
-            values = self.store.materials(published_only=False)
-            projected = []
-            for material in values:
-                try:
-                    version = service.inspect_version(user["id"], material["id"], material["version"])
-                except HTTPException as error:
-                    if error.status_code not in {403, 404, 409}:
-                        raise
-                    continue
-                state = version["governance"]
-                projected.append({**version["material"], "archived": state["state"] == "archived",
-                    "published": state["state"] == "published" and version["material"]["published"],
-                    "governance": {"state": state["state"], "authorId": state["author_id"],
-                                   "reason": state["reason"], "reviewId": state["review_id"]}})
-            return projected
+        @router.get('/jobs/{task_id}')
+        async def detail(task_id: str, request: Request):
+            return await self.detail(self.store.task(task_id, self.user(request)['id']))
 
-        @router.post("/materials", status_code=201)
-        def material_create(body: MaterialRequest, request: Request):
-            user = self.user(request)
-            if not body.requestId:
-                raise HTTPException(400, "Material drafts require a stable requestId")
-            definition = {**body.model_dump(exclude_none=True, exclude={"requestId"}), "license": "MIT",
-                          "compatibility": ["agno:3.1.0"], "provenance": {"kind": "original", "notice": "Original member-authored material."}}
-            return self.store.material_governance.create_draft(user["id"], definition, body.requestId)
-
-        @router.post("/materials/{material_id}/{version}/publish", status_code=202)
-        def material_publish(material_id: str, version: int, body: PublicationRequest, request: Request):
-            user = self.user(request)
-            return self.store.material_governance.publish(user["id"], material_id, version, body.requestId)
-
-        @router.get("/connections")
-        def connections(request: Request):
-            user = self.user(request)
-            service = getattr(self.store, "connections", None)
-            if service is None:
-                raise HTTPException(503, "Trusted connection service is unavailable")
-            return service.list(user["id"])
-
-        @router.get("/runtime-adapters")
-        def runtime_adapters(request: Request):
-            user = self.user(request)
-            service = getattr(self.store, "execution_bindings", None)
-            if service is None:
-                raise HTTPException(503, "Trusted runtime adapter registry is unavailable")
-            entries = service.describe()
-            return self.store.personal_tools.visible_runtime_adapters(user['id'], entries)
-
-        @router.get("/execution-targets")
-        def execution_targets(request: Request):
-            user = self.user(request)
-            return [{"id": ref, "name": ref, "kind": "remote-factory", "connectivityVerified": False,
-                     "supportedApplicationContracts": list(target.supported_application_contracts)}
-                    for ref, target in self.remote.client.targets.items() if user["id"] in target.identity_map] if self.remote else []
-
-        @router.post("/plans", status_code=201)
-        def plan_create(body: PlanRequest, request: Request):
-            user = self.user(request)
-            fields = body.model_dump(exclude={"requestId", *({'inputValues'} if body.inputValues is None else set())})
-            plan = self.store.admit_plan(user["id"], body.requestId, fields, lambda: create_plan(self.store, user["id"], body.topic, body.mode, body.application, application_ref=body.applicationRef, material_choices=body.materialChoices, connection_refs=body.connectionRefs, **({'input_values': body.inputValues} if body.inputValues is not None else {})))
-            return {**plan, "authorization": self.store.plan_policy.status(user["id"], plan)}
-
-        @router.post("/instances", status_code=202)
-        async def instantiate(body: InstanceRequest, request: Request):
-            user = self.user(request)
-            return await self.instantiate(user["id"], body)
-
-        @router.get("/requests/{request_id}")
-        def request_receipt(request_id: str, request: Request):
-            user = self.user(request)
-            task = self.store.task_for_request(request_id, user["id"])
-            # Do not invoke detail/reconciliation: this lookup cannot submit,
-            # continue, cancel, emit events or release a reservation.
-            placement = self.store.sql("SELECT target_ref FROM af_remote_placements WHERE task_id=:id AND owner_id=:owner",
-                                       id=task["id"], owner=user["id"])
-            return {"requestId": request_id, "taskId": task["id"], "planId": task["plan_id"],
-                    "executionTargetRef": placement[0]["target_ref"] if placement else None,
-                    "runId": task["run_id"], "admission": task["admission"],
-                    "outcomeSource": "persisted_factory_intent"}
-
-        @router.get("/jobs")
-        def jobs(request: Request, limit: int = Query(default=50, ge=1, le=100),
-                 cursor: str | None = Query(default=None, max_length=2048)):
-            user = self.user(request)
-            return self.store.task_history(user["id"], limit=limit, cursor=cursor)
-
-        @router.get("/jobs/{task_id}")
-        async def task_detail(task_id: str, request: Request):
-            user = self.user(request)
-            task, child = self.scoped_task(task_id, user["id"])
-            return await self.detail(task, child)
-
-        @router.get("/jobs/{task_id}/events")
-        async def event_page(task_id: str, request: Request, cursor: str | None = Query(default=None, max_length=4096),
-                             limit: int = Query(default=100, ge=1, le=1000)):
-            user = self.user(request)
-            task, child = self.scoped_task(task_id, user["id"])
-            if self.remote and self.remote.placed(task):
-                return await self.remote.events(task, child, cursor=cursor, limit=limit)
-            return self.store.event_replay.page(user["id"], task["id"], cursor=cursor, limit=limit)
-
-        @router.post("/jobs/{task_id}/children", status_code=202)
-        async def delegate(task_id: str, body: ChildRequest, request: Request):
-            user = self.user(request)
-            task, child = self.scoped_task(task_id, user["id"])
-            if self.remote and self.remote.placed(task):
-                return await self.remote.delegate(task, body.goal, body.mode, body.requestId, child)
-            if self.delegation is None:
-                raise HTTPException(503, "Delegation service is unavailable")
-            result = await self.delegation.create(user["id"], task_id, body.goal, body.mode, body.requestId)
-            return {**result, "job": (await self.detail(result["childTask"]))["job"]}
-
-        @router.get("/jobs/{task_id}/children")
-        async def children(task_id: str, request: Request):
-            user = self.user(request)
-            if self.delegation is None:
-                raise HTTPException(503, "Delegation service is unavailable")
-            task, child = self.scoped_task(task_id, user["id"])
-            if self.remote and self.remote.placed(task):
-                return await self.remote.children(task, child)
-            return await self.delegation.children(user["id"], task_id)
-
-        @router.get("/jobs/{task_id}/group")
-        async def group(task_id: str, request: Request):
-            user = self.user(request)
-            if self.delegation is None:
-                raise HTTPException(503, "Delegation service is unavailable")
-            task, child = self.scoped_task(task_id, user["id"])
-            if self.remote and self.remote.placed(task):
-                return (await self.remote.detail(task, child))["snapshot"].get("delegation")
-            return await self.delegation.inspect_group(user["id"], task_id)
-
-        @router.get("/commands")
-        async def outstanding_commands(request: Request, taskId: str | None = None,
-                                       limit: int = Query(default=50, ge=1, le=100),
-                                       after: str | None = Query(default=None, max_length=100), outstanding: bool = True):
-            user = self.user(request)
-            return await self.commands.list(user["id"], taskId, limit=limit, after=after, outstanding=outstanding)
-
-        @router.get("/jobs/{task_id}/commands/{command_id}")
-        async def command_receipt(task_id: str, command_id: str, request: Request):
-            user = self.user(request)
-            return await self.commands.recover(user["id"], task_id, command_id)
-
-        @router.post("/jobs/{task_id}/commands", status_code=202)
-        async def submit_command(task_id: str, body: ControlCommand, request: Request):
-            user = self.user(request)
-            return await self.commands.submit(user["id"], task_id, body)
-
-        @router.post("/jobs/{task_id}/commands/{command_id}/acknowledge")
-        async def acknowledge_command(task_id: str, command_id: str, request: Request):
-            user = self.user(request)
-            return await self.commands.acknowledge(user["id"], task_id, command_id)
-
-        @router.post("/jobs/{task_id}/commands/{command_id}/dispatch", status_code=202)
-        async def dispatch_prepared(task_id: str, command_id: str, request: Request):
-            user = self.user(request)
-            return await self.commands.dispatch(user["id"], task_id, command_id)
-
-        async def compatibility_command(task_id, request, action, decision, command_id):
-            user = self.user(request)
-            receipt = await self.commands.submit(user["id"], task_id, legacy_command(task_id, action, decision, command_id))
-            task, child = self.scoped_task(task_id, user["id"])
-            return {**(await self.detail(task, child))["job"], "commandReceipt": receipt}
-
-        @router.post("/jobs/{task_id}/cancel")
-        async def cancel(task_id: str, request: Request, body: Cancel | None = None):
-            return await compatibility_command(task_id, request, "cancel", {}, body.commandId if body else None)
-
-        @router.post("/jobs/{task_id}/answer")
-        async def answer(task_id: str, body: Answer, request: Request):
-            return await compatibility_command(task_id, request, "answer",
-                {"requirementId": body.questionId, "version": body.version, "answer": body.answer}, body.commandId)
-
-        @router.post("/jobs/{task_id}/approve")
-        async def approve(task_id: str, body: Approval, request: Request):
-            return await compatibility_command(task_id, request, "approve",
-                {"requirementId": body.requirementId, "version": body.version, "approved": body.approved}, body.commandId)
-
-        @router.post("/jobs/{task_id}/reconcile")
-        async def reconcile(task_id: str, request: Request):
-            user = self.user(request)
-            task, child = self.scoped_task(task_id, user["id"])
-            if self.remote and self.remote.placed(task):
-                await self.remote.client.reconcile(user["id"], task["id"])
-                return (await self.remote.detail(task, child))["job"]
-            # Snapshot/receipt lookup only; no replay and no timeout-based capacity release.
-            if not task.get("run_id"):
-                finder = getattr(self.bridge, "find_run", None)
-                receipt = await finder(task["id"], user["id"]) if finder else None
-                if receipt:
-                    self.store.accept(task_id, receipt["run_id"])
-            self.store.event(task_id, "reconciliation", "Queried native state; unresolved effects remain UNKNOWN", {})
-            observer = getattr(self.store, "lifecycle_observer", None)
-            if observer is not None:
-                await observer.observe_root(self.delegation._ancestry(task)[0] if self.delegation else task["id"])
-            return (await self.detail(self.store.task(task_id, user["id"]))) ["job"]
-
-        @router.get("/jobs/{task_id}/artifacts/{artifact_id}")
+        @router.get('/jobs/{task_id}/artifacts/{artifact_id}')
         async def download(task_id: str, artifact_id: str, request: Request):
-            user = self.user(request)
-            task, child = self.scoped_task(task_id, user["id"])
-            if self.remote and self.remote.placed(task):
-                meta, raw = await self.remote.client.artifact(user["id"], task["id"], artifact_id, child)
-            else:
-                meta, raw = self.store.artifact(task_id, artifact_id)
-            return Response(raw, media_type=meta["mediaType"], headers={"Content-Disposition": "attachment; filename*=UTF-8''" + __import__("urllib.parse", fromlist=["quote"]).quote(meta["name"]), "X-Content-SHA256": meta["sha256"], "Cache-Control": "private, no-store"})
+            self.store.task(task_id, self.user(request)['id'])
+            meta, raw = self.store.artifact(task_id, artifact_id)
+            from urllib.parse import quote
+            return Response(raw, media_type=meta['mediaType'], headers={
+                'Content-Disposition': "attachment; filename*=UTF-8''" + quote(meta['name']),
+                'X-Content-SHA256': meta['sha256'], 'Cache-Control': 'private, no-store'})

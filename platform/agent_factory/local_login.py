@@ -5,7 +5,6 @@ import argparse
 import getpass
 import secrets
 import sys
-import warnings
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
@@ -27,8 +26,8 @@ class LocalPasswords:
 
     @staticmethod
     def _password(value):
-        if not isinstance(value, str) or not 12 <= len(value) <= 128:
-            raise ValueError('Password must contain 12–128 characters')
+        if not isinstance(value, str) or not value:
+            raise ValueError('Password must not be empty')
 
     def create(self, owner, password):
         AccountCreate(id=owner)
@@ -76,14 +75,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     engine = None
     try:
-        if not sys.stdin.isatty():
-            raise ValueError('A private interactive terminal is required')
-        with warnings.catch_warnings():
-            warnings.simplefilter('error', getpass.GetPassWarning)
-            password = getpass.getpass('Password: ')
-            confirmation = getpass.getpass('Confirm password: ')
-        if password != confirmation:
-            raise ValueError('Passwords differ')
+        password = getpass.getpass('Password: ')
         from agno.db.postgres import PostgresDb
         from agno.os.authz import UserDirectory
         from .config import Settings

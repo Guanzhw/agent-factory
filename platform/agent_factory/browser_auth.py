@@ -31,8 +31,6 @@ PREFIX = "/api/factory/auth"
 CONFIG = {"enabled": True, "loginPath": PREFIX + "/login", "logoutPath": PREFIX + "/logout",
           "oidcEnabled": False, "localLoginEnabled": False}
 _TOKEN = re.compile(r"[A-Za-z0-9_-]{43}\Z")
-FLOW_SECONDS = 300
-SESSION_SECONDS = 900
 
 
 def _check(value, status=401):
@@ -51,10 +49,10 @@ def _hash(value):
 def _workspace_return(value):
     _check(type(value) is str, 400)
     try:
-        size = len(value.encode())
+        value.encode()
     except UnicodeError:
         raise HTTPException(400, "BROWSER_AUTH_REJECTED") from None
-    _check(value.startswith("/") and not value.startswith("//") and size <= 900
+    _check(value.startswith("/") and not value.startswith("//")
            and "\\" not in value and all(ord(c) >= 32 and ord(c) != 127 for c in value), 400)
     parsed = urlsplit(value)
     _check(not parsed.scheme and not parsed.netloc and parsed.path == "/", 400)
@@ -115,15 +113,10 @@ class BrowserSessionService:
         for row in rows:
             conn.execute(text("DELETE FROM af_browser_auth WHERE id=:id"), {"id": row[0]})
 
-    def _capacity(self, conn, kind, limit):
-        count = conn.execute(text("SELECT COUNT(*) FROM af_browser_auth WHERE kind=:kind AND CAST(body->>'expires' AS DOUBLE PRECISION)>:now"),
-                             {"kind": kind, "now": self.clock()}).scalar_one()
-        _check(count < limit, 429)
-
     def _cancel_flows(self, conn, binding):
         if not _valid(binding):
             return
-        rows = conn.execute(text("SELECT id,body FROM af_browser_auth WHERE kind='flow' AND body->>'binding'=:binding LIMIT 1000"),
+        rows = conn.execute(text("SELECT id,body FROM af_browser_auth WHERE kind='flow' AND body->>'binding'=:binding"),
                             {"binding": _hash(binding)}).all()
         for row in rows:
             body = json.loads(row[1]) if isinstance(row[1], str) else row[1]
@@ -147,13 +140,12 @@ class BrowserSessionService:
         with self._transaction() as conn:
             self._gc(conn)
             self._cancel_flows(conn, flow_cookie)
-            self._capacity(conn, "flow", 1000)
             prior = _hash(session_cookie) if _valid(session_cookie) else None
             prior_row = self._get(conn, prior, "session") if prior else None
-            if not prior_row or prior_row["revoked"] or prior_row["expires"] <= self.clock():
+            if not prior_row or prior_row["revoked"] or (prior_row["expires"] is not None and prior_row["expires"] <= self.clock()):
                 prior = None
             self._save(conn, identity, "flow", {"status": "PENDING", "binding": _hash(binding),
-                "config": self.fingerprint, "expires": self.clock() + FLOW_SECONDS,
+                "config": self.fingerprint, "expires": None,
                 "sealed": sealed, "prior": prior, "returnTo": return_to}, insert=True)
         challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip("=")
         params = {"response_type": "code", "client_id": self.config.client_id,
@@ -167,7 +159,7 @@ class BrowserSessionService:
         _check(_valid(state) and _valid(binding))
         with self._transaction() as conn:
             row = self._get(conn, _hash(state), "flow")
-            _check(row and row["status"] == "PENDING" and row["expires"] > self.clock()
+            _check(row and row["status"] == "PENDING"
                    and row["config"] == self.fingerprint and hmac.compare_digest(row["binding"], _hash(binding)))
             assert row is not None
             sealed = row["sealed"]
@@ -181,7 +173,7 @@ class BrowserSessionService:
     async def finish(self, code, state, binding):
         _check(self.exchanger is not None, 405)
         assert self.exchanger is not None
-        _check(type(code) is str and 1 <= len(code) <= 2048 and code.isascii()
+        _check(type(code) is str and bool(code) and code.isascii()
                and all(33 <= ord(c) <= 126 for c in code))
         context = await asyncio.to_thread(self._claim, state, binding)
         identity = await self.exchanger.exchange(code, code_verifier=context["verifier"], nonce=context["nonce"])
@@ -192,18 +184,17 @@ class BrowserSessionService:
         token = secrets.token_urlsafe(32)
         with self._transaction() as conn:
             row = self._get(conn, _hash(state), "flow")
-            _check(row and row["status"] == "EXCHANGING" and row["expires"] > self.clock()
+            _check(row and row["status"] == "EXCHANGING"
                    and row["config"] == self.fingerprint)
             assert row is not None
             if row["prior"]:
                 prior = self._get(conn, row["prior"], "session")
-                _check(prior and not prior["revoked"] and prior["expires"] > self.clock())
+                _check(prior and not prior["revoked"] and (prior["expires"] is None or prior["expires"] > self.clock()))
                 assert prior is not None
                 prior["revoked"] = True
                 self._save(conn, row["prior"], "session", prior)
-            expires = min(self.clock() + SESSION_SECONDS, identity.expires_at)
+            expires = identity.expires_at
             _check(expires > self.clock() + 1)
-            self._capacity(conn, "session", 2000)
             # Recheck inside the serialization boundary immediately before issuance.
             self.auth._current_user(identity.owner_id)
             self._save(conn, _hash(token), "session", {"owner": identity.owner_id,
@@ -231,9 +222,8 @@ class BrowserSessionService:
                 if prior:
                     prior['revoked'] = True
                     self._save(conn, _hash(session_cookie), 'session', prior)
-            self._capacity(conn, 'session', 2000)
             self.auth.require_member(owner)
-            self._save(conn, _hash(token), 'session', {'owner': owner, 'expires': self.clock() + SESSION_SECONDS,
+            self._save(conn, _hash(token), 'session', {'owner': owner, 'expires': None,
                 'config': self.fingerprint, 'revoked': False}, insert=True)
         return token
 
@@ -241,7 +231,7 @@ class BrowserSessionService:
         _check(_valid(token))
         with self._transaction() as conn:
             row = self._get(conn, _hash(token), "session")
-            _check(row and not row["revoked"] and row["expires"] > self.clock()
+            _check(row and not row["revoked"] and (row["expires"] is None or row["expires"] > self.clock())
                    and row["config"] == self.fingerprint)
         assert row is not None
         self.auth._current_user(row["owner"])
@@ -271,7 +261,6 @@ class BrowserAuthBridge:
         for name, value in scope.get("headers", []):
             if name.lower() != b"cookie":
                 continue
-            _check(len(value) <= 8192, 400)
             for part in value.decode("latin-1").split(";"):
                 key, sep, token = part.strip().partition("=")
                 if key in {SESSION_COOKIE, FLOW_COOKIE}:
@@ -306,7 +295,6 @@ class BrowserAuthBridge:
             _check(self.service.local_passwords is not None if local else self.service.config is not None, 405)
             body = bytearray()
             async for chunk in request.stream():
-                _check(len(body) + len(chunk) <= (4096 if local else 1024), 413)
                 body.extend(chunk)
             try:
                 payload = json.loads(body or b"{}")
@@ -317,21 +305,20 @@ class BrowserAuthBridge:
                 token = await asyncio.to_thread(self.service.local_login, payload['username'], payload['password'],
                     cookies.get(SESSION_COOKIE), cookies.get(FLOW_COOKIE))
                 response = JSONResponse({'authenticated': True})
-                response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_SECONDS, secure=True, httponly=True, samesite='strict', path='/')
+                response.set_cookie(SESSION_COOKIE, token, secure=True, httponly=True, samesite='strict', path='/')
                 response.delete_cookie(FLOW_COOKIE, secure=True, httponly=True, samesite='lax', path='/')
                 return response
             _check(type(payload) is dict and set(payload) <= {"returnTo"}, 400)
             url, binding = await asyncio.to_thread(self.service.start, cookies.get(FLOW_COOKIE),
                 cookies.get(SESSION_COOKIE), payload.get("returnTo", "/"))
             response = JSONResponse({"authorizationUrl": url})
-            response.set_cookie(FLOW_COOKIE, binding, max_age=FLOW_SECONDS + SESSION_SECONDS, secure=True, httponly=True, samesite="lax", path="/")
+            response.set_cookie(FLOW_COOKIE, binding, secure=True, httponly=True, samesite="lax", path="/")
             return response
         if path == PREFIX + "/callback" and method == "GET":
             try:
                 _check(self.service.config is not None, 405)
                 assert self.service.config is not None
                 raw = request.scope.get("query_string", b"")
-                _check(len(raw) <= 8192)
                 items = parse_qsl(raw.decode("ascii"), keep_blank_values=True, strict_parsing=True)
                 params = dict(items)
                 _check(len(params) == len(items) and set(params) <= {"code", "state", "iss"}
@@ -339,7 +326,7 @@ class BrowserAuthBridge:
                        and params.get("iss", self.service.config.issuer) == self.service.config.issuer)
                 token, return_to = await self.service.finish(params["code"], params["state"], cookies.get(FLOW_COOKIE))
                 response = RedirectResponse(return_to, status_code=303)
-                response.set_cookie(SESSION_COOKIE, token, max_age=SESSION_SECONDS, secure=True, httponly=True, samesite="strict", path="/")
+                response.set_cookie(SESSION_COOKIE, token, secure=True, httponly=True, samesite="strict", path="/")
                 response.delete_cookie(FLOW_COOKIE, secure=True, httponly=True, samesite="lax", path="/")
                 return response
             except Exception:
@@ -397,7 +384,7 @@ class BrowserAuthBridge:
                 if scope.get("method") not in {"GET", "HEAD", "OPTIONS"}:
                     self._csrf(scope, token)
                 row = await asyncio.to_thread(self.service.session, token)
-                remaining = int(row["expires"] - self.service.clock())
+                remaining = int(row["expires"] - self.service.clock()) if row["expires"] is not None else 60
                 _check(remaining > 0)
                 native = self.service.auth._issue_native_token(row["owner"], lifetime_seconds=min(60, remaining))
                 scope = {**scope, "headers": [*scope.get("headers", []), (b"authorization", ("Bearer " + native).encode())]}

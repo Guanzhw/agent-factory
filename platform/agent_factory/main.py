@@ -1,6 +1,5 @@
 import os
 from contextlib import ExitStack, asynccontextmanager, nullcontext
-from typing import cast
 
 os.environ["AGNO_TELEMETRY"] = "false"
 
@@ -11,52 +10,15 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from .auth import AuthService, EXECUTOR_ID, MemberTokenBoundary, UnconfiguredIdentityBoundary
+from .auth import AuthService, MemberTokenBoundary, UnconfiguredIdentityBoundary
 from .config import Settings
 from .connections import ConnectionService, connection_router
-from .execution_bindings import default_bindings
-from .applications import ApplicationService, application_router
-from .composition import CompositionService, composition_router
 from .delegation import DelegationService
 from .factory_api import FactoryAPI
-from .event_replay import EventReplay
 from .lifecycle_observer import FactoryLifecycleObserver
-from .material_governance import GovernanceConfig, MaterialGovernance, material_governance_router
-from .native_bridge import INTERNAL_NATIVE, NativeBridge
+from .native_bridge import NativeBridge
 from .runtime import build_runtime
-from .resources import PersistentResourceService
-from .resource_maintenance import ResourceMaintenance
-from .resource_api import resource_router
 from .store import Store
-from .usage_ledger import UsageLedger, default_zero_prices
-from .plan_policy import ToolContract, PolicyName, PlanPolicyConfig, PlanPolicyService, persisted_ancestor_guard, plan_policy_router
-from .scheduling import SchedulingService
-from .remote_handoff import PreparedHandoffService, TrustedHandoffClient
-from .remote_bindings import RemoteBindingService
-from .remote_authority import origin_authority_router
-from .remote_execution import RemoteExecution
-from .scheduling_api import scheduling_router
-
-
-class NativeIngress:
-    """Factory-bound executors receive their plan through the factory API.
-
-    A context variable is trusted in-process, not a user-controlled HTTP header.
-    Native middleware still authenticates and authorizes every internal call.
-    """
-    def __init__(self, app, workflow_ids=()):
-        self.app = app
-        self.prefixes = (f"/agents/{EXECUTOR_ID}/", *(f"/workflows/{identifier}/" for identifier in workflow_ids))
-
-    async def __call__(self, scope, receive, send):
-        protected = scope.get("path", "").startswith(self.prefixes)
-        if scope["type"] == "websocket" and protected and not INTERNAL_NATIVE.get():
-            await send({"type": "websocket.close", "code": 1008})
-            return
-        if scope["type"] == "http" and protected and not INTERNAL_NATIVE.get():
-            await JSONResponse({"message": "Use the scoped factory API", "code": "FACTORY_ENVELOPE_REQUIRED"}, status_code=403)(scope, receive, send)
-            return
-        await self.app(scope, receive, send)
 
 
 async def http_error(request: Request, error: HTTPException):
@@ -68,13 +30,8 @@ async def http_error(request: Request, error: HTTPException):
                         status_code=error.status_code, headers=error.headers)
 
 
-def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
-               storage_governance_type=None, lifecycle_observer_type=None,
-               model_dispatch_type=None, handoff_client_type=None, handoff_receiver_type=None,
-               bindings_factory=None, governance_config=None, policy_config=None,
-               queue_max_attempts=2, lifespan_context=None, tool_catalog_factory=None,
-               plan_policy_type=None, shutdown_callback=None, delegation_service_type=None,
-               connection_service_type=None, shutdown_guard=None):
+def create_app(settings=None, *, diagnostics=None, queue_max_attempts=2,
+               lifespan_context=None, shutdown_callback=None, shutdown_guard=None):
     """Build the application-neutral Factory; deployment code selects trusted implementations.
 
     These are ordinary constructor arguments, never request-driven discovery or
@@ -95,18 +52,6 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     at('PREPARATION_APP_AUTH')
     auth = AuthService(settings, native_db)
     store.auth = auth
-    from .storage_governance import StorageGovernance
-    from .storage_api import storage_router
-    at('PREPARATION_APP_STORAGE')
-    store.storage = (storage_governance_type or StorageGovernance)(store, auth)
-    at('PREPARATION_APP_EVENT_REPLAY')
-    replay = EventReplay(store, auth, signing_key=auth._key)
-    store.event_replay = replay
-    at('PREPARATION_APP_GOVERNANCE')
-    governance = MaterialGovernance(store, auth, governance_config or GovernanceConfig(
-        review_mode="member-self-service", revision=settings.material_policy_revision,
-        tool_contract=cast(ToolContract, settings.runtime_tool_contract)))
-    store.material_governance = governance
     at('PREPARATION_APP_CONNECTIONS')
     from .local_credentials import local_credential_vault
     credential_vault = (settings.credential_vault_factory(store.engine) if settings.credential_vault_factory
@@ -126,7 +71,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     from .credential_vault import VaultSecretProvider
     if OPENCODE_PROVIDER in credential_vault.capabilities()['providerIds']:
         personal_providers.setdefault(OPENCODE_PROVIDER, OpenCodeServeProvider(VaultSecretProvider(credential_vault, OPENCODE_PROVIDER)))
-    connections = (connection_service_type or ConnectionService)(store, auth, settings.trusted_connections,
+    connections = ConnectionService(store, auth, settings.trusted_connections,
         personal_providers=personal_providers)
     store.connections = connections
     from .personal_ssh import PersonalSSHServers, SSHEnrollmentConfig, personal_ssh_router
@@ -138,103 +83,34 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     store.personal_tools = PersonalTools(connections, credential_vault, settings.personal_tool_adapters)
     connections.personal_tools = store.personal_tools
     from .personal_models import PersonalModels, personal_model_router
-    store.personal_models = PersonalModels(store, auth, connections, credential_vault,
-        transport_factory=settings.owner_model_transport_factory,
-        trusted_model_proxy=settings.owner_model_trusted_proxy,
-        proxy_environment_id=settings.owner_model_proxy_environment_id)
+    store.personal_models = PersonalModels(store, auth, connections, credential_vault)
     connections.owner_models = store.personal_models
-    at('PREPARATION_APP_BINDINGS')
-    bindings = (bindings_factory or default_bindings)(settings, store, connections)
-    store.personal_models.register(bindings)
-    at('PREPARATION_APP_RUNTIME_ADAPTERS')
-    for entry in settings.runtime_adapters:
-        bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
-            tool_name=entry.tool_name, connection_kind=entry.connection_kind,
-            required_capabilities=entry.required_capabilities, permissions=entry.permissions,
-            validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
-    store.personal_tools.register(bindings)
-    store.execution_bindings = bindings
-    prices = { (price.adapter_id, price.adapter_revision): price for price in default_zero_prices() }
-    for price in settings.usage_pricing:
-        prices[(price.adapter_id, price.adapter_revision)] = price
-    at('PREPARATION_APP_USAGE_LEDGER')
-    if settings.fee_management_enabled:
-        store.usage_ledger = UsageLedger(store, prices=tuple(prices.values()), policy=settings.usage_policy)
-    from .local_budget_scopes import LocalBudgetScopes
-    store.local_budget_scopes = LocalBudgetScopes(store, getattr(store, 'usage_ledger', None))
-    store.register_execution_guard('local-budget-scopes', store.local_budget_scopes.require_current)
-    at('PREPARATION_APP_REMOTE_BINDINGS')
-    remote_bindings = RemoteBindingService(store, auth, bindings, connections, settings.remote_binding_mappings)
-    store.remote_bindings = remote_bindings
-    at('PREPARATION_APP_APPLICATIONS')
-    applications = ApplicationService(store, auth)
-    store.applications = applications
-    at('PREPARATION_APP_COMPOSITION')
-    composition = CompositionService(store, auth, applications, bindings, connections)
-    store.composition = composition
-    store.register_execution_guard("execution-bindings", bindings.require_execution, tool_independent=True)
-    store.register_execution_guard("application-governance",
-        lambda owner, plan, context, tool: applications.require_plan_current(plan), tool_independent=True)
     at('PREPARATION_APP_NATIVE_GRAPH')
-    executor, registry = build_runtime(settings, store, native_db, model_dispatch_type=model_dispatch_type,
-        catalog=tool_catalog_factory(settings, store) if tool_catalog_factory else None)
+    executor, registry = build_runtime(store, native_db)
     at('PREPARATION_APP_BRIDGE')
-    from .native_workflows import NativeWorkflows
-    store.native_workflows = NativeWorkflows(store, auth, native_db, settings.native_workflows)
-    store.register_execution_guard("native-workflow", store.native_workflows.require_plan_current)
     bridge = NativeBridge(settings, native_db, auth)
-    bridge.configure_components(store.native_workflows.component_for_task)
     at('PREPARATION_APP_DELEGATION')
-    delegation = (delegation_service_type or DelegationService)(settings, store, auth, bridge)
+    delegation = DelegationService(settings, store, auth, bridge)
     delegation.initialize()
     store.delegation = delegation
-    at('PREPARATION_APP_PLAN_POLICY')
-    policy = (plan_policy_type or PlanPolicyService)(store, auth, policy_config or PlanPolicyConfig(
-        name=cast(PolicyName, settings.temporary_policy), revision=settings.policy_revision,
-        tool_contract=cast(ToolContract, settings.runtime_tool_contract)), ancestor_guard=persisted_ancestor_guard(store))
-    store.plan_policy = policy
-    at('PREPARATION_APP_HANDOFF')
-    handoff_client = (handoff_client_type or TrustedHandoffClient)(store, auth, settings.handoff_targets)
-    handoff_client.install_guard()
-    store.handoff_client = handoff_client
-    store.remote_execution = RemoteExecution(store, handoff_client)
-    receiver = (handoff_receiver_type or PreparedHandoffService)(store, auth, bridge, settings.handoff_origins) if settings.handoff_origins else None
-    store.handoff_receiver = receiver
-    if receiver:
-        receiver.install_guard()
-    at('PREPARATION_APP_SCHEDULING')
-    schedules = SchedulingService(settings, store, native_db, auth, bridge)
-    schedules.initialize()
-    from .schedule_management import ScheduleManagement, schedule_management_router
-    schedule_management = ScheduleManagement(schedules)
     at('PREPARATION_APP_ROUTES')
-    base = FastAPI(title="Agent Factory", version="0.2.0", lifespan=schedules.lifespan)
+    base = FastAPI(title="Agent Factory", version="0.2.0")
     from .accounts import account_router
     base.include_router(account_router(auth))
     base.include_router(personal_ssh_router(auth, store.personal_ssh))
-    if receiver:
-        base.include_router(receiver.router)
-    if settings.handoff_targets:
-        base.include_router(origin_authority_router(auth, handoff_client))
-    base.include_router(material_governance_router(auth, governance))
     base.include_router(connection_router(auth, connections))
     base.include_router(personal_tool_router(auth, store.personal_tools))
     from .personal_connections import personal_connection_router
     base.include_router(personal_connection_router(auth, connections.personal))
     from .credential_vault import credential_vault_router
     base.include_router(credential_vault_router(auth, credential_vault))
-    base.include_router(application_router(auth, applications))
     from .assistant_endpoints import AssistantEndpoints, assistant_endpoints_router
-    assistant_endpoints = AssistantEndpoints(store, auth, applications)
+    assistant_endpoints = AssistantEndpoints(store, auth)
     base.include_router(assistant_endpoints_router(auth, assistant_endpoints))
     from .application_content import ApplicationContent, application_content_router
     application_content = ApplicationContent(store, auth, connections.sharing)
     base.include_router(application_content_router(auth, application_content))
-    base.include_router(composition_router(auth, composition))
-    base.include_router(plan_policy_router(auth, policy))
-    base.include_router(scheduling_router(auth, schedules))
-    base.include_router(schedule_management_router(auth, schedule_management))
-    factory_api = (factory_api_type or FactoryAPI)(settings, store, auth, bridge)
+    factory_api = FactoryAPI(settings, store, auth, bridge)
     base.include_router(factory_api.router)
     from .application_runs import ApplicationRuns
     from .assistant_messages import AssistantMessages, assistant_messages_router
@@ -244,48 +120,9 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
     from .assistant_events import AssistantEvents
     from .assistant_delivery import assistant_delivery_lifespan
     assistant_events = AssistantEvents(store, auth, assistant_endpoints, application_content,
-        assistant_messages, store.local_budget_scopes)
+        assistant_messages)
     store.assistant_events = assistant_events
     base.include_router(personal_model_router(auth, store.personal_models))
-    from .workflow_operations import OperationCustody
-    from .workflow_control import WorkflowControl, workflow_router
-    # Durable custody remains readable even after operator registrations end.
-    store.workflow = OperationCustody(store, auth, runtimes=settings.workflow_runtimes)
-    store.workflow_control = WorkflowControl(store.workflow, factory_api)
-    base.include_router(workflow_router(auth, store.workflow_control))
-    at('PREPARATION_APP_RESOURCES')
-    resources = PersistentResourceService(store, auth, settings.remote_targets)
-    from .process_runtime import ProcessRuntimeService
-    at('PREPARATION_APP_PROCESS_RUNTIME')
-    store.process_runtime = ProcessRuntimeService(store, auth, resources)
-    if settings.ssh_training_profiles:
-        from .ssh_operation_runtime import SSHOperationRuntime
-        from .ssh_operation_waits import SSHOperationWaits
-        from .ssh_process_contract import BINDINGS, OPERATION_PIN, RUNTIME_OWNER
-        from .ssh_process_provider import EFFECT
-        from .ssh_tool_factory import ssh_tool_registrations
-        if store.personal_ssh is None:
-            raise ValueError('SSH training requires the existing personal SSH credential service')
-        ssh_runtime = SSHOperationRuntime(store, resources, store.personal_ssh, settings.ssh_training_profiles)
-        resources.ssh_targets = ssh_runtime
-        resources.execution_runtimes[EFFECT] = ssh_runtime
-        operation_key = tuple(OPERATION_PIN[key] for key in ('adapterId', 'revision', 'configFingerprint'))
-        if operation_key in store.workflow.runtimes:
-            raise ValueError('SSH operation runtime is already registered')
-        store.workflow.runtimes[operation_key] = ssh_runtime
-        for entry in ssh_tool_registrations(ssh_runtime):
-            bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
-                tool_name=entry.tool_name, connection_kind=entry.connection_kind,
-                required_capabilities=entry.required_capabilities, permissions=entry.permissions,
-                validator=entry.validator, connection_adapter_ref=entry.connection_adapter_ref)
-        store.application_runtime.register(RUNTIME_OWNER,
-            SSHOperationWaits(store, store.workflow, OPERATION_PIN, commands=factory_api.commands,
-                runs=ApplicationRuns(factory_api)),
-            bindings=BINDINGS)
-    resource_maintenance = ResourceMaintenance(resources)
-    base.include_router(resource_router(auth, resources, resource_maintenance))
-    base.include_router(storage_router(auth, store.storage))
-
     base.exception_handler(HTTPException)(http_error)
 
     @base.exception_handler(RequestValidationError)
@@ -317,7 +154,7 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
         return None
 
     at('PREPARATION_APP_AGENTOS')
-    native = AgentOS(id="agent-factory", agents=[executor], workflows=store.native_workflows.components, db=native_db, registry=registry,
+    native = AgentOS(id="agent-factory", agents=[executor], workflows=[], db=native_db, registry=registry,
                      base_app=base, on_route_conflict="preserve_base_app", **auth.agentos_kwargs(),
                      queue=QueueConfig(durable=True, max_concurrency=settings.max_workers,
                          max_queue_depth=settings.max_queued,
@@ -327,18 +164,12 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                      tracing=False, cors_allowed_origins=[f"http://127.0.0.1:{settings.port}"]).get_app()
     at('PREPARATION_APP_ATTACH')
     native.add_middleware(MemberTokenBoundary)
-    native.add_middleware(NativeIngress, workflow_ids=tuple(workflow.id for workflow in store.native_workflows.components))
     bridge.attach(native)
     # Start after the native DB/worker lifespans; stop before their drain.
     at('PREPARATION_APP_OBSERVER')
-    observer = (lifecycle_observer_type or FactoryLifecycleObserver)(store, auth, native_db,
+    observer = FactoryLifecycleObserver(store, auth, native_db,
                                         lambda: getattr(native.state, "queue_worker", None))
     store.lifecycle_observer = observer
-    from .delegated_operations import DELEGATED_OPERATION_PIN, DelegatedOperations
-    delegated_key = tuple(DELEGATED_OPERATION_PIN[field] for field in ('adapterId', 'revision', 'configFingerprint'))
-    if delegated_key in store.workflow.runtimes:
-        raise ValueError('The built-in delegated operation pin cannot be replaced')
-    store.workflow.runtimes[delegated_key] = DelegatedOperations(delegation, observer, DELEGATED_OPERATION_PIN)
     native_lifespan = native.router.lifespan_context
 
     @asynccontextmanager
@@ -380,12 +211,14 @@ def create_app(settings=None, *, diagnostics=None, factory_api_type=None,
                         shutdown_callback(native.state.factory)
 
     native.router.lifespan_context = observed_lifespan
-    native.state.factory = {"store": store, "auth": auth, "bridge": bridge, "settings": settings, "schedules": schedules, "schedule_management": schedule_management, "plan_policy": policy, "handoff_client": handoff_client, "handoff_receiver": receiver, "material_governance": governance, "event_replay": replay, "lifecycle_observer": observer, "connections": connections, "execution_bindings": bindings, "applications": applications, "composition": composition, "remote_bindings": remote_bindings}
-    native.state.factory.update(credential_vault=credential_vault, resources=resources,
-        resource_maintenance=resource_maintenance, process_runtime=store.process_runtime,
-        factory_api=factory_api, assistant_endpoints=assistant_endpoints,
-        assistant_messages=assistant_messages, application_content=application_content,
-        assistant_events=assistant_events, local_budget_scopes=store.local_budget_scopes, http_app=native)
+    native.state.factory = {
+        "store": store, "auth": auth, "bridge": bridge, "settings": settings,
+        "lifecycle_observer": observer, "connections": connections,
+        "credential_vault": credential_vault, "factory_api": factory_api,
+        "assistant_endpoints": assistant_endpoints, "assistant_messages": assistant_messages,
+        "application_content": application_content, "assistant_events": assistant_events,
+        "http_app": native,
+    }
     at('PREPARATION_APP_BROWSER_AUTH')
     external = None
     if settings.oidc_identity is not None:

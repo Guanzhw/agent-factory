@@ -5,11 +5,9 @@ The user requested deletion of the entire existing test suite on 2026-11-07. Tes
 ## Static checks and build
 
 ```sh
-uv run ruff check platform deployment applications scripts
+uv run ruff check platform deployment applications
 uv run pyright
 npm run check
-uv run python scripts/check_architecture.py --config scripts/architecture-python.json
-node scripts/check_web_architecture.mjs --config scripts/architecture-web.json
 ```
 
 `npm run check` runs lint, TypeScript checking and the production build. It runs no tests.

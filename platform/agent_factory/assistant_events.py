@@ -10,15 +10,11 @@ from sqlalchemy import Boolean, Column, Float, Integer, JSON, MetaData, String, 
 from .application_content import Label, ObjectId
 from .assistant_messages import SendAssistantMessage
 from .applications import GovernedStorage
-from .local_budget_scopes import _caps
 from .store import digest
 
 
 DELIVERY_ERROR_CODES = frozenset({
     'ACTIVE_TASK_CAPACITY_EXHAUSTED',
-    'LOCAL_BUDGET_EXHAUSTED', 'LOCAL_BUDGET_CLOSED_OR_EXPIRED',
-    'LOCAL_BUDGET_SCOPE_NOT_FOUND',
-    'LOCAL_BUDGET_BINDING_CONFLICT', 'LOCAL_BUDGET_REQUEST_CONFLICT',
     'ASSISTANT_ENDPOINT_DISABLED', 'APPLICATION_CONTENT_NOT_FOUND', 'RESOURCE_NOT_FOUND',
     'ASSISTANT_EVENT_EXPIRED', 'ASSISTANT_EVENT_PROPAGATION_LIMIT',
     'ASSISTANT_EVENT_SUBSCRIPTION_MISMATCH', 'ASSISTANT_EVENT_DELIVERY_MISMATCH',
@@ -43,9 +39,6 @@ class EventSubscription(BaseModel):
     endpointId: ObjectId
     namespace: Label
     eventType: Label
-    scopeId: str = Field(min_length=1, max_length=200)
-    caps: dict
-    deadline: float | None = Field(default=None, allow_inf_nan=False)
     maxDepth: int | None = Field(default=None, ge=0)
     maxCandidates: int | None = Field(default=None, ge=1)
 
@@ -56,14 +49,13 @@ class ContentEvent(BaseModel):
     eventType: Label
     contentId: ObjectId
     candidates: list[ObjectId]
-    deadline: float | None = Field(default=None, allow_inf_nan=False)
 
 
 class AssistantEvents:
-    def __init__(self, store, auth, endpoints, content, messages, scopes):
+    def __init__(self, store, auth, endpoints, content, messages):
         self.admission_stopping: asyncio.Event | None = None
         self.store, self.auth, self.endpoints = store, auth, endpoints
-        self.content, self.messages, self.scopes = content, messages, scopes
+        self.content, self.messages = content, messages
         self.db = GovernedStorage(store, 'af_assistant_events_v1')
         metadata = MetaData()
         self.subscriptions = Table('af_assistant_subscriptions', metadata,
@@ -80,7 +72,7 @@ class AssistantEvents:
         self.deliveries = Table('af_assistant_event_deliveries', metadata,
             Column('id', String, primary_key=True), Column('event_id', String, nullable=False),
             Column('endpoint_id', String, nullable=False), Column('subscription_id', String),
-            Column('owner_id', String), Column('message_id', String), Column('allocation_id', String),
+            Column('owner_id', String), Column('message_id', String),
             Column('state', String, nullable=False), Column('error', String),
             Column('attempted_at', Float, nullable=False),
             UniqueConstraint('event_id', 'endpoint_id'))
@@ -97,22 +89,11 @@ class AssistantEvents:
     def configure(self, owner, configuration: EventSubscription, request_id):
         self.auth.require_member(owner)
         value = configuration.model_dump()
-        value['caps'] = _caps(value['caps'])
-        if value['caps']['rounds'] != 1:
-            raise HTTPException(422, 'LOCAL_BUDGET_ONE_ROUND_REQUIRED')
         with self.db.write() as conn:
             old = self.db.old(conn, self.commands, owner, request_id, digest(value))
             if old:
                 return self._row(conn, self.subscriptions, old['id'])
-            endpoint = self.endpoints.owned(owner, value['endpointId'])
-            budget = endpoint.get('automaticBudget')
-            if budget and (budget['scopeId'] != value['scopeId'] or budget['caps'] != value['caps']):
-                raise HTTPException(409, 'ASSISTANT_MESSAGE_ALLOCATION_MISMATCH')
-            if budget:
-                self.endpoints.require_budget(conn, owner, budget)
-            scope = self.scopes._scope(conn, owner, value['scopeId'])
-            if scope['state'] != 'ACTIVE':
-                raise HTTPException(409, 'ASSISTANT_SUBSCRIPTION_EXPIRED')
+            self.endpoints.owned(owner, value['endpointId'])
             existing = conn.execute(select(self.subscriptions.c.id).where(
                 self.subscriptions.c.endpoint_id == value['endpointId'],
                 self.subscriptions.c.namespace == value['namespace'],
@@ -155,7 +136,8 @@ class AssistantEvents:
         self.auth.require_member(owner)
         value = event.model_dump()
         fingerprint = digest({'event': value, 'parent': parent_delivery_id, 'task': task_id})
-        self.scopes.admission_lock(conn)
+        if self.store.engine.dialect.name == 'postgresql':
+            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
         with self.db.write():
             old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
             if old:
@@ -164,18 +146,19 @@ class AssistantEvents:
             if publication['ownerId'] != owner:
                 raise HTTPException(404, 'APPLICATION_CONTENT_NOT_FOUND')
             identifier = str(uuid4())
-            root, depth, deadline = identifier, 0, value['deadline'] or 0
+            root, depth = identifier, 0
             if parent_delivery_id is not None:
                 parent = self._row(conn, self.deliveries, parent_delivery_id)
-                allocation = self.scopes._allocation(conn, owner, parent['allocation_id'])
-                if parent['owner_id'] != owner or not task_id or allocation['task_id'] != task_id:
+                task = self.store.task(task_id, owner) if task_id else None
+                if (parent['owner_id'] != owner or task is None
+                        or task['request_id'] != 'application-start:assistant-message:' + parent['message_id']):
                     raise HTTPException(409, 'ASSISTANT_EVENT_PARENT_MISMATCH')
                 origin = self._row(conn, self.events, parent['event_id'])
                 root, depth = origin['root_id'], origin['depth'] + 1
             elif task_id is not None:
                 raise HTTPException(422, 'ASSISTANT_EVENT_PARENT_REQUIRED')
             conn.execute(self.events.insert().values(id=identifier, owner_id=owner, body=value,
-                root_id=root, depth=depth, deadline=deadline, scanned=False, attempted_at=0))
+                root_id=root, depth=depth, deadline=0, scanned=False, attempted_at=0))
             self.db.record(conn, self.commands, owner, request_id, fingerprint, 'event.emit', {'id': identifier})
             return self._row(conn, self.events, identifier)
 
@@ -197,7 +180,7 @@ class AssistantEvents:
         if conn is None or conn is not self.store._connection.get():
             raise RuntimeError('Collaboration emit requires the current domain transaction')
         self.auth.require_member(owner)
-        self.scopes.admission_lock(conn)
+        conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
         message = self.messages._row(conn, message_id)
         self.store.task(origin_task_id, owner)
         if message['sender_id'] != owner:
@@ -236,15 +219,15 @@ class AssistantEvents:
             return
         if owner != message['sender_id']:
             raise HTTPException(409, 'ASSISTANT_COLLABORATION_BINDING_MISMATCH')
-        runtime = self.store.application_runtime
-        hook = runtime.control(origin, 'validate_collaboration_admission') if runtime else None
-        if hook is None:
+        sessions = getattr(self.store, 'research_sessions', None)
+        if sessions is None:
             raise HTTPException(409, 'ASSISTANT_COLLABORATION_OWNER_UNAVAILABLE')
-        hook(self.store, origin, event_id, request_id, plan)
+        sessions.validate_collaboration_admission(self.store, origin, event_id, request_id, plan)
 
     def prepare(self, event_id, endpoint_id):
         with self.store.transaction() as conn:
-            self.scopes.admission_lock(conn)
+            if self.store.engine.dialect.name == 'postgresql':
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             with self.db.write():
                 existing = conn.execute(select(self.deliveries).where(self.deliveries.c.event_id == event_id,
                     self.deliveries.c.endpoint_id == endpoint_id)).mappings().first()
@@ -262,24 +245,19 @@ class AssistantEvents:
                 if subscription is None:
                     return None
                 self._current(conn, event, subscription, endpoint_id)
-                identifier, allocation_id = str(uuid4()), str(uuid4())
-                config, owner = subscription['body'], subscription['owner_id']
-                self.scopes.allocate(conn, owner, config['scopeId'], allocation_id,
-                    digest({'event': event_id, 'endpoint': endpoint_id}), config['caps'])
+                identifier, owner = str(uuid4()), subscription['owner_id']
                 message, _ = self.messages.reserve(event['owner_id'], endpoint_id, SendAssistantMessage(
-                    requestId='event:' + identifier, text='Shared content notification: ' + value['contentId']),
-                    allocation_id=allocation_id, delivery_id=identifier)
+                    requestId='event:' + identifier, text='Shared content notification: ' + value['contentId']))
                 conn.execute(self.deliveries.insert().values(id=identifier, event_id=event_id, endpoint_id=endpoint_id,
                     subscription_id=subscription['id'], owner_id=owner, message_id=message['id'],
-                    allocation_id=allocation_id, state='pending', attempted_at=0))
+                    state='pending', attempted_at=0))
                 return self._row(conn, self.deliveries, identifier)
 
-    def validate_admission(self, conn, owner, delivery_id, request_id, plan, allocation_id):
+    def validate_admission(self, conn, owner, delivery_id, request_id, plan):
         if self.admission_stopping is not None and self.admission_stopping.is_set():
             raise HTTPException(409, 'ASSISTANT_DELIVERY_STOPPING')
         delivery = self._row(conn, self.deliveries, delivery_id)
-        if (delivery['state'] != 'pending' or delivery['owner_id'] != owner
-                or delivery['allocation_id'] != allocation_id):
+        if delivery['state'] != 'pending' or delivery['owner_id'] != owner:
             raise HTTPException(409, 'ASSISTANT_EVENT_DELIVERY_MISMATCH')
         event = self._row(conn, self.events, delivery['event_id'])
         subscription = self._row(conn, self.subscriptions, delivery['subscription_id'])
@@ -287,13 +265,9 @@ class AssistantEvents:
         message = self.messages._row(conn, delivery['message_id'])
         expected = self.messages._start_body(message, endpoint)
         if (request_id != 'application-start:' + expected.requestId or plan['ownerId'] != owner
-                or plan['applicationRef'] != expected.applicationRef or plan['mode'] != expected.mode
+                or plan['mode'] != expected.mode
                 or plan['normalizedGoal'] != expected.goal):
             raise HTTPException(409, 'ASSISTANT_EVENT_ADMISSION_MISMATCH')
-        allocation = self.scopes._allocation(conn, owner, allocation_id)
-        if allocation['scope_id'] != subscription['body']['scopeId']:
-            raise HTTPException(409, 'ASSISTANT_EVENT_ALLOCATION_MISMATCH')
-
     def subscriptions_for(self, owner):
         self.auth.require_member(owner)
         with self.db.read() as conn:
@@ -324,25 +298,18 @@ class AssistantEvents:
 
     def delivery_for_task(self, owner, task_id):
         self.auth.require_member(owner)
+        task = self.store.task(task_id, owner)
+        prefix = 'application-start:assistant-message:'
+        if not task['request_id'].startswith(prefix):
+            return None
         with self.db.read() as conn:
-            task = self.store.task(task_id, owner)
-            delivery_id = self.scopes.request_delivery(conn, owner, task['request_id'])
-            if delivery_id is None:
+            delivery = conn.execute(select(self.deliveries).where(self.deliveries.c.owner_id == owner,
+                self.deliveries.c.message_id == task['request_id'][len(prefix):])).mappings().first()
+            if delivery is None:
                 return None
-            try:
-                delivery = self._row(conn, self.deliveries, delivery_id)
-                allocation = self.scopes._allocation(conn, owner, delivery['allocation_id'])
-                if (delivery['owner_id'] != owner or allocation['task_id'] != task['id']
-                        or self.scopes.request_allocation(conn, owner, task['request_id']) != delivery['allocation_id']):
-                    raise HTTPException(409, 'ASSISTANT_EVENT_TASK_BINDING_MISMATCH')
-                event = self._row(conn, self.events, delivery['event_id'])
-            except HTTPException as error:
-                if error.status_code == 404:
-                    raise HTTPException(409, 'ASSISTANT_EVENT_TASK_BINDING_MISMATCH') from error
-                raise
-            return {'contentId': event['body']['contentId'], 'eventId': event['id'],
-                'deliveryId': delivery['id'], 'rootId': event['root_id'], 'depth': event['depth'],
-                'scopeId': allocation['scope_id'], 'allocationId': delivery['allocation_id']}
+            event = self._row(conn, self.events, delivery['event_id'])
+        return {'contentId': event['body']['contentId'], 'eventId': event['id'],
+                'deliveryId': delivery['id'], 'rootId': event['root_id'], 'depth': event['depth']}
 
     def _finish_attempt(self, delivery, error, settled=False):
         with self.store.transaction() as conn:
@@ -383,10 +350,10 @@ class AssistantEvents:
             await asyncio.to_thread(self._finish_collaboration, event['id'], False, failure)
             if failure is not None or self.admission_stopping is not None and self.admission_stopping.is_set():
                 return
-            runtime = self.store.application_runtime
-            hook = runtime.control(origin, 'deliver_collaboration') if runtime else None
-            if hook is not None:
-                done = await hook(self.store, origin, event['id'], message['id']) is True
+            sessions = getattr(self.store, 'research_sessions', None)
+            if sessions is None:
+                raise HTTPException(409, 'ASSISTANT_COLLABORATION_OWNER_UNAVAILABLE')
+            done = await sessions.deliver_collaboration(self.store, origin, event['id'], message['id']) is True
         except Exception as error:
             failure = error
         await asyncio.to_thread(self._finish_collaboration, event['id'], done, failure)
@@ -435,15 +402,12 @@ class AssistantEvents:
             failure, settled = None, False
             try:
                 await self.messages.recover(delivery['owner_id'], delivery['message_id'],
-                    allocation_id=delivery['allocation_id'], delivery_id=delivery['id'])
+                    delivery_id=delivery['id'])
             except Exception as error:
                 failure = error
-            try:
-                result = await asyncio.to_thread(self.scopes.settle, delivery['owner_id'], delivery['allocation_id'])
-                settled = result['state'] == 'SETTLED'
-            except Exception as error:
-                if failure is None:
-                    failure = error
+            if failure is None:
+                message = await asyncio.to_thread(self.messages.read, delivery['owner_id'], delivery['message_id'])
+                settled = message['delivery']['taskId'] is not None
             await asyncio.to_thread(self._finish_attempt, delivery, failure, settled)
             attempted_deliveries += 1
         return completed_events, attempted_deliveries

@@ -14,13 +14,6 @@ from .projects import Reference, RequestId
 MAX_USER_INPUT_TEXT_CHARS = 1 << 20
 
 
-class SessionLimits(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    maxTurns: int | None = Field(default=None, strict=True, ge=1)
-    toolCallsPerTurn: int | None = Field(default=None, strict=True, ge=1)
-    operationSeconds: int | None = Field(default=None, strict=True, ge=1)
-
-
 class CreateSession(BaseModel):
     model_config = ConfigDict(extra='forbid')
     requestId: RequestId
@@ -28,7 +21,6 @@ class CreateSession(BaseModel):
     goal: str = Field(min_length=1)
     boundaries: str = ''
     modelConnectionRef: Reference
-    limits: SessionLimits = Field(default_factory=SessionLimits)
     projectId: Reference | None = None
 
     @model_validator(mode='after')

@@ -16,7 +16,7 @@
     "lint": "eslint web shared *.ts *.js",
     "check": "npm run lint && npm run typecheck && npm run build",
     "start:configured": "uv run agent-factory",
-    "check:python": "uv run ruff check platform deployment applications scripts && uv run pyright",
+    "check:python": "uv run ruff check platform deployment applications && uv run pyright",
     "build:research": "npm run build",
     "dev:research": "npm run dev:web"
   },
