@@ -1,59 +1,15 @@
-# Runtime design
+# Runtime
 
-This reference describes the current Agno integration. [Architecture](../ARCHITECTURE.md) defines package responsibilities. Historical experiments and retired ORX workflows are indexed separately in the [documentation map](DOCUMENTATION_MAP.md).
+Agno AgentOS 3.1.0 owns the Agent loop, streamed model responses, durable PostgreSQL queue and native cancellation. Factory supplies owner-selected models and native tool functions. There is no separate research scheduler or fixed experiment Workflow.
 
-## State ownership
+A conversation turn records its goal, context, model connection and original request. The native run uses that snapshot. Repeating a request reads its existing task; a failed or missing reply is reported as such. This request association supports refresh and correct results without a separate approval or receipt workflow for the user.
 
-| Owner | State |
-| --- | --- |
-| Agno AgentOS | Native runs, sessions, queue claims, model and tool execution, and native cancellation |
-| Factory core | Immutable plans, owner and resource bindings, admission records, effect receipts, and resource custody |
-| Research application | User conversations, goals, research context, experiments, interpretations, and shared research content |
+File, command, memory, research and collaboration tools are available through the same Agent. Personal MCP and CLI registrations are included directly. The installed Agno Workspace handles file replacement. The existing process helper runs local commands, observes their exit and responds to cancellation. There is no default command deadline or project tool-count quota.
 
-The native queue executes registered Factory operations. Factory application state derives from native state and recorded effects. A second application scheduler does not replace the queue.
+Subassistants use independent native queue tasks with parent links. Waiting continues the original native run when its child has a result. Stop requests apply to the task tree and local owned processes. SSH disconnection alone cannot prove that arbitrary remote background processes have stopped.
 
-## Requests and receipts
+A small per-run dispatcher resolves the selected model for the current owner. Agno handles compression and summary generation against known model metadata. Unknown context windows are left unspecified. The remaining Responses codec preserves provider output continuity that the pinned SDK does not yet cover.
 
-A request records its identity before dispatch. Repeating that identity reads the existing receipt. A missing reply or an uncertain effect remains `UNKNOWN`; it does not authorize replay or release occupied capacity.
+The browser receives actual conversation state and model/tool progress. The current SSE endpoint checks for changed snapshots on the server; it is not a cross-replica event bus. Settings and chat share one interface and preserve drafts across navigation.
 
-Plans retain their selected material and connection revisions. Later catalog changes do not rewrite a running plan. Current ownership and resource availability still apply to new calls. [Control commands](CONTROL_COMMANDS.md) and [event replay](EVENT_REPLAY.md) describe the persisted interfaces.
-
-## Autonomous research
-
-`ResearchSessions` submits work through the existing native Agent. The Agent selects tool order and whether an experiment or delegation is useful. Research context, experiment records, and interpretation tools are available without requiring a fixed sequence.
-
-Local research tools read, search, create, and edit files in their workspace. Host commands require explicit deployment configuration. The tools return exit codes, output, and file hashes. A command's nonzero exit is an observation the Agent can use, not an automatic failure of the entire conversation.
-
-[Personal research sessions](PERSONAL_RESEARCH_SESSIONS.md) describes the user journey. The [autonomy decision](plans/agent-autonomy-20261106.md) records why the fixed controller and second product entry were removed.
-
-## Delegation and budgets
-
-Each child has its own native task and a persisted parent/root relationship. Root and ancestor budgets bound the subtree. The task's explicit `maxDepth`, `maxChildren`, and tool budget apply; the former hidden depth-two and four-descendant caps no longer define the runtime.
-
-Persistent tool accounting is authoritative. The former duplicate native per-run tool-call limit was removed. Native workflow support remains available for applications that choose it. It is not a mandatory research framework. [Delegation](DELEGATION.md) describes the shared interfaces.
-
-## Credentials and shared resources
-
-Connections belong to members. Owners configure them and choose personal or team visibility. Shared use resolves credentials inside the service and retains the caller's task identity. Credentials are not catalog material or prompt content.
-
-The normal owner-model path supports the protocols in [model compatibility](MODEL_PROTOCOLS.md). [Owner BYOK](owner-byok-api.md) distinguishes provider billing from Factory accounting. [Resource sharing](RESOURCE_SHARING.md) defines visibility and revocation.
-
-## Stopping and recovery
-
-Cancellation records intent and requests native cancellation. The lifecycle observer inspects the original task tree and existing effects. It does not start replacement work. Capacity is released when native state and effect/process evidence establish that the owned work stopped.
-
-Windows commands use owned Job Objects. POSIX commands use owned process groups. Directory separation and process cleanup do not establish hostile-code isolation. [Lifecycle observation](LIFECYCLE.md), [process leases](PROCESS_LEASE_RUNTIME.md), and [security assumptions](SECURITY.md) describe the separate guarantees.
-
-HTTP shutdown has two stages: Uvicorn drains network work, then application lifespan cleanup stops workers and releases services. Official launchers give each stage a 35-second budget. These are sequential budgets, not a single 35-second deadline. See [shutdown behavior](SHUTDOWN.md), including the Windows TCP/TLS reset limitation.
-
-## Remote execution and scheduling
-
-A runtime attachment identifies an existing receiver. Allocation chooses an execution environment. Neither operation implies cloud provisioning. The SSH helper reports `gpuAllocation=false` and `scheduler=false`; its provider rejects `gpuBinding`. Remote GPU execution therefore needs more than model or host credentials.
-
-Agno's schedule poller supplies the clock and queue integration. Factory validates occurrence admission and retains original receipts. Current deployment coordination assumes one application process. [Remote resources](REMOTE_RESOURCES.md) and [scheduling](SCHEDULING.md) define these interfaces.
-
-## Evidence limits
-
-A native Windows CPU research acceptance used a real model, produced executable code and reproducible result files, and confirmed original-task stop. With the transport shutdown deadline configured, the application completed lifespan cleanup and exited after the observed TCP/TLS reset. This does not certify every research task or normal socket cleanup. Registered artifact downloads, persistent user login on the target installation, remote GPU allocation, and sustained team capacity require their own acceptance.
-
-Earlier Linux, ORX, fixed-program, and synthetic-user results remain evidence for their recorded revisions. They are not current deployment certification.
+Removed governance, budget, lease and prepared-handoff services no longer gate Agent execution. Historical rows and user files are preserved. Prior platform and Windows acceptance results apply only to the revisions they exercised; current static checks and actual use are recorded separately.

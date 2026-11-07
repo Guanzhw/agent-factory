@@ -3,7 +3,7 @@ import asyncio
 from copy import deepcopy
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from sqlalchemy import Column, MetaData, String, Table, select
+from sqlalchemy import Column, MetaData, String, Table, select, text
 
 from agent_factory.application_content import ObjectId
 from agent_factory.assistant_messages import SendAssistantMessage
@@ -33,7 +33,7 @@ class ResearchConversations:
         fingerprint = digest({'sessionId': session_id, 'assistantId': body.assistantId, 'text': body.text})
         with self.store.transaction() as conn:
             if self.store.engine.dialect.name == 'postgresql':
-                self.store.local_budget_scopes.admission_lock(conn)
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             self.sessions._row(conn, owner, session_id)
             old = conn.execute(select(self.origins).where(self.origins.c.owner_id == owner,
                 self.origins.c.request_id == body.requestId)).mappings().first()

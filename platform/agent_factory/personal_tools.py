@@ -57,32 +57,25 @@ class PersonalTools:
             Column('revision', String, nullable=False), Column('body', JSON, nullable=False),
             Column('fingerprint', String, nullable=False), Column('state', String, nullable=False))
         metadata.create_all(connections.store.engine)
-        self._bindings = None
         self._adapter_lock = threading.RLock()
         self._installed_ids = frozenset(self.adapters)
         from .member_tool_operations import MemberToolOperations
         self.operations = MemberToolOperations(self)
 
-    def register(self, bindings):
-        """Restore member resources into the same native registry as installed tools."""
-        self._bindings = bindings
-        with self.connections._read() as conn:
-            bodies = conn.execute(select(self.tools.c.body).where(self.tools.c.state == 'ACTIVE')).scalars().all()
-        with self.connections._read() as conn:
-            operation_ids = conn.execute(select(self.operations.operations.c.adapter_id)).scalars().all()
-        for adapter_id in operation_ids:
-            try:
-                self.ensure_registered(adapter_id)
-            except HTTPException as error:
-                if error.detail != 'TOOL_OPERATION_ADAPTER_UNAVAILABLE':
-                    raise
-        for body in bodies:
-            if body.get('resource'):
-                try:
-                    self.ensure_registered(body['adapterId'])
-                except HTTPException as error:
-                    if error.detail != 'PERSONAL_TOOL_ADAPTER_UNAVAILABLE':
-                        raise
+    def functions(self, owner, context, reserved_names=()):
+        from .personal_tool_execution import personal_tool_function
+        names = set(reserved_names)
+        result = []
+        resources = sorted(self.list(owner), key=lambda item: (item.get('ownerId') != owner, item['registrationRef']))
+        for item in resources:
+            if not item.get('available') or item['toolName'] in names:
+                continue
+            self.ensure_registered(item['adapterId'])
+            with self.connections._read() as conn:
+                handle = self.binding(conn, owner, item['registrationRef']).opaque_handle
+            result.append(personal_tool_function(handle.adapter, self.connections.store, handle, context))
+            names.add(item['toolName'])
+        return result
 
     def catalog_tools(self):
         """Public native declarations; resource configuration and secrets stay private."""
@@ -136,17 +129,6 @@ class PersonalTools:
                     'CLI_EXECUTABLE_UNAVAILABLE', 'CLI_WORKDIR_UNAVAILABLE'} else 'PERSONAL_TOOL_CONFIGURATION_INVALID')
                 raise HTTPException(409, code) from None
             self.adapters[adapter_id] = adapter
-        if self._bindings is not None:
-            from .personal_tool_execution import personal_tool_registration
-            entry = personal_tool_registration(adapter, operation_sha256=operation['operationRef']['sha256'] if operation else None)
-            key = (entry.kind, entry.adapter_id, entry.revision)
-            with self._bindings._lock:
-                if key not in self._bindings._adapters:
-                    self._bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
-                        tool_name=entry.tool_name, connection_kind=entry.connection_kind,
-                        required_capabilities=entry.required_capabilities, permissions=entry.permissions,
-                        validator=entry.validator)
-
     @staticmethod
     def _resource_adapter(descriptor, resource):
         values = {}
@@ -515,22 +497,22 @@ class PersonalToolHandle:
 
 class ConfigureToolRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    adapterId: str = Field(min_length=1, max_length=200)
-    credentialRef: str = Field(min_length=1, max_length=200)
-    credentialRevision: str = Field(min_length=1, max_length=200)
-    requestId: str = Field(min_length=1, max_length=200)
+    adapterId: str = Field(min_length=1)
+    credentialRef: str = Field(min_length=1)
+    credentialRevision: str = Field(min_length=1)
+    requestId: str = Field(min_length=1)
 
 
 class ToolCommandRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    requestId: str = Field(min_length=1, max_length=200)
+    requestId: str = Field(min_length=1)
 
 
 class DiscoverToolsRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    url: str = Field(min_length=1, max_length=512)
-    credentialRef: str | None = Field(default=None, min_length=1, max_length=200)
-    credentialRevision: str | None = Field(default=None, min_length=1, max_length=200)
+    url: str = Field(min_length=1)
+    credentialRef: str | None = Field(default=None, min_length=1)
+    credentialRevision: str | None = Field(default=None, min_length=1)
 
     @model_validator(mode='after')
     def credential_pair(self):
@@ -542,17 +524,17 @@ class DiscoverToolsRequest(BaseModel):
 class CreateOperationRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     configuration: dict
-    requestId: str = Field(min_length=1, max_length=200)
-    operationId: str | None = Field(default=None, min_length=1, max_length=200)
+    requestId: str = Field(min_length=1)
+    operationId: str | None = Field(default=None, min_length=1)
 
 
 class OperationAccountRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     version: int = Field(strict=True, ge=1)
     sha256: str = Field(pattern=r'^[a-f0-9]{64}$')
-    credentialRef: str | None = Field(default=None, min_length=1, max_length=200)
-    credentialRevision: str | None = Field(default=None, min_length=1, max_length=200)
-    requestId: str = Field(min_length=1, max_length=200)
+    credentialRef: str | None = Field(default=None, min_length=1)
+    credentialRevision: str | None = Field(default=None, min_length=1)
+    requestId: str = Field(min_length=1)
 
     @model_validator(mode='after')
     def credential_pair(self):
@@ -564,25 +546,25 @@ class OperationAccountRequest(BaseModel):
 class ConfigureResourceRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     transport: Literal['cli', 'mcp']
-    toolName: str = Field(pattern=r'^[A-Za-z_][A-Za-z0-9_-]{0,63}$')
-    description: str = Field(default='Member resource tool', min_length=1, max_length=2000)
+    toolName: str = Field(pattern=r'^[A-Za-z_][A-Za-z0-9_-]*$')
+    description: str = Field(default='Member resource tool', min_length=1)
     inputSchema: dict = Field(default_factory=lambda: {'type': 'object', 'properties': {}})
     readOnly: bool = False
-    timeoutSeconds: float = Field(default=30, ge=.1, le=300)
-    maxOutputBytes: int = Field(default=65536, ge=1024, le=1048576)
-    url: str | None = Field(default=None, max_length=512)
-    remoteToolName: str | None = Field(default=None, min_length=1, max_length=256)
-    executable: str | None = Field(default=None, max_length=4096)
-    arguments: list[str] = Field(default_factory=list, max_length=128)
-    workingDirectory: str | None = Field(default=None, max_length=4096)
-    environment: dict[str, str] = Field(default_factory=dict, max_length=128)
-    argumentOptions: dict[str, str] = Field(default_factory=dict, max_length=128)
+    timeoutSeconds: float | None = Field(default=None, gt=0)
+    maxOutputBytes: int | None = Field(default=None, ge=1)
+    url: str | None = Field(default=None)
+    remoteToolName: str | None = Field(default=None, min_length=1)
+    executable: str | None = Field(default=None)
+    arguments: list[str] = Field(default_factory=list)
+    workingDirectory: str | None = Field(default=None)
+    environment: dict[str, str] = Field(default_factory=dict)
+    argumentOptions: dict[str, str] = Field(default_factory=dict)
     stdinJson: bool = True
     credentialEnvironmentVariable: str | None = Field(default=None, pattern=r'^[A-Za-z_][A-Za-z0-9_]*$')
     outputFormat: Literal['json', 'text'] = 'json'
-    credentialRef: str | None = Field(default=None, min_length=1, max_length=200)
-    credentialRevision: str | None = Field(default=None, min_length=1, max_length=200)
-    requestId: str = Field(min_length=1, max_length=200)
+    credentialRef: str | None = Field(default=None, min_length=1)
+    credentialRevision: str | None = Field(default=None, min_length=1)
+    requestId: str = Field(min_length=1)
 
     @model_validator(mode='after')
     def validate_resource(self):
@@ -590,8 +572,8 @@ class ConfigureResourceRequest(BaseModel):
         if ((self.credentialRef is None) != (self.credentialRevision is None)
                 or self.transport == 'mcp' and (not self.url or not self.remoteToolName)
                 or self.transport == 'cli' and not self.executable
-                or any('\0' in item or len(item) > 8192 for item in self.arguments)
-                or any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key) or '\0' in value or len(value) > 16384
+                or any('\0' in item for item in self.arguments)
+                or any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key) or '\0' in value
                     for key, value in self.environment.items())
                 or any(not re.fullmatch(r'--?[A-Za-z0-9][A-Za-z0-9_-]*', value) for value in self.argumentOptions.values())
                 or self.transport == 'cli' and self.credentialRef and not self.credentialEnvironmentVariable):

@@ -109,18 +109,20 @@ async def _stop_windows(process: WindowsSSHProcess) -> bool:
     while True:
         if process.poll() is not None and process.job_active_processes() == 0:
             return True
-        if asyncio.get_running_loop().time() >= deadline:
+        if deadline is not None and asyncio.get_running_loop().time() >= deadline:
             return False
         await asyncio.sleep(.02)
 
 
 async def _run_windows_cli_process(*, executable: str, argv: Sequence[str], env: Mapping[str, str],
-        cwd: str | Path, stdin: bytes, timeout_seconds: float, max_output_bytes: int,
-        before_spawn: Callable[[], None | Awaitable[None]], check_authorized: Callable[[], None]) -> CLIProcessResult:
+        cwd: str | Path, stdin: bytes, timeout_seconds: float | None, max_output_bytes: int | None,
+        before_spawn: Callable[[], None | Awaitable[None]], check_authorized: Callable[[], None],
+        on_output: Callable[[str, bytes], None] | None = None,
+        capture_max_bytes: int | None = None) -> CLIProcessResult:
     process = None
     creating = rejected = dispatched = False
     code, cancelled = None, False
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    deadline = None if timeout_seconds is None else asyncio.get_running_loop().time() + timeout_seconds
     buffers = [bytearray(), bytearray()]
     eof = [False, False]
     pending = memoryview(stdin)
@@ -132,7 +134,7 @@ async def _run_windows_cli_process(*, executable: str, argv: Sequence[str], env:
         if inspect.isawaitable(checked):
             await checked
         check_authorized()
-        if asyncio.get_running_loop().time() >= deadline:
+        if deadline is not None and asyncio.get_running_loop().time() >= deadline:
             raise TimeoutError()
         creating = True
         try:
@@ -150,13 +152,15 @@ async def _run_windows_cli_process(*, executable: str, argv: Sequence[str], env:
             if eof[index]:
                 continue
             try:
-                chunk = os.read(stream.fileno(), min(65536, max_output_bytes - total + 1))
+                chunk = os.read(stream.fileno(), 65536 if max_output_bytes is None else min(65536, max_output_bytes - total + 1))
             except BlockingIOError:
                 continue
-            if total + len(chunk) > max_output_bytes:
+            if max_output_bytes is not None and total + len(chunk) > max_output_bytes:
                 raise _OutputLimit()
             total += len(chunk)
-            buffers[index].extend(chunk)
+            _retain_output(buffers, index, chunk, capture_max_bytes)
+            if chunk and on_output is not None:
+                on_output('stdout' if index == 0 else 'stderr', chunk)
             eof[index] = not chunk
 
     def mark_cancelled():
@@ -174,7 +178,7 @@ async def _run_windows_cli_process(*, executable: str, argv: Sequence[str], env:
             # The child remains suspended until custody and current authority
             # are both known. Timeout/cancellation never resumes a late child.
             check_authorized()
-            if asyncio.get_running_loop().time() >= deadline:
+            if deadline is not None and asyncio.get_running_loop().time() >= deadline:
                 raise TimeoutError()
             dispatched = True
             process.resume()
@@ -245,9 +249,23 @@ async def _run_windows_cli_process(*, executable: str, argv: Sequence[str], env:
     return CLIProcessResult(bytes(buffers[0]), bytes(buffers[1]), process.returncode)
 
 
+def _retain_output(buffers, index, chunk, maximum):
+    """Keep both ends of captured output; full chunks still reach the sink."""
+    buffers[index].extend(chunk)
+    if maximum is None:
+        return
+    while sum(map(len, buffers)) > maximum:
+        target = max(buffers, key=len)
+        excess = min(len(target), sum(map(len, buffers)) - maximum)
+        start = (len(target) - excess) // 2
+        del target[start:start + excess]
+
+
 async def run_cli_process(*, executable: str, argv: Sequence[str], env: Mapping[str, str],
-        cwd: str | Path, stdin: bytes, timeout_seconds: float, max_output_bytes: int,
-        before_spawn: Callable[[], None | Awaitable[None]], check_authorized: Callable[[], None]) -> CLIProcessResult:
+        cwd: str | Path, stdin: bytes, timeout_seconds: float | None, max_output_bytes: int | None,
+        before_spawn: Callable[[], None | Awaitable[None]], check_authorized: Callable[[], None],
+        on_output: Callable[[str, bytes], None] | None = None,
+        capture_max_bytes: int | None = None) -> CLIProcessResult:
     """Run once; a nonzero exit is returned for the adapter to interpret.
 
     Cancellation waits for spawn custody and group cleanup before raising a
@@ -260,14 +278,16 @@ async def run_cli_process(*, executable: str, argv: Sequence[str], env: Mapping[
             or any(type(arg) is not str or '\0' in arg for arg in argv)
             or not isinstance(env, Mapping) or any(type(key) is not str or type(value) is not str
                 or '=' in key or '\0' in key or '\0' in value for key, value in env.items())
-            or type(stdin) is not bytes or type(timeout_seconds) not in (int, float)
-            or not math.isfinite(timeout_seconds) or timeout_seconds <= 0
-            or type(max_output_bytes) is not int or max_output_bytes <= 0):
+            or type(stdin) is not bytes
+            or timeout_seconds is not None and (type(timeout_seconds) not in (int, float)
+                or not math.isfinite(timeout_seconds) or timeout_seconds <= 0)
+            or max_output_bytes is not None and (type(max_output_bytes) is not int or max_output_bytes <= 0)
+            or capture_max_bytes is not None and (type(capture_max_bytes) is not int or capture_max_bytes <= 0)):
         raise CLIProcessError('PERSONAL_CLI_PROCESS_INVALID', dispatched=False, stopped=True)
     if sys.platform == 'win32':
         return await _run_windows_cli_process(executable=executable, argv=argv, env=env, cwd=cwd,
             stdin=stdin, timeout_seconds=timeout_seconds, max_output_bytes=max_output_bytes,
-            before_spawn=before_spawn, check_authorized=check_authorized)
+            before_spawn=before_spawn, check_authorized=check_authorized, on_output=on_output, capture_max_bytes=capture_max_bytes)
     process = None
     started = False
     spawn_rejected = False
@@ -275,7 +295,7 @@ async def run_cli_process(*, executable: str, argv: Sequence[str], env: Mapping[
     readers: list[asyncio.Task] = []
     buffers = [bytearray(), bytearray()]
     total = 0
-    deadline = asyncio.get_running_loop().time() + timeout_seconds
+    deadline = None if timeout_seconds is None else asyncio.get_running_loop().time() + timeout_seconds
 
     async def spawn():
         nonlocal started, spawn_rejected
@@ -298,11 +318,13 @@ async def run_cli_process(*, executable: str, argv: Sequence[str], env: Mapping[
 
     async def read(stream: asyncio.StreamReader, index: int):
         nonlocal total
-        while chunk := await stream.read(min(65536, max_output_bytes - total + 1)):
-            if total + len(chunk) > max_output_bytes:
+        while chunk := await stream.read(65536 if max_output_bytes is None else min(65536, max_output_bytes - total + 1)):
+            if max_output_bytes is not None and total + len(chunk) > max_output_bytes:
                 raise _OutputLimit()
             total += len(chunk)
-            buffers[index].extend(chunk)
+            _retain_output(buffers, index, chunk, capture_max_bytes)
+            if chunk and on_output is not None:
+                on_output('stdout' if index == 0 else 'stderr', chunk)
 
     async def write():
         assert process is not None and process.stdin is not None

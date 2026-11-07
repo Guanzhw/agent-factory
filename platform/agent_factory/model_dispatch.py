@@ -1,103 +1,88 @@
-"""Run-bound dispatch through Agno's public Model response methods.
-
-Agno 3.1.0 passes native RunOutput to response/aresponse and their stream variants.
-The stable executor model selects a fresh operator adapter from that identity,
-never from prompt text and never by changing shared Agent.model. The selected
-native Model retains its own provider formatting and native tool/HITL loop.
-"""
+"""Select the owner's model per native run; Agno owns response and tool loops."""
 from __future__ import annotations
 
 import asyncio
 from typing import Any
 
-from agno.exceptions import InputCheckError, RunCancelledException, ModelProviderError
+from agno.exceptions import InputCheckError, RunCancelledException
 from agno.models.base import Model
-from agno.models.message import Message
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 
-from .execution_bindings import BindingContext, ExecutionBindings
-from .billing_mode import ledger_for_plan
-
 
 class DelegatingModel(Model):
-    def __init__(self, bindings: ExecutionBindings):
-        super().__init__(id="factory-material-dispatch-v1", name="Immutable material model dispatch", provider="factory-registered")
-        self.bindings = bindings
+    def __init__(self, store):
+        super().__init__(id='factory-owner-model', provider='factory')
+        self.store = store
 
     def __deepcopy__(self, memo):
-        # This dispatcher holds trusted services, not a mutable per-run model.
         return self
 
     def _prepare_selection(self, arguments, kwargs, *, streaming=False):
-        response = kwargs.get("run_response")
-        if response is None and len(arguments) > (6 if streaming else 5):
-            response = arguments[6 if streaming else 5]
+        index = 6 if streaming else 5
+        response = kwargs.get('run_response')
+        if response is None and len(arguments) > index:
+            response = arguments[index]
         if not isinstance(response, RunOutput) or not response.run_id or not response.session_id or not response.user_id:
-            raise InputCheckError("A trusted native run identity is required for model dispatch")
-        store = self.bindings.store
-        task = store.task(response.session_id, response.user_id)
-        if task["run_id"] != response.run_id:
-            raise InputCheckError("Native response identity differs from its original task binding")
-        state = response.session_state or {}
-        envelope = {"plan_ref": task["plan_id"], "user_id": task["owner_id"],
-                    "task_id": task["id"], "request_id": task["request_id"]}
-        if state.get("factory_envelope", envelope) != envelope:
-            raise InputCheckError("Native response envelope differs from its immutable task binding")
+            raise InputCheckError('Model selection requires the native run identity')
+        task = self.store.task(response.session_id, response.user_id)
+        if task['run_id'] != response.run_id:
+            raise InputCheckError('Model run differs from its task')
         context = RunContext(run_id=response.run_id, session_id=response.session_id, user_id=response.user_id,
-                             session_state={**state, "factory_envelope": envelope})
-        plan = store.resolve_run(context)
-
-        def local_current():
-            if store.cancellation_requested(response.run_id):
-                raise RunCancelledException("Factory cancellation requested before model invocation")
-
+            session_state=response.session_state or {})
+        plan = self.store.plan(task['plan_id'], response.user_id)
         def current():
-            local_current()
-            latest = store.resolve_run(context)
-            self._check_selected_plan(latest, context)
-            store.require_plan_execution(context.user_id, latest, run_context=context)
-
+            if self.store.cancellation_requested(response.run_id):
+                raise RunCancelledException('Factory cancellation requested')
         current()
-        self._check_task_wait(task)
-        binding = self.bindings.resolve(plan, context)["model"]
-        if not isinstance(binding, BindingContext):
-            raise InputCheckError("Trusted model binding is required")
-        return response, plan, context, current, local_current, binding
+        return response, plan, context, current, current, None
 
     def _complete_selection(self, prepared):
-        response, plan, context, current, local_current, binding = prepared
-        store = self.bindings.store
-
-        def auxiliary_current():
-            current()
-            if store.task(context.session_id, context.user_id)['terminal']:
-                raise InputCheckError('Auxiliary model invocation requires the original active task')
-
-        def selected_model(*, auxiliary=False):
-            check = auxiliary_current if auxiliary else current
-            if auxiliary:
-                check()
-            else:
-                local_current()
-            model = self.bindings.model_from_binding(binding)
-            # Each adapter is fresh. Auxiliary requests retain the run guards
-            # without recursively entering the application's request hook.
-            self._guard_provider_calls(model, check, local_current=local_current,
-                ledger=ledger_for_plan(store, plan), plan=plan, context=context,
-                before_model=None if auxiliary else lambda args, kwargs: self._before_model(
-                    context, args, kwargs, lambda: selected_model(auxiliary=True)),
-                on_recovered=lambda: self._model_recovered(context),
-                on_protocol_rejected=lambda: store.reject_model_protocol(context))
+        response, plan, context, current, _, _ = prepared
+        reference = plan['connectionRefs']['model']
+        def auxiliary():
+            model = self.store.personal_models.model_for(context.user_id, reference, context)
+            model._on_text = None
             return model
-
-        model = selected_model()
-        response.model = model.id
-        response.model_provider = model.provider
-        store.event(response.run_id, "model_binding_selected", "Exact trusted model adapter selected for this native response",
-                    {"modelId": model.id, "provider": model.provider,
-                     "executionBindingsSha256": self.bindings.manifest(plan)["sha256"], "createsExecution": False})
+        model = self.store.personal_models.model_for(context.user_id, reference, context)
+        self._provider_hooks(model, context, current, auxiliary, plan)
+        window = getattr(model, 'context_window', None)
+        threshold = getattr(model, 'auto_compact_token_limit', None)
+        if isinstance(window, int) and window > 0:
+            threshold = min(threshold, window * 9 // 10) if isinstance(threshold, int) else window * 9 // 10
+        if isinstance(threshold, int) and threshold > 0:
+            from agno.compression.manager import CompressionManager
+            model._factory_compression_manager = CompressionManager(model=auxiliary(), compress_token_limit=threshold)
+        response.model, response.model_provider = model.id, model.provider
         return model
+
+    def _provider_hooks(self, model, context, current, auxiliary, plan):
+        sessions = getattr(self.store, 'research_sessions', None)
+        inputs = plan.get('inputValues') or {}
+        callback = (sessions.before_model if sessions is not None and plan.get('mode') != 'qa'
+            and inputs.get('sessionId') and inputs.get('turnId') else None)
+        def before(args, kwargs):
+            current()
+            if callback is not None:
+                messages = kwargs.get('messages', args[0] if args else None)
+                callback(context, messages, auxiliary)
+        invoke, ainvoke = model.invoke, model.ainvoke
+        invoke_stream, ainvoke_stream = model.invoke_stream, model.ainvoke_stream
+        def sync(*args, **kwargs):
+            before(args, kwargs)
+            return invoke(*args, **kwargs)
+        async def async_call(*args, **kwargs):
+            await asyncio.to_thread(before, args, kwargs)
+            return await ainvoke(*args, **kwargs)
+        def stream(*args, **kwargs):
+            before(args, kwargs)
+            yield from invoke_stream(*args, **kwargs)
+        async def async_stream(*args, **kwargs):
+            await asyncio.to_thread(before, args, kwargs)
+            async for item in ainvoke_stream(*args, **kwargs):
+                yield item
+        model.invoke, model.ainvoke = sync, async_call
+        model.invoke_stream, model.ainvoke_stream = stream, async_stream
 
     def _select(self, arguments, kwargs, *, streaming=False):
         return self._complete_selection(self._prepare_selection(arguments, kwargs, streaming=streaming))
@@ -106,241 +91,43 @@ class DelegatingModel(Model):
         prepared = await asyncio.to_thread(self._prepare_selection, arguments, kwargs, streaming=streaming)
         return self._complete_selection(prepared)
 
-    def _before_model(self, context, arguments, kwargs, auxiliary_model):
-        """Let the exact application owner amend this provider request in place."""
-        store = self.bindings.store
-        runtime = getattr(store, "application_runtime", None)
-        if not runtime:
-            return
-        task = store.task(context.session_id, context.user_id)
-        callback = runtime.control(task, "before_model")
-        if callback is None:
-            return
-        messages = kwargs.get("messages") if "messages" in kwargs else arguments[0] if arguments else None
-        if not isinstance(messages, list) or not all(isinstance(message, Message) for message in messages):
-            raise InputCheckError("Application model control requires the native request message list")
-        callback(context, messages, auxiliary_model)
-
-    @staticmethod
-    def _guard_provider_calls(model: Model, current, *, ledger=None, plan=None, context=None, local_current=None, before_model=None, on_recovered=None, on_protocol_rejected=None):
-        invoke, ainvoke, invoke_stream, ainvoke_stream = model.invoke, model.ainvoke, model.invoke_stream, model.ainvoke_stream
-
-        def reserve(args, kwargs, *, streaming=False):
-            current()
-            if before_model is not None:
-                before_model(args, kwargs)
-            if local_current is not None:
-                local_current()
-            return ledger.begin_attempt(context, plan, model, streaming=streaming or getattr(model, "factory_wire_stream", False) is True,
-                arguments=args, keyword_arguments=kwargs) if ledger is not None else None
-
-        def finish(identity, value):
-            if ledger is not None:
-                ledger.finish_attempt(identity, ledger.evidence_for(plan, value))
-
-        def reject_protocol(error):
-            if (on_protocol_rejected is not None and isinstance(error, ModelProviderError)
-                    and str(error) == 'PERSONAL_MODEL_TOOL_NOT_DECLARED'):
-                on_protocol_rejected()
-
-        def recovered():
-            if on_recovered is not None:
-                on_recovered()
-
-        def guarded(*args, **kwargs):
-            identity = reserve(args, kwargs)
-            try:
-                response = invoke(*args, **kwargs)
-            except BaseException as error:
-                try:
-                    finish(identity, error)
-                finally:
-                    reject_protocol(error)
-                raise
-            # A later permission/cancellation check cannot erase incurred usage.
-            finish(identity, response)
-            current()
-            recovered()
-            return response
-
-        async def aguard(*args, **kwargs):
-            await asyncio.to_thread(current)
-            if before_model is not None:
-                await asyncio.to_thread(before_model, args, kwargs)
-            if local_current is not None:
-                local_current()
-            identity = ledger.begin_attempt(context, plan, model, streaming=getattr(model, "factory_wire_stream", False) is True, arguments=args, keyword_arguments=kwargs) if ledger is not None else None
-            try:
-                response = await ainvoke(*args, **kwargs)
-            except BaseException as error:
-                try:
-                    finish(identity, error)
-                finally:
-                    await asyncio.to_thread(reject_protocol, error)
-                raise
-            finish(identity, response)
-            await asyncio.to_thread(current)
-            if local_current is not None:
-                local_current()
-            recovered()
-            return response
-
-        def stream(*args, **kwargs):
-            identity = reserve(args, kwargs, streaming=True)
-            values, evidence = None, None
-            try:
-                values = invoke_stream(*args, **kwargs)
-                for value in values:
-                    if ledger is not None:
-                        authoritative = ledger.evidence_for(plan, value)
-                        if authoritative is not None:
-                            evidence = authoritative
-                    current()
-                    yield value
-                current()
-                recovered()
-            except BaseException as error:
-                try:
-                    if ledger is not None:
-                        authoritative = ledger.evidence_for(plan, error)
-                        if authoritative is not None:
-                            evidence = authoritative
-                finally:
-                    reject_protocol(error)
-                raise
-            finally:
-                # No final authoritative usage => UNKNOWN with the whole hold,
-                # including GeneratorExit, cancellation and partial streams.
-                try:
-                    if ledger is not None:
-                        ledger.finish_attempt(identity, evidence)
-                finally:
-                    close = getattr(values, "close", None)
-                    if close is not None:
-                        close()
-
-        async def astream(*args, **kwargs):
-            await asyncio.to_thread(current)
-            if before_model is not None:
-                await asyncio.to_thread(before_model, args, kwargs)
-            if local_current is not None:
-                local_current()
-            identity = ledger.begin_attempt(context, plan, model, streaming=True, arguments=args, keyword_arguments=kwargs) if ledger is not None else None
-            values, evidence = None, None
-            try:
-                values = ainvoke_stream(*args, **kwargs)
-                async for value in values:
-                    if ledger is not None:
-                        authoritative = ledger.evidence_for(plan, value)
-                        if authoritative is not None:
-                            evidence = authoritative
-                    await asyncio.to_thread(current)
-                    if local_current is not None:
-                        local_current()
-                    yield value
-                await asyncio.to_thread(current)
-                if local_current is not None:
-                    local_current()
-                recovered()
-            except BaseException as error:
-                try:
-                    if ledger is not None:
-                        authoritative = ledger.evidence_for(plan, error)
-                        if authoritative is not None:
-                            evidence = authoritative
-                finally:
-                    await asyncio.to_thread(reject_protocol, error)
-                raise
-            finally:
-                try:
-                    if ledger is not None:
-                        ledger.finish_attempt(identity, evidence)
-                finally:
-                    close = getattr(values, "aclose", None)
-                    if close is not None:
-                        await close()
-        model.invoke, model.ainvoke = guarded, aguard
-        model.invoke_stream, model.ainvoke_stream = stream, astream
-
     def response(self, *args, **kwargs):
-        try:
-            result = self._select(args, kwargs).response(*args, **kwargs)
-            self._recovered(args, kwargs)
-            return result
-        except ModelProviderError as error:
-            result = self._pause(args, kwargs, error)
-            if result is None:
-                raise
-            return result
+        model = self._select(args, kwargs)
+        kwargs['compression_manager'] = getattr(model, '_factory_compression_manager', None)
+        return model.response(*args, **kwargs)
 
     async def aresponse(self, *args, **kwargs):
-        try:
-            model = await self._aselect(args, kwargs)
-            result = await model.aresponse(*args, **kwargs)
-            self._recovered(args, kwargs)
-            return result
-        except ModelProviderError as error:
-            result = await self._apause(args, kwargs, error)
-            if result is None:
-                raise
-            return result
+        model = await self._aselect(args, kwargs)
+        kwargs['compression_manager'] = getattr(model, '_factory_compression_manager', None)
+        return await model.aresponse(*args, **kwargs)
 
     def response_stream(self, *args, **kwargs):
-        try:
-            yield from self._select(args, kwargs, streaming=True).response_stream(*args, **kwargs)
-            self._recovered(args, kwargs, streaming=True)
-        except ModelProviderError as error:
-            result = self._pause(args, kwargs, error, streaming=True)
-            if result is None:
-                raise
-            yield result
+        model = self._select(args, kwargs, streaming=True)
+        kwargs['compression_manager'] = getattr(model, '_factory_compression_manager', None)
+        yield from model.response_stream(*args, **kwargs)
 
     async def aresponse_stream(self, *args, **kwargs):
-        try:
-            model = await self._aselect(args, kwargs, streaming=True)
-            async for value in model.aresponse_stream(*args, **kwargs):
-                yield value
-            self._recovered(args, kwargs, streaming=True)
-        except ModelProviderError as error:
-            result = await self._apause(args, kwargs, error, streaming=True)
-            if result is None:
-                raise
-            yield result
-
-    async def _apause(self, arguments, kwargs, error, *, streaming=False):
-        return None
-
-    def _pause(self, arguments, kwargs, error, *, streaming=False):
-        return None
-
-    def _recovered(self, arguments, kwargs, *, streaming=False):
-        """Optional adapter acknowledgement after the native response completes."""
-
-    def _check_selected_plan(self, plan, context):
-        """Application checks are installed by explicit trusted assembly."""
-
-    def _check_task_wait(self, task):
-        """The core does not invent a recovery policy for provider failures."""
-
-    def _model_recovered(self, context):
-        """Optional existing-wait acknowledgement; never dispatches work."""
+        model = await self._aselect(args, kwargs, streaming=True)
+        kwargs['compression_manager'] = getattr(model, '_factory_compression_manager', None)
+        async for value in model.aresponse_stream(*args, **kwargs):
+            yield value
 
     def invoke(self, *args, **kwargs):
-        raise InputCheckError("Use native response dispatch with its trusted run identity")
+        raise InputCheckError('Use native response dispatch with its run identity')
 
     async def ainvoke(self, *args, **kwargs):
-        raise InputCheckError("Use native response dispatch with its trusted run identity")
+        raise InputCheckError('Use native response dispatch with its run identity')
 
     def invoke_stream(self, *args, **kwargs):
-        raise InputCheckError("Use native response dispatch with its trusted run identity")
-        yield  # pragma: no cover
+        raise InputCheckError('Use native response dispatch with its run identity')
+        yield
 
     async def ainvoke_stream(self, *args, **kwargs):
-        raise InputCheckError("Use native response dispatch with its trusted run identity")
-        yield  # pragma: no cover
+        raise InputCheckError('Use native response dispatch with its run identity')
+        yield
 
     def _parse_provider_response(self, response: Any, **kwargs):
-        raise InputCheckError("Provider parsing belongs to the selected native Model")
+        return response
 
     def _parse_provider_response_delta(self, response: Any):
-        raise InputCheckError("Provider parsing belongs to the selected native Model")
+        return response

@@ -24,11 +24,11 @@ dependencies = [
   "python-multipart==0.0.32",
   "croniter==6.2.4",
   "pytz==2026.4",
+  "openai==2.54.0",
 ]
 
 [project.scripts]
 agent-factory-local-user = "agent_factory.local_login:main"
-agent-factory-ssh-askpass = "agent_factory.windows_ssh_askpass:main"
 agent-factory = "agent_factory_server.research:main"
 agent-factory-research = "agent_factory_server.research:main"
 
@@ -36,11 +36,12 @@ agent-factory-research = "agent_factory_server.research:main"
 packages = ["platform/agent_factory", "deployment/agent_factory_server", "applications/research"]
 
 [dependency-groups]
-ssh-probe = ["bcrypt==5.0.0"]
-browser = [
+dev = [
+    "ruff==0.15.8",
+    "pyright==1.1.408",
+    "hatchling==1.29.0",
     "playwright==1.58.0",
 ]
-dev = ["ruff==0.15.8", "pyright==1.1.408", "hatchling==1.29.0"]
 
 [tool.ruff]
 target-version = "py312"

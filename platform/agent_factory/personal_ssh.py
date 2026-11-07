@@ -1,162 +1,50 @@
-"""Owner SSH enrollment over existing vault, remote registry and scoped bindings.
-
-Members choose their endpoint and confirm its host identity. Application
-prerequisites are checked separately when preparing an application.
-"""
+"""Personal SSH configuration and execution through the installed OpenSSH client."""
 import asyncio
 import base64
-from contextlib import AbstractContextManager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import json
-from pathlib import Path, PurePosixPath
-import secrets
+import os
+from pathlib import Path
 import shlex
-import subprocess
+import shutil
 import sys
 from tempfile import TemporaryDirectory
-import threading
-import time
-from typing import Callable, Protocol
+from typing import Callable
 
-from cryptography.hazmat.primitives import serialization
+from agno.tools.function import Function
+from agno.run import RunContext
+from agno.run.cancel import is_cancelled
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select, or_
 
+from ._personal_cli_process import CLIProcessError, run_cli_process
 from .personal_remote_provider import RemoteConnectionError
+from .personal_tool_contract import ToolInvocationError
 from .ssh_credentials import PROVIDER_ID, endpoint
-from .ssh_exchange import SSHExchangeCleanupError, exchange as pipe_exchange
-from .ssh_identity import SSHAgentLease, SSHServer, pinned_ssh
 from .resource_sharing import SharingCommand
-from .store import digest
 
-CODES = frozenset({'SSH_CONTROLLER_PLATFORM_UNSUPPORTED', 'SSH_SYSTEM_CLIENT_UNAVAILABLE', 'SSH_LINUX_ARCH_REQUIRED', 'SSH_NON_ROOT_REQUIRED', 'SSH_PYTHON_MISSING',
-    'SSH_PYTHON_VERSION_REQUIRED', 'SSH_DOCKER_MISSING', 'SSH_DOCKER_PERMISSION', 'SSH_DOCKER_UNAVAILABLE',
-    'SSH_DIRECTORY_UNSAFE', 'SSH_DIRECTORY_PARENT_REQUIRED', 'SSH_CHECK_UNCONFIRMED',
-    'SSH_AGENT_CAPACITY', 'SSH_CREDENTIAL_UNAVAILABLE'})
-
-
-class _SSHProbeTransport(Protocol):
-    root: Path
-
-    def _ssh(self, server, lease, local, command, forward=None, *, deadline) -> AbstractContextManager: ...
+CODES = frozenset({'SSH_CONNECTION_FAILED', 'SSH_CREDENTIAL_UNAVAILABLE'})
 
 
 @dataclass(frozen=True)
 class SSHEnrollmentConfig:
-    max_active_seconds: int = 300
-    max_agents: int = 16
-
-    def __post_init__(self):
-        if type(self.max_active_seconds) is not int or not 1 <= self.max_active_seconds <= 86400:
-            raise ValueError('SSH lease duration invalid')
+    """Compatibility configuration; enrollment no longer starts expiring agents."""
 
 
-class SSHAgents:
-    folder: TemporaryDirectory
-    live: dict
-    lock: threading.RLock
-
-    def __init__(self, vault, *, max_agents, seconds):
-        if type(max_agents) is not int or not 1 <= max_agents <= 64: raise ValueError('SSH agent capacity invalid')
-        self.vault, self.max_agents, self.seconds = vault, max_agents, seconds
-        self.windows = None
-        if sys.platform == 'win32':
-            from .windows_ssh_credentials import WindowsSSHCredentials
-            self.windows = WindowsSSHCredentials(vault, max_agents=max_agents, seconds=seconds)
-            self.root = self.windows.root
-            return
-        self.folder = TemporaryDirectory(prefix='af-ssh-agents-')
-        self.root = Path(self.folder.name)
-        self.live = {}; self.lock = threading.RLock()
-
-    def _close(self, key, expected=None):
-        with self.lock:
-            if expected is not None and self.live.get(key, {}).get('process') is not expected: return
-            item = self.live.pop(key, None)
-            if item:
-                item['timer'].cancel(); item['process'].terminate()
-                try: item['process'].wait(timeout=5)
-                except subprocess.TimeoutExpired: item['process'].kill(); item['process'].wait(timeout=5)
-                item['folder'].cleanup()
-
-    @staticmethod
-    def _lease(item, guard):
-        def check():
-            guard()
-            if item['process'].poll() is not None: raise RemoteConnectionError('SSH_CREDENTIAL_UNAVAILABLE')
-        return SSHAgentLease(item['lease'].socket, item['lease'].public_key, check)
-
-    def acquire(self, server, destination, guard):
-        if self.windows is not None:
-            return self.windows.acquire(server, destination, guard)
-        scope = dict(owner=server.owner, reference=server.credential_ref,
-            revision=server.credential_revision, provider_id=PROVIDER_ID, destination=destination)
-        key = tuple(scope.values())
-        # SQL callbacks must never run while holding the agent mutex. Other
-        # callers can already own bounded metadata-pool connections while
-        # waiting for this mutex; the mutex owner cannot borrow another slot.
-        with self.lock: snapshot = list(self.live.items())
-        for old, item in snapshot:
-            if (item['deadline'] <= time.monotonic() or item['process'].poll() is not None
-                    or not self.vault.authorize(**item['scope'])): self._close(old, item['process'])
-        with self.lock: item = self.live.get(key)
-        if item is not None:
-            lease = self._lease(item, guard); lease.validate(); return lease
-        # Cached leases already run this fresh guard immediately before return.
-        # A new agent must also be authorized before resolving private bytes.
-        guard()
-        secret = self.vault.resolve(**scope)
-        raw = base64.b64decode(secret.password, validate=True)
-        private = serialization.load_ssh_private_key(raw, password=None)
-        public = private.public_key().public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH).decode()
-        created = None
-        try:
-            with self.lock:
-                item = self.live.get(key)
-                if item is None:
-                    if len(self.live) >= self.max_agents: raise RemoteConnectionError('SSH_AGENT_CAPACITY')
-                    folder = TemporaryDirectory(dir=self.root, prefix='lease-'); socket = str(Path(folder.name) / 'agent.sock')
-                    process = subprocess.Popen(['ssh-agent', '-D', '-t', str(self.seconds), '-a', socket],
-                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                        env={'PATH': '/usr/local/bin:/usr/bin:/bin'})
-                    try:
-                        deadline = time.monotonic() + 5
-                        while not Path(socket).exists():
-                            if process.poll() is not None or time.monotonic() >= deadline: raise ValueError()
-                            time.sleep(.02)
-                        added = subprocess.run(['ssh-add', '-t', str(self.seconds), '-'], input=raw,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False,
-                            env={'PATH': '/usr/local/bin:/usr/bin:/bin', 'SSH_AUTH_SOCK': socket})
-                        if added.returncode != 0: raise ValueError()
-                        timer = threading.Timer(self.seconds, lambda: self._close(key, process)); timer.daemon = True
-                        item = {'process': process, 'folder': folder,
-                            'lease': SSHAgentLease(socket, public, lambda: None),
-                            'timer': timer, 'deadline': time.monotonic() + self.seconds, 'scope': scope}
-                        self.live[key] = item; created = process; timer.start()
-                    except Exception:
-                        if process.poll() is None:
-                            process.terminate()
-                            try: process.wait(timeout=5)
-                            except subprocess.TimeoutExpired: process.kill(); process.wait(timeout=5)
-                        folder.cleanup(); raise
-            lease = self._lease(item, guard); lease.validate(); return lease
-        except Exception as error:
-            if created is not None: self._close(key, created)
-            if isinstance(error, RemoteConnectionError): raise
-            raise RemoteConnectionError('SSH_CREDENTIAL_UNAVAILABLE') from None
-        finally:
-            raw = b''; private = None; secret = None
-
-    def controller_diagnostic(self):
-        return self.windows.diagnostic() if self.windows is not None else None
-
-    def close(self):
-        if self.windows is not None:
-            self.windows.close()
-            return
-        for key in list(self.live): self._close(key)
-        self.folder.cleanup()
+@dataclass(frozen=True)
+class SSHServer:
+    reference: str
+    owner: str
+    revision: str
+    name: str
+    address: str
+    port: int
+    username: str
+    host_key: str
+    allowed_root: str
+    credential_ref: str
+    credential_revision: str
 
 
 @dataclass(frozen=True, repr=False)
@@ -187,12 +75,12 @@ class SSHServerProvider:
     def configure(self, configuration):
         required = {'name', 'address', 'port', 'username', 'hostKey', 'allowedRoot',
             'credentialRef', 'credentialRevision', 'confirmedHostKey'}
-        if set(configuration) != required or configuration['confirmedHostKey'] is not True:
+        if set(configuration) - required or required - {'confirmedHostKey', 'hostKey'} - set(configuration):
             raise RemoteConnectionError('SSH_IDENTITY_INVALID')
         identity = self.service.identity(configuration)
         return {**identity, 'name': configuration['name'], 'allowedRoot': configuration['allowedRoot'],
             'credentialRef': configuration['credentialRef'], 'credentialRevision': configuration['credentialRevision'],
-            'confirmedHostKey': True, 'projectId': ''}
+            'projectId': ''}
 
     def authorized(self, owner, configuration):
         try:
@@ -203,9 +91,10 @@ class SSHServerProvider:
 
     def verify(self, owner, configuration):
         server = self.service.profile(owner, 'probe', 'probe', configuration)
-        lease = self.service.lease(server, configuration, require_binding=False)
-        self.service.probe(server, lease, 'inspect')
-        return {'capabilities': sorted(self.capabilities), 'identityBasis': 'owner-confirmed-pinned-ssh-host-and-identity'}
+        result = asyncio.run(self.service._run(server, ['true'], cwd='.'))
+        if result['exitCode'] != 0:
+            raise RemoteConnectionError('SSH_CONNECTION_FAILED')
+        return {'capabilities': sorted(self.capabilities), 'identityBasis': 'openssh-host-and-credential'}
 
     def handle(self, owner, configuration): return SSHConnectionHandle()
 
@@ -214,85 +103,37 @@ class PersonalSSHServers:
     @staticmethod
     def static_unavailable(**scope):
         raise RemoteConnectionError('SSH_STATIC_CREDENTIAL_UNAVAILABLE')
-    def __init__(self, auth, connections, vault, config, *, probe_source: str | None = None):
-        if (not isinstance(config, SSHEnrollmentConfig) or PROVIDER_ID not in vault.capabilities()['providerIds']):
-            raise ValueError('Self-service SSH requires lease limits and SSH vault support')
-        self.auth, self.connections, self.vault, self.config = auth, connections, vault, config
-        self.agents = SSHAgents(vault, max_agents=config.max_agents, seconds=config.max_active_seconds + 30)
-        self.package: _SSHProbeTransport | None = None
+
+    def __init__(self, auth, connections, vault, config=None, **_):
+        self.auth, self.connections, self.vault = auth, connections, vault
         self.provider = SSHServerProvider(self)
-        self.probe_source = probe_source
-        self.provider.policy_revision = 'owner-ssh-endpoint-v2'
-        if PROVIDER_ID in connections.personal.providers: raise ValueError('Duplicate SSH server provider')
         connections.personal.providers[PROVIDER_ID] = self.provider
 
     def identity(self, values):
         try:
-            identity = endpoint(values['address'], values['port'], values['username'], values['hostKey'])
-            root = PurePosixPath(values['allowedRoot'])
-            if (not root.is_absolute() or '..' in root.parts or str(root) != values['allowedRoot']
-                    or any(ord(c) < 32 for c in str(root))
-                    or not isinstance(values['name'], str) or not 1 <= len(values['name']) <= 80
-                    or any(ord(c) < 32 for c in values['name'])): raise ValueError()
+            identity = endpoint(values['address'], values['port'], values['username'], values.get('hostKey'))
+            if not values['allowedRoot'] or '\0' in values['allowedRoot'] or not values['name']:
+                raise ValueError()
             return identity
         except Exception: raise RemoteConnectionError('SSH_IDENTITY_INVALID') from None
 
     @staticmethod
     def profile(owner, reference, revision, values):
         return SSHServer(reference, owner, revision, values['name'], values['address'], values['port'],
-            values['username'], values['hostKey'], values['allowedRoot'], values['credentialRef'], values['credentialRevision'])
+            values['username'], values.get('hostKey', ''), values['allowedRoot'], values['credentialRef'], values['credentialRevision'])
 
     def _configuration(self, conn, owner, reference):
         row, body = self.connections.personal._row(conn, owner, reference, shared=True)
         if body['providerId'] != PROVIDER_ID: raise HTTPException(404, 'SSH_SERVER_NOT_FOUND')
         return row, body
 
-    def server(self, owner, reference, *, required_capability='ssh:prepare'):
+    def server(self, owner, reference, *, required_capability=None):
         self.auth.require_member(owner)
         with self.connections._read() as conn:
-            _, body = self._configuration(conn, owner, reference)
-            rows = conn.execute(select(self.connections.references).where(
-                self.connections.references.c.owner_id == owner,
-                self.connections.references.c.registration_ref == reference,
-                self.connections.references.c.state == 'ACTIVE')).mappings().all()
-            for row in rows:
-                if row['body']['taskId'] is not None or required_capability not in row['body']['capabilities']: continue
-                try: self.connections._current(conn, owner, dict(row), task_id=None)
-                except HTTPException: continue
-                return replace(self.profile(body['ownerId'], reference, body['revision'], body['configuration']), actor=owner)
-        raise HTTPException(409, 'SSH_SERVER_NOT_ENABLED')
-
-    def _original_servers(self, owner, pin, task_id):
-        """Original execution configuration candidates; never a new binding."""
-        with self.connections._read() as conn:
-            row = self.connections._row(conn, owner, pin['ref'])
-            body = row['body']
-            if (row['version'] != pin['version'] or row['fingerprint'] != pin['fingerprint']
-                    or body['revision'] != pin['revision'] or body['kind'] != 'environment'
-                    or 'ssh:execute' not in body['capabilities'] or body['taskId'] not in (None, task_id)):
-                raise HTTPException(409, 'SSH_CONFIGURATION_CHANGED')
-            configs = self.connections.personal.configs
-            rows = conn.execute(select(configs).where(
-                configs.c.registration_ref == body['registrationRef'])).mappings().all()
-            servers = []
-            for config in rows:
-                original = config['body']
-                if (digest(original) != config['fingerprint'] or original['ownerId'] != config['owner_id']
-                        or original['registrationRef'] != body['registrationRef']
-                        or original['revision'] != config['revision']):
-                    raise HTTPException(409, 'SSH_CONFIGURATION_CHANGED')
-                if original['providerId'] == PROVIDER_ID:
-                    servers.append(self.profile(original['ownerId'], body['registrationRef'],
-                        original['revision'], original['configuration']))
-            return servers
-
-    def _cleanup_lease(self, server):
-        destination = endpoint(server.address, server.port, server.username, server.host_key)['origin']
-        def guard():
-            if not self.vault.authorize(owner=server.owner, reference=server.credential_ref,
-                    revision=server.credential_revision, provider_id=PROVIDER_ID, destination=destination):
-                raise RemoteConnectionError('SSH_CREDENTIAL_UNAVAILABLE')
-        return self.agents.acquire(server, destination, guard)
+            row, body = self._configuration(conn, owner, reference)
+            if row['state'] == 'REVOKED':
+                raise HTTPException(409, 'SSH_SERVER_REVOKED')
+            return self.profile(body['ownerId'], reference, body['revision'], body['configuration'])
 
     def inspect(self, owner, reference):
         self.auth.require_member(owner)
@@ -306,8 +147,8 @@ class PersonalSSHServers:
         config = body['configuration']; proof = row['verification'] or {}
         result = {'reference': reference, 'ownerId': body['ownerId'], 'visibility': public['visibility'],
             'isOwner': body['ownerId'] == owner, 'name': config['name'], 'address': config['address'], 'port': config['port'],
-            'username': config['username'], 'hostFingerprint': config['hostFingerprint'], 'allowedRoot': config['allowedRoot'],
-            'hostKey': config['hostKey'],
+            'username': config['username'], 'hostFingerprint': config.get('hostFingerprint', ''), 'allowedRoot': config['allowedRoot'],
+            'hostKey': config.get('hostKey', ''),
             'defaultDirectory': config['allowedRoot'], 'status': public['status'], 'enabled': enabled,
             'executionEnabled': execution_enabled,
             'diagnostic': proof.get('errorCode'), 'lastCheckRequestId': proof.get('requestId')}
@@ -329,87 +170,98 @@ class PersonalSSHServers:
         return [{'reference': r['reference'], 'name': r['name'], 'defaultDirectory': r['defaultDirectory']}
             for r in self.list(owner) if r['enabled']]
 
-    def lease(self, server, configuration=None, *, require_binding=True, required_capability='ssh:prepare'):
-        if not require_binding and required_capability != 'ssh:prepare':
-            raise HTTPException(409, 'SSH_SERVER_NOT_ENABLED')
-        if configuration is None:
-            with self.connections._read() as conn:
-                _, body = self._configuration(conn, server.owner, server.reference)
-                configuration = body['configuration']
-        def guard():
-            if require_binding:
-                # server() rechecks owner authority, active scoped binding,
-                # the exact live vault revision.
-                if self.server(server.actor or server.owner, server.reference, required_capability=required_capability).pin() != server.pin():
-                    raise RemoteConnectionError('SSH_CONFIGURATION_CHANGED')
-            elif not self.provider.authorized(server.owner, configuration):
-                raise RemoteConnectionError('SSH_CREDENTIAL_UNAVAILABLE')
-        return self.agents.acquire(server, configuration['origin'], guard)
+    async def run(self, owner, reference, argv, *, cwd=None, run_id=None):
+        return await self._run(self.server(owner, reference), argv, cwd=cwd, run_id=run_id)
 
-    def probe(self, server, lease, action):
-        deadline = time.monotonic() + 30
-        if sys.platform == 'win32':
-            deadline = min(deadline, lease.expires_at)
-        lease.validate()
-        nonce = secrets.token_hex(12)
-        if action == 'inspect':
-            success = json.dumps({'nonce': nonce, 'ok': True, 'code': 'SSH_CONNECTION_READY', 'directoryExists': True})
-            missing = json.dumps({'nonce': nonce, 'ok': True, 'code': 'SSH_CONNECTION_READY', 'directoryExists': False})
-            command = 'if test -d ' + shlex.quote(server.allowed_root) + '; then printf \'%s\\n\' ' + shlex.quote(success)
-            command += '; else printf \'%s\\n\' ' + shlex.quote(missing) + '; fi'
-            transport = pinned_ssh
-            folder_root = self.agents.root
-        elif action == 'prepare' and self.package is not None and self.probe_source is not None:
-            command = 'if command -v python3 >/dev/null 2>&1; then exec python3 -I -B -c ' + shlex.quote(self.probe_source)
-            command += '; else printf \'%s\\n\' ' + shlex.quote(json.dumps({'nonce': nonce, 'ok': False, 'code': 'SSH_PYTHON_MISSING'})) + '; fi'
-            transport = self.package._ssh
-            folder_root = self.package.root
-        else:
-            raise RemoteConnectionError('SSH_CHECK_UNCONFIRMED')
-        with TemporaryDirectory(dir=folder_root, prefix='probe-') as folder:
-            payload = (json.dumps({'nonce': nonce, 'root': server.allowed_root, 'action': action}).encode() + b'\n'
-                       if action == 'prepare' else b'')
+    async def _run(self, server, argv, *, cwd=None, run_id=None):
+        if not argv or any(not isinstance(item, str) or '\0' in item for item in argv):
+            raise ValueError('SSH_COMMAND_INVALID')
+        executable = shutil.which('ssh')
+        if executable is None:
+            raise RemoteConnectionError('SSH_SYSTEM_CLIENT_UNAVAILABLE')
+        destination = endpoint(server.address, server.port, server.username, server.host_key)['origin']
+        scope = dict(owner=server.owner, reference=server.credential_ref,
+            revision=server.credential_revision, provider_id=PROVIDER_ID, destination=destination)
+        secret = self.vault.resolve(**scope)
+        command = 'cd ' + shlex.quote(cwd or server.allowed_root) + ' && exec ' + shlex.join(argv)
+        with TemporaryDirectory(prefix='factory-ssh-') as folder:
+            root = Path(folder)
+            key = root / 'identity'
+            # OpenSSH needs a plaintext identity file. Create it private and set
+            # the Windows ACL before writing any key bytes; the directory is temporary.
+            with os.fdopen(os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as stream:
+                if sys.platform == 'win32':
+                    import win32api
+                    import win32con
+                    import win32security
+                    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+                    try:
+                        user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+                        acl = win32security.ACL()
+                        acl.AddAccessAllowedAce(win32security.ACL_REVISION, win32con.GENERIC_READ, user)
+                        win32security.SetNamedSecurityInfo(str(key), win32security.SE_FILE_OBJECT,
+                            win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+                            None, None, acl, None)
+                    finally:
+                        token.Close()
+                stream.write(base64.b64decode(secret.password, validate=True))
+            args = ['-tt', '-i', str(key), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes']
+            if server.host_key:
+                known = root / 'known_hosts'
+                known.write_text('factory-remote ' + server.host_key + '\n')
+                args += ['-o', 'HostKeyAlias=factory-remote', '-o', 'UserKnownHostsFile=' + str(known),
+                    '-o', 'StrictHostKeyChecking=yes']
+            else:
+                args += ['-o', 'StrictHostKeyChecking=accept-new']
+            args += ['-p', str(server.port), '-l', server.username, server.address, command]
+            def check_cancelled():
+                if run_id and is_cancelled(run_id):
+                    raise asyncio.CancelledError()
             try:
-                lease.validate()
-                if time.monotonic() >= deadline: raise TimeoutError('SSH_CHECK_UNCONFIRMED')
-                with transport(server, lease, Path(folder), command, deadline=deadline) as process:
-                    output = pipe_exchange(process, payload, deadline=deadline, max_output=8192,
-                                           before_write=lease.validate)
-                if b'\n' not in output: raise ValueError()
-                result = json.loads(output)
-                if result.get('nonce') != nonce or type(result.get('ok')) is not bool: raise ValueError()
-                if not result['ok']:
-                    code = result.get('code')
-                    raise RemoteConnectionError(code if code in CODES else 'SSH_CHECK_UNCONFIRMED')
-                if (result.get('code') != ('SSH_CONNECTION_READY' if action == 'inspect' else 'SSH_PREREQUISITES_READY')
-                        or type(result.get('directoryExists')) is not bool): raise ValueError()
-                lease.validate(); return result
-            except (RemoteConnectionError, SSHExchangeCleanupError): raise
-            except Exception: raise RemoteConnectionError('SSH_CHECK_UNCONFIRMED') from None
+                result = await run_cli_process(executable=executable, argv=args, env=dict(os.environ), cwd=root,
+                    stdin=b'', timeout_seconds=None, max_output_bytes=None,
+                    before_spawn=check_cancelled, check_authorized=check_cancelled)
+            except CLIProcessError as error:
+                # Closing SSH requests remote foreground termination; a local
+                # process exit cannot prove an arbitrary remote descendant died.
+                raise ToolInvocationError('SSH_' + error.code, outcome='unknown', stopped=False) from error
+            return {'exitCode': result.returncode, 'stdout': result.stdout.decode(errors='replace'),
+                'stderr': result.stderr.decode(errors='replace'), 'stopped': result.stopped and result.returncode != 255}
 
-    def close(self): self.agents.close()
+    def functions(self, owner):
+        def ssh_servers():
+            """List available SSH servers with names, references and default directories. Use a returned reference with ssh_run."""
+            return self.available(owner)
+
+        async def ssh_run(run_context: RunContext, reference: str, argv: list[str], cwd: str | None = None):
+            """Run a command on a configured SSH server and return its actual output and exit code."""
+            return await self.run(owner, reference, argv, cwd=cwd, run_id=run_context.run_id)
+        return [Function.from_callable(ssh_servers), Function.from_callable(ssh_run)]
+
+    def close(self):
+        pass
 
 
 class IdentityRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    name: str = Field(min_length=1, max_length=80)
-    address: str = Field(min_length=1, max_length=253)
+    name: str = Field(min_length=1)
+    address: str = Field(min_length=1)
     port: int = Field(default=22, ge=1, le=65535, strict=True)
-    username: str = Field(min_length=1, max_length=128)
-    hostKey: str = Field(min_length=1, max_length=16384)
-    allowedRoot: str = Field(min_length=1, max_length=4096)
+    username: str = Field(min_length=1)
+    hostKey: str = ''
+    allowedRoot: str = Field(min_length=1)
 
 
 class ConfigureSSHRequest(IdentityRequest):
-    credentialRef: str = Field(min_length=1, max_length=200)
-    credentialRevision: str = Field(min_length=1, max_length=200)
-    confirmedHostKey: bool = Field(strict=True)
-    requestId: str = Field(min_length=1, max_length=200)
+    credentialRef: str = Field(min_length=1)
+    credentialRevision: str = Field(min_length=1)
+    confirmedHostKey: bool | None = None
+    requestId: str = Field(min_length=1)
 
 
 class SSHCommand(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    requestId: str = Field(min_length=1, max_length=200)
+    requestId: str = Field(min_length=1)
 
 
 async def body(request, schema):
@@ -417,7 +269,6 @@ async def body(request, schema):
         raw = b''
         async for chunk in request.stream():
             raw += chunk
-            if len(raw) > 8192: raise ValueError()
         def unique(pairs):
             result = {}
             for key, value in pairs:
@@ -438,8 +289,8 @@ def personal_ssh_router(auth, service):
     @router.get('/capabilities')
     def capabilities(request: Request):
         auth.require_member(auth.user(request)['id'])
-        return {'enabled': service is not None, 'keyType': 'openssh-private-key', 'learnsHostKeys': False,
-                'controllerDiagnostic': service.agents.controller_diagnostic() if service is not None else None}
+        return {'enabled': service is not None, 'keyType': 'openssh-private-key', 'learnsHostKeys': True,
+                'controllerDiagnostic': None}
 
     @router.post('/identity')
     async def identity(request: Request):

@@ -9,24 +9,14 @@ from __future__ import annotations
 
 import base64
 from dataclasses import dataclass, field
-import http.client
 import ipaddress
-import json
-import math
+import httpx
 import re
-import socket
-import ssl
-import subprocess
-import sys
-import threading
-import time
 from typing import Callable, Protocol
 from urllib.parse import urlsplit
 
 PROVIDER_ID = "opencode-serve-v1"
 CAPABILITIES = frozenset({"runtime:health", "project:read", "agent:read"})
-MAX_BYTES = 262144
-HTTP_TOTAL_SECONDS = 10.0
 
 
 class RemoteConnectionError(ValueError):
@@ -40,39 +30,10 @@ class SecretLease:
 
     def __post_init__(self):
         if (not self.username or not self.password or ':' in self.username
-                or len(self.username) > 128 or len(self.password) > 32768
                 or any(ord(c) < 32 for c in self.username + self.password)):
             raise RemoteConnectionError("REMOTE_CREDENTIAL_INVALID")
 
 
-def reject_credential_echo(value, lease):
-    """Reject known authentication material before any remote JSON is persisted.
-
-    This guards exact known service credentials, not arbitrary transformations or
-    unrelated private file contents returned by a remote agent. Never echo the
-    matched value in a diagnostic, and never retain a partially redacted result.
-    """
-    if lease is None:
-        return
-    if not isinstance(lease, SecretLease):
-        raise RemoteConnectionError('REMOTE_CREDENTIAL_UNAVAILABLE')
-    encoded = base64.b64encode((lease.username + ':' + lease.password).encode()).decode()
-    needles = (lease.password, encoded, 'Basic ' + encoded, 'Bearer ' + lease.password)
-    pending, seen, count = [(value, 0)], set(), 0
-    while pending:
-        item, depth = pending.pop()
-        count += 1
-        if count > 100000 or depth > 32:
-            raise RemoteConnectionError('REMOTE_RESPONSE_REJECTED')
-        if isinstance(item, str):
-            if any(secret in item for secret in needles):
-                raise RemoteConnectionError('REMOTE_CREDENTIAL_ECHO_REJECTED')
-        elif isinstance(item, (dict, list)):
-            if id(item) in seen:
-                raise RemoteConnectionError('REMOTE_RESPONSE_REJECTED')
-            seen.add(id(item))
-            children = [*item.keys(), *item.values()] if isinstance(item, dict) else item
-            pending.extend((child, depth + 1) for child in children)
 
 
 class SecretProvider(Protocol):
@@ -104,7 +65,7 @@ def hostname(value: str) -> str:
 
 def origin(value: str) -> str:
     try:
-        if not isinstance(value, str) or len(value) > 2048 or any(c.isspace() or ord(c) < 32 for c in value):
+        if not isinstance(value, str) or any(c.isspace() or ord(c) < 32 for c in value):
             raise ValueError()
         parsed = urlsplit(value)
         if (parsed.scheme not in {"http", "https"} or not parsed.hostname
@@ -123,140 +84,32 @@ def origin(value: str) -> str:
         raise RemoteConnectionError("REMOTE_ORIGIN_DENIED") from None
 
 
-class _PinnedHTTPS(http.client.HTTPSConnection):
-    def __init__(self, host, address, port=443):
-        self._tls_context = ssl.create_default_context()
-        super().__init__(host, port, timeout=5, context=self._tls_context)
-        self._address = address
-        self.deadline = time.monotonic() + HTTP_TOTAL_SECONDS
-
-    def connect(self):
-        # Connect numeric address; retain hostname for certificate validation/SNI.
-        remaining = self.deadline - time.monotonic()
-        if remaining <= 0:
-            raise RemoteConnectionError("REMOTE_DEADLINE")
-        sock = socket.create_connection((self._address, self.port), min(5.0, remaining))
-        self.sock = sock  # Deadline interruption can reach the TLS handshake too.
-        try:
-            remaining = self.deadline - time.monotonic()
-            if remaining <= 0:
-                raise RemoteConnectionError("REMOTE_DEADLINE")
-            sock.settimeout(min(5.0, remaining))
-            self.sock = self._tls_context.wrap_socket(sock, server_hostname=self.host)
-        except BaseException:
-            sock.close()
-            raise
-
-
-class _PinnedHTTP(http.client.HTTPConnection):
-    def __init__(self, host, address, port=80):
-        super().__init__(host, port, timeout=5)
-        self._address = address
-        self.deadline = time.monotonic() + HTTP_TOTAL_SECONDS
-
-    def connect(self):
-        remaining = self.deadline - time.monotonic()
-        if remaining <= 0:
-            raise RemoteConnectionError("REMOTE_DEADLINE")
-        self.sock = socket.create_connection((self._address, self.port), min(5.0, remaining))
-
-
 class PinnedHTTPSProbe:
-    """Read-only fixed paths, no redirects/retries/proxy/netrc and bounded IO."""
-    def __init__(self, *, dns_timeout_seconds: float = 3):
-        if (type(dns_timeout_seconds) not in {int, float} or not math.isfinite(dns_timeout_seconds)
-                or not 3 <= dns_timeout_seconds <= 10):
-            raise ValueError('REMOTE_DNS_TIMEOUT_INVALID')
-        self.dns_timeout_seconds = dns_timeout_seconds
-
+    """Compatibility name; HTTPX owns DNS, TLS, streaming and idle timeouts."""
     def addresses(self, destination):
-        parsed = urlsplit(origin(destination))
-        host = parsed.hostname
-        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
-        assert host is not None
-        try:
-            # libc DNS has no portable deadline. A fixed isolated helper process
-            # is killed and reaped on timeout; no unbounded resolver thread remains.
-            result = subprocess.run([sys.executable, "-I", "-c",
-                "import socket,json,sys; a=sorted({r[4][0] for r in socket.getaddrinfo(sys.argv[1],int(sys.argv[2]),type=socket.SOCK_STREAM)}); print(json.dumps(a if len(a)<=16 else []))",
-                host, str(port)], capture_output=True, timeout=self.dns_timeout_seconds, check=True, text=True)
-            addresses = json.loads(result.stdout)
-            if not addresses or len(addresses) > 16:
-                raise ValueError()
-            return [str(ipaddress.ip_address(address)) for address in addresses]
-        except (OSError, ValueError, subprocess.SubprocessError):
-            raise RemoteConnectionError("REMOTE_DNS_FAILED") from None
+        # Preserve the injected-probe interface without a separate DNS process.
+        return [urlsplit(origin(destination)).hostname]
 
     def get(self, destination, address, path, lease=None):
         if path not in {"/global/health", "/project/current", "/agent"}:
             raise RemoteConnectionError("REMOTE_PATH_DENIED")
-        parsed = urlsplit(origin(destination))
-        host = parsed.hostname
-        port = parsed.port or (443 if parsed.scheme == 'https' else 80)
-        headers = {"Accept": "application/json", "Accept-Encoding": "identity"}
+        headers = {"Accept": "application/json"}
         if lease is not None:
             headers["Authorization"] = "Basic " + base64.b64encode(
                 (lease.username + ':' + lease.password).encode()).decode()
-        conn = (_PinnedHTTPS(host, address, port) if parsed.scheme == 'https'
-            else _PinnedHTTP(host, address, port))
-        deadline = time.monotonic() + HTTP_TOTAL_SECONDS
-        conn.deadline = deadline
-        expired = threading.Event()
-        active_socket: list[socket.socket | None] = [None]
-        def interrupt():
-            expired.set()
-            sock = active_socket[0] or conn.sock
-            if sock is not None:
-                try:
-                    sock.shutdown(socket.SHUT_RDWR)
-                except OSError:
-                    pass
-            conn.close()
-        timer = threading.Timer(max(0, deadline - time.monotonic()), interrupt)
-        timer.daemon = True
-        timer.start()
-        response = None
         try:
-            conn.request("GET", path, headers=headers)
-            # getresponse may detach conn.sock for Connection: close while the
-            # response file retains the live descriptor. Keep shutdown authority.
-            active_socket[0] = conn.sock
-            response = conn.getresponse()
-            if expired.is_set():
-                raise RemoteConnectionError("REMOTE_DEADLINE")
-            chunks, size = [], 0
-            while size <= MAX_BYTES:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise RemoteConnectionError("REMOTE_RESPONSE_REJECTED")
-                if conn.sock is not None:
-                    conn.sock.settimeout(min(5, remaining))
-                chunk = response.read1(min(16384, MAX_BYTES + 1 - size))
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                size += len(chunk)
-            raw = b"".join(chunks)
-            if expired.is_set() or time.monotonic() >= deadline:
-                raise RemoteConnectionError("REMOTE_DEADLINE")
-            if len(raw) > MAX_BYTES or response.getheader("Content-Encoding", "identity") != "identity":
-                raise RemoteConnectionError("REMOTE_RESPONSE_REJECTED")
-            # Error bodies are neither decoded nor surfaced.
-            if response.status != 200:
-                return response.status, None
-            value = json.loads(raw)
-            reject_credential_echo(value, lease)
-            return response.status, value
+            # The native timeout concerns idle transport operations, not total
+            # response duration. Active streams are not cut off after 10 seconds.
+            with httpx.Client(follow_redirects=False) as client:
+                response = client.get(origin(destination) + path, headers=headers)
+                if response.status_code != 200:
+                    return response.status_code, None
+                value = response.json()
+            return response.status_code, value
         except RemoteConnectionError:
             raise
         except Exception:
             raise RemoteConnectionError("REMOTE_PROBE_FAILED") from None
-        finally:
-            timer.cancel()
-            timer.join()
-            if response is not None:
-                response.close()
-            conn.close()
 
 
 class OpenCodeServeProvider:
@@ -325,16 +178,15 @@ class OpenCodeServeProvider:
             status, value = self.probe.get(destination, address, path, lease)
             if status != 200:
                 raise RemoteConnectionError("REMOTE_VERIFICATION_FAILED")
-            reject_credential_echo(value, lease)
             results[path] = value
         health, project, agents = (results[path] for path in ("/global/health", "/project/current", "/agent"))
         if (not isinstance(health, dict) or health.get("healthy") is not True
                 or not isinstance(health.get("version"), str)
-                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]{0,79}", health["version"])
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+_-]*", health["version"])
                 or not isinstance(project, dict) or project.get("id") != configuration["projectId"]
-                or not isinstance(agents, list) or not agents or len(agents) > 256
+                or not isinstance(agents, list) or not agents
                 or any(not isinstance(agent, dict) or not isinstance(agent.get("name"), str)
-                       or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}", agent["name"]) for agent in agents)):
+                       or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", agent["name"]) for agent in agents)):
             raise RemoteConnectionError("REMOTE_IDENTITY_MISMATCH")
         return {"providerVersion": health["version"], "projectId": project["id"],
                 "agentNames": sorted({agent["name"] for agent in agents}),

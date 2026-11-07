@@ -5,7 +5,7 @@ export interface PersonalToolDescriptor {
   adapterId: string; revision: string; toolName: string; description: string;
   inputSchema: Record<string, unknown>; transport: 'cli' | 'mcp';
   credentialProviderId: string; credentialDestination: string; capabilities: string[];
-  permission: string; readOnly: boolean; timeoutSeconds?: number; maxOutputBytes?: number;
+  permission: string; readOnly: boolean; timeoutSeconds?: number | null; maxOutputBytes?: number | null;
 }
 export interface PersonalToolConnection {
   ownerId: string; registrationRef: string; adapterId: string; revision: string; descriptorRevision: string;
@@ -31,7 +31,7 @@ export interface MemberToolConfiguration {
   url?: string; remoteToolName?: string; executable?: string; arguments?: string[];
   workingDirectory?: string; environment?: Record<string, string>; argumentOptions?: Record<string, string>;
   stdinJson?: boolean; credentialEnvironmentVariable?: string; outputFormat?: 'json' | 'text'; readOnly?: boolean;
-  timeoutSeconds?: number; maxOutputBytes?: number;
+  timeoutSeconds?: number | null; maxOutputBytes?: number | null;
 }
 
 export interface ToolOperationRef { id: string; version: number; sha256: string }
@@ -79,15 +79,15 @@ function descriptor(value: unknown): PersonalToolDescriptor {
       || typeof value.description !== 'string' || !record(value.inputSchema) || !transport(value.transport)
       || typeof value.credentialDestination !== 'string' || !value.credentialDestination || !strings(value.capabilities)
       || typeof value.readOnly !== 'boolean'
-      || value.timeoutSeconds !== undefined && (typeof value.timeoutSeconds !== 'number' || !Number.isFinite(value.timeoutSeconds) || value.timeoutSeconds <= 0)
-      || value.maxOutputBytes !== undefined && (!Number.isSafeInteger(value.maxOutputBytes) || Number(value.maxOutputBytes) <= 0)) throw invalid();
+      || value.timeoutSeconds !== undefined && value.timeoutSeconds !== null && (typeof value.timeoutSeconds !== 'number' || !Number.isFinite(value.timeoutSeconds) || value.timeoutSeconds <= 0)
+      || value.maxOutputBytes !== undefined && value.maxOutputBytes !== null && (!Number.isSafeInteger(value.maxOutputBytes) || Number(value.maxOutputBytes) <= 0)) throw invalid();
   // Public declarations only. Credentials and constructor/process details are not copied.
   return { adapterId: value.adapterId as string, revision: value.revision as string, toolName: value.toolName as string,
     description: value.description, inputSchema: value.inputSchema, transport: value.transport,
     credentialProviderId: value.credentialProviderId as string, credentialDestination: value.credentialDestination,
     capabilities: [...value.capabilities], permission: value.permission as string, readOnly: value.readOnly,
-    ...(value.timeoutSeconds === undefined ? {} : { timeoutSeconds: value.timeoutSeconds as number }),
-    ...(value.maxOutputBytes === undefined ? {} : { maxOutputBytes: value.maxOutputBytes as number }) };
+    ...(value.timeoutSeconds === undefined ? {} : { timeoutSeconds: value.timeoutSeconds as number | null }),
+    ...(value.maxOutputBytes === undefined ? {} : { maxOutputBytes: value.maxOutputBytes as number | null }) };
 }
 
 const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -115,8 +115,8 @@ export function publicToolConfiguration(value: unknown): PublicToolConfiguration
       || ['environment', 'argumentOptions'].some(key => value[key] !== undefined && (!record(value[key]) || Object.values(value[key]).some(item => typeof item !== 'string')))
       || ['readOnly', 'stdinJson'].some(key => value[key] !== undefined && typeof value[key] !== 'boolean')
       || value.outputFormat !== undefined && !['json', 'text'].includes(String(value.outputFormat))
-      || value.timeoutSeconds !== undefined && (typeof value.timeoutSeconds !== 'number' || !Number.isFinite(value.timeoutSeconds) || value.timeoutSeconds <= 0)
-      || value.maxOutputBytes !== undefined && (!Number.isSafeInteger(value.maxOutputBytes) || Number(value.maxOutputBytes) <= 0)) throw invalid();
+      || value.timeoutSeconds !== undefined && value.timeoutSeconds !== null && (typeof value.timeoutSeconds !== 'number' || !Number.isFinite(value.timeoutSeconds) || value.timeoutSeconds <= 0)
+      || value.maxOutputBytes !== undefined && value.maxOutputBytes !== null && (!Number.isSafeInteger(value.maxOutputBytes) || Number(value.maxOutputBytes) <= 0)) throw invalid();
   return structuredClone(value) as unknown as PublicToolConfiguration;
 }
 function operation(value: unknown): ToolOperation {

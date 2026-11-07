@@ -343,7 +343,7 @@ class ResearchCollaboration:
                 raise rejected('RESEARCH_SESSION_STOP_REQUESTED', '协作继续已停止或被后续轮次取代。')
             if ('application-start:' + turn['application_request_id'] != request_id
                     or turn['body'].get('collaborationEventId') != event_id
-                    or plan.get('applicationRef') != row['body']['configuration']['applicationRef']
+                    or plan.get('connectionRefs') != turn['body'].get('configuration', row['body']['configuration'])['connectionRefs']
                     or plan.get('inputValues') != service._start(row, turn).inputValues):
                 raise rejected('RESEARCH_COLLABORATION_BINDING_MISMATCH', '原协作继续请求绑定不一致。')
             original = self.store.sql('SELECT fingerprint FROM af_plan_requests WHERE owner_id=:owner '
@@ -355,14 +355,13 @@ class ResearchCollaboration:
 
     def _reserve(self, conn, row, turns, ready, event_id):
         service = self.sessions
-        if len(turns) >= row['body']['limits']['maxTurns']:
-            raise rejected('RESEARCH_TURN_LIMIT', '会话已达到约定轮数。')
         service._sources(row['owner_id'], row['body']['sharedSourceIds'])
         service._replies(row['owner_id'], row['id'], turns)
+        row = service._prepare_turn_configuration(conn, row['owner_id'], row, turns)
         identifier, stamp = str(uuid4()), now()
         origin = next(intent for intent, _ in ready if intent['body']['eventId'] == event_id)
         request_id = 'research-collaboration:' + origin['question_id']
-        body = {'requestId': request_id, 'taskId': None, 'runId': None, 'status': 'reserved',
+        body = {'requestId': request_id, 'configuration': deepcopy(row['body']['configuration']), 'taskId': None, 'runId': None, 'status': 'reserved',
             'createdAt': stamp, 'completedAt': None, 'result': None, 'failure': None, 'terminal': False,
             'blockReason': None, 'messages': [], 'lastAttempt': 0, 'dispatchStarted': False,
             'events': [], 'toolResults': [], 'sharedSourceIds': [], 'assistantReplies': [snapshot for _, snapshot in ready],

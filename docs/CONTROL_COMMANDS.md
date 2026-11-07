@@ -1,5 +1,7 @@
 # Durable task control commands
 
+> Historical reference: the structural simplification on 2026-11-07 retires the former manual Factory/governance APIs described here. See [current architecture](../ARCHITECTURE.md) and [current implementation record](reviews/structural-simplification-20261107.md). Examples below apply to their original revision.
+
 `POST /api/factory/jobs/{task}/commands` accepts an owner-scoped `commandId` and
 one exact decision: `answer` with requirement ID/version/answer, `approve` with
 requirement ID/version/boolean, or `cancel`. The server stores the intent before

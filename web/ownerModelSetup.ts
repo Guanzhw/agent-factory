@@ -9,6 +9,8 @@ export interface ModelSetup {
   owner: string; provider: OwnerModel['provider']; baseURL: string; model: string;
   thinkingMode?: OwnerModel['thinkingMode'];
   maxOutputTokens?: number;
+  contextWindow?: number;
+  autoCompactTokenLimit?: number;
   protocol?: ModelProtocol;
   dispatched?: { model?: true; default?: true };
   credentialRequest: string; modelRequest: string; defaultRequest: string;
@@ -29,6 +31,8 @@ export function setupCredential(value: PersonalCredential, setup: ModelSetup): P
 export function setupMetadata(setup: ModelSetup): ModelSetup {
   if (!validThinkingMetadata(setup)
       || Object.prototype.hasOwnProperty.call(setup, 'maxOutputTokens') && !validOutputTokens(setup.maxOutputTokens)
+      || Object.prototype.hasOwnProperty.call(setup, 'autoCompactTokenLimit') && !validOutputTokens(setup.autoCompactTokenLimit)
+      || Object.prototype.hasOwnProperty.call(setup, 'contextWindow') && !validOutputTokens(setup.contextWindow)
       || Object.prototype.hasOwnProperty.call(setup, 'protocol') && !validModelProtocol(setup.protocol)
       || setup.reference !== undefined && !identifier(setup.reference)
       || setup.rotating && ![setup.rotating.credentialRef, setup.rotating.credentialRevision].every(identifier)
@@ -42,6 +46,8 @@ export function setupMetadata(setup: ModelSetup): ModelSetup {
     ...(setup.dispatched ? { dispatched: { ...(setup.dispatched.model ? { model: true as const } : {}), ...(setup.dispatched.default ? { default: true as const } : {}) } } : {}),
     ...(setup.thinkingMode ? { thinkingMode: setup.thinkingMode } : {}),
     ...(Object.prototype.hasOwnProperty.call(setup, 'maxOutputTokens') ? { maxOutputTokens: setup.maxOutputTokens } : {}),
+    ...(Object.prototype.hasOwnProperty.call(setup, 'autoCompactTokenLimit') ? { autoCompactTokenLimit: setup.autoCompactTokenLimit } : {}),
+    ...(Object.prototype.hasOwnProperty.call(setup, 'contextWindow') ? { contextWindow: setup.contextWindow } : {}),
     ...(setup.credential ? { credential: setupCredential(setup.credential, setup) } : {}),
     ...(setup.rotating ? { rotating: { credentialRef: setup.rotating.credentialRef, credentialRevision: setup.rotating.credentialRevision } } : {}) };
 }
@@ -52,7 +58,7 @@ export function readModelSetup(raw: string | null, owner: string): ModelSetup | 
     if (s.owner !== owner || !['openai', 'openai-compatible'].includes(s.provider)
         || !['credential', 'model', 'default'].includes(s.stage) || typeof s.chooseDefault !== 'boolean'
         || !['credentialRequest', 'modelRequest', 'defaultRequest'].every(key => /^[a-zA-Z0-9_.:-]{8,100}$/.test(String(s[key as keyof ModelSetup])))
-        || typeof s.model !== 'string' || !s.model || s.model.length > 120) return null;
+        || typeof s.model !== 'string' || !s.model) return null;
     modelEndpoint(s.baseURL);
     return setupMetadata(s);
   } catch { return null; }
@@ -68,7 +74,7 @@ export function readModelSetups(raw: string | null, owner: string): ModelSetup[]
   if (!raw) return [];
   try {
     const value: unknown = JSON.parse(raw);
-    if (!Array.isArray(value) || value.length > 100) return [];
+    if (!Array.isArray(value)) return [];
     return value.map(item => readModelSetup(JSON.stringify(item), owner)).filter((item): item is ModelSetup => item !== null);
   } catch { return []; }
 }

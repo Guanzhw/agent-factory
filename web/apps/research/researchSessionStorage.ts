@@ -1,6 +1,6 @@
-import type { SessionAction, SessionLimits } from './researchSessionsClient.js';
+import type { SessionAction } from './researchSessionsClient.js';
 
-export interface SessionDraft { projectId?: string; title: string; goal: string; boundaries: string; modelConnectionRef: string; limits: SessionLimits }
+export interface SessionDraft { projectId?: string; title: string; goal: string; boundaries: string; modelConnectionRef: string }
 export interface PendingSessionRequest { requestId: string; action: SessionAction; sessionId: string | null }
 const prefix = (owner: string) => `factory:research-sessions:${encodeURIComponent(owner)}:`;
 export const draftKey = (owner: string, sessionId = '') => `${prefix(owner)}draft:${sessionId || 'new'}`;

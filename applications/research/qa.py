@@ -1,12 +1,25 @@
 """Persist only original QA inputs; core owns replies and current source authority."""
+import asyncio
 import json
 import re
 from contextlib import contextmanager
+from typing import Literal
+
+from agno.tools import tool
+from pydantic import BaseModel, ConfigDict, Field
 
 from fastapi import HTTPException
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
 from agent_factory.applications import GovernedStorage
+
+
+class Answer(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    answer: str = Field(min_length=1)
+    citations: list[str]
+    evidenceLevel: Literal['agent_analysis'] = 'agent_analysis'
+    relation: Literal['related', 'conditions_differ', 'not_related'] | None = None
 
 
 class ResearchQA:
@@ -20,6 +33,24 @@ class ResearchQA:
             Column('run_id', String, nullable=False), Column('message_id', String, nullable=False),
             Column('configuration', JSON, nullable=False), Column('content_ids', JSON, nullable=False))
         metadata.create_all(store.engine)
+
+    def functions(self, context):
+        @tool(name='research_qa_context')
+        async def read_shared_sources():
+            """Read the original question and research sources shared with both participants."""
+            return await asyncio.to_thread(self.context, context)
+
+        @tool(name='research_qa_record')
+        async def save_reply(answer: str, citations: list[str],
+                             relation: Literal['related', 'conditions_differ', 'not_related'] | None = None):
+            """Save the answer to the original question. Cite only retrieved source IDs.
+
+            For a source association, supply the relation and cite both sources.
+            """
+            value = Answer(answer=answer, citations=citations, relation=relation)
+            return await asyncio.to_thread(self.record, context, value)
+
+        return [read_shared_sources, save_reply]
 
     @contextmanager
     def _write(self):
@@ -53,7 +84,7 @@ class ResearchQA:
     def _select(self, message):
         tokens = set(re.findall(r'[\w]+', message['text'].casefold()))
         ranked = []
-        for item in self.content.list(message['recipientId'], limit=50)['items']:
+        for item in self._sources(message['recipientId']):
             if item['visibility'] != 'team' or item['source']['application'] != 'research':
                 continue
             try:
@@ -66,16 +97,16 @@ class ResearchQA:
             score = sum(token in text for token in tokens)
             if score:
                 ranked.append((-score, source['id'], source))
-        selected, size = [], 0
-        for _, _, source in sorted(ranked):
-            length = len(json.dumps(source, ensure_ascii=False).encode())
-            if size + length > 16384:
-                continue
-            selected.append(source)
-            size += length
-            if len(selected) == 8:
+        return [source for _, _, source in sorted(ranked)]
+
+    def _sources(self, owner):
+        after = ''
+        while True:
+            page = self.content.list(owner, after=after, limit=50)
+            yield from page['items']
+            after = page.get('nextCursor')
+            if not after:
                 break
-        return selected
 
     def context(self, ctx):
         with self._write() as conn:
@@ -83,7 +114,6 @@ class ResearchQA:
             if self.associations is not None:
                 delivery = self.associations.events.delivery_for_task(ctx.user_id, ctx.session_id)
                 if delivery is not None:
-                    self.assistants.require_question_budget(ctx.user_id, message['endpointId'], ctx.session_id)
                     return self.associations.context(ctx, message, delivery)
             saved = self.messages.read(ctx.user_id, message['messageId'])['reply']
             row = conn.execute(select(self.inputs).where(self.inputs.c.task_id == ctx.session_id)).mappings().first()
@@ -97,7 +127,6 @@ class ResearchQA:
                     raise HTTPException(403, 'RESEARCH_QA_REPLY_SOURCE_UNAVAILABLE')
                 return {'savedReply': self.messages.reply_for_task(ctx.user_id, ctx.session_id,
                     saved['text'], content_ids=row['content_ids'])}
-            self.assistants.require_question_budget(ctx.user_id, message['endpointId'], ctx.session_id)
             if row is None:
                 sources = self._select(message)
                 conn.execute(self.inputs.insert().values(task_id=ctx.session_id, owner_id=ctx.user_id,
@@ -107,7 +136,7 @@ class ResearchQA:
                 self._match(row, ctx, message, config)
                 sources = [self._source(message, identifier) for identifier in row['content_ids']]
             return {'question': message['text'], 'sources': sources,
-                'search': {'candidateLimit': 50, 'sourceLimit': 8, 'byteLimit': 16384,
+                'search': {'candidateLimit': None, 'sourceLimit': None, 'byteLimit': None,
                            'insufficientEvidence': not sources}}
 
     @staticmethod

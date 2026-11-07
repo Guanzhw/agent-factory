@@ -49,13 +49,15 @@ def continuation_scope(configuration, owner=None):
 
 
 def model_id(value):
-    if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}', value):
+    if not isinstance(value, str) or not value.strip():
         raise ValueError('PERSONAL_MODEL_ID_INVALID')
     return value
 
 
 def max_output_tokens(configuration):
-    value = configuration.get('maxOutputTokens', 4096)
+    value = configuration.get('maxOutputTokens')
+    if value is None:
+        return None
     if type(value) is not int or value <= 0:
         raise ValueError('PERSONAL_MODEL_OUTPUT_LIMIT_INVALID')
     return value
@@ -71,7 +73,7 @@ def chat_headers(base, lease, session_id):
     if lease is not None:
         headers['Authorization'] = 'Bearer ' + lease.password
     if requires_session(base):
-        if (type(session_id) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{8,128}', session_id)
+        if (type(session_id) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{8,}', session_id)
                 or lease is not None and session_id == lease.password):
             raise ValueError('PERSONAL_MODEL_SESSION_REQUIRED')
         headers.update({'User-Agent': CLIENT_USER_AGENT, 'x-opencode-session': session_id})

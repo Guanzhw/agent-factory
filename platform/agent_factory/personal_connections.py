@@ -289,15 +289,15 @@ class PersonalRemoteConnections:
 
 class ConfigureRemoteRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    providerId: str = Field(min_length=1, max_length=200)
-    origin: str = Field(min_length=1, max_length=512)
-    credentialRef: str | None = Field(default=None, min_length=1, max_length=200)
-    credentialRevision: str | None = Field(default=None, min_length=1, max_length=200)
-    projectId: str | None = Field(default=None, min_length=1, max_length=200)
+    providerId: str = Field(min_length=1)
+    origin: str = Field(min_length=1)
+    credentialRef: str | None = Field(default=None, min_length=1)
+    credentialRevision: str | None = Field(default=None, min_length=1)
+    projectId: str | None = Field(default=None, min_length=1)
     projectCreation: Literal[True] | None = None
     authMode: Literal["bearer", "basic-proxy"] | None = None
-    sessionTemplateId: str | None = Field(default=None, min_length=1, max_length=160)
-    requestId: str = Field(min_length=1, max_length=200)
+    sessionTemplateId: str | None = Field(default=None, min_length=1)
+    requestId: str = Field(min_length=1)
 
     @model_validator(mode='after')
     def credential_pair(self):
@@ -308,7 +308,7 @@ class ConfigureRemoteRequest(BaseModel):
 
 class RemoteCommandRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    requestId: str = Field(min_length=1, max_length=200)
+    requestId: str = Field(min_length=1)
 
 
 def personal_connection_router(auth, service):

@@ -23,7 +23,6 @@ from starlette.responses import JSONResponse
 
 from .accounts import AccountCreate
 
-MAX_TOKEN_BYTES = 16384
 _KID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 _B64 = re.compile(r"[A-Za-z0-9_-]+\Z")
 _REQUIRED = ("iss", "sub", "aud", "exp", "iat", "jti", "client_id")
@@ -73,7 +72,6 @@ class OIDCIdentityConfig:
     jwks: Mapping[str, Any]
     subject_owners: Mapping[tuple[str, str], str]
     clock_skew_seconds: int = 30
-    max_token_lifetime_seconds: int = 3600
 
     def __post_init__(self):
         try:
@@ -83,11 +81,9 @@ class OIDCIdentityConfig:
                      and not issuer.password and not issuer.query and not issuer.fragment
                      and (issuer.port is None or 1 <= issuer.port <= 65535))
             _require(type(self.clock_skew_seconds) is int and 0 <= self.clock_skew_seconds <= 60)
-            _require(type(self.max_token_lifetime_seconds) is int and 1 <= self.max_token_lifetime_seconds <= 3600)
             _require(type(self.jwks) is dict and set(self.jwks) == {"keys"})
             keys: Any = self.jwks["keys"]
-            _require(type(keys) is list and 1 <= len(keys) <= 16)
-            _require(len(json.dumps(self.jwks, allow_nan=False).encode()) <= 32768)
+            _require(type(keys) is list and bool(keys))
             copied = []
             for raw_key in keys:
                 _require(type(raw_key) is dict)
@@ -99,7 +95,7 @@ class OIDCIdentityConfig:
                 _require("key_ops" not in key or key["key_ops"] == ["verify"])
                 _require(type(key["n"]) is str and len(key["n"]) <= 684 and type(key["e"]) is str and len(key["e"]) <= 8)
                 copied.append(MappingProxyType({k: tuple(v) if k == "key_ops" else v for k, v in key.items()}))
-            _require(isinstance(self.subject_owners, Mapping) and 1 <= len(self.subject_owners) <= 1024)
+            _require(isinstance(self.subject_owners, Mapping) and bool(self.subject_owners))
             owners = {}
             for pair, owner in self.subject_owners.items():
                 _require(type(pair) is tuple and len(pair) == 2 and pair[0] == self.issuer and _text(pair[1], 255))
@@ -136,9 +132,9 @@ class OIDCAccessTokenVerifier:
 
     def verify(self, token: str) -> VerifiedIdentity:
         try:
-            _require(type(token) is str and token.isascii() and 1 <= len(token) <= MAX_TOKEN_BYTES)
+            _require(type(token) is str and token.isascii() and bool(token))
             segments = token.split(".")
-            _require(len(segments) == 3 and len(segments[0]) <= 2048)
+            _require(len(segments) == 3)
             header = _json_segment(segments[0])
             claims = _json_segment(segments[1])
             _unbase64(segments[2])
@@ -156,11 +152,10 @@ class OIDCAccessTokenVerifier:
             if type(audience) is str:
                 _require(audience == self.config.audience)
             else:
-                _require(type(audience) is list and 1 <= len(audience) <= 8 and all(_text(a, 512) for a in audience)
+                _require(type(audience) is list and bool(audience) and all(_text(a, 512) for a in audience)
                          and len(set(audience)) == len(audience) and self.config.audience in audience)
             iat, exp = claims["iat"], claims["exp"]
-            _require(type(iat) is int and type(exp) is int and 0 <= iat < exp <= 2**53
-                     and exp - iat <= self.config.max_token_lifetime_seconds)
+            _require(type(iat) is int and type(exp) is int and 0 <= iat < exp <= 2**53)
             now, skew = time.time(), self.config.clock_skew_seconds
             _require(iat <= now + skew and exp > now - skew)
             if "nbf" in claims:
@@ -196,7 +191,7 @@ class OIDCIdentityBridge:
             _require(scope.get("scheme") == "https")
             _require(len(authorization) == 1)
             value = authorization[0]
-            _require(type(value) is bytes and len(value) <= MAX_TOKEN_BYTES + 7)
+            _require(type(value) is bytes)
             scheme, separator, token = value.partition(b" ")
             _require(scheme.lower() == b"bearer" and separator == b" " and bool(token)
                      and b" " not in token and b"\t" not in token)

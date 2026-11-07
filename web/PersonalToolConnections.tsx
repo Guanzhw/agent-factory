@@ -21,7 +21,7 @@ const bindingRejected = (error: unknown) => error instanceof ToolConnectionError
 
 function credential(value: PersonalCredential): PersonalCredential {
   if (!value || ![value.credentialRef, value.credentialRevision, value.providerId].every(identifier)
-      || typeof value.destination !== 'string' || !value.destination || value.destination.length > 1000
+      || typeof value.destination !== 'string' || !value.destination
       || Object.keys(value).some(k => !['credentialRef', 'credentialRevision', 'providerId', 'destination', 'status'].includes(k))
       || !['active', 'revoked'].includes(value.status)) throw new Error('Invalid credential metadata');
   return { credentialRef: value.credentialRef, credentialRevision: value.credentialRevision, providerId: value.providerId, destination: value.destination, status: value.status };
@@ -37,7 +37,7 @@ export function readToolCommand(raw: string | null, owner: string): Command | nu
     if (value.action !== 'setup' || !['credential', 'configure', 'bind'].includes(value.stage)
         || !['cli', 'mcp'].includes(value.transport)
         || ![value.adapterId, value.descriptorRevision, value.toolName, value.credentialProviderId, value.credentialRequestId, value.bindRequestId].every(identifier)
-        || typeof value.credentialDestination !== 'string' || !value.credentialDestination || value.credentialDestination.length > 1000
+        || typeof value.credentialDestination !== 'string' || !value.credentialDestination
         || !Array.isArray(value.capabilities) || !value.capabilities.every(identifier)
         || value.registrationRef !== undefined && !identifier(value.registrationRef)
         || Object.keys(value).some(k => !['action', 'owner', 'requestId', 'adapterId', 'descriptorRevision', 'toolName', 'transport', 'credentialProviderId', 'credentialDestination', 'capabilities', 'credentialRequestId', 'bindRequestId', 'stage', 'dispatched', 'credential', 'registrationRef'].includes(k))) return null;
@@ -60,13 +60,13 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
   const [credentials, setCredentials] = useState<PersonalCredential[]>([]);
   const [providers, setProviders] = useState<string[]>([]);
   const [adapterId, setAdapterId] = useState(''); const [credentialRef, setCredentialRef] = useState('');
-  const [source, setSource] = useState<'saved' | 'new'>('saved'); const [token, setToken] = useState(''); const [consent, setConsent] = useState(false);
+  const [source, setSource] = useState<'saved' | 'new'>('saved'); const [token, setToken] = useState('');
   const [ready, setReady] = useState(false); const [busy, setBusy] = useState(false); const [blocked, setBlocked] = useState(false);
   const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [refresh, setRefresh] = useState(0);
   const alive = useRef(true); const lock = useRef(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   function accountChanged() {
-    setToken(''); setConsent(false); setCredentialRef(''); setAdapterId(''); setCredentials([]); setDescriptors([]); setRecords([]); setPending(null);
+    setToken(''); setCredentialRef(''); setAdapterId(''); setCredentials([]); setDescriptors([]); setRecords([]); setPending(null);
     setReady(false); setBlocked(true); setError('当前登录账户已改变。已清空输入，请刷新后管理自己的工具连接。');
   }
   async function verifyOwner() {
@@ -183,7 +183,7 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
         // failed before a binding/receipt was written. Never apply this to GET
         // recovery, unknown conflicts or an invalid/missing success response.
         if (alive.current && bindingRejected(failure)) {
-          release(s); setToken(''); setConsent(false); setCredentialRef(''); changed();
+          release(s); setToken(''); setCredentialRef(''); changed();
           setNotice('绑定请求已被明确拒绝。已保存的工具配置和原保存回执保留；没有重发绑定或更换凭据。'); return;
         }
         throw failure;
@@ -196,7 +196,7 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
     if (connection.status !== 'active' || !connection.available) {
       release(s); changed(); setNotice('原连接绑定已核对，但连接当前不可用或已撤销。没有重新绑定或改用其他凭据。'); return;
     }
-    release(s); setToken(''); setConsent(false); setCredentialRef(''); changed();
+    release(s); setToken(''); setCredentialRef(''); changed();
     setNotice('工具已保存并绑定到你的连接。应用可按声明使用此连接；保存没有执行工具或验证第三方服务。');
   }
   async function run(work: () => Promise<void>) {
@@ -204,21 +204,21 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
     try { await verifyOwner(); await work(); }
     catch (failure) {
       if (alive.current) {
-        setToken(''); setConsent(false);
+        setToken('');
         if ((failure instanceof RemoteRequestError || failure instanceof ToolConnectionError) && failure.code === 'EXPECTED_OWNER_MISMATCH') accountChanged();
         else setError('操作尚未确认。请核对原请求或重新读取；不会重复发送，也不会改用其他账户的凭据。');
       }
     } finally { lock.current = false; if (alive.current) setBusy(false); }
   }
   function save() {
-    if (!ready || pending || !descriptor || source === 'saved' && !selected || source === 'new' && (!token || !consent || !providers.includes(descriptor.credentialProviderId))) return;
+    if (!ready || pending || !descriptor || source === 'saved' && !selected || source === 'new' && (!token || !providers.includes(descriptor.credentialProviderId))) return;
     void run(async () => {
       const s = retainSetup({ action: 'setup', owner: ownerId, requestId: crypto.randomUUID(), adapterId: descriptor.adapterId, descriptorRevision: descriptor.revision,
         toolName: descriptor.toolName, transport: descriptor.transport, credentialProviderId: descriptor.credentialProviderId, credentialDestination: descriptor.credentialDestination,
         capabilities: [...descriptor.capabilities], credentialRequestId: crypto.randomUUID(), bindRequestId: crypto.randomUUID(),
         stage: source === 'new' ? 'credential' : 'configure', dispatched: false, ...(selected && source === 'saved' ? { credential: selected } : {}) }, true);
       if (s.credential) { await continueSetup(s); return; }
-      const secret = token; setToken(''); setConsent(false);
+      const secret = token; setToken('');
       const value = await post(s, () => personalRemoteApi.saveCredential({ providerId: s.credentialProviderId, destination: s.credentialDestination, username: 'bearer', password: secret, requestId: s.credentialRequestId }, ownerId));
       if (alive.current) await continueSetup(retainSetup({ ...s, credential: acceptedCredential(value, s), stage: 'configure', dispatched: false }));
     });
@@ -254,12 +254,12 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
       const current = readToolCommand(localStorage.getItem(storage), ownerId);
       if (!current || current.requestId !== original.requestId || current.action !== original.action || current.dispatched
           || current.action === 'setup' && original.action === 'setup' && current.stage !== original.stage) throw new Error('Original step changed');
-      release(original); setToken(''); setConsent(false); setCredentialRef(''); changed();
+      release(original); setToken(''); setCredentialRef(''); changed();
       setNotice('已结束未发送步骤。已保存的工具配置和原保存回执保留；没有发送或重发请求。');
     });
   }
   const disabled = busy || blocked || !ready || !!pending;
-  const canSave = !!descriptor && (source === 'saved' ? !!selected : !!token && consent && providers.includes(descriptor.credentialProviderId));
+  const canSave = !!descriptor && (source === 'saved' ? !!selected : !!token && providers.includes(descriptor.credentialProviderId));
   return <section aria-labelledby="personal-tools-title"><h2 id="personal-tools-title">我的工具连接</h2>
     <p>连接自己的 MCP 服务或服务器上的 CLI 命令，保存后可用于组件与工作流。</p>
     <ReusableToolOperations ownerId={ownerId} credentials={credentials} disabled={disabled} onChanged={changed}/>
@@ -268,11 +268,11 @@ function ToolConnections({ ownerId, revision = 0, onChanged }: Props) {
     {error && <p role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     {pending && <aside className="state-note"><p>原工具{pending.action === 'revoke' ? '撤销' : '保存或绑定'}尚待核对。仅恢复原请求，已发送的步骤不会重发。</p><button disabled={busy || blocked} onClick={recover}>核对原工具请求</button>{!pending.dispatched && <button className="secondary" disabled={busy || blocked} onClick={endUnsent}>结束未发送步骤</button>}</aside>}
     {!ready ? <p className="quiet">正在读取工具与本人连接。</p> : !!installedDescriptors.length && <form className="material-editor" aria-label="添加个人工具连接" onSubmit={event => { event.preventDefault(); save(); }}>
-      <fieldset disabled={disabled}><label>工具<select aria-label="个人工具" value={adapterId} onChange={event => { setAdapterId(event.target.value); setCredentialRef(''); setToken(''); setConsent(false); }}><option value="">选择已安装工具</option>{installedDescriptors.map(d => <option key={d.adapterId} value={d.adapterId}>{d.toolName} · {d.transport.toUpperCase()}</option>)}</select></label>
+      <fieldset disabled={disabled}><label>工具<select aria-label="个人工具" value={adapterId} onChange={event => { setAdapterId(event.target.value); setCredentialRef(''); setToken(''); }}><option value="">选择已安装工具</option>{installedDescriptors.map(d => <option key={d.adapterId} value={d.adapterId}>{d.toolName} · {d.transport.toUpperCase()}</option>)}</select></label>
         {descriptor && <><p>{descriptor.description}</p>{descriptor.transport === 'cli' && <p className="quiet">CLI 在部署服务器上运行；当前适配器支持 Linux/POSIX 服务器，Windows 浏览器可管理连接。</p>}<dl className="plan-details"><dt>凭据用途</dt><dd>{descriptor.credentialProviderId}</dd><dt>固定服务目标</dt><dd>{descriptor.credentialDestination}</dd><dt>允许能力</dt><dd>{descriptor.capabilities.join('、')}</dd></dl>
-          <label>凭据来源<select aria-label="工具凭据来源" value={source} onChange={event => { setSource(event.target.value as 'saved' | 'new'); setToken(''); setConsent(false); }}><option value="saved">使用本人已保存的凭据</option><option value="new" disabled={!providers.includes(descriptor.credentialProviderId)}>安全保存新令牌</option></select></label>
+          <label>凭据来源<select aria-label="工具凭据来源" value={source} onChange={event => { setSource(event.target.value as 'saved' | 'new'); setToken(''); }}><option value="saved">使用本人已保存的凭据</option><option value="new" disabled={!providers.includes(descriptor.credentialProviderId)}>安全保存新令牌</option></select></label>
           {source === 'saved' ? <><label>本人凭据<select aria-label="工具已有凭据" value={credentialRef} onChange={event => setCredentialRef(event.target.value)}><option value="">选择此用途与目标的凭据</option>{matching.map(c => <option key={c.credentialRef} value={c.credentialRef}>{c.credentialRef} · {c.credentialRevision}</option>)}</select></label>{!matching.length && <p className="quiet">没有与此工具用途及目标匹配的本人凭据。不会使用服务器或其他账户的凭据。</p>}</>
-            : <><label>工具访问令牌<input aria-label="工具访问令牌" type="password" autoComplete="new-password" value={token} onChange={event => setToken(event.target.value)}/></label><label><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)}/>我同意将令牌加密保存到凭据保险库，仅供上述工具用途和固定目标使用。</label></>}
+            : <><label>工具访问令牌<input aria-label="工具访问令牌" type="password" autoComplete="new-password" value={token} onChange={event => setToken(event.target.value)}/></label></>}
         </>}
         <button className="primary" disabled={!canSave}>保存并绑定工具</button>
       </fieldset>

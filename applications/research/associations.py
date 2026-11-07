@@ -1,6 +1,5 @@
 """Selective research notifications over the existing endpoint event queue."""
 from copy import deepcopy
-import json
 import re
 import unicodedata
 from uuid import uuid4
@@ -51,6 +50,15 @@ class ResearchAssociations:
             Column('answer', JSON), Column('created_at', String, nullable=False))
         metadata.create_all(self.db.store.engine)
 
+    def _content(self, owner):
+        after = ''
+        while True:
+            page = self.content.list(owner, after=after, limit=50)
+            yield from page['items']
+            after = page.get('nextCursor')
+            if not after:
+                break
+
     def prepare(self, conn, owner, content_id):
         if conn.execute(select(self.intents).where(self.intents.c.content_id == content_id)).first():
             return
@@ -63,7 +71,7 @@ class ResearchAssociations:
             return
         words = research_terms(trigger['content'])
         ranked = []
-        for item in self.content.list(owner, limit=50)['items']:
+        for item in self._content(owner):
             if item['ownerId'] == owner or item['visibility'] != 'team' or item['source']['application'] != 'research':
                 continue
             try:
@@ -86,13 +94,10 @@ class ResearchAssociations:
             selected.append({'contentId': identifier, 'ownerId': author, 'endpointId': endpoint,
                              'score': -score, 'rule': 'research-terms-v1'})
             owners.add(author)
-            if len(selected) == configuration['associations']['maxRecipients']:
-                break
         event_id = None
         if selected:
             event = self.events.emit(conn, owner, ContentEvent(namespace='research', eventType='evidence.available',
-                contentId=content_id, candidates=[item['endpointId'] for item in selected],
-                deadline=configuration['budget']['deadline']), 'research-associate:' + content_id)
+                contentId=content_id, candidates=[item['endpointId'] for item in selected]), 'research-associate:' + content_id)
             event_id = event['id']
         conn.execute(self.intents.insert().values(content_id=content_id, owner_id=owner,
             event_id=event_id, candidates=selected))
@@ -116,8 +121,6 @@ class ResearchAssociations:
                 if source['visibility'] != 'team':
                     raise HTTPException(404, 'RESEARCH_SOURCE_UNAVAILABLE')
                 selected.append({key: source[key] for key in ('id', 'source', 'content', 'verificationStatus')})
-            if len(json.dumps(selected, ensure_ascii=False).encode()) > 16384:
-                raise HTTPException(422, 'RESEARCH_ASSOCIATION_INPUT_TOO_LARGE')
             dependencies = sorted({identifier for source_id in ids
                                    for identifier in self.sources.source_dependencies(source_id, actor=ctx.user_id)})
             if row is None:
@@ -128,7 +131,7 @@ class ResearchAssociations:
                 raise HTTPException(409, 'RESEARCH_ASSOCIATION_ORIGINAL_INPUT_REQUIRED')
             return {'question': 'Compare these two research records. Explain related evidence, differing conditions, or no useful relation.',
                     'purpose': 'association', 'sources': selected,
-                    'search': {'candidateLimit': 50, 'sourceLimit': 8, 'byteLimit': 16384, 'insufficientEvidence': False}}
+                    'search': {'candidateLimit': None, 'sourceLimit': None, 'byteLimit': None, 'insufficientEvidence': False}}
 
     @staticmethod
     def _original(row, ctx, delivery):
@@ -166,54 +169,6 @@ class ResearchAssociations:
             if row is None:
                 raise HTTPException(404, 'RESEARCH_ASSOCIATION_NOT_FOUND')
             return self._projection(actor, row)
-
-    def for_round(self, owner, round_id, project_id, agreement):
-        bound = self.sources.bound(round_id)
-        if bound is None:
-            words = terms(agreement.objective + ' ' + agreement.evaluation + ' ' + agreement.stopConditions)
-            ranked = []
-            for source in self.content.list(owner, limit=50)['items']:
-                if source['ownerId'] == owner or source['visibility'] != 'team' or source['source']['application'] != 'research':
-                    continue
-                score = len(words & research_terms(source['content']))
-                if score:
-                    item = {'id': source['id'], 'kind': 'original_record', 'sources': [source],
-                            'sourceIds': self.sources.source_dependencies(source['id'], actor=owner)}
-                    ranked.append((-score, source['id'], item))
-            for item in self.list(owner)['items']:
-                original = [self.content.read(owner, identifier) for identifier in item['sourceIds']]
-                score = len(words & set().union(*(research_terms(source['content']) for source in original)))
-                if score:
-                    ranked.append((-score, item['id'], {**item, 'kind': 'association', 'sources': original}))
-            selected, size = [], 0
-            for _, _, item in sorted(ranked):
-                encoded = len(json.dumps(item, ensure_ascii=False).encode())
-                displayed = {source['id'] for candidate in [*selected, item] for source in candidate['sources']}
-                if size + encoded <= 16384 and len(displayed) <= 8:
-                    selected.append(item)
-                    size += encoded
-            dependencies = set(self.sources.project_dependencies(project_id))
-            dependencies.update(identifier for item in selected for identifier in item['sourceIds'])
-            self.sources.bind(round_id, project_id, dependencies,
-                [item['id'] for item in selected if item['kind'] == 'association'],
-                [item['id'] for item in selected if item['kind'] == 'original_record'])
-        return self.round_inputs(owner, round_id)
-
-    def round_inputs(self, owner, round_id):
-        bound = self.sources.bound(round_id)
-        if bound is None:
-            return []
-        self.sources.require(owner, bound['source_ids'])
-        result = []
-        for identifier in bound['content_ids']:
-            result.append({'id': identifier, 'kind': 'original_record', 'sources': [self.content.read(owner, identifier)],
-                           'sourceIds': self.sources.source_dependencies(identifier, actor=owner)})
-        for identifier in bound['association_ids']:
-            item = self.read(owner, identifier)
-            item['kind'] = 'association'
-            item['sources'] = [self.content.read(owner, source_id) for source_id in item['sourceIds']]
-            result.append(item)
-        return result
 
     def list(self, actor, *, after='', limit=50):
         self.assistants.auth.require_member(actor)

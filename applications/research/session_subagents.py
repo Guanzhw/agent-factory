@@ -53,8 +53,9 @@ class ResearchSubagents:
                   and facts.get('persistedRunStatus') == 'completed' else None)
         if result is not None and not isinstance(result, str):
             result = canonical(result)
+        plan = self.store.plan(child['plan_id'], child['owner_id'])
         return {'childTaskId': child['id'], 'runId': child.get('run_id'),
-                'goal': self.store.plan(child['plan_id'], child['owner_id'])['normalizedGoal'],
+                'goal': plan['normalizedGoal'],
                 'status': status, 'result': result}
 
     async def children(self, task):
@@ -134,7 +135,9 @@ class ResearchSubagents:
             return
         snapshot = await self.commands.bridge.detail(task['run_id'], task['id'], task['owner_id'])
         for requirement in native_requirements(snapshot):
-            if (requirement.get('tool_execution') or {}).get('tool_name') != WAIT:
+            if ((requirement.get('tool_execution') or {}).get('tool_name') != WAIT
+                    or (requirement.get('tool_execution') or {}).get('result') is not None
+                    or not RunRequirement.from_dict(requirement).needs_external_execution):
                 continue
             child = self._linked(task, requirement)
             group = await observer.inspect_subtree(task['owner_id'], child['id'])

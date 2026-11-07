@@ -83,8 +83,8 @@ export function SessionQuestions({ ownerId, sessionId, collaborationEnabled = fa
   }
   async function send() {
     if (lock.current || pending) return;
-    if (!draft.assistantId || draft.text.trim().length < 2) {
-      setError('请选择接收助手，并填写至少 2 个字的问题。'); field.current?.focus(); return;
+    if (!draft.assistantId || draft.text.trim().length < 1) {
+      setError('请选择接收助手并填写问题。'); field.current?.focus(); return;
     }
     const original = { requestId: crypto.randomUUID(), assistantId: draft.assistantId, text: draft.text.trim() };
     if (!writeStored(payloadStorage, original)) { setError('无法保存原发送文本，尚未发送。请保留输入并检查浏览器存储。'); return; }
@@ -126,7 +126,7 @@ export function SessionQuestions({ ownerId, sessionId, collaborationEnabled = fa
     {open && <div className="rs-question-compose">
       {!draft.assistantId ? <AssistantDirectory ownerId={ownerId} onAsk={(assistantId, name) => change({ ...draft, assistantId, name })}/> : <p>接收助手：{draft.name || draft.assistantId} <button disabled={busy || !!pending} onClick={() => change({ ...draft, assistantId: '', name: '' })}>更换接收助手</button></p>}
       <form className="rw-form" noValidate onSubmit={event => { event.preventDefault(); void send(); }}><fieldset disabled={busy || !!pending}>
-        <label>发给同事助手的问题<textarea ref={field} rows={3} maxLength={2000} value={draft.text} onChange={event => change({ ...draft, text: event.target.value })} aria-describedby={`rs-question-scope${error ? ' rs-question-error' : ''}`} aria-invalid={!!error}/></label>
+        <label>发给同事助手的问题<textarea ref={field} rows={3} value={draft.text} onChange={event => change({ ...draft, text: event.target.value })} aria-describedby={`rs-question-scope${error ? ' rs-question-error' : ''}`} aria-invalid={!!error}/></label>
         <p id="rs-question-scope" className="rw-muted">只发送这里的文本；会话目标、历史、文件和凭据不会自动附带。未发送内容保存在本浏览器，退出登录时清除。</p>
         <button className="rw-primary" disabled={!draft.assistantId}>{busy ? '正在发送…' : '确认发送问题'}</button>
       </fieldset></form>

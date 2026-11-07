@@ -21,10 +21,7 @@ from agno.db.base import SessionType
 from fastapi import HTTPException
 from sqlalchemy import text
 
-from .plan_policy import NativeMandateCompleted
-from .remote_handoff import HandoffCancellationRequested
 from .store import effect_unresolved, runtime_custody_held
-from .runtime_hooks import native_ended_reason, cancel_owned_runtime
 
 
 TERMINAL = {"completed", "cancelled", "failed"}
@@ -47,8 +44,6 @@ class FactoryLifecycleObserver:
         self.last_result: dict[str, Any] = {}
         self.last_error_type: str | None = None
         self._cursor = ""
-        self._remote_tasks: dict[str, asyncio.Task] = {}
-        self._remote_results: dict[str, dict] = {}
 
     def _binding(self, task: dict, *, include_content: bool = False) -> dict | None:
         """Strict native read; caller must keep missing/mismatched work held."""
@@ -93,8 +88,6 @@ class FactoryLifecycleObserver:
 
     def _group(self, root: dict) -> tuple[list[dict], list[dict]]:
         links = self.store.sql("SELECT * FROM af_delegation_links WHERE root_id=:root ORDER BY depth,created_at", root=root["id"])
-        if len(links) > 4:
-            raise ValueError("Persisted delegation group exceeds its bounded contract")
         tasks, depths = [root], {root["id"]: 0}
         for link in links:
             if link["owner_id"] != root["owner_id"] or link["parent_id"] not in depths or link["depth"] != depths[link["parent_id"]] + 1:
@@ -129,9 +122,6 @@ class FactoryLifecycleObserver:
         if ticket and (ticket["status"] == "cancelled" or ticket.get("persistedRunStatus") == "cancelled"):
             return "native-ended"
         if ticket and ticket["status"] == "completed":
-            reason = native_ended_reason(self.store, task)
-            if reason:
-                return reason
             # Native completion does not renew an execution grant. Its pending
             # descendants are observed independently below; their current
             # guards still validate ancestor grants before any further effect.
@@ -160,21 +150,6 @@ class FactoryLifecycleObserver:
                     guard(task["owner_id"], plan, None, None)
             else:
                 self.store.require_plan_execution(task["owner_id"], plan, run_context=context if ticket else None)
-        except HandoffCancellationRequested:
-            return "cancel-requested"
-        except NativeMandateCompleted as error:
-            # A running snapshot can complete during the mandate check. Only
-            # this typed, exact-ticket transition is observation, never a new
-            # grant. Other authority denials remain sticky failures below.
-            fresh = self.store.task(task["id"], task["owner_id"])
-            if (error.task_id != task["id"] or error.run_id != task.get("run_id")
-                    or any(fresh.get(key) != task.get(key) for key in
-                           ("id", "owner_id", "plan_id", "run_id", "request_id"))):
-                raise ValueError("Completed mandate differs from the original execution binding") from error
-            latest = self._binding(fresh)
-            if not latest or latest["status"] not in TERMINAL:
-                raise ValueError("Completed mandate lacks a current terminal binding") from error
-            return self._reason(fresh, latest)
         except HTTPException as error:
             if error.status_code in {403, 409}:
                 return "current-authority-ended"
@@ -192,9 +167,9 @@ class FactoryLifecycleObserver:
             changed = self.store.sql("UPDATE af_tasks SET cancel_requested=TRUE WHERE id=:id AND owner_id=:owner AND NOT cancel_requested RETURNING id",
                                      id=task["id"], owner=task["owner_id"])
             if changed:
-                registry = self.store.application_runtime
-                if registry is not None:
-                    registry.mark_cancel(self.store.task(task['id'], task['owner_id']), reason=reason)
+                sessions = getattr(self.store, 'research_sessions', None)
+                if sessions is not None:
+                    sessions.mark_cancel(self.store, task['id'], reason=reason)
                 if reason == "current-authority-ended":
                     self.store.event(task["id"], "protected_denied", "Current authority ended; existing owned work requires cleanup",
                                      {"boundary": "lifecycle", "createsExecution": False})
@@ -206,7 +181,6 @@ class FactoryLifecycleObserver:
         # Detached experiment supervision belongs to the same persisted task.
         # Cleanup validates its original handle/source/limits even after grants
         # end. Native completion alone cannot prove that tree stopped.
-        await cancel_owned_runtime(self.store, task)
         if not ticket or ticket["status"] in TERMINAL:
             return
         worker = self.worker_getter()
@@ -231,7 +205,8 @@ class FactoryLifecycleObserver:
         effects_unknown = effects_unknown or runtime_custody_held(self.store, task['id'])
         stopped = not effects_unknown and bool(ticket and ticket["status"] in TERMINAL or not ticket and task["admission"] == "rejected")
         return {"taskId": task["id"], "stopped": stopped,
-                "unknown": effects_unknown or ticket is None and task["admission"] != "rejected",
+                "unknown": (effects_unknown and (not ticket or ticket["status"] != "running"))
+                    or ticket is None and task["admission"] != "rejected",
                 "nativeStatus": ticket["status"] if ticket else None,
                 "persistedRunStatus": ticket.get("persistedRunStatus") if ticket else None,
                 "failed": (task["body"]["stoppedStatus"] == "failed" if task["body"].get("stoppedStatus") is not None
@@ -304,9 +279,6 @@ class FactoryLifecycleObserver:
 
     def _summary_status(self, task, status):
         """Applications may project their persisted wait state for the summary."""
-        registry = getattr(self.store, 'application_runtime', None)
-        if registry is not None:
-            return registry.summary_status(self, task, status)
         return status
 
     def _observe_summaries(self, root, facts):
@@ -321,7 +293,7 @@ class FactoryLifecycleObserver:
             descendants = [link for link in links if link["parent_id"] == task["id"]]
             children_unknown = any(not link["child_id"] or facts.get(link["child_id"], {}).get("unknown", True)
                                    for link in descendants)
-            if (fact["unknown"] and status not in {"running", "canceling"}) or children_unknown:
+            if status not in {"running", "canceling"} and (fact["unknown"] or children_unknown):
                 status = "unknown"
             elif status == "completed" and descendants:
                 status = "waiting_children"
@@ -329,10 +301,10 @@ class FactoryLifecycleObserver:
 
     async def _observe_application_waits(self, root):
         """Application observers may inspect existing work before core cleanup."""
-        registry = getattr(self.store, 'application_runtime', None)
-        if registry is not None:
+        sessions = getattr(self.store, 'research_sessions', None)
+        if sessions is not None:
             for task in self._group(root)[0]:
-                await registry.observe_waits(self, task)
+                await sessions.observe_waits(self, task)
 
     async def observe_root(self, identifier: str) -> dict:
         root = self.store.task(identifier)
@@ -389,7 +361,6 @@ class FactoryLifecycleObserver:
         service = self.store.delegation
         with service._root_lock(root["id"]):
             tasks, links = self._group(self.store.task(root["id"], root["owner_id"]))
-            completion = self.store.completion_context(tasks[0])
             facts = {task["id"]: self._facts(task) for task in tasks}
             for task in reversed(tasks):
                 direct = [link for link in links if link["parent_id"] == task["id"]]
@@ -414,52 +385,17 @@ class FactoryLifecycleObserver:
                         link["child_id"] and facts[link["child_id"]].get("groupFailed") for link in direct)
                     if stopped:
                         status = "failed" if facts[task["id"]]["groupFailed"] else "canceled" if task["cancel_requested"] or facts[task["id"]].get("nativeStatus") == "cancelled" else "completed"
-                        if completion is not None:
-                            self.store.observe_stopped(task, status)
-                        else:
-                            self.store.observed(task, status, True)
-            if facts[root["id"]]["groupStopped"] and completion is not None:
-                facts[root['id']]['finalizationCommitted'] = self._finalize_group(tasks, completion)
-                return facts
+                        self.store.observed(task, status, True)
             if facts[root["id"]]["groupStopped"]:
                 self.store.sql("UPDATE af_delegation_roots SET reclaimed=TRUE WHERE root_id=:id AND owner_id=:owner", id=root["id"], owner=root["owner_id"])
         return facts
-
-    def _finalize_group(self, tasks, completion):
-        root = tasks[0]
-        try:
-            with self.store.transaction() as conn:
-                self.store.local_budget_scopes.admission_lock(conn)
-                root = self.store.task(root['id'], root['owner_id'])
-                if root['terminal']:
-                    return True
-                with completion(conn, root) as finalize:
-                    current = [self.store.task(task['id'], root['owner_id']) for task in tasks]
-                    for task in current:
-                        self.store.observed(task, task['body']['stoppedStatus'], True)
-                    if any(not self.store.task(task['id'])['terminal'] for task in current):
-                        raise _FinalizationPending()
-                    settlement = self.store.local_budget_scopes.settle_task(root['owner_id'], root['id'])
-                    if settlement is not None and settlement['state'] == 'HELD':
-                        raise _FinalizationPending()
-                    finalize({'task': root, 'group': current, 'settlement': settlement})
-                    self.store.sql("UPDATE af_delegation_roots SET reclaimed=TRUE WHERE root_id=:id AND owner_id=:owner",
-                                   id=root['id'], owner=root['owner_id'])
-            return True
-        except _FinalizationPending:
-            return False
 
     async def tick(self) -> dict:
         async with self._tick_lock:
             process_runtime = getattr(self.store, "process_runtime", None)
             process_results = await process_runtime.tick() if process_runtime is not None else []
-            # Origin placements have no local native ticket. Only their exact
-            # receiver evidence may settle custody, never local ticket absence.
-            placement_filter = ("AND NOT EXISTS (SELECT 1 FROM af_remote_placements placement WHERE placement.task_id=task.id)"
-                                if getattr(self.store, "handoff_client", None) is not None else "")
-            query = f"""SELECT task.id FROM af_tasks task WHERE NOT EXISTS(
+            query = """SELECT task.id FROM af_tasks task WHERE NOT EXISTS(
                 SELECT 1 FROM af_delegation_links own_link WHERE own_link.child_id=task.id)
-                {placement_filter}
                 AND (NOT task.terminal OR EXISTS(SELECT 1 FROM af_delegation_links link JOIN af_tasks child ON child.id=link.child_id
                 WHERE link.root_id=task.id AND NOT child.terminal)) AND task.id>:after ORDER BY task.id LIMIT :limit"""
             roots = self.store.sql(query, after=self._cursor, limit=self.batch_limit)
@@ -474,27 +410,9 @@ class FactoryLifecycleObserver:
                 except Exception as error:
                     errors.append({"rootTaskId": row["id"], "errorType": type(error).__name__})
                 await asyncio.sleep(0)
-            self._schedule_remote_observation()
             self.last_result = {"groups": groups, "errors": errors, "processLeases": process_results,
-                                "remoteObservations": dict(self._remote_results), "nativeOwner": "agno", "createsExecution": False}
+                                "nativeOwner": "agno", "createsExecution": False}
             return self.last_result
-
-    async def _observe_remote(self, name, service):
-        try:
-            # One remote batch cannot consume the local cleanup loop. A timeout
-            # abandons observation, never re-dispatches an ambiguous operation.
-            async with asyncio.timeout(5):
-                self._remote_results[name] = await service.observe_pending(limit=self.batch_limit)
-        except Exception as error:
-            self._remote_results[name] = {"errors": [{"errorType": type(error).__name__}]}
-
-    def _schedule_remote_observation(self):
-        for name in ("handoff_receiver", "handoff_client"):
-            service = getattr(self.store, name, None)
-            current = self._remote_tasks.get(name)
-            if service is not None and (current is None or current.done()) and not self._stop.is_set():
-                self._remote_tasks[name] = asyncio.create_task(
-                    self._observe_remote(name, service), name="factory-observe-" + name)
 
     async def _run(self) -> None:
         while not self._stop.is_set():
@@ -518,10 +436,6 @@ class FactoryLifecycleObserver:
         if self._task is not None:
             await self._task
             self._task = None
-        for task in self._remote_tasks.values():
-            task.cancel()
-        await asyncio.gather(*self._remote_tasks.values(), return_exceptions=True)
-        self._remote_tasks.clear()
 
     @asynccontextmanager
     async def lifespan(self, app: Any):

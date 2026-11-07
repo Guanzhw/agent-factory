@@ -1,110 +1,70 @@
-# 可选研究应用
+# 自主研究应用
 
-研究工作台提供项目约定、个人执行配置、显式启动/续接、运行记录、助手 QA、主动关联和成果包。固定 native Workflow 使用原实验 child、实际结果、受预算限制的后继轮次和精选终态记录；成员可查阅授权的团队经验，并按明确选择的证据生成可下载交付包。
+研究应用以聊天会话为日常入口。用户提供目标，Agent 根据实际结果选择文件操作、命令、个人工具、MCP、子助手和可选研究记录工具。开始聊天不需要先建立项目、确认研究约定或选择固定 Workflow。
 
-应用复用 core 认证、资源连接、发布治理、原任务执行、预算 scope、消息和内容权限。项目及其执行配置只供 owner 读取；精选研究记录按 core 内容授权团队可读，不因此公开整个项目、私有聊天、凭据或原始 artifact。
+应用使用 Agno AgentOS 的模型与工具循环、原生队列和运行状态。Factory 保存原请求、执行绑定和工具回执；研究应用保存会话、项目引用、实验记录和共享内容，不另建研究调度器。
 
-## 安装与配置
+## 启动与设置
 
-部署 composition root 显式构造 `ApplicationAssembly(name='research', install=research.public.install)`，注册研究和 QA 的固定 native Workflow，并把 `applications` 加入 Python import roots。应用不 import 部署模块；未安装时 core 不创建 research 表或路由。安装不启动研究或模型调用、不创建独立后台执行器、不取得数据库所有权，运行与关闭仍归 core。
+发行包使用 `agent-factory-research` 启动研究组合；`agent-factory` 启动底座。源码运行需要 `PYTHONPATH=applications:platform:deployment`。`npm run build:research` 构建研究前端，构建本身不公开服务。
 
-安装本仓库发行包后，用 `agent-factory-research` 启动研究组合；默认 `agent-factory` 仍只启动底座。源码开发使用 `PYTHONPATH=applications:platform:deployment`。`npm run build:research` 构建研究入口，`npm run build` 构建无应用入口；构建不公开服务。
+在统一的设置页面配置个人模型和所需工具。默认研究部署提供工作目录并启用宿主机命令；部署者可用 `FACTORY_RESEARCH_WORKSPACE_ROOT` 指定目录，或用 `FACTORY_RESEARCH_HOST_COMMANDS=0` 禁用宿主机命令。工作目录隔离不是操作系统沙箱。
 
-工作台可以选择个人模型连接、已部署环境和已发布实验工具，预览后明确发布执行 definition，再保存并确认项目约定。共享 definition 不保存个人 connectionRefs；运行使用成员自己的显式连接。空库不自动种入模型、工具或目标机，缺少实际环境注册/资源连接时必须先配置，不能用 fixture 冒充可用资源。
+主聊天使用自己的模型连接，不要求先启用离线问答。会话会复用个人助手身份；离线问答是另一项可选功能。保存设置不会启动研究或调用模型。
 
-以下 HTTP 前缀均为 `/api/factory/research`。mutation 的 requestId 为 8–80 字符；同一命令重投恢复原收据，同键异内容冲突。接口使用当前认证 owner，不接受任意 owner 字段。
+## 聊天与执行
 
-### 执行配置 HTTP
+HTTP 前缀为 `/api/factory/research`，接口使用当前认证成员，不接受任意 owner 字段。
 
-- GET `/setup`：读取当前候选模型、连接、环境和实验材料；读取不隐式创建个人绑定。
-- POST `/setup/drafts`：`{requestId,name,modelConnectionRef,environment,experimentMaterialRefs,connectionRefs,budget}`。environment 为 `{adapterId,revision,connectionRef?}`，experimentMaterialRefs 为精确材料 pin。只创建私有意图和 preview，不发布。
-- GET `/setup/requests/{requestId}`、GET `/setup/{id}`：恢复原配置命令或读取预览。
-- POST `/setup/{id}/publish`：`{requestId}`，明确发布并返回 applicationRef、mode 和个人 connectionRefs。重新验证当前资源与预览中的准确 Workflow pin；pin 改变返回 `RESEARCH_SETUP_PREVIEW_CHANGED`，要求重新预览，不静默换版本。
-- POST `/setup/qa/drafts`：`{requestId,name,modelConnectionRef,budget}`，使用同一预览/发布路径产生单一 `qa` mode，不需要实验或 GPU 环境。
+| 接口 | 用途 |
+| --- | --- |
+| `GET /sessions/options` | 可用模型、工具和工作目录状态 |
+| `POST /sessions` | 创建会话：`requestId,title,goal,modelConnectionRef`，可选 `boundaries,projectId` |
+| `POST /sessions/{id}/turns` | 提交消息：`requestId,text` |
+| `POST /sessions/{id}/corrections` | 向当前轮次补充或纠正要求 |
+| `GET /sessions/{id}` | 当前行动、工具结果、子助手、会话消息与状态 |
+| `GET /sessions/{id}/events` | 会话事件流 |
+| `POST /sessions/{id}/stop` | 请求停止原会话的执行 |
+| `GET /sessions/requests/{requestId}` | 查找原命令收据 |
 
-## 项目与约定 HTTP
+一次提交的 `goal` 与 `boundaries` 合计、或单条消息，最多 1,048,576 个字符。会话不再使用八轮、32 次工具调用、120 秒操作或 12 KB 上下文的项目默认上限。历史 `limits` 字段仍可读取；新轮次不继承这些旧数值。模型与外部服务仍可能有各自的上下文、连接和请求限制。
 
-- GET `/projects?after=&limit=20`：`{items,nextCursor}`，摘要不含 goals，上限 100。
-- POST `/projects`：`{requestId,title,assistantId?,researchAssistantId?}`，title 最多 120 字符。assistantId 是自己的历史 core endpoint 引用，researchAssistantId 是自己的稳定研究助手身份，二者不能互换。
-- GET `/projects/{id}`：详情。
-- POST `/projects/{id}/goals`：`{requestId,expectedVersion,agreement}`，追加目标版本并回到 draft。
-- POST `/projects/{id}/confirm`：`{requestId,expectedVersion}`，确认当前约定并标 ready，不执行研究。
-- POST `/projects/{id}/end`：`{requestId,expectedVersion,outcome,reason}`，outcome 为 not_met 或 cancelled；取消已有项目 scope，阻止新入口，不声称在途操作已停止，`resourceCleanup=not_observed`。ended 项目不能再修订，继续研究需新项目。
+已结束历史在达到已配置模型的压缩阈值时使用 Agno 原生摘要能力整理；原记录保留。未知模型容量不会被猜成一个通用窗口。个人记忆使用 Agno 的存储，由 Agent 按需查找和维护。
 
-详情包含 `id,ownerId,title,assistantId,researchAssistantId,state,currentGoalVersion,goals,ending,createdAt,execution`。state 为 draft/ready/ended，新项目 version 为 0。goals 按版本升序：`{version,agreement,createdAt,confirmedAt}`。execution.available 表示当前约定和已存在运行是否允许申请启动/续接；false 带 reason，true 的 reason 为 null，不代替实际准入时的当前授权检查。
+命令异步等待实际执行结果。用户可以停止执行；取消请求或等待超时不能单独证明远端工作已停止。未知结果保留原身份供核对，不通过重新派发猜测原操作的结果。原轮次未安全结束时，新轮次不会覆盖它；运行中的追加要求使用纠正入口。
 
-agreement 的 objective/evaluation/stopConditions 各为 1–4000 字符；resourceRefs 为 slot 到已有资源 ref（最多 30 项），保存引用不授予权限。budget 采用 core scope 语义：rounds/toolCalls 为正整数；tokenLimit 为空时 amountMicros/currency 同时为空；否则 tokenLimit/amountMicros 非负且 currency 为 USD/EUR/CNY。声明预算字段不等于当前选择的模型支持实际费用计量，准入仍须验证。
+## 可选项目与研究记录
 
-```json
-{"objective":"测试目标","evaluation":"可核对评价标准","stopConditions":"达标或预算用尽停止","resourceRefs":{},"budget":{"rounds":3,"toolCalls":12,"tokenLimit":null,"amountMicros":null,"currency":null}}
-```
+项目用于组织目标，不是聊天的前置条件。`POST /projects` 创建项目；`POST /projects/{id}/goals` 保存新目标版本。目标约定只要求 `objective`，`evaluation` 与 `stopConditions` 为可选说明。保存目标后可直接使用，不需要额外确认。
 
-目标历史不可覆盖，confirmedAt 是确认元数据。修改、确认、结束均检查 expectedVersion；409 `RESEARCH_GOAL_VERSION_CONFLICT` 要求读取最新状态，不可无条件重写。其他项目错误包括 `RESEARCH_PROJECT_NOT_FOUND`、`RESEARCH_AGREEMENT_REQUIRED`、`RESEARCH_PROJECT_ENDED`；权限和幂等错误沿 core 契约。
+目标版本和原执行记录不会被覆盖。修订目标不会因版本变化阻断已关联会话的工具；原会话保留创建时的目标版本引用，Agent 可读取当前项目并按用户消息继续。结束项目会阻止其关联会话继续执行受该项目约束的写入、命令和委托操作；结束记录不声称所有在途资源已经清理。
 
-## Native 研究轮次
+Agent 可以直接工作，也可以选择：
 
-agreement 可包含 execution；缺失时仍可保存约定，但不能 start。正式研究配置选择准确发布的固定研究 Workflow，而非把任意应用当成自主研究组件。
+- 查看关联项目；未关联项目时仍可使用会话目标。
+- 委托独立实验，或根据当前任务的原命令回执记录实验。
+- 查询实际实验结果，再记录自己的评估。
 
-```json
-{"applicationRef":{"id":"published-application","version":1,"sha256":"<真实发布版本的64位摘要>"},"mode":"research","materialChoices":{},"connectionRefs":{},"deadline":1793000000,"perRoundCaps":{"rounds":1,"toolCalls":4,"tokenLimit":null,"amountMicros":null,"currency":null}}
-```
+这些工具没有固定调用顺序。实验记录发布团队可读的精选目标、条件、证据身份和评估，不自动公开工作目录、原始命令输出、私有聊天或连接凭据。`agent_analysis` 是 Agent 判断，不能当作已经复现的科学结论。
 
-示例 deadline 仅说明 epoch 单位，必须替换为明确且未过期的期限。materialChoices 是 slot 到材料 pin，connectionRefs 是 slot 到已有个人连接 ref，不提交秘密。每轮 caps 不超过项目 budget，计费类型/币种一致；完整目标/评价/停止文本不截断，组合超过 2000 字符或不符合所选 inputSchema 时拒绝。
+## 可选离线问答与协作
 
-- POST `/projects/{id}/start`：`{requestId,expectedVersion}`。固定研究路径的 202 包含 projectId/goalVersion/roundId/scopeId/allocationId/execution；202 是准入回执，不是执行成功。确认后由工作台“按当前约定启动或续接研究”按钮调用。
-- GET `/projects/{id}/experiments`：固定研究路径返回 `{items,rounds}`。items 包含实验假设/条件和 attempts 的原 operationId/operation；rounds 包含 goalVersion、scope/allocation/task/delivery 身份、decision、terminal、terminalRecordId 和 continuations。实际任务与 artifact 仍通过授权的 core 任务接口读取。
+离线问答通过 `POST /assistants/me/configurations` 配置个人模型绑定。总问题数、工具操作额度和期限不再使用原先的必填默认限额。不能将未支持的 BYOK token 或费用计量宣称为已经执行的硬限额。
 
-固定 Workflow 依次取得约定和原证据，由所选模型决定实验或立即停止；实验使用 core 原 child/custody 身份，等待并读取实际结果后再判断 continue/stop。完成消费者发布精选终态，并在原 scope 和 deadline 内通过 core 事件安排后继；不建立第二套执行或恢复链。模型判断标为 agent_analysis，进程成功不等于科学达标。
+`POST /assistants/{id}/questions` 发送问题，`GET /assistant-questions/{messageId}` 读取原问题与回答。会话中的 Agent 也可以主动向其他助手提问；回复到达后，原事件处理会在执行状态允许时继续会话，不要求用户逐条点击采纳。
 
-同 request 恢复原操作，UNKNOWN 不重新 dispatch。项目 scope 跨目标修订保持原总预算与 deadline，不重置或扩容；旧运行保留原目标版本。存在未终态运行或同目标已有原轮次时，不用另一个 start 请求复制工作；已确认新目标的续接也由原约束检查。end 取消 scope，不释放 UNKNOWN 或伪造清理完成。
+这项私问与主聊天共用 Agno Agent 执行入口，模型可调用读取共享证据和保存回复的工具。不再创建、发布专用问答应用或执行固定 Workflow。它只回答双方可读取的共享研究资料，不提供通用命令或训练工具。这是私问功能的范围，不是主聊天 Agent 的执行流程。
 
-历史首轮路径仍由 `ResearchRuns` 处理不匹配固定 Workflow 的配置：其 start 返回 experimentId/attemptId/startRecordId，experiments 返回原首轮 execution。它不能承诺自主后继，也不会自动迁移既有实验为新轮次。历史切片证据见[开始记录验证](../../openspec/changes/restore-team-research-application/start-records-verification.md)；当前轮次见[native Workflow 验证](../../openspec/changes/restore-team-research-application/native-workflow-verification.md)。
+共享来源权限在读取和后续使用时重新检查。来源撤回可能使派生回答或相关上下文不可用，摘要不会绕过原来源权限。问题与回答保持原消息、配置和运行身份；重试原请求不生成另一份问题。
 
-## 精选研究记录
+## 已有记录
 
-固定轮次创建实验时发布开始精选记录，完成消费者发布独立终态记录；历史首轮路径的 startRecordId 则是准备事务中的 pending_admission 快照。开始快照不会被覆写成实时状态，应读取原运行和后续终态。内容读取使用 `GET /api/factory/application-content/{id}`，作者可按 core sharing 接口撤回，命令回放不恢复撤回。
+旧固定研究控制器、轮次历史 API 和成果包服务已移除。已有数据库记录没有删除；已经发布到共享内容服务的研究记录仍可按原权限读取。新研究从聊天会话开始，不会自动把旧未知操作重新派发。
 
-精选内容包含研究目标、假设/条件、原操作身份及有限结果投影，不自动共享原始 artifact、聊天或连接。任务/进程状态与 agent 判断的证据等级分开；创建记录、202、native completed 都不是科学结论已验证的证明。主动关联使用下述显式启用的接收范围，轮次后继事件不等于团队广播。
+主动关联的已有配置和分析仍保留。当前自主实验发布路径没有接入旧固定轮次的自动关联触发链。
 
-## 私有研究 QA
+## 请求恢复与验证范围
 
-研究部署显式安装 `ResearchQAWorkflow`：三个顶层步骤读取原消息上下文、调用所选 owner 模型、在本地验证 JSON 文本答案后写回原 core message。不使用 provider structured-output 选项、应用答案表、反向消息或 GPU/CLI/MCP 工具。
+写入命令使用 `requestId`；同键同内容恢复原收据，同键异内容冲突。项目更新的 `expectedVersion` 用于避免并发覆盖，不是人工审批。资源归属、原运行关联和实际停止证据仍然有效。
 
-工作台在同一张表单中选择个人模型、有限回答额度、截止时间和主动关联范围，点击“启用离线问答”后完成稳定身份、内部定义发布和准确版本绑定；新定义的单次操作额度采用本次明确授权的每问上限，设置不调用模型。已有配置的额度和关联选择不会因打开页面而扩大；旧版本上限不足时须降低额度或明确选择生成新配置。失去响应时保留整次授权及各步骤原 requestId，使用“重试原操作”恢复原收据；旧版本留下的待确认创建、草稿或发布请求也保留恢复入口。配置修订冲突须读取最新修订，再明确提交保留的输入。
-
-- POST `/assistants`：`{requestId}` 创建 owner 唯一稳定身份；GET `/assistants/me` 读自己的身份/配置，GET `/assistants` 读目录。
-- POST `/assistants/me/configurations`：`{requestId,expectedRevision,applicationRef,connectionRefs,budget,associations?}`。budget 包含 caps/perQuestionCaps/deadline，使用已发布 QA 应用和个人连接。配置替换保留历史 endpoint 与身份关系，以恢复原问题；旧 endpoint 不接收新问题。
-- POST `/assistants/{id}/questions`：`{requestId,text}`，text 为 2–2000 字符，返回 202；GET `/assistant-questions/{messageId}`：读取原消息/答案。原 request 的恢复先于读取当前配置，不因对方改配置而重派。
-
-QA 的 BYOK 不进入平台账务：有限 rounds/toolCalls/deadline 必填，tokenLimit/amountMicros/currency 必须为 null，配置明确显示“操作额度受限，token/费用未计量”。不支持的 token/费用硬限额请求会被拒绝。
-
-每次问答所需的最低处理额度由已安装 QA 能力目录提供，包含读取上下文与保存回答。总操作额度和每问操作额度都须满足该值；不足时拒绝启用，不自动增加授权。历史不足配置也标为不可用；原问题生成新回答前按其原配置和原任务预算检查，不借用新配置的额度。已经保存的回答仍可按原来源授权恢复。未安装 QA 的部署不能启用离线问答。
-
-上下文最多扫描 50 个候选、提供 8 条当前共享研究记录（16 KiB），不包含私有聊天或 raw artifact。core reply 的 contentIds 绑定模型看到的全部证据输入，不只是所选引用；缺来源时返回证据不足，撤回任意输入会使整份派生答案在 core 读取路径不可用。
-
-## 团队经验与主动关联
-
-在助手配置中显式设置 `associations: {enabled: true, maxRecipients: 2}` 可启用主动关联；maxRecipients 为 1–20，默认 2。省略或关闭不会自动启用。它复用 QA 端点、原操作额度与期限；收到关联事件不会因此获得训练或 GPU 权限。
-
-研究进展按固定词项规则从当前有权读取的团队研究记录中选择相关成员，按配置限制接收人数；重复事件保留原候选，不广播兜底。模型可产生 related、conditions_differ 或 not_related，分析标为 agent_analysis，不修改他人记录。GET `/associations?after=&limit=50` 返回目录（上限 50），GET `/associations/{id}` 查看当前有权读取的分析和来源。
-
-研究轮次也直接检索原团队记录，不必先有一条关联才能复用。下游判断、实验和精选结果保留完整来源权限依赖，展示窗口不截断授权依赖。撤回任意必要来源后，派生分析、研究投影和成果访问会重新检查权限；不能把摘要或附件复制成可绕过撤回的副本。原已授权操作仍按其身份观察、取消和收尾，不因撤回重新派发。
-
-## 精选证据与成果包
-
-约定的可选 `evidence` 字段为 `{toolMaterial:{id,version,sha256},fields:{metrics:"metrics",source:"source",run_recipe:"recipe"}}`。成员通过工作台选择准确 CLI 材料和原输出字段；fields 可选择 1–3 个角色，角色仅为 metrics/source/run_recipe。模型不能扩大分享范围。修改其他约定字段时保留原 evidence；当前目录不可用时界面保留原精确材料引用，不静默替换。
-
-采集使用原 CLI 工具结果和 task/run/material 身份，保存明确选择的字段为 JSON 证据附件。未选择的原始文件、凭据和工具输出不会整份打包。配方和指标仍标为 producer_declared，需要实际复现核对；缺字段、缺原输出或无有效配方如实显示缺项。
-
-- POST `/projects/{id}/deliveries`：`{requestId,expectedVersion}`，201 返回不可变 manifest；同请求恢复原包，不重新执行实验。
-- GET `/deliveries?after=&limit=20`：授权目录，上限 100。
-- GET `/deliveries/{id}`：manifest、已选记录和 missingEvidence；未终态轮次、未发布记录或证据不足不伪装完整成果。remainingQuestions 为 not_provided 时不能理解为没有剩余疑问。
-- GET `/deliveries/{id}/download`：授权后返回 `application/zip`，包含 manifest 和所选证据。仅作为权限依赖的来源不因此自动导出附件；损坏、超限或失去来源权限时拒绝整包。
-
-没有来源的包仅作者可读。有来源的包对每个访问者检查全部原来源，作者也不能绕过撤回。下载不会执行包内命令；另一成员应在自己的环境、资源和新任务预算下复现或继续，不能复用旧 UNKNOWN 操作来启动新工作。
-
-## 验证与运行边界
-
-实际 native/PG、受控 CLI、demo/本地合成 OIDC 的浏览器和跨成员复现证据见[集成验证](../../openspec/changes/restore-team-research-application/integration-verification.md)，首次失败和修复均保留。后端组合完整 CI 与最终 UI/新增接缝检查的准确范围分别记录；真实模型自主研究与团队价值、实际 GPU、外部身份服务和目标机容量尚未验收，按[最终验收契约](../../docs/plans/research-platform-acceptance-contract.md)分别判定。移除应用仍可运行底座，但遗留应用任务需要原组件才能继续；缺组件时保留原任务及未确认资源，不伪造完成或重新派发，移除应用也不删除现有数据。
-
-完全移除应用及其运行时声明后，底座仍可在确认原操作全部停止后将执行记为失败并结算。它不会代替缺失应用补写研究终态或后继事件；重新安装也不会自动补写这些业务记录。需要继续原应用收尾责任的装配撤回，应保留原运行时声明。
+本轮按用户要求移除了测试，不把静态检查当作真实模型、Windows、GPU 或外部服务验收。当前总体行为见[运行设计](../../docs/RUNTIME_DESIGN.md)与[个人研究会话](../../docs/PERSONAL_RESEARCH_SESSIONS.md)。

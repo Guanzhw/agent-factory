@@ -1,3 +1,5 @@
+> Current status: the standalone Go development campaigns and private runtime broker are retired and removed. Personal models, including Go endpoints, use the normal owner model connection and Agno loop. Historical limits, runners and broker behavior below are not current configuration. HTTPX now supplies model transport directly.
+
 # OpenCode model presets
 
 The current UI presets are defined in [`web/modelProviderConfig.ts`](../web/modelProviderConfig.ts). They configure the owner-model path, not a separate execution engine.

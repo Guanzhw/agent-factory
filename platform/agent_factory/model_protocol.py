@@ -6,7 +6,6 @@ extensions. Callers keep them in their existing scoped history.
 from __future__ import annotations
 
 import json
-import math
 import re
 from decimal import Decimal
 from typing import Any, NoReturn, cast
@@ -21,29 +20,22 @@ def _fail(code='INVALID') -> NoReturn:
 
 
 def _bounded(value):
-    """Accept only bounded JSON, including when called directly without a parser."""
-    pending, count = [(value, 0)], 0
+    """Validate JSON shape without imposing a model-independent byte budget."""
+    try:
+        json.dumps(value, ensure_ascii=False, allow_nan=False)
+    except (TypeError, ValueError, UnicodeError, RecursionError):
+        _fail()
+    pending = [value]
     while pending:
-        item, depth = pending.pop()
-        count += 1
-        if count > 100_000 or depth > 32:
-            _fail('SIZE')
+        item = pending.pop()
         if type(item) is dict:
             if any(type(key) is not str for key in item):
                 _fail()
-            pending.extend((child, depth + 1) for child in item.values())
+            pending.extend(item.values())
         elif type(item) is list:
-            pending.extend((child, depth + 1) for child in item)
+            pending.extend(item)
         elif item is not None and type(item) not in {str, int, float, bool}:
             _fail()
-        elif type(item) is float and not math.isfinite(item):
-            _fail()
-    try:
-        size = len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode())
-    except (TypeError, ValueError, UnicodeError, RecursionError):
-        _fail()
-    if size > MAX_BYTES:
-        _fail('SIZE')
 
 
 def protocol_name(configuration):
@@ -61,13 +53,13 @@ def protocol_path(protocol):
 
 
 def _identifier(value):
-    if type(value) is not str or not 1 <= len(value) <= 200 or any(ord(c) < 32 for c in value):
+    if type(value) is not str or not value or any(ord(c) < 32 for c in value):
         _fail('TOOL')
     return value
 
 
 def _name(value):
-    if type(value) is not str or not re.fullmatch(r'[A-Za-z0-9_-]{1,120}', value):
+    if type(value) is not str or not re.fullmatch(r'[A-Za-z0-9_-]+', value):
         _fail('TOOL')
     return value
 
@@ -92,7 +84,7 @@ def function_call(call):
 
 
 def _calls(value):
-    if type(value) is not list or len(value) > 16:
+    if type(value) is not list:
         _fail('TOOL')
     calls = [function_call(call) for call in value]
     if len({call['id'] for call in calls}) != len(calls):
@@ -122,7 +114,7 @@ def _message(value):
 
 
 def _tools(value, responses):
-    if type(value) is not list or len(value) > 64:
+    if type(value) is not list:
         _fail('TOOL')
     tools, names = [], set()
     for tool in value:
@@ -179,7 +171,7 @@ def _usage(value, responses):
 
 
 def _response_items(output):
-    if type(output) is not list or len(output) > 200:
+    if type(output) is not list:
         _fail('RESPONSE')
     content, calls, replay = [], [], []
     for source in output:
@@ -312,7 +304,7 @@ def _continuations(protocol, value):
         call_ids = tuple(call['id'] for call in calls)
         if 'message_index' in record:
             position = record['message_index']
-            if type(position) is not int or not 0 <= position < 200:
+            if type(position) is not int or position < 0:
                 _fail('CONTINUATION')
             key = ('index', position)
         else:
@@ -337,9 +329,9 @@ def encode_request(protocol, chat_body, continuation=None):
     if type(chat_body) is not dict or set(chat_body) - _REQUEST_FIELDS:
         _fail('REQUEST')
     model, messages, limit = (chat_body.get(field) for field in ('model', 'messages', 'max_tokens'))
-    if (type(model) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:/-]{0,119}', model)
-            or type(messages) is not list or not 1 <= len(messages) <= 200
-            or type(limit) is not int or limit <= 0 or chat_body.get('stream', False) is not False):
+    if (type(model) is not str or not model.strip()
+            or type(messages) is not list or not messages
+            or limit is not None and (type(limit) is not int or limit <= 0) or type(chat_body.get('stream', False)) is not bool):
         _fail('REQUEST')
     responses = protocol == 'responses'
     records = _continuations(protocol, continuation)
@@ -369,8 +361,9 @@ def encode_request(protocol, chat_body, continuation=None):
             encoded.extend({'type': 'function_call', 'call_id': call['id'], **call['function']} for call in calls)
     if used != set(records):
         _fail('CONTINUATION')
-    body = {'model': model, 'stream': False, 'input' if responses else 'messages': encoded,
-        'max_output_tokens' if responses else 'max_tokens': limit}
+    body = {'model': model, 'stream': chat_body.get('stream', False), 'input' if responses else 'messages': encoded}
+    if limit is not None:
+        body['max_output_tokens' if responses else 'max_tokens'] = limit
     if responses:
         body['store'] = False
         body['include'] = ['reasoning.encrypted_content']

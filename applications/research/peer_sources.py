@@ -2,16 +2,14 @@
 from contextlib import contextmanager
 
 from fastapi import HTTPException
-from sqlalchemy import Column, JSON, MetaData, String, Table, select
+from sqlalchemy import Column, JSON, MetaData, String, Table, select, text
 
-from agent_factory.application_content import ContentPublication, ContentSource
 from agent_factory.applications import GovernedStorage
 
 
 class ResearchPeerSources:
-    def __init__(self, store, content, scopes=None):
+    def __init__(self, store, content):
         self.content = content
-        self.scopes = scopes
         self.db = GovernedStorage(store, 'research_projects_v1')
         metadata = MetaData()
         self.inputs = Table('research_round_peer_inputs', metadata,
@@ -24,15 +22,9 @@ class ResearchPeerSources:
     def guard(self):
         with self.db.store.transaction() as conn:
             if self.db.store.engine.dialect.name == 'postgresql':
-                assert self.scopes is not None
-                self.scopes.admission_lock(conn)
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             with self.db.write():
                 yield conn
-
-    def dependencies(self, round_id):
-        with self.db.read() as conn:
-            row = conn.execute(select(self.inputs).where(self.inputs.c.round_id == round_id)).mappings().first()
-            return list(row['source_ids']) if row else []
 
     def project_dependencies(self, project_id):
         with self.db.read() as conn:
@@ -53,28 +45,6 @@ class ResearchPeerSources:
                 raise
             return False
         return True
-
-    def bind(self, round_id, project_id, source_ids, association_ids, content_ids=()):
-        value = {'source_ids': sorted(set(source_ids)), 'association_ids': sorted(set(association_ids)),
-                 'content_ids': sorted(set(content_ids))}
-        with self.db.write() as conn:
-            old = conn.execute(select(self.inputs).where(self.inputs.c.round_id == round_id)).mappings().first()
-            if old:
-                if any(old[key] != val for key, val in value.items()) or old['project_id'] != project_id:
-                    raise HTTPException(409, 'RESEARCH_PEER_INPUT_CONFLICT')
-                return
-            conn.execute(self.inputs.insert().values(round_id=round_id, project_id=project_id, **value))
-
-    def bound(self, round_id):
-        with self.db.read() as conn:
-            row = conn.execute(select(self.inputs).where(self.inputs.c.round_id == round_id)).mappings().first()
-            return dict(row) if row else None
-
-    def publication(self, owner, round_id, identifier, revision, body, *, artifacts=(), content_artifact=None):
-        return self.content.publish(owner, ContentPublication(source=ContentSource(
-            application='research', record=identifier, revision=revision), content=body, contentArtifact=content_artifact, visibility='team',
-            artifacts=list(artifacts), sourceContentIds=self.dependencies(round_id)),
-            'research-record:' + identifier + ':' + revision)['id']
 
     def source_dependencies(self, content_id, *, actor):
         source = self.content.read(actor, content_id)

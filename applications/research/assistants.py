@@ -4,16 +4,15 @@ from contextlib import nullcontext
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, select
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, select, text
 
 from agent_factory.applications import GovernedStorage
-from agent_factory.assistant_endpoints import AutomaticBudget, EndpointConfiguration
+from agent_factory.assistant_endpoints import EndpointConfiguration
 from agent_factory.assistant_messages import SendAssistantMessage
 from agent_factory.assistant_events import EventSubscription
-from agent_factory.material_governance import PinnedRef
 from agent_factory.store import digest
-from .projects import Budget, Reference, RequestId
+from .projects import Reference, RequestId
 
 
 class CreateAssistant(BaseModel):
@@ -21,42 +20,23 @@ class CreateAssistant(BaseModel):
     requestId: RequestId
 
 
-class QuestionBudget(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    caps: Budget
-    perQuestionCaps: Budget
-    deadline: float = Field(strict=True, allow_inf_nan=False)
-
-    @model_validator(mode='after')
-    def bounded(self):
-        if self.perQuestionCaps.rounds != 1:
-            raise ValueError('One question consumes one native root allocation')
-        if self.perQuestionCaps.toolCalls > self.caps.toolCalls:
-            raise ValueError('Question caps exceed the total commitment')
-        return self
-
-
 class AssociationConfiguration(BaseModel):
     model_config = ConfigDict(extra='forbid')
     enabled: bool
-    maxRecipients: int = Field(default=2, strict=True, ge=1, le=20)
+    maxRecipients: int | None = Field(default=None, strict=True, ge=1)
 
 
 class ConfigureAssistant(BaseModel):
     model_config = ConfigDict(extra='forbid')
     requestId: RequestId
     expectedRevision: int = Field(strict=True, ge=0)
-    applicationRef: PinnedRef
-    connectionRefs: dict[Reference, Reference] = Field(max_length=12)
-    budget: QuestionBudget
+    connectionRefs: dict[Reference, Reference]
     associations: AssociationConfiguration | None = None
 
 
 class ResearchAssistants:
-    def __init__(self, store, auth, endpoints, messages, scopes, *, pin,
-                 tool_registrations, environment_registration, events=None):
-        self.store, self.auth, self.endpoints, self.messages, self.scopes = store, auth, endpoints, messages, scopes
-        self.pin, self.tools, self.environment = pin, tuple(tool_registrations), environment_registration
+    def __init__(self, store, auth, endpoints, messages, *, events=None):
+        self.store, self.auth, self.endpoints, self.messages = store, auth, endpoints, messages
         self.events = events
         self.db = GovernedStorage(store, 'research_assistants_v1')
         metadata = MetaData()
@@ -92,18 +72,6 @@ class ResearchAssistants:
         row = self._configuration_row(conn, owner, endpoint_id)
         return {'id': row['assistant_id'], 'revision': row['revision'], 'endpointId': row['endpoint_id']}
 
-    def _require_budget(self, execution_budget, total, per_question):
-        if min(total['toolCalls'], per_question['toolCalls'], execution_budget['toolCalls']) < len(self.tools):
-            raise HTTPException(422, 'RESEARCH_QA_BUDGET_INSUFFICIENT')
-
-    def require_question_budget(self, owner, endpoint_id, task_id):
-        with self.db.read() as conn:
-            configuration = self._configuration_row(conn, owner, endpoint_id)['body']
-        task = self.store.task(task_id, owner)
-        plan = self.store.plan(task['plan_id'], owner)
-        budget = configuration['budget']
-        self._require_budget(plan['budget'], budget['caps'], budget['perQuestionCaps'])
-
     def _projection(self, conn, row):
         qa = {'state': 'unconfigured'}
         if row['qa_endpoint_id']:
@@ -111,8 +79,6 @@ class ResearchAssistants:
                 self.configurations.c.assistant_id == row['id'],
                 self.configurations.c.revision == row['configuration_revision'])).scalar_one()
             qa = {'state': 'configured', 'endpointId': row['qa_endpoint_id'], **deepcopy(configuration),
-                'accounting': {'mode': 'operational_limits_only', 'tokenMetered': False, 'costMetered': False,
-                               'notice': '操作额度受限，token/费用未计量'},
                 **self._availability(row)}
         return {'id': row['id'], 'ownerId': row['owner_id'],
             'configurationRevision': row['configuration_revision'], 'qa': qa}
@@ -146,51 +112,13 @@ class ResearchAssistants:
                 row = self._identity(conn, identifier)
             return self.db.record(conn, self.commands, owner, body.requestId, fingerprint, 'create', self._projection(conn, row))
 
-    def _validate_execution(self, owner, application_ref, connection_refs):
-        app = self.store.applications.require_current(application_ref)
-        if set(app['modes']) != {'qa'}:
-            raise HTTPException(422, 'RESEARCH_QA_ONLY_MODE_REQUIRED')
-        mode = app['modes']['qa']
-        if mode.get('nativeComponent') != self.pin or self.store.native_workflows.pin(self.pin['id']) != self.pin or mode['materialChoices']:
-            raise HTTPException(409, 'RESEARCH_QA_COMPONENT_MISMATCH')
-        materials = self.store.applications.closure(mode['materialRefs'])
-        expected_tools = {(entry.adapter_id, entry.revision, entry.tool_name) for entry in self.tools}
-        actual_tools = set()
-        for material in materials:
-            binding = material.get('runtimeBinding') or {}
-            config = binding.get('config', {})
-            identity = (binding.get('adapterId'), binding.get('revision'))
-            if material['kind'] == 'model':
-                valid = identity == ('owner-chat-completions-v1', '1') and config == {'connectionName': 'model'}
-            elif material['kind'] == 'environment':
-                valid = identity == (self.environment.adapter_id, self.environment.revision) and config == {}
-            elif material['kind'] == 'tool':
-                actual_tools.add((*identity, material['content']))
-                valid = config == {}
-            else:
-                valid = False
-            if not valid:
-                raise HTTPException(422, 'RESEARCH_QA_MATERIAL_MISMATCH')
-        if actual_tools != expected_tools or set(connection_refs) != {'model'}:
-            raise HTTPException(422, 'RESEARCH_QA_MATERIAL_MISMATCH')
-        pins = {'model': self.store.connections.preflight(owner, connection_refs['model'], 'model',
-            required_capabilities=['model:invoke'])}
-        self.store.execution_bindings.build(materials, owner, pins)
-        if self.store.execution_bindings.preflight(materials, owner, pins):
-            raise HTTPException(409, 'RESEARCH_QA_BINDING_UNAVAILABLE')
-        return mode
-
     def configure(self, owner, body: ConfigureAssistant):
         self.auth.require_member(owner)
-        if body.budget.caps.tokenLimit is not None or body.budget.perQuestionCaps.tokenLimit is not None:
-            raise HTTPException(422, 'RESEARCH_QA_BYOK_METERING_UNSUPPORTED')
         value = body.model_dump(exclude={'requestId', 'expectedRevision'}, exclude_none=True)
-        # Caps intentionally retain explicit null BYOK accounting fields.
-        value['budget'] = body.budget.model_dump()
         fingerprint = digest({'action': 'configure', 'expectedRevision': body.expectedRevision, **value})
         with self.store.transaction() as conn:
             if self.store.engine.dialect.name == 'postgresql':
-                self.scopes.admission_lock(conn)
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             with self.db.write(), (self.events.db.write() if self.events is not None else nullcontext()), self.endpoints.db.write():
                 old = self.db.old(conn, self.commands, owner, body.requestId, fingerprint)
                 if old is not None:
@@ -200,25 +128,18 @@ class ResearchAssistants:
                     raise HTTPException(404, 'RESEARCH_ASSISTANT_NOT_FOUND')
                 if row['configuration_revision'] != body.expectedRevision:
                     raise HTTPException(409, 'RESEARCH_ASSISTANT_REVISION_CONFLICT')
-                mode = self._validate_execution(owner, value['applicationRef'], value['connectionRefs'])
-                self._require_budget(mode['budget'], value['budget']['caps'], value['budget']['perQuestionCaps'])
-                scope_id = str(uuid4())
-                budget = value['budget']
-                self.scopes.create_scope(owner, scope_id, digest(value), budget['caps'], budget['deadline'])
                 endpoint = self.endpoints.configure(owner, EndpointConfiguration(name='Research assistant QA',
-                    applicationRef=body.applicationRef, mode='qa', connectionRefs=body.connectionRefs,
-                    automaticBudget=AutomaticBudget(scopeId=scope_id, caps=budget['perQuestionCaps'], deadline=budget['deadline'])), str(uuid4()))
+                    mode='qa', connectionRefs=body.connectionRefs), str(uuid4()))
                 if body.associations and body.associations.enabled:
                     if self.events is None:
                         raise HTTPException(409, 'RESEARCH_ASSOCIATIONS_NOT_INSTALLED')
                     self.events.configure(owner, EventSubscription(endpointId=endpoint['id'], namespace='research',
-                        eventType='evidence.available', scopeId=scope_id, caps=budget['perQuestionCaps'],
-                        deadline=budget['deadline'], maxDepth=0, maxCandidates=20), 'research-associations:' + endpoint['id'])
+                        eventType='evidence.available'), 'research-associations:' + endpoint['id'])
                 if row['qa_endpoint_id']:
                     self.endpoints.set_enabled(owner, row['qa_endpoint_id'], False, str(uuid4()))
                 revision = row['configuration_revision'] + 1
                 conn.execute(self.configurations.insert().values(assistant_id=row['id'], revision=revision,
-                    endpoint_id=endpoint['id'], body={**value, 'scopeId': scope_id}))
+                    endpoint_id=endpoint['id'], body=value))
                 conn.execute(self.identities.update().where(self.identities.c.id == row['id']).values(
                     configuration_revision=revision, qa_endpoint_id=endpoint['id']))
                 result = self._projection(conn, self._identity(conn, row['id']))
@@ -237,22 +158,14 @@ class ResearchAssistants:
                 return None
             if not self._availability(row)['available']:
                 return None
-            return {'assistantId': row['id'], 'endpointId': row['qa_endpoint_id'], **deepcopy(configuration)}
+            result = {'assistantId': row['id'], 'endpointId': row['qa_endpoint_id'], **deepcopy(configuration)}
+        return result
 
     def _availability(self, row):
         if row['qa_endpoint_id'] is None:
             return {'available': False, 'unavailableCode': 'RESEARCH_ASSISTANT_UNCONFIGURED'}
         try:
-            endpoint = self.endpoints.resolve(row['qa_endpoint_id'])
-            budget = endpoint['automaticBudget']
-            with self.db.read() as conn:
-                self.endpoints.require_budget(conn, row['owner_id'], budget)
-            mode = self._validate_execution(row['owner_id'], endpoint['applicationRef'], endpoint['defaults']['connectionRefs'])
-            scope = self.scopes.inspect(row['owner_id'], budget['scopeId'])
-            caps, per = scope['caps'], budget['caps']
-            self._require_budget(mode['budget'], caps, per)
-            if scope['allocatedRounds'] + 1 > caps['rounds'] or scope['heldToolCalls'] + scope['settledToolCalls'] + per['toolCalls'] > caps['toolCalls']:
-                return {'available': False, 'unavailableCode': 'LOCAL_BUDGET_EXHAUSTED'}
+            self.endpoints.resolve(row['qa_endpoint_id'])
             return {'available': True}
         except HTTPException as error:
             if error.status_code not in {403, 404, 409, 422}:

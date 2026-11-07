@@ -2,7 +2,7 @@
 
 Unencrypted private keys accepted by the OpenSSH parser are enrolled.
 Canonical private bytes are encrypted as a single-line value; never returned.
-Host identity is supplied and confirmed by the owner, never learned by probing.
+New connections use OpenSSH known_hosts; legacy pinned destinations remain readable.
 """
 import base64
 import hashlib
@@ -35,21 +35,21 @@ def host_identity(value):
 
 
 def ssh_username(value):
-    if (not isinstance(value, str) or not 1 <= len(value) <= 128
+    if (not isinstance(value, str) or not value
             or any(ord(c) < 32 or ord(c) == 127 or c == ':' for c in value)):
         reject()
     return value
 
 
-def endpoint(address, port, username, host_key):
+def endpoint(address, port, username, host_key=None):
     try:
         address = hostname(address)
         if type(port) is not int or not 1 <= port <= 65535: reject()
         username = ssh_username(username)
-        canonical, pin, fingerprint = host_identity(host_key)
+        canonical, pin, fingerprint = host_identity(host_key) if host_key else ('', '', '')
         host = f'[{address}]' if ':' in address else address
         return {'address': address, 'port': port, 'username': username, 'hostKey': canonical,
-            'hostFingerprint': fingerprint, 'origin': f'ssh://{quote(username, safe="")}@{host}:{port}?hostkey={pin}'}
+            'hostFingerprint': fingerprint, 'origin': f'ssh://{quote(username, safe="")}@{host}:{port}' + (f'?hostkey={pin}' if pin else '')}
     except Exception:
         reject()
 
@@ -60,11 +60,11 @@ def ssh_destination(value):
         address = hostname(parsed.hostname)
         username = ssh_username(unquote(parsed.username or ''))
         if (parsed.scheme != 'ssh' or parsed.password is not None or parsed.path or parsed.fragment
-                or parsed.port is None or not re.fullmatch(r'hostkey=[a-f0-9]{64}', parsed.query)
+                or parsed.port is None or (parsed.query and not re.fullmatch(r'hostkey=[a-f0-9]{64}', parsed.query))
                 or not 1 <= parsed.port <= 65535):
             reject()
         host = f'[{address}]' if ':' in address else address
-        normalized = f'ssh://{quote(username, safe="")}@{host}:{parsed.port}?{parsed.query}'
+        normalized = f'ssh://{quote(username, safe="")}@{host}:{parsed.port}' + ('?' + parsed.query if parsed.query else '')
         if normalized != value: reject()
         return normalized
     except Exception:

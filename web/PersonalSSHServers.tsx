@@ -18,7 +18,7 @@ function readPending(value: unknown, owner: string): Pending | null {
   if (p.action === 'credential' || p.action === 'configure') {
     const i = p.input;
     if (!i || Object.keys(i).sort().join(',') !== 'address,allowedRoot,hostKey,name,port,username' ||
-        Object.entries({ name: 80, address: 253, username: 128, hostKey: 16384, allowedRoot: 4096 }).some(([key, limit]) => { const value = i[key as keyof SSHIdentityInput]; return typeof value !== 'string' || Array.from(value).length > limit || /[\r\n]/.test(value); }) ||
+        ['name', 'address', 'username', 'hostKey', 'allowedRoot'].some(key => { const value = i[key as keyof SSHIdentityInput]; return typeof value !== 'string' || /[\r\n]/.test(value); }) ||
         !Number.isInteger(i.port) || i.port < 1 || i.port > 65535) return null;
     if (p.action === 'credential' && (typeof p.destination !== 'string' || !p.destination.startsWith('ssh://'))) return null;
     if (p.action === 'configure' && (!identifier(p.credentialRef) || !identifier(p.credentialRevision))) return null;
@@ -39,17 +39,17 @@ export function PersonalSSHServers(props: Props) {
 function OwnerSSHServers({ ownerId, onChanged, revision = 0 }: Props) {
   const storage = `factory-personal-ssh:${encodeURIComponent(ownerId)}`;
   const [pending, setPending] = useState<Pending | null>(() => { try { return readPending(JSON.parse(localStorage.getItem(storage) ?? 'null'), ownerId); } catch { return null; } });
-  const [archived, setArchived] = useState<Pending[]>(() => { try { const a: unknown = JSON.parse(localStorage.getItem(`${storage}:unresolved`) ?? '[]'); return Array.isArray(a) ? a.slice(0, 100).map(v => readPending(v, ownerId)).filter((p): p is Pending => !!p) : []; } catch { return []; } });
+  const [archived, setArchived] = useState<Pending[]>(() => { try { const a: unknown = JSON.parse(localStorage.getItem(`${storage}:unresolved`) ?? '[]'); return Array.isArray(a) ? a.map(v => readPending(v, ownerId)).filter((p): p is Pending => !!p) : []; } catch { return []; } });
   const [ready, setReady] = useState(false); const [enabled, setEnabled] = useState(false); const [blocked, setBlocked] = useState(false);
   const [rows, setRows] = useState<PersonalSSHServer[]>([]); const [credentials, setCredentials] = useState<PersonalCredential[]>([]);
   const [input, setInput] = useState<SSHIdentityInput>(pending?.input ?? empty); const [form, setForm] = useState(!!pending?.input);
   const [editing, setEditing] = useState<string>(); const [identity, setIdentity] = useState<SSHIdentity>();
-  const [credential, setCredential] = useState<PersonalCredential>(); const [privateKey, setPrivateKey] = useState(''); const [consent, setConsent] = useState(false);
+  const [credential, setCredential] = useState<PersonalCredential>(); const [privateKey, setPrivateKey] = useState('');
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState(''); const [refresh, setRefresh] = useState(0);
   const [confirmStop, setConfirmStop] = useState(false); const [revoking, setRevoking] = useState<string>();
   const alive = useRef(true); const lock = useRef(false);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  function clearSecret() { setPrivateKey(''); setConsent(false); }
+  function clearSecret() { setPrivateKey(''); }
   function accountChanged() { clearSecret(); setRows([]); setCredentials([]); setInput(empty); setIdentity(undefined); setCredential(undefined); setForm(false); setPending(null); setArchived([]); setReady(false); setBlocked(true); setError('登录账户已改变，SSH 输入已清空。请刷新后管理自己的服务器。'); }
   async function verifyOwner() { const s = await api.session(); if (!alive.current) throw new Error('Unmounted'); if (s.id !== ownerId) { accountChanged(); throw new RemoteRequestError(true, 'EXPECTED_OWNER_MISMATCH'); } }
   useEffect(() => {
@@ -91,12 +91,12 @@ function OwnerSSHServers({ ownerId, onChanged, revision = 0 }: Props) {
     const p: Pending = { owner: ownerId, action: 'configure', requestId: crypto.randomUUID(), input: profile, credentialRef: saved.credentialRef, credentialRevision: saved.credentialRevision, ...(reference ? { reference } : {}) };
     retain(p);
     try {
-      serverReceipt(await personalSSHApi.configure(ownerId, { ...profile, credentialRef: saved.credentialRef, credentialRevision: saved.credentialRevision, confirmedHostKey: true, requestId: p.requestId }, reference));
+      serverReceipt(await personalSSHApi.configure(ownerId, { ...profile, credentialRef: saved.credentialRef, credentialRevision: saved.credentialRevision, requestId: p.requestId }, reference));
       await verifyOwner(); if (alive.current) { acknowledge(p); setForm(false); setIdentity(undefined); setCredential(undefined); setNotice('服务器已登记。下一步检查连接与目录；此时尚未安装应用。'); changed(); }
     } catch (e) { if (e instanceof RemoteRequestError && e.rejected && alive.current) acknowledge(p); throw e; }
   }
   async function save() {
-    if (!ready || pending || !identity || !consent || (!credential && !privateKey)) return;
+    if (!ready || pending || !identity || (!credential && !privateKey)) return;
     const profile = { ...input, address: identity.address, username: identity.username, hostKey: identity.hostKey };
     await run(async () => {
       let saved = credential;
@@ -145,11 +145,11 @@ function OwnerSSHServers({ ownerId, onChanged, revision = 0 }: Props) {
       if (p.action === 'credential') {
         const saved = matchCredentialReceipt(await personalRemoteApi.recoverCredential(p.requestId, ownerId), { owner: ownerId, action: 'create', requestId: p.requestId, providerId: SSH_CREDENTIAL_PROVIDER, destination: p.destination! });
         await verifyOwner(); if (alive.current) {
-          const pin = new URL(saved.destination).searchParams.get('hostkey')!;
-          const bytes = pin.match(/../g)!.map(v => parseInt(v, 16));
+          const pin = new URL(saved.destination).searchParams.get('hostkey');
+          const bytes = pin?.match(/../g)?.map(v => parseInt(v, 16)) ?? [];
           acknowledge(p, archive); clearSecret(); setInput(p.input!); setEditing(p.reference);
           setIdentity({ address: p.input!.address, port: p.input!.port, username: p.input!.username, hostKey: p.input!.hostKey,
-            hostFingerprint: 'SHA256:' + btoa(String.fromCharCode(...bytes)).replace(/=+$/, ''), origin: saved.destination });
+            hostFingerprint: pin ? 'SHA256:' + btoa(String.fromCharCode(...bytes)).replace(/=+$/, '') : '', origin: saved.destination });
           setCredential(saved); setForm(true); setNotice('身份保存已确认。请重新确认授权后登记服务器；核对没有重发私钥。'); changed();
         }
       } else {
@@ -169,7 +169,7 @@ function OwnerSSHServers({ ownerId, onChanged, revision = 0 }: Props) {
     });
   }
   function stopWaiting() {
-    if (!pending || archived.length >= 100) return;
+    if (!pending) return;
     void run(async () => { const next = [...archived, pending]; localStorage.setItem(`${storage}:unresolved`, JSON.stringify(next)); setArchived(next); acknowledge(pending); clearSecret(); setForm(false); setIdentity(undefined); setCredential(undefined); setNotice('已停止等待，原操作仍可核对。它可能已经完成；请先查看最新服务器和已保存身份，再决定新操作。'); changed(); });
   }
   function begin(server?: PersonalSSHServer) { clearSecret(); setCredential(undefined); setIdentity(undefined); setEditing(server?.reference); setInput(server ? { name: server.name, address: server.address, port: server.port, username: server.username, hostKey: server.hostKey, allowedRoot: server.allowedRoot } : empty); setForm(true); setError(''); }
@@ -179,17 +179,17 @@ function OwnerSSHServers({ ownerId, onChanged, revision = 0 }: Props) {
     {error && <p className="error-message" role="alert">{error}</p>}{notice && <p role="status">{notice}</p>}
     <button disabled={busy || blocked} onClick={() => setRefresh(n => n + 1)}>重新读取服务器</button>
     {!ready && !error && <p role="status">正在读取自己的服务器…</p>}{ready && !enabled && <p className="state-note">此部署尚未启用 SSH 服务器接入。请检查平台 SSH 和凭据存储配置。</p>}
-    {pending && <div className="state-note"><h3>上次操作待确认</h3><p>私钥输入已清空。核对只读取原结果，不会重发或安装。</p><button disabled={busy || blocked} onClick={() => void recover(pending)}>核对原操作</button><button disabled={busy || blocked || archived.length >= 100} onClick={() => setConfirmStop(true)}>停止等待</button>{confirmStop && <div><p>停止等待不会取消原操作，它仍可能完成。将保留原结果核对入口，任何新操作都需重新确认。</p><button disabled={busy} onClick={stopWaiting}>确认停止等待并保留记录</button><button disabled={busy} onClick={() => setConfirmStop(false)}>继续等待</button></div>}</div>}
+    {pending && <div className="state-note"><h3>上次操作待确认</h3><p>私钥输入已清空。核对只读取原结果，不会重发或安装。</p><button disabled={busy || blocked} onClick={() => void recover(pending)}>核对原操作</button><button disabled={busy || blocked} onClick={() => setConfirmStop(true)}>停止等待</button>{confirmStop && <div><p>停止等待不会取消原操作，它仍可能完成。将保留原结果核对入口，任何新操作都需重新确认。</p><button disabled={busy} onClick={stopWaiting}>确认停止等待并保留记录</button><button disabled={busy} onClick={() => setConfirmStop(false)}>继续等待</button></div>}</div>}
     {!!archived.length && <details><summary>未确认的保留操作</summary>{archived.map(p => <p key={p.requestId}>原操作仍可核对。<button disabled={disabled || form} onClick={() => void recover(p, true)}>核对保留结果</button></p>)}</details>}
     {rows.map(server => <article className="model-record" key={server.reference}><h3>{server.name}</h3><p>{server.username}@{server.address}:{server.port} · {server.allowedRoot}</p><p>{server.visibility === 'team' ? '团队共享' : '个人'}{server.isOwner === false ? ` · 所有者 ${server.ownerId}` : ''}</p><p role="status">{server.enabled ? '已启用' : server.status === 'verified' ? '连接已通过，请确认启用' : server.status === 'revoked' ? '连接授权已撤销' : server.status === 'expired' ? '检查授权已到期，请重新检查并启用' : server.status === 'credential_unavailable' ? 'SSH 身份不可用，请更换连接设置' : '需要检查连接与目录'}</p><p>{server.executionEnabled ? '已允许执行已配置训练' : '尚未允许训练执行'}</p><p className="quiet">执行授权允许当前成员使用此 SSH 身份运行已配置的训练，可能占用服务器资源；连接检查或共享不会自动开启它。此按钮不启动任务。</p><p className="quiet">检查授权有效 15 分钟。到期后重新检查并启用，原研究数据保留。</p>{server.diagnostic && <p className="error-message">{sshMessages[server.diagnostic] ?? '依赖检查未通过。'}</p>}
       {server.status !== 'revoked' && <div className="button-row">{server.isOwner !== false && <button disabled={disabled} onClick={() => void command(server, 'verify')}>检查连接与目录</button>}{server.status === 'verified' && !server.enabled && <button disabled={disabled} onClick={() => void command(server, 'bind')}>启用此服务器</button>}{server.status === 'verified' && !server.executionEnabled && <button disabled={disabled} onClick={() => void command(server, 'bind-execution')}>允许执行已配置训练</button>}{server.isOwner !== false && <><button disabled={disabled} onClick={() => begin(server)}>更换连接设置</button><button disabled={disabled} onClick={() => void share(server)}>{server.visibility === 'team' ? '改为个人服务器' : '共享服务器给团队'}</button><button disabled={disabled} onClick={() => setRevoking(server.reference)}>撤销授权</button></>}</div>}
       {revoking === server.reference && <div><p>确认撤销 {server.name} 的后续连接授权？原研究数据保留。</p><button disabled={disabled} onClick={() => void command(server, 'revoke')}>确认撤销服务器授权</button><button disabled={busy} onClick={() => setRevoking(undefined)}>保留授权</button></div>}</article>)}
     {ready && enabled && !form && !pending && <><p>{!rows.length && '还没有自己的服务器。先添加并检查，再用于应用。'}</p><button disabled={disabled} onClick={() => begin()}>添加我的服务器</button></>}
     {form && !pending && !blocked && <form className="model-form" aria-label="设置我的服务器" onSubmit={e => { e.preventDefault(); void (identity ? save() : preview()); }}><h3>{identity ? '确认服务器身份与授权' : editing ? '更换服务器连接设置' : '添加我的服务器'}</h3>
-      <fieldset disabled={disabled || !!identity}><label>服务器名称<input value={input.name} maxLength={80} onChange={e => setInput({ ...input, name: e.target.value })}/></label><label>服务器地址<input value={input.address} autoComplete="off" onChange={e => setInput({ ...input, address: e.target.value })}/></label><label>SSH 端口<input type="number" min={1} max={65535} value={input.port} onChange={e => setInput({ ...input, port: Number(e.target.value) })}/></label><label>SSH 账户<input value={input.username} autoComplete="off" onChange={e => setInput({ ...input, username: e.target.value })}/></label><label>服务器主机公钥<textarea rows={2} value={input.hostKey} autoComplete="off" maxLength={16384} placeholder="ssh-ed25519 / ssh-rsa / ecdsa-sha2-…" onChange={e => setInput({ ...input, hostKey: e.target.value })}/></label><details><summary>如何取得主机公钥？</summary><p>从服务器本机终端或可信管理控制台读取 <code>cat /etc/ssh/ssh_host_*_key.pub</code>，复制完整公钥。这里不会从未确认的网络连接自动学习主机身份。</p></details><label>私有工作目录<input value={input.allowedRoot} autoComplete="off" placeholder="/home/me/.agent-factory" maxLength={4096} onChange={e => setInput({ ...input, allowedRoot: e.target.value })}/></label><p>检查时不创建目录；准备研究应用时可在本人已有目录下创建这个私有子目录，不修改其他目录权限。</p></fieldset>
-      {identity && <fieldset disabled={disabled}><p>主机指纹：<code>{identity.hostFingerprint}</code></p><label>已保存的此服务器 SSH 身份<select value={credential?.credentialRef ?? ''} onChange={e => { setCredential(credentials.find(c => c.credentialRef === e.target.value)); setPrivateKey(''); }}><option value="">输入一个专用身份</option>{credentials.filter(c => c.destination === identity.origin).map((c, i) => <option key={c.credentialRef} value={c.credentialRef}>已保存身份 {i + 1}</option>)}</select></label>{!credential && <><label>专用 SSH 私钥<textarea rows={4} autoComplete="off" maxLength={24576} value={privateKey} onChange={e => setPrivateKey(e.target.value)}/></label><p className="quiet">使用服务器已授权的、无口令 OpenSSH 私钥（RSA、ECDSA 或 Ed25519）。它仅加密保存在保险库，不回显或写入浏览器存储；带口令密钥暂不支持。</p></>}
-        <label><input type="checkbox" checked={consent} onChange={e => setConsent(e.target.checked)}/>我已从可信来源核对主机公钥，授权 Factory 使用此 SSH 身份连接此服务器并检查所选私有目录。</label></fieldset>}
-      <div className="button-row"><button className="primary" disabled={disabled || !input.name || !input.address || !input.username || !input.hostKey || !input.allowedRoot || !!identity && (!consent || !credential && !privateKey)}>{identity ? '保存身份并登记服务器' : '核对服务器身份'}</button>{identity && <button type="button" disabled={busy} onClick={() => { clearSecret(); setIdentity(undefined); setCredential(undefined); }}>修改服务器信息</button>}<button type="button" disabled={busy} onClick={() => { clearSecret(); setForm(false); setIdentity(undefined); setCredential(undefined); }}>取消并清空输入</button></div>
+      <fieldset disabled={disabled || !!identity}><label>服务器名称<input value={input.name} onChange={e => setInput({ ...input, name: e.target.value })}/></label><label>服务器地址<input value={input.address} autoComplete="off" onChange={e => setInput({ ...input, address: e.target.value })}/></label><label>SSH 端口<input type="number" min={1} max={65535} value={input.port} onChange={e => setInput({ ...input, port: Number(e.target.value) })}/></label><label>SSH 账户<input value={input.username} autoComplete="off" onChange={e => setInput({ ...input, username: e.target.value })}/></label><label>私有工作目录<input value={input.allowedRoot} autoComplete="off" placeholder="/home/me/.agent-factory" onChange={e => setInput({ ...input, allowedRoot: e.target.value })}/></label><p>检查时不创建目录；准备研究应用时可在本人已有目录下创建这个私有子目录，不修改其他目录权限。</p></fieldset>
+      {identity && <fieldset disabled={disabled}>{identity.hostFingerprint && <p>主机指纹：<code>{identity.hostFingerprint}</code></p>}<label>已保存的此服务器 SSH 身份<select value={credential?.credentialRef ?? ''} onChange={e => { setCredential(credentials.find(c => c.credentialRef === e.target.value)); setPrivateKey(''); }}><option value="">输入一个专用身份</option>{credentials.filter(c => c.destination === identity.origin).map((c, i) => <option key={c.credentialRef} value={c.credentialRef}>已保存身份 {i + 1}</option>)}</select></label>{!credential && <><label>专用 SSH 私钥<textarea rows={4} autoComplete="off" value={privateKey} onChange={e => setPrivateKey(e.target.value)}/></label><p className="quiet">使用服务器已授权的、无口令 OpenSSH 私钥（RSA、ECDSA 或 Ed25519）。它仅加密保存在保险库，不回显或写入浏览器存储；带口令密钥暂不支持。</p></>}
+        </fieldset>}
+      <div className="button-row"><button className="primary" disabled={disabled || !input.name || !input.address || !input.username || !input.allowedRoot || !!identity && (!credential && !privateKey)}>{identity ? '保存身份并登记服务器' : '继续配置 SSH 身份'}</button>{identity && <button type="button" disabled={busy} onClick={() => { clearSecret(); setIdentity(undefined); setCredential(undefined); }}>修改服务器信息</button>}<button type="button" disabled={busy} onClick={() => { clearSecret(); setForm(false); setIdentity(undefined); setCredential(undefined); }}>取消并清空输入</button></div>
     </form>}
   </section>;
 }

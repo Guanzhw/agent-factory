@@ -5,6 +5,7 @@ owner, protocol, TLS destination and credential revision; stale plans fail close
 """
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 from typing import Literal
 
@@ -26,13 +27,8 @@ from .resource_sharing import SharingCommand
 
 
 class PersonalModels:
-    def __init__(self, store, auth, connections, vault, *, transport_factory=None,
-            trusted_model_proxy=None, proxy_environment_id=None):
+    def __init__(self, store, auth, connections, vault):
         self.store, self.auth, self.connections, self.vault = store, auth, connections, vault
-        self.transport_factory = transport_factory
-        self.proxy_environment_id = proxy_environment_id
-        self.trusted_model_proxy = None
-        self.install_trusted_model_proxy(trusted_model_proxy)
         self.db = GovernedStorage(store, 'af_personal_models_v1')
         metadata = MetaData()
         self.models = Table('af_personal_models', metadata,
@@ -46,23 +42,6 @@ class PersonalModels:
             Column('connection_ref', String, nullable=False))
         self.commands = self.db.command_table('af_personal_model_commands', metadata)
         metadata.create_all(store.engine)
-
-    def install_trusted_model_proxy(self, proxy):
-        """Trusted same-process operator configuration only; no HTTP/env loader."""
-        if proxy is not None:
-            from .trusted_model_proxy import TrustedModelProxy
-            if not isinstance(proxy, TrustedModelProxy) or self.transport_factory is not None:
-                raise ValueError('TRUSTED_MODEL_PROXY_CONFIGURATION_INVALID')
-            proxy.validate_environment(self.proxy_environment_id)
-        self.trusted_model_proxy = proxy
-
-    def _model_proxy(self, owner, body):
-        if self.trusted_model_proxy is None:
-            return None
-        try:
-            return self.trusted_model_proxy.select(owner, body, self.proxy_environment_id)
-        except ValueError:
-            raise HTTPException(409, 'PERSONAL_MODEL_PROXY_SCOPE_CHANGED') from None
 
     def capabilities(self, owner):
         self.auth.require_member(owner)
@@ -100,7 +79,7 @@ class PersonalModels:
         body = dict(row['body'])
         default_binding_current = True
         if row['owner_id'] != owner:
-            body = {key: body[key] for key in ('ownerId', 'reference', 'revision', 'updatedAt', 'provider', 'baseURL', 'model', 'protocol', 'thinkingMode', 'maxOutputTokens') if key in body}
+            body = {key: body[key] for key in ('ownerId', 'reference', 'revision', 'updatedAt', 'provider', 'baseURL', 'model', 'protocol', 'thinkingMode', 'maxOutputTokens', 'contextWindow', 'autoCompactTokenLimit') if key in body}
             binding = conn.execute(select(self.shared_defaults).where(self.shared_defaults.c.actor_id == owner,
                 self.shared_defaults.c.reference == reference)).mappings().first()
             if binding:
@@ -235,25 +214,22 @@ class PersonalModels:
             self.connections.sharing.set(conn, owner, reference, visibility)
             return self.db.record(conn, self.commands, owner, request_id, fingerprint, 'model.sharing', self._public(conn, owner, reference))
 
-    def register(self, bindings):
-        def validate(configuration):
-            if configuration: raise ValueError('Owner model material configuration must be empty')
-        def create(context):
-            handle = context.connection
-            if not isinstance(handle, OwnerModelHandle) or handle.actor != context.plan['ownerId']:
-                raise HTTPException(403, 'PERSONAL_MODEL_OWNER_REQUIRED')
-            return OwnerChatModel(handle.body, handle.credential, transport_factory=self.transport_factory,
-                recheck=handle.check, session_id='af-plan-' + context.plan['id'], trusted_proxy=handle.trusted_proxy,
-                timeout_seconds=context.settings.native_timeout_seconds)
-        bindings.register('model', ADAPTER_ID, '1', create, connection_kind='model',
-            required_capabilities=(CAPABILITY,), validator=validate)
+    def model_for(self, owner, reference, context):
+        handle = self.connections.resolve(owner, reference, 'model', task_id=context.session_id)
+        if not isinstance(handle, OwnerModelHandle) or handle.actor != owner:
+            raise HTTPException(403, 'PERSONAL_MODEL_OWNER_REQUIRED')
+        async def on_text(text, response_id):
+            await asyncio.to_thread(self.store.event, context.session_id,
+                'model_content_delta', '正在生成回答', {'text': text, 'responseId': response_id})
+        return OwnerChatModel(handle.body, handle.credential,
+            recheck=handle.check, session_id='af-task-' + context.session_id,
+            on_text=on_text)
 
 
 class OwnerModelHandle:
     def __init__(self, service, owner, body, *, actor=None):
         self.service, self.owner, self.body = service, owner, dict(body)
         self.actor = actor or owner
-        self.trusted_proxy = service._model_proxy(owner, self.body)
 
     def __repr__(self): return 'OwnerModelHandle(credentials=<redacted>)'
 
@@ -266,10 +242,6 @@ class OwnerModelHandle:
                 raise HTTPException(409, 'PERSONAL_MODEL_CHANGED')
             if not self.service._authorize(self.owner, row['body']):
                 raise HTTPException(409, 'PERSONAL_MODEL_CREDENTIAL_UNAVAILABLE')
-            if self.service._model_proxy(self.owner, row['body']) is not self.trusted_proxy:
-                raise HTTPException(409, 'PERSONAL_MODEL_PROXY_ROUTE_CHANGED')
-            if self.service._model_proxy(self.owner, self.body) is not self.trusted_proxy:
-                raise HTTPException(409, 'PERSONAL_MODEL_PROXY_SCOPE_CHANGED')
 
     def credential(self):
         self.check()
@@ -300,15 +272,17 @@ class RedactedInputRoute(APIRoute):
 
 class ConfigureModel(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    provider: str = Field(min_length=1, max_length=100)
-    baseURL: str = Field(min_length=1, max_length=512)
-    model: str = Field(min_length=1, max_length=120)
-    credentialRef: str | None = Field(default=None, min_length=1, max_length=200)
-    credentialRevision: str | None = Field(default=None, min_length=1, max_length=200)
+    provider: str = Field(min_length=1)
+    baseURL: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    credentialRef: str | None = Field(default=None, min_length=1)
+    credentialRevision: str | None = Field(default=None, min_length=1)
     protocol: Literal['chat-completions', 'responses'] | None = None
     thinkingMode: Literal['default', 'disabled'] | None = None
     maxOutputTokens: int | None = None
-    requestId: str = Field(min_length=8, max_length=100)
+    contextWindow: int | None = Field(default=None, strict=True, ge=1)
+    autoCompactTokenLimit: int | None = Field(default=None, strict=True, ge=1)
+    requestId: str = Field(min_length=1)
 
     @model_validator(mode='after')
     def credential_pair(self):
@@ -330,7 +304,7 @@ class ConfigureModel(BaseModel):
 
 class ModelCommand(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    requestId: str = Field(min_length=8, max_length=100)
+    requestId: str = Field(min_length=1)
 
 
 def personal_model_router(auth, service):

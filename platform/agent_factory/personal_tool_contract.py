@@ -23,7 +23,7 @@ def validate_tool_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
     """
     from jsonschema import Draft202012Validator
     try:
-        value = bounded_tool_json(dict(schema), maximum=32768)
+        value = bounded_tool_json(dict(schema), maximum=None)
         if value.get('type') != 'object' or {'fc', 'run_context', '_agno_run_context'} & set(value.get('properties', {})):
             raise ValueError()
         Draft202012Validator.check_schema(value)
@@ -32,7 +32,7 @@ def validate_tool_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError('PERSONAL_TOOL_DESCRIPTOR_INVALID') from None
 
 
-def bounded_tool_json(value: Any, *, maximum: int) -> Any:
+def bounded_tool_json(value: Any, *, maximum: int | None) -> Any:
     """Use the tool's byte budget, not application-form shape limits."""
     def check(item):
         if type(item) is dict:
@@ -49,7 +49,7 @@ def bounded_tool_json(value: Any, *, maximum: int) -> Any:
     try:
         check(value)
         encoded = json.dumps(value, allow_nan=False)
-        if len(encoded.encode()) > maximum:
+        if maximum is not None and len(encoded.encode()) > maximum:
             raise ValueError()
         return json.loads(encoded)
     except (TypeError, ValueError, OverflowError, RecursionError):
@@ -60,7 +60,7 @@ def validate_tool_arguments(schema: Mapping[str, Any], arguments: Mapping[str, A
     from jsonschema import Draft202012Validator
     from referencing import Registry
     try:
-        value = bounded_tool_json(dict(arguments), maximum=65536)
+        value = bounded_tool_json(dict(arguments), maximum=None)
         if {'fc', 'run_context', '_agno_run_context'} & set(value):
             raise ValueError()
         Draft202012Validator(dict(schema), registry=Registry()).validate(value)
@@ -80,28 +80,28 @@ class ToolDescriptor:
     credential_provider_id: str
     credential_destination: str
     capabilities: tuple[str, ...]
-    timeout_seconds: float = 30.0
-    max_output_bytes: int = 65536
+    timeout_seconds: float | None = None
+    max_output_bytes: int | None = None
     permission: str = "tool:invoke"
     read_only: bool = False
 
     def __post_init__(self):
         from .connections import _capabilities, _identifier
-        identifier = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}')
+        identifier = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]*')
         if (any(type(value) is not str or not identifier.fullmatch(value) for value in
                 (self.adapter_id, self.revision, self.credential_provider_id, self.permission))
-                or type(self.tool_name) is not str or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]{0,63}', self.tool_name)
+                or type(self.tool_name) is not str or not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_-]*', self.tool_name)
                 or self.transport not in {'cli', 'mcp'}
-                or type(self.description) is not str or not 1 <= len(self.description) <= 2000
-                or type(self.credential_destination) is not str or not 1 <= len(self.credential_destination) <= 512
+                or type(self.description) is not str or not self.description
+                or type(self.credential_destination) is not str or not self.credential_destination
                 or any(ord(char) < 32 for char in self.credential_destination)
-                or type(self.capabilities) is not tuple or not 1 <= len(self.capabilities) <= 30
-                or any(type(value) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}', value)
+                or type(self.capabilities) is not tuple or not self.capabilities
+                or any(type(value) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]*', value)
                     for value in self.capabilities)
                 or len(set(self.capabilities)) != len(self.capabilities)
-                or type(self.timeout_seconds) not in (int, float) or not math.isfinite(self.timeout_seconds)
-                or not 0.1 <= self.timeout_seconds <= 300
-                or type(self.max_output_bytes) is not int or not 1 <= self.max_output_bytes <= 1048576
+                or self.timeout_seconds is not None and (type(self.timeout_seconds) not in (int, float)
+                    or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0)
+                or self.max_output_bytes is not None and (type(self.max_output_bytes) is not int or self.max_output_bytes <= 0)
                 or type(self.read_only) is not bool):
             raise ValueError('PERSONAL_TOOL_DESCRIPTOR_INVALID')
         _capabilities(self.capabilities)
@@ -115,7 +115,7 @@ class ToolDescriptor:
 class ToolInvocation:
     """One owner-scoped call. Never cache this object or its credential lease.
 
-    Call check_authorized before dispatch and while observing cancellation.
+    Call check_authorized before dispatch.
     resolve_credential repeats exact owner/ref/revision/provider/target checks.
     call_id identifies the original durable effect; retry must not redispatch it.
     """
@@ -139,20 +139,20 @@ class ToolInvocationError(RuntimeError):
     is settled; failed/unstopped receipts retain custody and stop the native run.
     """
     def __init__(self, code: str, *, outcome: Literal["failed", "cancelled", "unknown"] = "unknown",
-                 stopped: bool = False):
+                 stopped: bool = False, output: Any = None):
         super().__init__(code)
         self.code, self.outcome, self.stopped = code, outcome, stopped
+        self.output = output
 
 
 class PersonalToolAdapter(Protocol):
     descriptor: ToolDescriptor
 
     async def invoke(self, invocation: ToolInvocation) -> Any:
-        """Return bounded JSON and attempt owned-resource cleanup in finally.
+        """Return JSON and clean up invocation-owned resources in finally.
 
         No ambient credential fallback, owner-global mutable auth, automatic
-        redispatch or cross-owner session reuse. Verify known credential echoes
-        before returning output. Initial implementation uses one call/session.
+        redispatch or cross-owner session reuse. MCP uses one call/session.
         Stop and cleanup evidence remain separate from the business outcome;
         retain private CLI state whenever process stop cannot be confirmed.
         """
