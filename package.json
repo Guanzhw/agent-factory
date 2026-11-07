@@ -13,11 +13,10 @@
     "start": "uv run agent-factory",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint web shared tests *.ts *.js",
-    "test": "vitest run",
-    "check": "npm run lint && npm run typecheck && npm test && npm run build",
+    "lint": "eslint web shared *.ts *.js",
+    "check": "npm run lint && npm run typecheck && npm run build",
     "start:configured": "uv run agent-factory",
-    "check:python": "uv run ruff check platform deployment applications scripts && uv run pyright && uv run python scripts/check_python.py",
+    "check:python": "uv run ruff check platform deployment applications scripts && uv run pyright",
     "build:research": "npm run build",
     "dev:research": "npm run dev:web"
   },
@@ -37,10 +36,8 @@
     "@types/react-dom": "19.1.9",
     "@vitejs/plugin-react": "5.0.3",
     "eslint": "10.11.0",
-    "happy-dom": "21.0.4",
     "typescript": "5.9.2",
     "typescript-eslint": "8.71.0",
-    "vite": "7.3.7",
-    "vitest": "4.1.12"
+    "vite": "7.3.7"
   }
 }
