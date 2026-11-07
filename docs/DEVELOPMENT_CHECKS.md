@@ -1,6 +1,6 @@
 # Development checks
 
-The old test suite was deleted at the user's request on 2026-11-07. The user subsequently requested minimal feature-based regression coverage using Ponytail. The new suite has two browser journeys and three focused review regressions; it does not restore the old tests or their implementation constraints.
+The old test suite was deleted at the user's request on 2026-11-07. The user subsequently requested minimal feature-based regression coverage using Ponytail. The new suite covers a small set of browser journeys and focused review regressions; it does not restore the old tests or their implementation constraints.
 
 ## Run
 
@@ -28,5 +28,7 @@ Two focused cases exercise SSH revocation through the real database/API and nati
 - Native file editing produces a larger-than-52-KB UTF-8 document; the browser downloads identical bytes with a Chinese filename. Downloads also reject parent traversal, sibling-prefix paths and escaping symlinks while accepting normalized paths within the session.
 - A child Agent creates a file, returns its result and the parent resumes. Refresh retains one original turn; files remain downloadable on desktop/mobile.
 - Stop terminates an actually running local command; refreshing does not repeat it.
+- External Skills load native instructions, nested references and script source. A script preserves shebang flags, arguments and cwd, returns exit-7 diagnostics, then another invocation runs longer than 30 seconds and produces a downloadable result. Stop terminates an actual skill-script PID.
+- Focused cases cover ordinary research records and standalone analysis without command receipts, unknown-call non-replay and independent continuation, and native session completion without pretending unknown effects succeeded.
 
-The model is a deterministic protocol fixture, not an intelligence or real-provider check. These tests do not establish Windows compatibility, remote SSH execution, all model protocols, MCP interoperability, long-duration execution or scientific research quality. Real-model and platform-specific acceptance remain separate. `npm run check` itself still runs only frontend lint, types and build; CI also runs all five regression cases.
+The model is a deterministic protocol fixture, not an intelligence or real-provider check. These tests do not establish Windows compatibility, remote SSH execution, all model protocols, MCP interoperability, long-duration execution or scientific research quality. Real-model and platform-specific acceptance remain separate. `npm run check` itself still runs only frontend lint, types and build; CI also runs the minimal regression suite.

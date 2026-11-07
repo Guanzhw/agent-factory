@@ -13,12 +13,12 @@ import tempfile
 from typing import Any, cast
 import weakref
 
-from agno.exceptions import RunCancelledException, StopAgentRun
+from agno.exceptions import RunCancelledException
 from agno.tools.function import Function, FunctionCall
 from agno.tools.workspace import Workspace
 from fastapi import HTTPException
 
-from agent_factory._personal_cli_process import CLIProcessError, run_cli_process
+from agent_factory._personal_cli_process import run_cli_process
 from agent_factory.tool_output import DEFAULT_OUTPUT_TOKENS
 from agent_factory.personal_tool_contract import ToolInvocationError, validate_tool_arguments
 from .session_memory import MEMORY_TOOLS, MEMORY_WRITES
@@ -50,17 +50,23 @@ TOOLS = {
         'You may instead run commands directly and use research_record_experiment; delegation is optional.',
         _schema({'hypothesis': MEMORY_TEXT, 'conditions': MEMORY_TEXT,
                  'goal': {'type': 'string', 'minLength': 1}}, ['hypothesis', 'conditions', 'goal'])),
-    'research_record_experiment': ('Record an experiment from actual completed command receipts in this task, without delegating. '
-        'Publishes curated hypothesis/conditions and receipt identities, never raw output. '
-        'Optional effectKeys selects original receipts; omit to use completed command receipts in this task. '
-        'A successful command is not a scientifically verified result.',
+    'research_record_experiment': ('Save research observations from files, existing results or external tool output. '
+        'No command receipt is required. Publishes supplied observations and references to the team; omit private information. '
+        'Recording an observation does not certify execution or scientific success.',
         _schema({'hypothesis': MEMORY_TEXT, 'conditions': MEMORY_TEXT,
-                 'effectKeys': {'type': 'array', 'minItems': 1, 'items': {'type': 'string'}}}, ['hypothesis', 'conditions'])),
-    'research_experiment_result': ('Inspect an original experiment and its evidence identities; never restart unknown work.',
+                 'observations': {'type': 'array', 'items': {'type': 'string'}},
+                 'evidenceIds': {'type': 'array', 'items': {'type': 'string'},
+                     'description': 'Ordinary file paths, URLs or other references to supporting results.'},
+                 'effectKeys': {'type': 'array', 'items': {'type': 'string'},
+                     'description': 'Optional legacy result references.'}}, [])),
+    'research_experiment_result': ('Inspect an original research record; never restart unknown work.',
         _schema({'experimentId': MEMORY_ID}, ['experimentId'])),
-    'research_assess': ('Save an interpretation of an experiment with confirmed execution evidence. '
-        'This remains agent analysis, including negative results; it never changes facts or certifies scientific success.',
-        _schema({'experimentId': MEMORY_ID, 'assessment': MEMORY_TEXT}, ['experimentId', 'assessment'])),
+    'research_assess': ('Save an interpretation of available evidence, optionally linked to a research record. '
+        'No terminal result is required. Publishes the supplied analysis to the team; omit private information. '
+        'Analysis never changes execution facts or certifies scientific success.',
+        _schema({'experimentId': MEMORY_ID, 'assessment': MEMORY_TEXT,
+                 'observations': {'type': 'array', 'items': {'type': 'string'}},
+                 'evidenceIds': {'type': 'array', 'items': {'type': 'string'}}}, ['assessment'])),
     SPAWN: ('Delegate one independent subtask to a temporary assistant with the same owner, workspace, tools and execution configuration. '
         'State the precise subtask, relevant file paths and whether it may edit or only inspect. '
         'Avoid concurrent edits to the same file. This starts a child, not a finished result; use research_wait_child to collect it.',
@@ -95,7 +101,7 @@ TOOLS = {
         'Creates missing parent directories for new files.',
         _schema({'path': PATH_SCHEMA, 'old': {'type': 'string'},
                  'new': {'type': 'string'}}, ['path', 'old', 'new'])),
-    'research_run': ('Run argv without shell expansion in the workspace. '
+    'research_run': ('Run argv without shell expansion; cwd defaults to this session workspace. '
         'These run with the configured OS user permissions, not inside a sandbox. '
         'Follow the owner goal and boundaries. Inspect the actual exit code and output. '
         'Large output is summarized with paths to the complete stdout/stderr files; read those files when needed. '
@@ -323,7 +329,6 @@ class ResearchSessionTools:
         self.sessions: Any = None
         self.content: Any = None
         self._call_locks: weakref.WeakValueDictionary[tuple, asyncio.Lock] = weakref.WeakValueDictionary()
-        self._active_effects: set[str] = set()
         if type(host_commands) is not bool or not isinstance(self.command_path, str) or '\0' in self.command_path:
             raise ValueError('RESEARCH_COMMAND_CONFIGURATION_INVALID')
         if self.workspace_root is not None:
@@ -382,21 +387,16 @@ class ResearchSessionTools:
                     else 'RESEARCH_WORKSPACE_NOT_CONFIGURED')
             key = EFFECT_PREFIX + call_id
             full_key = run_context.run_id + ':' + key
-            effects = store.effects(run_context.session_id)
-            for effect in effects:
-                if (EFFECT_PREFIX in effect['effect_key']
-                        and (effect['effect_key'] != full_key or name not in MEMORY_WRITES | RESEARCH_WRITES | {'research_ask_assistant'})
-                        and effect['effect_key'] not in self._active_effects
-                        and effect['status'] not in {'DONE', 'CANCELLED'}):
-                    raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN')
+            original = {'callId': call_id, 'effectKey': full_key}
+
+            def unknown(code='RESEARCH_TOOL_OUTCOME_UNKNOWN', *, stopped=None):
+                guard()
+                return self._receipt({'outcome': 'unknown', 'code': code, 'stopped': stopped}, **original)
+
             event = {'toolName': name, 'callId': call_id, 'operation': name.removeprefix('research_')}
             try:
                 values = validate_tool_arguments(TOOLS[name][1], arguments)
             except ValueError:
-                if any(EFFECT_PREFIX in effect['effect_key'] and effect['effect_key'] not in self._active_effects
-                        and effect['status'] not in {'DONE', 'CANCELLED'}
-                        for effect in effects):
-                    raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN') from None
                 guard()
                 receipt = {'outcome': 'failed', 'stopped': True, 'code': 'PERSONAL_TOOL_INPUT_INVALID',
                     'message': 'No operation was started. Check the required fields and types in this tool schema.'}
@@ -417,13 +417,13 @@ class ResearchSessionTools:
                 try:
                     reservation = store.effect_reserve(identity[2], key, request)
                 except Exception:
-                    raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN') from None
+                    return unknown()
                 if reservation['status'] == 'done':
                     guard()
-                    return self._receipt(reservation.get('result'))
+                    return self._receipt(reservation.get('result'), **original)
                 if reservation['status'] != 'new':
                     if name not in MEMORY_WRITES | RESEARCH_WRITES | {'research_ask_assistant'}:
-                        raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN')
+                        return unknown()
                     try:
                         output = (self.sessions.memory.reconcile(identity[0], call_id, memory_operation)
                             if name in MEMORY_WRITES else self.sessions.research.reconcile(run_context, call_id, name, values)
@@ -432,11 +432,9 @@ class ResearchSessionTools:
                             raise ValueError('Original question is unconfirmed')
                         store.effect_complete(identity[2], key, {'outcome': 'completed', 'output': output})
                     except Exception:
-                        raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN') from None
+                        return unknown()
                     guard()
                     return output
-                if reservation['status'] == 'new':
-                    self._active_effects.add(full_key)
             if 'path' in values:
                 event['relativePath'] = values['path']
             store.event(identity[1], 'research_tool_started', '开始执行研究工具', event)
@@ -486,7 +484,7 @@ class ResearchSessionTools:
                 else:
                     store.event(identity[1], 'research_tool_finished', '原操作结果未确认，请先核对',
                         {**event, 'outcome': 'unknown', 'stopped': error.stopped, 'code': error.code})
-                    raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN') from None
+                    return unknown(error.code, stopped=error.stopped)
             except (ValueError, OSError, UnicodeError, PermissionError, HTTPException):
                 # A mutation may have committed before an IO failure. Keep its
                 # effect unresolved; a new model call must not replay it.
@@ -495,7 +493,7 @@ class ResearchSessionTools:
                         {**event, 'outcome': 'unknown', 'code': 'RESEARCH_TOOL_OUTCOME_UNKNOWN'
                             if name == 'research_ask_assistant' else 'RESEARCH_MEMORY_OUTCOME_UNKNOWN'
                             if name in MEMORY_WRITES else 'RESEARCH_FILE_OR_COMMAND_REJECTED'})
-                    raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN') from None
+                    return unknown()
                 store.event(identity[1], 'research_tool_finished', '研究工具未完成',
                     {**event, 'outcome': 'failed', 'code': 'RESEARCH_TOOL_INPUT_OR_ACCESS_REJECTED'})
                 raise ValueError('RESEARCH_TOOL_INPUT_OR_ACCESS_REJECTED') from None
@@ -505,7 +503,7 @@ class ResearchSessionTools:
                 except Exception:
                     store.event(identity[1], 'research_tool_finished', '原操作回执未确认，请先核对',
                         {**event, 'outcome': 'unknown', 'code': 'RESEARCH_TOOL_RECEIPT_UNCONFIRMED'})
-                    raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN') from None
+                    return unknown('RESEARCH_TOOL_RECEIPT_UNCONFIRMED')
             result = receipt.get('output', {})
             store.event(identity[1], 'research_tool_finished', '研究工具返回结果',
                 {**event, **receipt, **{field: result[field] for field in
@@ -521,16 +519,13 @@ class ResearchSessionTools:
             call_id = getattr(fc, 'call_id', None)
             call_lock = self._call_locks.setdefault((*identity, call_id), asyncio.Lock())
             async with call_lock:
-                try:
-                    return await invoke(run_context=run_context, fc=fc, **arguments)
-                finally:
-                    self._active_effects.discard(identity[2] + ':' + EFFECT_PREFIX + str(call_id))
+                return await invoke(run_context=run_context, fc=fc, **arguments)
 
         return Function(name=name, description=TOOLS[name][0], parameters=TOOLS[name][1],
             entrypoint=serialized, skip_entrypoint_processing=True, external_execution=name == WAIT)
 
     @staticmethod
-    def _receipt(receipt):
+    def _receipt(receipt, **identity):
         if isinstance(receipt, dict):
             if receipt.get('outcome') == 'completed':
                 return receipt['output']
@@ -539,7 +534,10 @@ class ResearchSessionTools:
             if receipt.get('outcome') == 'failed' and receipt.get('stopped') is True:
                 return {'outcome': 'failed', 'code': receipt['code'], 'message': receipt.get('message',
                     'Tool call failed. Check the reported code and tool arguments before correcting this call.')}
-        raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN')
+        return {'outcome': 'unknown', 'stopped': None, 'code': 'RESEARCH_TOOL_OUTCOME_UNKNOWN',
+                **(receipt if isinstance(receipt, dict) else {}), **identity,
+                'message': 'The original operation is unconfirmed. Do not replay it. '
+                           'Inspect its original result if possible; other work can continue.'}
 
     def _files(self, workspace, name, values):
         if name == 'research_edit_file':
@@ -630,12 +628,12 @@ class ResearchSessionTools:
         if not argv[0] or any('\0' in arg for arg in argv):
             raise _rejected('RESEARCH_COMMAND_INVALID')
         try:
-            cwd_parts = _workspace_parts(workspace, values.get('cwd', '.'), directory=True)
-            manager = _directory(workspace, cwd_parts)
+            requested = Path(values.get('cwd', '.'))
+            cwd = (requested if requested.is_absolute() else workspace / requested).resolve()
+            manager = _directory(cwd)
             manager.__enter__()
         except (ValueError, OSError):
             raise _rejected('RESEARCH_COMMAND_DIRECTORY_INVALID') from None
-        cwd = workspace.joinpath(*cwd_parts)
         command_path = os.pathsep.join(str(Path(part) if Path(part).is_absolute() else cwd / part)
             for part in self.command_path.split(os.pathsep)) if self.command_path else ''
         if '/' in argv[0] or '\\' in argv[0]:
@@ -650,9 +648,6 @@ class ResearchSessionTools:
         if executable is None:
             manager.__exit__(None, None, None)
             raise _rejected('RESEARCH_COMMAND_UNAVAILABLE')
-        root = None
-        stopped = False
-
         def check():
             try:
                 guard()
@@ -668,19 +663,12 @@ class ResearchSessionTools:
                 stream.write(chunk)
 
         try:
-            root = Path(tempfile.mkdtemp(prefix='research-command-'))
             environment = dict(os.environ)
             environment['PATH'] = command_path
-            try:
-                result = await run_cli_process(executable=executable, argv=argv[1:], env=environment,
-                    cwd=workspace.joinpath(*cwd_parts), stdin=b'',
-                    timeout_seconds=None,
-                    max_output_bytes=None, before_spawn=check, check_authorized=check, on_output=append_output,
-                    capture_max_bytes=1024 * 1024)
-                stopped = result.stopped
-            except CLIProcessError as error:
-                stopped = error.stopped
-                raise
+            result = await run_cli_process(executable=executable, argv=argv[1:], env=environment,
+                cwd=cwd, stdin=b'', timeout_seconds=None,
+                max_output_bytes=None, before_spawn=check, check_authorized=check, on_output=append_output,
+                capture_max_bytes=1024 * 1024)
             returned = {**output, 'exitCode': result.returncode, 'stopped': result.stopped,
                 **command_output(saved, values.get('max_output_tokens', DEFAULT_OUTPUT_TOKENS) * 4)}
             if returned.get('truncated') or output_directory is not None:
@@ -691,5 +679,3 @@ class ResearchSessionTools:
             return returned
         finally:
             manager.__exit__(None, None, None)
-            if stopped and root is not None:
-                shutil.rmtree(root)
