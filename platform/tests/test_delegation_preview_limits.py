@@ -1,6 +1,5 @@
 """Impossible child previews deny locally; viable previews still recheck authority."""
 import asyncio
-from contextlib import nullcontext
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
@@ -8,7 +7,7 @@ from unittest.mock import Mock
 from agno.exceptions import RunCancelledException
 from fastapi import HTTPException
 
-from agent_factory.delegation import DelegationService
+from agent_factory.delegation import DelegationService, application_group_status
 from agent_factory.remote_handoff import HandoffCancellationRequested
 
 
@@ -31,16 +30,21 @@ class DelegationPreviewLimitsTests(unittest.TestCase):
         service._mandate = Mock(side_effect=remote_authority)
         return service, remote_authority
 
-    def test_exhausted_depth_count_and_tool_limits_deny_without_remote_authority(self):
-        for state in ({'depth': 2}, {'children': 1}, {'used': 8}):
+    def test_pending_child_admission_does_not_block_known_running_parent(self):
+        group = {'unknown': True, 'parent': {'nativeStatus': 'running', 'unknown': False}}
+        self.assertEqual(application_group_status('running', group), 'running')
+        self.assertEqual(application_group_status('completed', group), 'unknown')
+        group['parent']['unknown'] = True
+        self.assertEqual(application_group_status('running', group), 'unknown')
+
+    def test_historical_depth_count_and_tool_limits_do_not_block_preview(self):
+        for state in ({'depth': 20}, {'children': 50}, {'used': 1000}):
             with self.subTest(state=state):
                 service, authority = self.fixture(**state)
                 result = service.delegation_scope('alice', 'root')
-                self.assertFalse(result['allowed'])
-                self.assertEqual(result['reason'], 'Shared delegation budget exhausted')
-                self.assertEqual(result['modes'], [])
-                service._mandate.assert_not_called()
-                authority.assert_not_called()
+                self.assertTrue(result['allowed'])
+                self.assertIsNone(result['sharedBudget']['toolCallsLimit'])
+                authority.assert_called_once()
 
     def test_viable_preview_rechecks_authority_on_every_read(self):
         service, authority = self.fixture()
@@ -59,27 +63,20 @@ class DelegationPreviewLimitsTests(unittest.TestCase):
         plan['budget'].update(maxDepth=3, maxChildren=5)
         result = service.delegation_scope('alice', 'root')
         self.assertTrue(result['allowed'], result)
-        self.assertEqual(result['sharedBudget']['maxDepth'], 3)
-        self.assertEqual(result['sharedBudget']['childrenLimit'], 5)
+        self.assertIsNone(result['sharedBudget']['maxDepth'])
+        self.assertIsNone(result['sharedBudget']['childrenLimit'])
         authority.assert_called_once()
-        # Creation uses this same aggregate check, including each ancestor.
-        service._require_child_budget([service.store.task.return_value] * 3, [plan] * 3)
-        service._descendants.return_value.append({'child_id': 'fifth'})
-        with self.assertRaises(HTTPException) as exhausted:
-            service._require_child_budget([service.store.task.return_value] * 3, [plan] * 3)
-        self.assertEqual(exhausted.exception.status_code, 429)
-
     def test_deep_persisted_ancestry_remains_cycle_checked(self):
         service, _ = self.fixture()
-        tasks = {str(index): {'id': str(index), 'owner_id': 'alice'} for index in range(9)}
+        tasks = {str(index): {'id': str(index), 'owner_id': 'alice'} for index in range(20)}
         service.store.task.side_effect = lambda key, owner: tasks[key]
         service._link = Mock(side_effect=lambda key: {'parent_id': str(int(key) - 1)} if int(key) else None)
-        root, ancestors = DelegationService._ancestry(service, tasks['8'])
+        root, ancestors = DelegationService._ancestry(service, tasks['19'])
         self.assertEqual(root, '0')
-        self.assertEqual(len(ancestors), 8)
-        service._link.side_effect = lambda key: {'parent_id': '8'}
+        self.assertEqual(len(ancestors), 19)
+        service._link.side_effect = lambda key: {'parent_id': '19'}
         with self.assertRaises(HTTPException):
-            DelegationService._ancestry(service, tasks['8'])
+            DelegationService._ancestry(service, tasks['19'])
 
     def test_local_ceiling_denial_does_not_bypass_owner_lookup(self):
         service, authority = self.fixture(children=1)
@@ -131,34 +128,6 @@ class DelegationPreviewLimitsTests(unittest.TestCase):
         with self.assertRaises(asyncio.CancelledError):
             service.delegation_scope('alice', 'root')
 
-    def test_narrow_intermediate_count_and_depth_deny_preview_and_creation(self):
-        for budget in ({'maxChildren': 1, 'maxDepth': 2}, {'maxChildren': 4, 'maxDepth': 1}):
-            with self.subTest(budget=budget):
-                service, _ = self.fixture()
-                root = {'id': 'root', 'owner_id': 'alice', 'plan_id': 'root-plan'}
-                parent = {'id': 'parent', 'owner_id': 'alice', 'plan_id': 'child-plan'}
-                root_plan = {'id': 'root-plan', 'tools': ['inspect'], 'capabilities': ['research:read'],
-                    'budget': {'toolCalls': 8, 'maxChildren': 4, 'maxDepth': 2}}
-                child_plan = {**root_plan, 'id': 'child-plan', 'budget': {**root_plan['budget'], **budget}}
-                service.store.task.side_effect = lambda key, owner: {'root': root, 'parent': parent}[key]
-                service.store.plan.side_effect = lambda key, owner: {'root-plan': root_plan, 'child-plan': child_plan}[key]
-                service._ancestry.return_value = ('root', [root])
-                service._mandate = Mock(return_value=('root', [child_plan, root_plan]))
-                service._root_lock = Mock(side_effect=lambda _: nullcontext(None))
-                links = [{'child_id': 'parent'}, {'child_id': 'grandchild'}]
-                service._descendants.side_effect = lambda key: links if key == 'root' else links[1:]
-                service.store.sql.side_effect = lambda query, **_: ([{'n': 0}] if 'af_delegation_tool_calls' in query
-                    else [] if 'SELECT * FROM af_delegation_links' in query
-                    else [{'n': 2}] if 'af_delegation_links' in query else [{'total': 3, 'owned': 3}])
-                preview = service.delegation_scope('alice', 'parent')
-                self.assertFalse(preview['allowed'])
-                self.assertEqual(preview['reason'], 'Shared delegation budget exhausted')
-                with self.assertRaises(HTTPException) as denied:
-                    asyncio.run(service.create('alice', 'parent', 'inspect another result', 'literature', 'original-child-request'))
-                self.assertEqual(denied.exception.status_code, 429)
-                self.assertEqual(denied.exception.detail, preview['reason'])
-                service.store.admit_plan.assert_not_called()
-                service.store.reserve_task.assert_not_called()
 
 
 if __name__ == '__main__':

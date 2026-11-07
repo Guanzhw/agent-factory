@@ -6,7 +6,7 @@ Agent Factory provides execution and shared resources for a trusted small team. 
 
 | Layer | Responsibility | Source |
 | --- | --- | --- |
-| Core | Native execution, identities, resource ownership, bindings, receipts, cancellation, and shared budgets | `platform/agent_factory` |
+| Core | Native execution, identities, resource ownership, bindings, receipts, cancellation, and execution capacity | `platform/agent_factory` |
 | Research application | Conversations, research context, experiments, interpretations, and research tools | `applications/research` |
 | Adapters | Concrete model, command, MCP, SSH, and remote-service integrations | Registered through core contracts |
 | Composition | Application selection and trusted adapter registration | `deployment/agent_factory_server` and frontend composition files |

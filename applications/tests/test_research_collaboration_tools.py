@@ -164,8 +164,7 @@ class ResearchCollaborationToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.collaboration.calls, [])
 
     async def test_untrusted_owner_fields_and_changed_native_identity_are_rejected(self):
-        for arguments in ({**QUESTION, 'owner_id': 'bob'}, {**QUESTION, 'text': 'x'},
-                {**QUESTION, 'text': 'x' * 2001}):
+        for arguments in ({**QUESTION, 'owner_id': 'bob'}, {**QUESTION, 'text': ''}):
             with self.subTest(arguments=list(arguments)):
                 result = await self.invoke(self.call(arguments=arguments))
                 self.assertEqual(result['outcome'], 'failed')
@@ -179,6 +178,13 @@ class ResearchCollaborationToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((await stale.aexecute()).status, 'failure')
         self.assertEqual(self.collaboration.calls, [])
         self.assertEqual(self.store.receipts, {})
+
+    async def test_short_and_long_questions_preserve_complete_text(self):
+        for index, text in enumerate(('x', '问题' * 12001)):
+            arguments = {**QUESTION, 'text': text}
+            self.assertEqual(await self.invoke(self.call(arguments=arguments, call_id='question-' + str(index))), ACK)
+            self.assertEqual(self.collaboration.calls[-1][1], arguments)
+        self.assertEqual(len(self.collaboration.calls), 2)
 
     async def test_unbound_collaboration_is_not_advertised_or_called(self):
         self.sessions.collaboration = None

@@ -63,6 +63,44 @@ class PersonalCLIProcessTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('synthetic', repr(result))
         self.assertGreaterEqual(self.checks, 2)
 
+    async def test_no_timeout_or_output_ceiling_preserves_complete_output(self):
+        chunks = []
+        result = await run_cli_process(executable=sys.executable,
+            argv=('-I', '-c', 'import sys;sys.stdout.write("x" * 100000)'),
+            env={}, cwd=self.root, stdin=b'', timeout_seconds=None, max_output_bytes=None,
+            before_spawn=lambda: None, check_authorized=self.authorize,
+            on_output=lambda stream, chunk: chunks.append((stream, chunk)))
+        self.assertEqual(b''.join(chunk for stream, chunk in chunks if stream == 'stdout'), b'x' * 100000)
+        self.assertEqual(result.stdout, b'x' * 100000)
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(result.stopped)
+
+    async def test_capture_budget_preserves_full_sink_and_does_not_fail_process(self):
+        chunks = []
+        result = await run_cli_process(executable=sys.executable,
+            argv=('-I', '-c', 'import sys;sys.stdout.write("HEAD"+"x"*2000000+"TAIL");sys.stderr.write("ERR")'),
+            env={}, cwd=self.root, stdin=b'', timeout_seconds=None, max_output_bytes=None,
+            capture_max_bytes=1024 * 1024, before_spawn=lambda: None, check_authorized=self.authorize,
+            on_output=lambda stream, chunk: chunks.append((stream, chunk)))
+        self.assertLessEqual(len(result.stdout) + len(result.stderr), 1024 * 1024)
+        self.assertTrue(result.stdout.startswith(b'HEAD') and result.stdout.endswith(b'TAIL'))
+        self.assertEqual(b''.join(chunk for stream, chunk in chunks if stream == 'stdout'), b'HEAD' + b'x' * 2000000 + b'TAIL')
+        self.assertEqual(result.stderr, b'ERR')
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(result.stopped)
+
+    async def test_unlimited_process_still_stops_on_cancellation(self):
+        task = asyncio.create_task(run_cli_process(executable=sys.executable,
+            argv=('-I', '-c', 'import time; time.sleep(60)'),
+            env={}, cwd=self.root, stdin=b'', timeout_seconds=None, max_output_bytes=None,
+            before_spawn=lambda: None, check_authorized=self.authorize))
+        await asyncio.sleep(.15)
+        task.cancel()
+        with self.assertRaises(CLIProcessError) as caught:
+            await task
+        self.assertTrue(caught.exception.stopped)
+        self.assertEqual(caught.exception.code, 'PERSONAL_CLI_CANCELLED')
+
     async def test_owner_check_runs_after_async_before_spawn_and_prevents_dispatch(self):
         before_finished = False
         async def before():

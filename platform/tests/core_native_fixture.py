@@ -96,8 +96,8 @@ def build_tools(settings, store, operation_name='fixture_operation'):
     def ask_scope(question: str, scope: str, run_context: RunContext) -> str:
         """Ask for the input scope using Agno's native input boundary."""
         checked(run_context, 'ask_scope')
-        if not scope.strip() or len(scope) > 4000:
-            raise ValueError('Scope must contain between 1 and 4000 characters')
+        if not scope.strip():
+            raise ValueError('Scope must not be empty')
         result = {'question': question, 'scope': scope.strip(), 'evidenceKind': 'synthetic'}
         store.event(run_context.run_id, 'scope_answered', 'Fixture scope accepted', {'scope': scope.strip()})
         return json.dumps(result)
@@ -148,7 +148,7 @@ def build_tools(settings, store, operation_name='fixture_operation'):
         try:
             while process.poll() is None:
                 await asyncio.sleep(.02)
-                if asyncio.get_running_loop().time() - started >= limits.timeout_seconds:
+                if limits.timeout_seconds is not None and asyncio.get_running_loop().time() - started >= limits.timeout_seconds:
                     raise TimeoutError('Selected environment wall time exceeded')
                 try:
                     await asyncio.to_thread(checked, run_context, operation_name)
@@ -203,7 +203,7 @@ def fixture_bindings(settings, store, connections=None):
     def environment(context):
         config = context.spec['config']
         if set(config) - fields.keys(): raise ValueError('Unknown bounded environment configuration')
-        return EnvironmentLimits(**{fields[k]: v for k, v in config.items()})
+        return EnvironmentLimits(**{'timeout_seconds': 8, 'output_bytes': 65536, **{fields[k]: v for k, v in config.items()}})
     def validate_environment(config):
         from types import SimpleNamespace
         environment(SimpleNamespace(spec={'config': config}))

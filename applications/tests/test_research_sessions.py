@@ -120,15 +120,15 @@ class ResearchSessionContracts(unittest.TestCase):
     def test_new_session_uses_configured_timeout_without_rewriting_old_session(self):
         self.store.settings.experiment_timeout_seconds = 60
         option = self.service.options('alice')['limits']['operationSeconds']
-        self.assertEqual(option, {'min': 1, 'max': 60, 'default': 60})
+        self.assertEqual(option, {'min': 1, 'max': None, 'default': None})
         longer = self.service.create('alice', self.create.model_copy(update={
             'requestId': 'create-longer-session',
             'limits': SessionLimits(maxTurns=4, toolCallsPerTurn=4, operationSeconds=option['default'])}))
-        self.assertEqual(asyncio.run(self.service.read('alice', longer))['limits']['operationSeconds'], 60)
+        self.assertEqual(asyncio.run(self.service.read('alice', longer))['limits']['operationSeconds'], None)
         self.assertEqual(self.read()['limits']['operationSeconds'], 5)
         with self.service.db.read() as conn:
             configuration = self.service._row(conn, 'alice', longer)['body']['configuration']
-        self.assertEqual(configuration['budget']['operationSeconds'], 60)
+        self.assertEqual(configuration['budget']['operationSeconds'], None)
 
     def test_conversation_admits_without_workspace_and_new_sessions_select_only_available_tools(self):
         _, original = self.reserved('turn-before-capability-change')
@@ -162,26 +162,52 @@ class ResearchSessionContracts(unittest.TestCase):
     def test_new_tool_default_preserves_existing_plan_and_explicit_lower_budget(self):
         _, original_task = self.reserved()
         original_plan = deepcopy(self.store.plan(original_task['plan_id'], 'alice'))
-        self.store.settings.max_tool_calls = 32
+        self.store.settings.max_tool_calls = None
         option = self.service.options('alice')['limits']['toolCallsPerTurn']
-        self.assertEqual(option, {'min': 1, 'max': 32, 'default': 32})
+        self.assertEqual(option, {'min': 1, 'max': None, 'default': None})
         wider = self.service.create('alice', self.create.model_copy(update={
             'requestId': 'create-wider-tool-session',
             'limits': SessionLimits(maxTurns=4, toolCallsPerTurn=option['default'], operationSeconds=5)}))
         explicit = self.service.create('alice', self.create.model_copy(update={'requestId': 'create-explicit-tool-session'}))
-        self.assertEqual(asyncio.run(self.service.read('alice', wider))['limits']['toolCallsPerTurn'], 32)
+        self.assertEqual(asyncio.run(self.service.read('alice', wider))['limits']['toolCallsPerTurn'], None)
         self.assertEqual(asyncio.run(self.service.read('alice', explicit))['limits']['toolCallsPerTurn'], 4)
-        self.assertEqual(self.read()['limits']['toolCallsPerTurn'], 4)
+        self.assertIsNone(self.read()['limits']['toolCallsPerTurn'])
         with self.service.db.read() as conn:
             old_config = self.service._row(conn, 'alice', self.identifier)['body']['configuration']
             explicit_config = self.service._row(conn, 'alice', explicit)['body']['configuration']
             wider_config = self.service._row(conn, 'alice', wider)['body']['configuration']
-        self.assertEqual(old_config, explicit_config)
-        self.assertEqual(wider_config['budget']['toolCalls'], 32)
+        self.assertIsNone(old_config['budget']['toolCalls'])
+        self.assertEqual(explicit_config['budget']['toolCalls'], 4)
+        self.assertEqual(wider_config['budget']['toolCalls'], None)
         self.assertEqual(self.store.plan(original_task['plan_id'], 'alice'), original_plan)
         self.identifier = wider
         _, wider_task = self.reserved('turn-wider-tool-budget')
-        self.assertEqual(self.store.plan(wider_task['plan_id'], 'alice')['budget']['toolCalls'], 32)
+        self.assertEqual(self.store.plan(wider_task['plan_id'], 'alice')['budget']['toolCalls'], None)
+
+    def test_existing_session_refreshes_tools_without_rebinding_original_turn(self):
+        _, original = self.reserved('original-tool-selection')
+        original_context = deepcopy(self.context)
+        original_plan = deepcopy(self.store.plan(original['plan_id'], 'alice'))
+        self.store.sql('UPDATE af_tasks SET terminal=TRUE WHERE id=:id', id=original['id'])
+        with self.service.db.write() as conn:
+            turn = self.service._turns(conn, self.identifier)[-1]
+            legacy = {key: value for key, value in turn['body'].items() if key != 'configuration'}
+            self.service._save_turn(conn, turn, {**legacy, 'terminal': True, 'status': 'completed'})
+        self.tools.workspace_root = None
+        self.tools.host_commands = False
+        _, latest = self.reserved('updated-tool-selection')
+        plan = self.store.plan(latest['plan_id'], 'alice')
+        self.assertNotIn('research_run', plan['tools'])
+        self.assertNotIn('research_read_file', plan['tools'])
+        self.assertEqual(self.store.plan(original['plan_id'], 'alice'), original_plan)
+        with self.service.db.read() as conn:
+            # The old binding still validates, but an ended turn must never resume.
+            with self.assertRaises(RunCancelledException):
+                self.service._execution(conn, original_context)
+            turns = self.service._turns(conn, self.identifier)
+        self.assertEqual(turns[0]['body']['configuration']['applicationRef'], original_plan['applicationRef'])
+        self.assertNotEqual(turns[0]['body']['configuration']['applicationRef'], turns[-1]['body']['configuration']['applicationRef'])
+        self.assertEqual(self.read()['limits'], {'maxTurns': None, 'toolCallsPerTurn': None, 'operationSeconds': None})
 
     def test_concurrent_reservations_have_one_active_turn_and_duplicate_is_read_only(self):
         barrier = Barrier(2)
@@ -510,15 +536,13 @@ class ResearchSessionContracts(unittest.TestCase):
         self.assertEqual(turns[0]['body']['sharedSourceIds'], [source['id'] for source in sources])
         self.assertEqual(row['body']['sharedSourceIds'], [source['id'] for source in sources])
 
-    def test_context_capacity_rejects_without_new_task_or_silent_truncation(self):
+    def test_long_context_is_preserved_without_application_character_limit(self):
         with self.service.db.write() as conn:
             row = self.service._row(conn, 'alice', self.identifier)
             self.service._save_session(conn, row, {**row['body'], 'boundaries': 'b' * 12000})
-        with self.assertRaises(HTTPException) as error:
-            self.service._reserve('alice', self.identifier, SessionText(requestId='oversized-context', text='Continue'))
-        self.assertEqual(error.exception.detail['code'], 'RESEARCH_CONTEXT_LIMIT')
+        self.service._reserve('alice', self.identifier, SessionText(requestId='oversized-context', text='Continue'))
         with self.service.db.read() as conn:
-            self.assertEqual(self.service._turns(conn, self.identifier), [])
+            self.assertIn('b' * 12000, self.service._turns(conn, self.identifier)[0]['body']['context'])
             self.assertEqual(self.service._row(conn, 'alice', self.identifier)['body']['boundaries'], 'b' * 12000)
 
 

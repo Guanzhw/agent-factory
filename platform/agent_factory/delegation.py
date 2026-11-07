@@ -14,7 +14,7 @@ from agno.exceptions import RunCancelledException
 from fastapi import HTTPException
 from sqlalchemy import text
 
-from .application_schema import budget_limits, task_config, time_budget_key
+from .application_schema import budget_limits, task_config, optional_min
 from .catalog import create_plan
 from .store import effect_unresolved, digest, now, runtime_custody_held
 
@@ -25,6 +25,12 @@ TERMINAL = {"completed", "failed", "cancelled", "canceled", "error"}
 def application_group_status(parent_status: str, group: dict[str, Any]) -> str:
     """A completed native parent cannot close an application with pending children."""
     if group["unknown"]:
+        # A child intent can be between its durable reservation and native
+        # acknowledgement while the parent's tool is still running. Keep
+        # uncertainty on that child without blocking its known-running parent.
+        parent = group.get("parent", {})
+        if parent_status == "running" and parent.get("nativeStatus") == "running" and not parent.get("unknown", True):
+            return "running"
         return "unknown"
     if parent_status == "completed" and group["pending"]:
         return "waiting_children"
@@ -82,7 +88,7 @@ class _ChildPlannerStore:
         tools = mode["toolOrder"] or list(dict.fromkeys(item["content"] for item in materials if item["kind"] == "tool"))
         caps = sorted({cap for item in materials for cap in item["permissions"]})
         limits = budget_limits(self.store.settings, application.get("contractVersion", 1))
-        budget = {key: min(value, limits[key]) for key, value in mode["budget"].items()}
+        budget = {key: optional_min(mode["budget"].get(key), value) for key, value in limits.items()}
         budget["depth"] = 0
         anchor = {"schema": 1, "applicationRef": root["applicationRef"], "mode": mode_name,
             "materialRefs": refs, "materialChoices": {name: choices.get(name, slot["defaultRef"])
@@ -107,11 +113,6 @@ class _ChildPlannerStore:
             if not set(plan["capabilities"]) <= set(parent["capabilities"]) or not set(plan["tools"]) <= set(parent["tools"]):
                 raise HTTPException(403, "Child authority exceeds an ancestor's immutable mandate")
         budget = dict(plan["budget"])
-        for parent in self.ancestors:
-            if plan.get("contractVersion", 1) != parent.get("contractVersion", 1):
-                raise HTTPException(403, "Child cannot change its ancestor's budget contract")
-            for key in ("toolCalls", "maxDepth", "maxChildren", time_budget_key(plan), "outputBytes"):
-                budget[key] = min(budget[key], parent["budget"][key])
         plan = {**plan, "delegation": self.binding,
                 "budget": {**budget, "depth": self.binding["depth"]}}
         from .billing_mode import ledger_for_plan
@@ -130,14 +131,14 @@ class DelegationService:
         self.store.sql("CREATE TABLE IF NOT EXISTS af_delegation_roots (root_id TEXT PRIMARY KEY REFERENCES af_tasks(id), owner_id TEXT NOT NULL, reclaimed BOOLEAN NOT NULL DEFAULT FALSE)")
         self.store.sql("""CREATE TABLE IF NOT EXISTS af_delegation_links (
             owner_id TEXT NOT NULL, parent_id TEXT NOT NULL REFERENCES af_tasks(id), request_id TEXT NOT NULL,
-            root_id TEXT NOT NULL REFERENCES af_tasks(id), depth INTEGER NOT NULL CHECK(depth BETWEEN 1 AND 8),
+            root_id TEXT NOT NULL REFERENCES af_tasks(id), depth INTEGER NOT NULL CHECK(depth >= 1),
             fingerprint TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id),
             child_id TEXT UNIQUE REFERENCES af_tasks(id), created_at TEXT NOT NULL,
             PRIMARY KEY(owner_id,parent_id,request_id))""")
         # Widen the original constraint atomically; existing links remain valid.
         self.store.sql("""ALTER TABLE af_delegation_links
             DROP CONSTRAINT IF EXISTS af_delegation_links_depth_check,
-            ADD CONSTRAINT af_delegation_links_depth_check CHECK(depth BETWEEN 1 AND 8)""")
+            ADD CONSTRAINT af_delegation_links_depth_check CHECK(depth >= 1)""")
         self.store.sql("""CREATE TABLE IF NOT EXISTS af_delegation_tool_calls (
             task_id TEXT NOT NULL REFERENCES af_tasks(id), call_id TEXT NOT NULL,
             root_id TEXT NOT NULL REFERENCES af_tasks(id), tool_name TEXT NOT NULL,
@@ -167,7 +168,7 @@ class DelegationService:
         cursor = task
         while (link := self._link(cursor["id"])) is not None:
             cursor = self.store.task(link["parent_id"], task["owner_id"])
-            if cursor["id"] in seen or len(ancestors) >= 8:
+            if cursor["id"] in seen:
                 raise HTTPException(409, "Invalid persisted delegation ancestry")
             seen.add(cursor["id"])
             ancestors.append(cursor)
@@ -216,10 +217,6 @@ class DelegationService:
                 from .go_legacy import is_go_plan
                 if is_go_plan(plan):
                     raise HTTPException(409, "GO_DEVELOPMENT_DELEGATION_UNAVAILABLE: development checks are standalone")
-                ids = [current["id"], *(link["child_id"] for link in self._descendants(current["id"]) if link["child_id"])]
-                used = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE task_id=ANY(:ids)", ids=ids)[0]["n"]
-                if used >= int(plan["budget"]["toolCalls"]):
-                    raise HTTPException(429, "Ancestor tool execution budget is exhausted")
             if creating and any(item.get("remoteHandoff") for item in [plan, *plans]):
                 context = SimpleNamespace(session_id=current["id"], run_id=current["run_id"], user_id=owner,
                     session_state={"factory_envelope": {"plan_ref": plan["id"], "user_id": owner,
@@ -254,10 +251,10 @@ class DelegationService:
             raise PermissionError(str(error.detail)) from error
 
     def consume_tool_budget(self, run_context: Any, call_id: str, name: str) -> dict[str, Any]:
-        """Charge a native execution ID once against its root and ancestor budgets.
+        """Record each native execution ID once without imposing a call quota.
 
-        Standalone root executions are recorded too, so later delegation cannot
-        reset already consumed budget. The native runtime still owns execution.
+        The durable identity still prevents conflicting replay and supports
+        inspection across the task tree. Native runtime owns execution.
         """
         if not isinstance(call_id, str) or not call_id or len(call_id) > 200:
             raise PermissionError("A bounded native tool execution ID is required")
@@ -281,13 +278,6 @@ class DelegationService:
             local_scopes = getattr(self.store, 'local_budget_scopes', None)
             if local_scopes is not None:
                 local_scopes.check_tool_capacity(conn, run_context.user_id, root_id)
-            for ancestor in [task, *ancestors]:
-                ids = [ancestor["id"], *(link["child_id"] for link in self._descendants(ancestor["id"]) if link["child_id"])]
-                used = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE task_id=ANY(:ids)", ids=ids)[0]["n"]
-                limit = int(self.store.plan(ancestor["plan_id"], run_context.user_id)["budget"]["toolCalls"])
-                if used >= limit:
-                    self.store.event(task["id"], "protected_denied", "Shared ancestor tool execution budget exhausted", {"ancestorTaskId": ancestor["id"], "used": used, "limit": limit})
-                    raise PermissionError("Shared ancestor tool execution budget exhausted")
             conn.execute(text("INSERT INTO af_delegation_roots(root_id,owner_id) VALUES(:root,:owner) ON CONFLICT DO NOTHING"), {"root": root_id, "owner": task["owner_id"]})
             conn.execute(text("INSERT INTO af_delegation_tool_calls VALUES(:task,:call,:root,:name,:at)"), {"task": task["id"], "call": call_id, "root": root_id, "name": name, "at": now()})
             return {"charged": True, "rootTaskId": root_id}
@@ -311,13 +301,6 @@ class DelegationService:
                 return True
         return False
 
-    def _require_child_budget(self, tasks, plans):
-        depth = len(tasks)
-        for task, plan in zip(tasks, plans):
-            if (depth > int(plan['budget']['maxDepth'])
-                    or len(self._descendants(task['id'])) >= int(plan['budget']['maxChildren'])):
-                raise HTTPException(429, 'Shared delegation budget exhausted')
-
     def delegation_scope(self, owner: str, parentTaskId: str) -> dict[str, Any]:
         """Current owner-scoped UI facts; this response never grants authority."""
         parent = self.store.task(parentTaskId, owner)  # Cross-owner access stays 404.
@@ -327,20 +310,13 @@ class DelegationService:
         root_plan = self.store.plan(root["plan_id"], owner)
         used = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE root_id=:root", root=root_id)[0]["n"]
         children = self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_links WHERE root_id=:root", root=root_id)[0]["n"]
-        shared = {"toolCallsUsed": used, "toolCallsLimit": root_plan["budget"]["toolCalls"], "childrenUsed": children,
-                  "childrenLimit": int(root_plan["budget"]["maxChildren"]), "maxDepth": int(root_plan["budget"]["maxDepth"])}
+        shared = {"toolCallsUsed": used, "toolCallsLimit": None, "childrenUsed": children,
+                  "childrenLimit": None, "maxDepth": None}
         depth = len(ancestors) + 1
         scope = {"allowed": True, "parentTaskId": parent["id"], "rootTaskId": root_id, "depth": depth,
                  "capabilities": plan["capabilities"], "tools": plan["tools"], "budget": plan["budget"], "sharedBudget": shared}
         scope.update(modes=[], defaultMode=None)
         try:
-            # A local exhausted ceiling is already a definitive denial. Avoid
-            # remote authority/model-mode expansion for an impossible UI action;
-            # successful previews and every create/execute still check fresh authority.
-            if depth > shared["maxDepth"] or children >= shared["childrenLimit"] or used >= shared["toolCallsLimit"]:
-                raise HTTPException(429, "Shared delegation budget exhausted")
-            self._require_child_budget([parent, *ancestors],
-                [plan, *[self.store.plan(task['plan_id'], owner) for task in ancestors]])
             _, plans = self._mandate(owner, parent, creating=True)
             applications = getattr(self.store, "applications", None)
             if applications is not None and root_plan.get("applicationRef"):
@@ -364,9 +340,6 @@ class DelegationService:
             else:
                 # Only legacy snapshots lack a versioned application definition.
                 scope.update(modes=["literature", "experiment"], defaultMode="literature")
-            counts = self.store.sql("SELECT COUNT(*) AS total,COUNT(*) FILTER(WHERE owner_id=:owner) AS owned FROM af_tasks WHERE NOT terminal", owner=owner)[0]
-            if counts["total"] >= self.settings.max_total_tasks or counts["owned"] >= self.settings.max_user_tasks:
-                raise HTTPException(429, "Active task budget exhausted")
         except RunCancelledException:
             # Cancellation can become current after the initial task read.
             # This owner-scoped availability projection grants no execution;
@@ -400,7 +373,7 @@ class DelegationService:
     async def create(self, owner: str, parentTaskId: str, goal: str, mode: str, requestId: str, *, placement: dict | None = None, original_operation_id: str | None = None, input_values: dict | None = None) -> dict[str, Any]:
         if not isinstance(requestId, str) or not 8 <= len(requestId) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in requestId):
             raise HTTPException(422, "A bounded delegation request ID is required")
-        if not isinstance(goal, str) or not 2 <= len(goal.strip()) <= 2000 or not isinstance(mode, str) or not 1 <= len(mode) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in mode):
+        if not isinstance(goal, str) or not goal.strip() or not isinstance(mode, str) or not 1 <= len(mode) <= 100 or any(not (c.isascii() and (c.isalnum() or c in "_.:-")) for c in mode):
             raise HTTPException(422, "Unsupported bounded child goal or mode")
         if requestId.startswith('operation:') and original_operation_id is None:
             raise HTTPException(409, "DELEGATED_OPERATION_REQUEST_RESERVED")
@@ -448,7 +421,6 @@ class DelegationService:
                 parent = self.store.task(parent["id"], owner)
                 _, plans = self._mandate(owner, parent, creating=True)
                 depth = len(plans)
-                self._require_child_budget([parent, *ancestors], plans)
                 binding = {"parentTaskId": parent["id"], "rootTaskId": root_id, "depth": depth}
                 planner_store = _ChildPlannerStore(self.store, plans, binding)
                 if input_values is not None and plans[-1].get('remoteHandoff'):
@@ -460,15 +432,15 @@ class DelegationService:
                     raise HTTPException(409, "Child preflight is blocked: " + "; ".join(plan["missing"]))
                 link = {"owner_id": owner, "parent_id": parent["id"], "request_id": requestId, "root_id": root_id,
                         "depth": depth, "fingerprint": fp, "plan_id": plan["id"], "child_id": None, "created_at": now()}
-                # An intent counts against the root before task reservation. A
-                # crash anywhere after this commit cannot exceed the root cap.
+                # Persist the original child intent before native reservation,
+                # so recovery never creates a replacement child.
                 with conn.begin():
                     conn.execute(text("INSERT INTO af_delegation_roots(root_id,owner_id) VALUES(:root,:owner) ON CONFLICT DO NOTHING"), {"root": root_id, "owner": owner})
                     conn.execute(text("INSERT INTO af_delegation_links VALUES(:owner_id,:parent_id,:request_id,:root_id,:depth,:fingerprint,:plan_id,:child_id,:created_at)"), link)
                 try:
                     task, fresh = self.store.reserve_task(plan, native_request)
                 except HTTPException:
-                    # A known quota rejection creates no native task/effect.
+                    # A known admission rejection creates no native task/effect.
                     with conn.begin():
                         conn.execute(text("DELETE FROM af_delegation_links WHERE owner_id=:owner AND parent_id=:parent AND request_id=:request AND child_id IS NULL"), {"owner": owner, "parent": parent["id"], "request": requestId})
                     raise
@@ -622,4 +594,12 @@ class DelegationService:
                 errors.append({"taskId": task["id"], "errorType": type(error).__name__})
                 self.store.event(task["id"], "cascade_cancel_pending", "Owned experiment cleanup remains unconfirmed",
                                  {"errorType": type(error).__name__})
+        # Reuse original-task reconciliation now, rather than making a user
+        # wait for a sweep of unrelated roots after a confirmed cancellation.
+        observer = getattr(self.store, "lifecycle_observer", None)
+        if observer is not None:
+            try:
+                await observer.observe_root(root_id)
+            except Exception as error:
+                errors.append({"taskId": root_id, "errorType": type(error).__name__})
         return {"requested": requested, "errors": errors, "group": await self.inspect_group(owner, parent["id"])}

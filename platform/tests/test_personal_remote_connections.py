@@ -66,6 +66,22 @@ class Auth:
 
 
 class PersonalRemoteTests(unittest.TestCase):
+    def test_credential_scan_accepts_large_shared_graph_but_rejects_cycles(self):
+        from agent_factory.personal_remote_provider import reject_credential_echo
+        lease = SecretLease('fixture', 'synthetic-known-secret-value')
+        shared = {'text': 'ordinary text'}
+        reject_credential_echo([shared] * 100001, lease)
+        deep = 'ordinary text'
+        for _ in range(100):
+            deep = [deep]
+        reject_credential_echo(deep, lease)
+        cycle = []
+        cycle.append(cycle)
+        with self.assertRaisesRegex(RemoteConnectionError, 'REMOTE_RESPONSE_REJECTED'):
+            reject_credential_echo(cycle, lease)
+        with self.assertRaisesRegex(RemoteConnectionError, 'REMOTE_CREDENTIAL_ECHO_REJECTED'):
+            reject_credential_echo({'nested': [shared, lease.password]}, lease)
+
     def setUp(self):
         self.engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
         self.addCleanup(self.engine.dispose)

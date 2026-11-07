@@ -3,7 +3,6 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 import time
 import unittest
-from unittest.mock import patch
 
 from fastapi import HTTPException
 from sqlalchemy import event, select
@@ -177,8 +176,9 @@ class LocalBudgetScopesPostgresTests(unittest.TestCase):
         self.ended(child)
         self.assertEqual(self.scopes.settle('alice', 'round-1')['state'], 'SETTLED')
 
-    def test_deadline_cancel_and_scope_tool_budget_use_original_native_call(self):
-        self.scope(self.caps(rounds=2, tools=2, tokens=None))
+    def test_expired_small_scope_allows_tools_and_explicit_cancel_still_stops(self):
+        self.deadline = 1.0
+        self.scope(self.caps(rounds=1, tools=1, tokens=None))
         self.allocate(caps=self.caps(tools=1, tokens=None))
         task, context, _ = self.root(plan=self.fixture.plan(extra={'tools': ['controlled-tool']}))
         stamp = int(time.time())
@@ -188,19 +188,16 @@ class LocalBudgetScopesPostgresTests(unittest.TestCase):
         first = self.delegation.consume_tool_budget(context, 'original-call', 'controlled-tool')
         self.assertTrue(first['charged'])
         self.assertFalse(self.delegation.consume_tool_budget(context, 'original-call', 'controlled-tool')['charged'])
-        with self.assertRaises(HTTPException) as caught:
-            self.delegation.consume_tool_budget(context, 'new-call', 'controlled-tool')
-        self.assertEqual(caught.exception.detail, 'LOCAL_BUDGET_TOOL_CALLS_EXHAUSTED')
-        with patch('agent_factory.local_budget_scopes.time.time', return_value=self.deadline + 1):
-            with self.assertRaises(HTTPException):
-                self.fixture.invoke(self.fixture.selected(context))
-        self.assertEqual(self.fixture.records, [])
+        self.assertTrue(self.delegation.consume_tool_budget(context, 'new-call', 'controlled-tool')['charged'])
+        self.fixture.invoke(self.fixture.selected(context))
+        self.assertEqual(self.fixture.records, ['success'])
+        self.allocate('round-2', self.caps(tokens=None))
         self.scopes.cancel('alice', 'scope')
         with self.assertRaises(HTTPException):
-            self.allocate('round-2', self.caps(tokens=None))
+            self.allocate('round-3', self.caps(tokens=None))
         with self.assertRaises(HTTPException):
             self.fixture.invoke(self.fixture.selected(context))
-        self.assertEqual(self.scopes.inspect('alice', 'scope')['heldToolCalls'], 1)
+        self.assertEqual(self.scopes.inspect('alice', 'scope')['heldToolCalls'], 3)
 
     def test_inspect_is_postgres_read_only_and_never_settles(self):
         self.scope(); self.allocate()
@@ -232,3 +229,16 @@ class LocalBudgetScopesPostgresTests(unittest.TestCase):
         with self.assertRaises(HTTPException):
             self.scopes.create_scope('alice', 'invalid', 'a' * 64,
                 self.caps(tokens=None) | {'amountMicros': 1}, self.deadline)
+
+    def test_null_limits_accept_multiple_allocations_and_settle_original_task(self):
+        self.deadline = None
+        self.scope(self.caps(rounds=None, tools=None, tokens=None))
+        self.allocate(caps=self.caps(tools=None, tokens=None))
+        self.allocate('round-2', self.caps(tools=None, tokens=None))
+        task, _, _ = self.root()
+        self.ended(task)
+        self.assertEqual(self.scopes.settle('alice', 'round-1')['state'], 'SETTLED')
+        state = self.scopes.inspect('alice', 'scope')
+        self.assertEqual(state['allocatedRounds'], 2)
+        self.assertEqual(state['heldToolCalls'], 0)
+        self.assertIsNone(state['deadline'])

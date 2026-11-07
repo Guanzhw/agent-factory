@@ -156,7 +156,7 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                         self.assertEqual(backend.connections, [{'host': PROXY, 'port': 8080}])
                         wire = b''.join(backend.writes)
                         self.assertEqual(wire.count(b'CONNECT '), 1)
-                        self.assertIn(f'CONNECT {IP}:443 HTTP/1.1\r\n'.encode(), wire)
+                        self.assertIn(f'CONNECT {host}:443 HTTP/1.1\r\n'.encode(), wire)
                         self.assertEqual(wire.count(b'POST '), 1)
                         post = wire.split(b'POST ', 1)[1]
                         self.assertTrue(post.startswith(f'{urlsplit(base).path}{suffix} HTTP/1.1\r\n'.encode()))
@@ -169,7 +169,7 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                             self.assertIn(b'x-opencode-session: fixture-proxy-session', headers.lower())
                         sent = json.loads(payload)
                         self.assertEqual(sent['model'], 'fixture-model')
-                        self.assertIs(sent['stream'], False)
+                        self.assertIs(sent['stream'], True)
                         if protocol == 'responses':
                             self.assertIs(sent['store'], False)
                             self.assertEqual(sent['input'], [{'role': 'user', 'content': 'synthetic route fixture'}])
@@ -187,14 +187,13 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
         configuration = grant(base_url='https://models.example.com:8443/custom/api')
         backend = GatewayBackend(configuration, target_host='models.example.com')
         transport = PinnedChatTransport('https://models.example.com:8443', base_path='/custom/api', trusted_proxy=configuration)
-        transport.probe.addresses = lambda destination: ['10.20.30.40']
         with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
             async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
                 response = await client.post('https://models.example.com:8443/custom/api/chat/completions',
                     headers={'authorization': 'Bearer synthetic-fixture'}, json={'model': 'fixture-model', 'stream': False})
                 self.assertEqual(response.status_code, 200)
         wire = b''.join(backend.writes)
-        self.assertIn(b'CONNECT 10.20.30.40:8443 HTTP/1.1', wire)
+        self.assertIn(b'CONNECT models.example.com:8443 HTTP/1.1', wire)
         self.assertIn(b'host: models.example.com:8443', wire.lower())
         self.assertIn(b'POST /custom/api/chat/completions', wire)
         self.assertEqual([item['server_hostname'] for item in backend.tls], ['models.example.com'])
@@ -343,7 +342,6 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
     async def post(self, configuration, backend, *, before_send=None, on_dispatch=None):
         transport = PinnedChatTransport('https://opencode.ai', base_path='/zen/go/v1',
             trusted_proxy=configuration, before_send=before_send, on_dispatch=on_dispatch)
-        transport.probe.addresses = lambda destination: [IP]
         with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
             async with httpx.AsyncClient(transport=transport, trust_env=False, auth=None,
                     follow_redirects=False) as client:
@@ -363,7 +361,7 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(marks, ['dispatch'])
         self.assertEqual(backend.connections, [{'host': PROXY, 'port': 8080}])
         raw = b''.join(backend.writes)
-        self.assertIn(('CONNECT ' + IP + ':443 HTTP/1.1').encode(), raw)
+        self.assertIn(b'CONNECT opencode.ai:443 HTTP/1.1', raw)
         self.assertIn(b'host: opencode.ai\r\n', raw.lower())
         self.assertEqual(backend.tls[0]['server_hostname'], 'opencode.ai')
         self.assertTrue(all(backend.tls[0][key] for key in ['verify_required','check_hostname','context_identity_preserved']))
@@ -520,7 +518,6 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
             marks = []
             transport = PinnedChatTransport('https://opencode.ai', base_path='/zen/go/v1',
                 trusted_proxy=configuration, on_dispatch=lambda: marks.append('dispatch'))
-            transport.probe.addresses = lambda destination: [address]
             with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
                 async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
                     response = await client.post(GO_BASE + '/chat/completions', json={'model':'fixture-model','stream':False})
@@ -536,7 +533,6 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
         marks = []
         transport = PinnedChatTransport('https://opencode.ai', base_path='/zen/go/v1',
             trusted_proxy=configuration, on_dispatch=lambda: marks.append('dispatch'))
-        transport.probe.addresses = lambda destination: [IP]
         with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
             async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
                 with self.assertRaises(ValueError):
@@ -674,7 +670,7 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(error.exception.code, 'OWNER_MODEL_CALL_UNCONFIRMED')
                     self.assertNotIn(SECRET, json.dumps(error.exception.response()))
             self.assertEqual(diagnostics[0], diagnostics[1])
-            self.assertEqual(broker.remaining, 63)
+            self.assertIsNone(broker.remaining)
             self.assertEqual(len(backend.connections), 1,
                 'SAFE_NATIVE_WORKER_FAILURES='+json.dumps(safe_failures))
             original_errors = [record.error for record in broker.native_calls.values()]
@@ -683,7 +679,7 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                 await asyncio.to_thread(broker.native_completion, request,
                     'ses_syntheticproxy123', 'msg_syntheticproxy123')
             self.assertEqual([record.error for record in broker.native_calls.values()], original_errors)
-            self.assertEqual(broker.remaining, 63)
+            self.assertIsNone(broker.remaining)
             self.assertEqual(len(backend.connections), 1)
 
     async def test_actual_direct_transport_ignores_proxy_and_ca_environment(self):
@@ -697,7 +693,6 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                 'SSL_CERT_FILE': '/nonexistent-ambient-cert-forbidden'}):
             direct = PinnedChatTransport('https://opencode.ai',
                 before_send=lambda: owner_checks.append('current-owner'))
-            direct.probe.addresses = lambda destination: [IP]
             # The real production constructor must succeed without reading ambient
             # CA/proxy configuration. Only its network pool is replaced for I/O.
             await direct.transport._pool.aclose()
@@ -707,7 +702,7 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
                     follow_redirects=False, auth=None) as client:
                 response = await client.post('https://opencode.ai/v1/chat/completions', json={})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(backend.connections, [{'host': IP, 'port': 443}])
+        self.assertEqual(backend.connections, [{'host': HOST, 'port': 443}])
         self.assertEqual(backend.tls[0]['server_hostname'], HOST)
         self.assertEqual(owner_checks, ['current-owner'])
         raw = b''.join(backend.writes)
@@ -721,7 +716,6 @@ class TrustedModelProxyTests(unittest.IsolatedAsyncioTestCase):
             raise PermissionError('synthetic-owner-revoked')
         direct = PinnedChatTransport('https://opencode.ai',
             before_send=revoked)
-        direct.probe.addresses = lambda destination: [IP]
         await direct.transport._pool.aclose()
         direct.transport._pool = httpcore.AsyncConnectionPool(
             network_backend=backend, ssl_context=ctx, retries=0)

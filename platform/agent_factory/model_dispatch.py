@@ -81,6 +81,8 @@ class DelegatingModel(Model):
             else:
                 local_current()
             model = self.bindings.model_from_binding(binding)
+            if auxiliary and hasattr(model, "_on_text"):
+                setattr(model, "_on_text", None)
             # Each adapter is fresh. Auxiliary requests retain the run guards
             # without recursively entering the application's request hook.
             self._guard_provider_calls(model, check, local_current=local_current,
@@ -92,6 +94,16 @@ class DelegatingModel(Model):
             return model
 
         model = selected_model()
+        window = getattr(model, 'context_window', None)
+        threshold = getattr(model, 'auto_compact_token_limit', None)
+        if isinstance(window, int) and window > 0:
+            threshold = min(threshold, window * 9 // 10) if isinstance(threshold, int) else window * 9 // 10
+        if isinstance(threshold, int) and threshold > 0:
+            from agno.compression.manager import CompressionManager
+            # Reuse the SDK's in-loop tool-result compaction with the selected
+            # model's token threshold, never the SDK's unrelated 3-result default.
+            setattr(model, "_factory_compression_manager", CompressionManager(
+                model=selected_model(auxiliary=True), compress_token_limit=threshold))
         response.model = model.id
         response.model_provider = model.provider
         store.event(response.run_id, "model_binding_selected", "Exact trusted model adapter selected for this native response",
@@ -264,7 +276,10 @@ class DelegatingModel(Model):
 
     def response(self, *args, **kwargs):
         try:
-            result = self._select(args, kwargs).response(*args, **kwargs)
+            model = self._select(args, kwargs)
+            if getattr(model, "_factory_compression_manager", None) is not None:
+                kwargs["compression_manager"] = getattr(model, "_factory_compression_manager")
+            result = model.response(*args, **kwargs)
             self._recovered(args, kwargs)
             return result
         except ModelProviderError as error:
@@ -276,6 +291,8 @@ class DelegatingModel(Model):
     async def aresponse(self, *args, **kwargs):
         try:
             model = await self._aselect(args, kwargs)
+            if getattr(model, '_factory_compression_manager', None) is not None:
+                kwargs['compression_manager'] = getattr(model, "_factory_compression_manager")
             result = await model.aresponse(*args, **kwargs)
             self._recovered(args, kwargs)
             return result
@@ -287,7 +304,10 @@ class DelegatingModel(Model):
 
     def response_stream(self, *args, **kwargs):
         try:
-            yield from self._select(args, kwargs, streaming=True).response_stream(*args, **kwargs)
+            model = self._select(args, kwargs, streaming=True)
+            if getattr(model, "_factory_compression_manager", None) is not None:
+                kwargs["compression_manager"] = getattr(model, "_factory_compression_manager")
+            yield from model.response_stream(*args, **kwargs)
             self._recovered(args, kwargs, streaming=True)
         except ModelProviderError as error:
             result = self._pause(args, kwargs, error, streaming=True)
@@ -298,6 +318,8 @@ class DelegatingModel(Model):
     async def aresponse_stream(self, *args, **kwargs):
         try:
             model = await self._aselect(args, kwargs, streaming=True)
+            if getattr(model, '_factory_compression_manager', None) is not None:
+                kwargs['compression_manager'] = getattr(model, "_factory_compression_manager")
             async for value in model.aresponse_stream(*args, **kwargs):
                 yield value
             self._recovered(args, kwargs, streaming=True)

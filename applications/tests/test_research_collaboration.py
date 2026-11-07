@@ -131,6 +131,10 @@ class ResearchCollaborationContracts(unittest.TestCase):
         self.assertEqual(len(self.read()['turns']), 1)
 
     def test_idle_reserves_one_batch_and_repeated_event_reconciles_same_request(self):
+        with self.service.db.write() as conn:
+            row = self.service._row(conn, 'alice', self.identifier)
+            self.service._save_session(conn, row, {**row['body'],
+                'limits': {**row['body']['limits'], 'maxTurns': 1}})
         first, _ = self.ask()
         second, _ = self.ask('ask-two', 'Is there another comparison?')
         self.reply(first)

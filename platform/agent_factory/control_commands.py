@@ -28,7 +28,7 @@ class ControlCommand(BaseModel):
     approvalCommandId: str | None = Field(default=None, pattern=COMMAND_ID)
     requirementId: str | None = Field(default=None, min_length=1, max_length=200)
     version: StrictInt | None = Field(default=None, ge=0)
-    answer: str | None = Field(default=None, min_length=1, max_length=2000)
+    answer: str | None = Field(default=None, min_length=1)
     approved: StrictBool | None = None
 
     @model_validator(mode="after")

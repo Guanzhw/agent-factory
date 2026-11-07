@@ -46,7 +46,8 @@ class PersonalToolAdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
         effect = store.effects['run-alice', 'personal-tool:original-native-call']
         self.assertEqual(effect['status'], 'DONE')
         self.assertEqual(effect['task_id'], 'task-alice')
-        self.assertEqual(effect['result'], {'outcome': 'completed', 'output': output})
+        self.assertEqual(effect['result']['outcome'], 'completed')
+        self.assertEqual(effect['result']['output'], output)
         self.assertNotIn(lease.password, json.dumps(effect))
 
     @unittest.skipUnless(os.name == 'posix', 'CLI process groups require POSIX')
@@ -154,10 +155,15 @@ class PersonalToolAdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
             call, store, handle = native_call(adapter, lease, {'value': value})
             self.assertEqual(call.function.parameters, schema)
             self.assertEqual((await call.aexecute()).status, 'success')
-            self.assertEqual(call.result['structuredContent'], {'owner': 'alice', 'value': value})
-            self.assertGreater(len(call.result['content'][0]['text']), 16000)
+            receipt = next(iter(store.effects.values()))['result']
+            full = receipt['output']
+            self.assertEqual(full['structuredContent'], {'owner': 'alice', 'value': value})
+            self.assertGreater(len(full['content'][0]['text']), 16000)
+            self.assertTrue(call.result['truncated'])
+            self.assertEqual(call.result['fullOutput'], receipt['outputArtifact'])
+            self.assertEqual(json.loads(store.artifacts[0]['content']), full)
             original = call.result
-            self.assert_done(store, original, lease)
+            self.assert_done(store, full, lease)
             self.assertEqual(server.calls, [('echo', 'alice')])
             requests, resolutions = len(server.requests), handle.resolutions
             self.assertGreater(requests, 0)
@@ -168,7 +174,7 @@ class PersonalToolAdapterIntegrationTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(server.calls, [('echo', 'alice')])
             self.assertEqual(len(server.requests), requests)
             self.assertEqual(handle.resolutions, resolutions)
-            self.assert_done(store, original, lease)
+            self.assert_done(store, full, lease)
         self.assertTrue(server.closed)
 
     async def test_mcp_initialize_401_is_stopped_failure_and_replays_without_network(self):

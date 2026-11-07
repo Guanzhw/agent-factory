@@ -42,9 +42,9 @@ class ByokModelTests(unittest.TestCase):
         with patch('agent_factory.byok_model.asyncio.timeout', wraps=asyncio.timeout) as timeout:
             result = asyncio.run(model.ainvoke([Message(role='user', content='Synthetic goal')]))
         self.assertEqual(result.content, 'Synthetic completion')
-        timeout.assert_called_once_with(180)
+        self.assertTrue(all(call.args == (300,) for call in timeout.call_args_list))
         self.assertEqual(len(requests), 1)
-        self.assertEqual(requests[0].extensions['timeout'], dict(connect=None, read=None, write=None, pool=None))
+        self.assertEqual(requests[0].extensions['timeout'], dict(connect=300, read=300, write=300, pool=300))
 
     def test_request_lifetime_bounds_async_and_sync_headers_and_body_without_retry(self):
         for synchronous in (False, True):
@@ -72,7 +72,7 @@ class ByokModelTests(unittest.TestCase):
                         'baseURL': 'https://fixture.invalid/v1'}, lambda: None,
                         transport_factory=Wire, timeout_seconds=.02)
                     messages = [Message(role='user', content='Synthetic goal')]
-                    with self.assertRaisesRegex(ModelProviderError, '^PERSONAL_MODEL_REQUEST_FAILED$'):
+                    with self.assertRaisesRegex(ModelProviderError, '^PERSONAL_MODEL_REQUEST_FAILED_'):
                         if synchronous: model.invoke(messages)
                         else: asyncio.run(model.ainvoke(messages))
                     self.assertEqual(len(calls), 1)
@@ -103,7 +103,7 @@ class ByokModelTests(unittest.TestCase):
 
     def test_owner_output_limit_reaches_both_protocols_without_per_call_override(self):
         for protocol, field in (('chat-completions', 'max_tokens'), ('responses', 'max_output_tokens')):
-            for options, expected in (({}, 4096), ({'maxOutputTokens': 16384}, 16384)):
+            for options, expected in (({}, None), ({'maxOutputTokens': 16384}, 16384)):
                 with self.subTest(protocol=protocol, options=options):
                     requests = []
                     def wire(request):
@@ -119,7 +119,7 @@ class ByokModelTests(unittest.TestCase):
                     model = OwnerChatModel(configuration, lambda: None,
                         transport_factory=lambda: httpx.MockTransport(wire))
                     asyncio.run(model.ainvoke([Message(role='user', content='Synthetic goal')], max_tokens=1))
-                    self.assertEqual(requests[0][field], expected)
+                    self.assertEqual(requests[0].get(field), expected)
                     self.assertEqual(len(requests), 1)
                     self.assertEqual(configuration.get('maxOutputTokens'), options.get('maxOutputTokens'))
 
@@ -127,7 +127,7 @@ class ByokModelTests(unittest.TestCase):
         from agent_factory.personal_models import ConfigureModel
         configuration = {'provider': 'openai-compatible', 'model': 'fixture-model',
             'baseURL': 'https://models.example.com/v1'}
-        for value in (None, True, False, 0, -1, 1.5, '16384'):
+        for value in (True, False, 0, -1, 1.5, '16384'):
             with self.subTest(value=value):
                 values = {**configuration, 'maxOutputTokens': value}
                 with self.assertRaises(ValueError):
@@ -170,7 +170,7 @@ class ByokModelTests(unittest.TestCase):
             asyncio.run(model.ainvoke([Message(role='user', content='synthetic')]))
         self.assertNotIn('thinking', requests[0])
         self.assertEqual(requests[1]['thinking'], {'type':'disabled'})
-        self.assertTrue(all(r['max_tokens']==4096 and r['stream'] is False for r in requests))
+        self.assertTrue(all('max_tokens' not in r and r['stream'] is True for r in requests))
         for change in ({'model':'different-model'}, {'baseURL':'https://other.example/v1'},
                 {'thinkingMode':'enabled'}, {'thinkingMode':False}):
             with self.subTest(change=change), self.assertRaises(ValueError):
@@ -239,7 +239,7 @@ class ByokModelTests(unittest.TestCase):
             self.assertEqual(str(request.url), 'https://models.example.com/v1/chat/completions')
             self.assertEqual(request.headers['authorization'], 'Bearer synthetic-test-password')
             body = json.loads(request.content); seen.append(body)
-            self.assertFalse(body['stream'])
+            self.assertTrue(body['stream'])
             self.assertEqual(body['model'], 'fixture-model')
             result = {'role': 'assistant', 'content': 'fixture completion'}
             finish = 'stop'
@@ -291,7 +291,6 @@ class ByokModelTests(unittest.TestCase):
             transport.transport = Wire()
             checks = []
             transport.before_send = lambda: checks.append('current-owner')
-            transport.probe.addresses = lambda destination: ['93.184.216.34']
             async with httpx.AsyncClient(transport=transport) as client:
                 await client.post('https://models.example.com/v1/chat/completions', json={'fixture': True})
                 with self.assertRaises(ValueError): await client.post('https://other.example.com/v1/chat/completions')
@@ -301,7 +300,7 @@ class ByokModelTests(unittest.TestCase):
                 with self.assertRaises(PermissionError):
                     await client.post('https://models.example.com/v1/chat/completions', json={})
         asyncio.run(run())
-        self.assertEqual(str(observed[0].url), 'https://93.184.216.34/v1/chat/completions')
+        self.assertEqual(str(observed[0].url), 'https://models.example.com/v1/chat/completions')
         self.assertEqual(observed[0].headers['host'], 'models.example.com')
         self.assertEqual(observed[0].extensions['sni_hostname'], 'models.example.com')
 

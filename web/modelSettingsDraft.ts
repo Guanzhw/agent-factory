@@ -3,7 +3,7 @@ import type { OwnerModel } from './ownerModelApi.js';
 export interface ModelSettingsDraft {
   provider: OwnerModel['provider']; protocol?: OwnerModel['protocol']; endpoint: string; model: string;
   credentialSource: 'new' | 'saved' | 'none'; savedReference: string; outputTokens: string;
-  editing?: string; outputEditing?: string;
+  editing?: string; outputEditing?: string; contextWindow?: string; autoCompactTokenLimit?: string;
 }
 const key = (owner: string) => `factory-model-draft:${encodeURIComponent(owner)}`;
 export function readModelSettingsDraft(owner: string): ModelSettingsDraft | undefined {
@@ -13,7 +13,7 @@ export function readModelSettingsDraft(owner: string): ModelSettingsDraft | unde
       || !['new', 'saved', 'none'].includes(draft.credentialSource)
       || [draft.endpoint, draft.model, draft.savedReference, draft.outputTokens].some(value => typeof value !== 'string')
       || draft.protocol !== undefined && !['chat-completions', 'responses'].includes(draft.protocol)
-      || [draft.editing, draft.outputEditing].some(value => value !== undefined && typeof value !== 'string')) return;
+      || [draft.editing, draft.outputEditing, draft.contextWindow, draft.autoCompactTokenLimit].some(value => value !== undefined && typeof value !== 'string')) return;
     return draft;
   } catch { return undefined; }
 }

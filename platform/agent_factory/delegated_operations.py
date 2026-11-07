@@ -113,7 +113,7 @@ class DelegatedOperations:
                     content = group['parent'].get('content')
                     failure = None
                     try:
-                        if delegated_result_bytes(content) > limit:
+                        if limit is not None and delegated_result_bytes(content) > limit:
                             failure = 'DELEGATED_RESULT_LIMIT'
                     except ValueError:
                         failure = 'DELEGATED_RESULT_INVALID'

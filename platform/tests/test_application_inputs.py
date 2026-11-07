@@ -38,22 +38,42 @@ class InputSchemaTests(unittest.TestCase):
         for key, value in (('$ref', 'https://example.invalid/schema'), ('default', {}), ('code', 'pass')):
             invalid.append({**schema(), key: value})
         invalid += [{**schema(), 'additionalProperties': True}, {**schema(), 'required': ['missing']}]
-        for child in ({'type': 'string'}, {'type': 'array', 'items': {'type': 'boolean'}},
-                      {'type': 'string', 'maxLength': 10, 'pattern': '.*'},
+        for child in ({'type': 'string', 'maxLength': 10, 'pattern': '.*'},
                       {'type': 'number', 'maximum': float('inf')}, {'type': 'boolean', 'enum': [True, True]}):
             invalid.append({'type': 'object', 'properties': {'field': child}, 'additionalProperties': False})
         for value in invalid:
             with self.subTest(value=value), self.assertRaises(ValueError):
                 validate_input_schema(value)
 
-    def test_depth_cycles_size_and_non_json_rejected(self):
+    def test_cycles_and_non_json_rejected_without_arbitrary_size_or_depth_caps(self):
         cycle = {}; cycle['cycle'] = cycle
         nested = {'type': 'boolean'}
         for _ in range(8):
             nested = {'type': 'object', 'properties': {'next': nested}, 'additionalProperties': False}
-        with self.assertRaises(ValueError): validate_input_schema(nested)
-        for value in (cycle, {'x': object()}, {'x': '中' * 16000}, {'x': 10 ** 1000}):
+        self.assertEqual(validate_input_schema(nested), nested)
+        self.assertEqual(bounded_json({'x': '中' * 20000}), {'x': '中' * 20000})
+        self.assertEqual(bounded_json({'x': 10 ** 1000}), {'x': 10 ** 1000})
+        for value in (cycle, {'x': object()}, {'x': float('inf')}):
             with self.assertRaises(ValueError): bounded_json(value)
+
+    def test_schema_can_omit_length_limits_and_large_enum_is_valid(self):
+        declaration = {'type': 'object', 'additionalProperties': False, 'properties': {
+            'text': {'type': 'string'}, 'items': {'type': 'array', 'items': {'type': 'boolean'}},
+            'choice': {'type': 'integer', 'enum': list(range(100))}}}
+        value = {'text': '文' * 20000, 'items': [True] * 300, 'choice': 99}
+        self.assertEqual(validate_input_values(declaration, value), value)
+
+    def test_schema_identity_survives_jsonb_property_order(self):
+        declaration = schema()
+        reordered = {**declaration, 'properties': dict(reversed(list(declaration['properties'].items())))}
+        self.assertEqual(input_model(declaration).model_json_schema(), input_model(reordered).model_json_schema())
+
+    def test_named_schema_uses_distinct_native_registry_identity(self):
+        model = input_model({**schema(), 'title': 'ResearchCommandInputs'})
+        self.assertEqual(model.__name__, 'ResearchCommandInputs')
+        self.assertEqual(model.model_json_schema()['title'], 'ResearchCommandInputs')
+        self.assertEqual(model.model_validate({'subject': 'input'}).model_dump(by_alias=True, exclude_unset=True),
+                         {'subject': 'input'})
 
     def test_pydantic_native_model_omission_is_not_explicit_null_or_default(self):
         declaration = schema()

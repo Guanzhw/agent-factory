@@ -76,8 +76,8 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
         first, second = [json.loads(request.content) for request in self.calls]
         self.assertEqual(str(self.calls[0].url), 'https://opencode.ai/inference/go/v1/responses')
         self.assertEqual(first['model'], 'gpt-6-luna')
-        self.assertFalse(first['store']); self.assertFalse(first['stream'])
-        self.assertEqual(first['max_output_tokens'], 4096)
+        self.assertFalse(first['store']); self.assertTrue(first['stream'])
+        self.assertNotIn('max_output_tokens', first)
         self.assertIn('reasoning.encrypted_content', first['include'])
         self.assertEqual(first['tools'][0]['type'], 'function')
         self.assertEqual(first['tools'][0]['name'], 'checksum_fixture')
@@ -180,7 +180,7 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
                                     {'role': 'tool', 'tool_call_id': f'call_synthetic{turn}', 'content': 'synthetic-checksum'}])
                         self.assertEqual(answer['choices'][0]['message']['content'], 'synthetic completion')
                     self.assertEqual(len(self.calls), 3)
-                    self.assertTrue(all(json.loads(request.content)['parallel_tool_calls'] is False for request in self.calls))
+                    self.assertTrue(all(json.loads(request.content).get('parallel_tool_calls') is not False for request in self.calls))
                     if protocol == 'responses':
                         final_input = json.loads(self.calls[2].content)['input']
                         self.assertEqual([item['id'] for item in final_input if item.get('type') == 'reasoning'],
@@ -485,12 +485,11 @@ class OwnerProtocolExecutionTests(unittest.TestCase):
             transport = PinnedChatTransport('https://opencode.ai', base_path='/inference/go/v1', protocol='responses')
             await transport.transport.aclose()
             transport.transport = httpx.MockTransport(lambda request: calls.append(request) or httpx.Response(200, json={}))
-            transport.probe.addresses = lambda destination: ['93.184.216.34']
             async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
                 await client.post('https://opencode.ai/inference/go/v1/responses', json={})
                 with self.assertRaises(ValueError):
                     await client.post('https://opencode.ai/inference/go/v1/chat/completions', json={})
         asyncio.run(run())
-        self.assertEqual(str(calls[0].url), 'https://93.184.216.34/inference/go/v1/responses')
+        self.assertEqual(str(calls[0].url), 'https://opencode.ai/inference/go/v1/responses')
         self.assertEqual(calls[0].headers['host'], 'opencode.ai')
         self.assertEqual(calls[0].extensions['sni_hostname'], 'opencode.ai')

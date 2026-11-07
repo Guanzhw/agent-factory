@@ -96,7 +96,7 @@ if ($LASTEXITCODE) { throw '账号创建未完成，先核对实际状态' }
 
 ## 启用本地文件与命令
 
-需要文件工具时，创建专用研究目录并设置绝对路径：
+默认启动创建研究工作目录并启用文件和命令工具。需要更换工作目录时，可设置：
 
 ```powershell
 $researchRoot = Join-Path $localRoot 'research-workspaces'
@@ -104,16 +104,16 @@ New-Item -ItemType Directory -Path $researchRoot -Force | Out-Null
 $env:FACTORY_RESEARCH_WORKSPACE_ROOT = $researchRoot
 ```
 
-需要运行本机实验时，启用命令，并给出已安装工具的绝对目录：
+命令默认使用服务启动环境的 PATH。需要指定工具目录时，可设置：
 
 ```powershell
 $env:FACTORY_RESEARCH_HOST_COMMANDS = '1'
 $env:FACTORY_RESEARCH_COMMAND_PATH = (Resolve-Path '.venv\Scripts').Path
 ```
 
-需要 Git 或其他 CLI 时，用分号追加它们的绝对安装目录。路径不能包含 `.`。工具直接执行命令，不做 shell 展开。项目依赖需要按研究目标准备。
+需要 Git 或其他 CLI 时，用分号追加它们的安装目录。工具直接执行命令，不做 shell 展开。项目依赖需要按研究目标准备。
 
-这些命令使用服务账号的 Windows 权限。工作目录不是操作系统沙箱，也不会限制命令只能访问目录内的文件。只需要对话时可省略本节，只需要文件操作时可省略启用命令的两行。
+这些命令使用服务账号的 Windows 权限。工作目录不是操作系统沙箱，也不会限制命令只能访问目录内的文件。保持默认配置可省略本节。若部署确实只需要文件操作，可显式设置 `FACTORY_RESEARCH_HOST_COMMANDS='0'`。
 
 ## 启动并登录
 

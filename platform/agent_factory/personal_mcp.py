@@ -248,7 +248,7 @@ class _OwnerAuth(httpx2.Auth):
 
 
 class _BoundedStream(httpx2.AsyncByteStream):
-    def __init__(self, stream: httpx2.AsyncByteStream, limit: int, state: _InvocationState,
+    def __init__(self, stream: httpx2.AsyncByteStream, limit: int | None, state: _InvocationState,
                  deadline: float | None = None, on_eof: Callable[[], None] | None = None):
         self._stream, self._limit, self._state = stream, limit, state
         self._deadline = deadline
@@ -266,7 +266,7 @@ class _BoundedStream(httpx2.AsyncByteStream):
                     self._on_eof()
                 return
             size += len(chunk)
-            if size > self._limit:
+            if self._limit is not None and size > self._limit:
                 raise self._state.error('MCP_RESPONSE_LIMIT')
             yield chunk
 
@@ -275,7 +275,7 @@ class _BoundedStream(httpx2.AsyncByteStream):
 
 
 class _BoundedTransport(httpx2.AsyncBaseTransport):
-    def __init__(self, transport: httpx2.AsyncBaseTransport, limit: int, state: _InvocationState):
+    def __init__(self, transport: httpx2.AsyncBaseTransport, limit: int | None, state: _InvocationState):
         self._transport, self._limit, self._state = transport, limit, state
         state.transport_started = True
 
@@ -354,16 +354,18 @@ class MCPToolAdapter:
 
     def __init__(self, descriptor: ToolDescriptor, *, url: str,
                  remote_tool_name: str | None = None, authorization_interval: float = 0.05,
-                 teardown_timeout_seconds: float = 2.0,
+                 teardown_timeout_seconds: float = 2.0, request_timeout_seconds: float = 300.0,
                  http_transport_factory: Callable[[], httpx2.AsyncBaseTransport] | None = None):
         url = mcp_url(url)
         if (descriptor.transport != 'mcp'
-                or not math.isfinite(descriptor.timeout_seconds) or descriptor.timeout_seconds <= 0
-                or descriptor.max_output_bytes < 1
+                or descriptor.timeout_seconds is not None and (not math.isfinite(descriptor.timeout_seconds) or descriptor.timeout_seconds <= 0)
+                or not math.isfinite(request_timeout_seconds) or request_timeout_seconds <= 0
                 or not math.isfinite(authorization_interval) or authorization_interval <= 0
                 or not math.isfinite(teardown_timeout_seconds) or teardown_timeout_seconds <= 0):
             raise ValueError('MCP_CONFIGURATION_INVALID')
         self.descriptor = descriptor
+        # Preserve immutable descriptors; old default 30s no longer governs calls.
+        self._request_timeout_seconds = request_timeout_seconds
         self._endpoint = httpx2.URL(url)
         self._remote_tool_name = remote_tool_name or descriptor.tool_name
         self._schema = json.loads(json.dumps(dict(descriptor.input_schema), allow_nan=False))
@@ -395,7 +397,7 @@ class MCPToolAdapter:
             operation = asyncio.create_task(self._run(state, arguments))
             monitor = asyncio.create_task(self._watch_authorization(state))
             done, _ = await asyncio.wait(
-                {operation, monitor}, timeout=self.descriptor.timeout_seconds,
+                {operation, monitor}, timeout=self._request_timeout_seconds,
                 return_when=asyncio.FIRST_COMPLETED,
             )
             if monitor in done:
@@ -477,20 +479,20 @@ class MCPToolAdapter:
         raw_transport = self._http_transport_factory() if self._http_transport_factory else httpx2.AsyncHTTPTransport(
             retries=0, trust_env=False,
         )
-        transport = _BoundedTransport(raw_transport, max(1048576, self.descriptor.max_output_bytes * 2), state)
+        transport = _BoundedTransport(raw_transport, None, state)
         body_error: BaseException | None = None
         output: dict[str, Any] = {}
         async with httpx2.AsyncClient(
             auth=_OwnerAuth(state, self._endpoint, self._teardown_timeout_seconds), transport=transport,
-            timeout=self.descriptor.timeout_seconds, trust_env=False,
+            timeout=self._request_timeout_seconds, trust_env=False,
             follow_redirects=False, max_redirects=0,
         ) as http:
             async with streamable_http_client(
                 str(self._endpoint), http_client=http, terminate_on_close=True,
-                max_sse_event_size=max(65536, self.descriptor.max_output_bytes * 2),
+                max_sse_event_size=None,
             ) as (read_stream, write_stream):
                 async with ClientSession(
-                    _PrivateErrors(read_stream), write_stream, read_timeout_seconds=self.descriptor.timeout_seconds,
+                    _PrivateErrors(read_stream), write_stream, read_timeout_seconds=self._request_timeout_seconds,
                 ) as session:
                     try:
                         output = await self._call(session, state, arguments)
@@ -512,7 +514,7 @@ class MCPToolAdapter:
         state.dispatched = True
         result = await session.call_tool(
             self._remote_tool_name, arguments,
-            read_timeout_seconds=self.descriptor.timeout_seconds,
+            read_timeout_seconds=self._request_timeout_seconds,
             allow_input_required=True,
         )
         await state.check()
@@ -528,8 +530,6 @@ class MCPToolAdapter:
             reject_credential_echo(output, state.lease)
         except Exception:
             raise state.error('MCP_CREDENTIAL_ECHO_REJECTED') from None
-        if len(json.dumps(output, ensure_ascii=False, allow_nan=False).encode()) > self.descriptor.max_output_bytes:
-            raise state.error('MCP_OUTPUT_LIMIT')
         return output
 
     async def _verify_tool(self, session: ClientSession, state: _InvocationState) -> None:

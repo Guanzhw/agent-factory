@@ -356,7 +356,7 @@ class ResearchSubagentProbe(unittest.TestCase):
                 'time.sleep(120)\n')
             self.workspaces[owner] = path
         self.assertEqual(self.store.settings.max_workers, 2)
-        self.assertEqual(self.store.settings.max_user_tasks, 2)
+        self.assertEqual(self.store.settings.max_user_tasks, 0)
         for owner in owners:
             self.post(owner, '/sessions/' + self.identifiers[owner] + '/turns', {
                 'requestId': 'probe-turn-' + owner, 'text': 'Investigate with one child, then integrate.'})
@@ -399,7 +399,7 @@ class ResearchSubagentProbe(unittest.TestCase):
         self.assertEqual(len(self.store.effects(child['id'])), 0)
         self.assertEqual((self.workspaces['alice'] / 'parent-note.txt').read_text(), 'investigation-alice')
         budget = self.store.plan(root['plan_id'])['budget']
-        self.assertEqual((budget['maxDepth'], budget['maxChildren']), (2, 4))
+        self.assertEqual((budget['maxDepth'], budget['maxChildren']), (None, None))
         self.assertEqual(self.store.plan(child['plan_id'])['inputValues']['sessionId'], self.identifiers['alice'])
         child_requests = [item['body'] for item in self.calls if item['child']]
         self.assertIn('private-evidence-alice', json.dumps(child_requests))

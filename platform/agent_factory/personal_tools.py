@@ -568,15 +568,15 @@ class ConfigureResourceRequest(BaseModel):
     description: str = Field(default='Member resource tool', min_length=1, max_length=2000)
     inputSchema: dict = Field(default_factory=lambda: {'type': 'object', 'properties': {}})
     readOnly: bool = False
-    timeoutSeconds: float = Field(default=30, ge=.1, le=300)
-    maxOutputBytes: int = Field(default=65536, ge=1024, le=1048576)
+    timeoutSeconds: float | None = Field(default=None, gt=0)
+    maxOutputBytes: int | None = Field(default=None, ge=1)
     url: str | None = Field(default=None, max_length=512)
     remoteToolName: str | None = Field(default=None, min_length=1, max_length=256)
     executable: str | None = Field(default=None, max_length=4096)
-    arguments: list[str] = Field(default_factory=list, max_length=128)
+    arguments: list[str] = Field(default_factory=list)
     workingDirectory: str | None = Field(default=None, max_length=4096)
-    environment: dict[str, str] = Field(default_factory=dict, max_length=128)
-    argumentOptions: dict[str, str] = Field(default_factory=dict, max_length=128)
+    environment: dict[str, str] = Field(default_factory=dict)
+    argumentOptions: dict[str, str] = Field(default_factory=dict)
     stdinJson: bool = True
     credentialEnvironmentVariable: str | None = Field(default=None, pattern=r'^[A-Za-z_][A-Za-z0-9_]*$')
     outputFormat: Literal['json', 'text'] = 'json'
@@ -590,8 +590,8 @@ class ConfigureResourceRequest(BaseModel):
         if ((self.credentialRef is None) != (self.credentialRevision is None)
                 or self.transport == 'mcp' and (not self.url or not self.remoteToolName)
                 or self.transport == 'cli' and not self.executable
-                or any('\0' in item or len(item) > 8192 for item in self.arguments)
-                or any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key) or '\0' in value or len(value) > 16384
+                or any('\0' in item for item in self.arguments)
+                or any(not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', key) or '\0' in value
                     for key, value in self.environment.items())
                 or any(not re.fullmatch(r'--?[A-Za-z0-9][A-Za-z0-9_-]*', value) for value in self.argumentOptions.values())
                 or self.transport == 'cli' and self.credentialRef and not self.credentialEnvironmentVariable):

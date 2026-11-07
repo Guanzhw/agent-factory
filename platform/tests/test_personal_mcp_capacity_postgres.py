@@ -299,9 +299,13 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
     submit = native_fixture.PersonalToolNativePostgresTests.submit
     def wait(self, started, owner, *, expected='completed'):
         try:
-            return native_fixture.PersonalToolNativePostgresTests.wait(self, started, owner, expected=expected)
+            # This fixture executes real vault callbacks and two MCP calls. Under
+            # suite load their observed progress outlasts the generic 20s wait;
+            # allow completion, while retaining all effect/cleanup assertions.
+            return native_fixture.PersonalToolNativePostgresTests.wait(
+                self, started, owner, expected=expected, timeout=60)
         except AssertionError as error:
-            # Capture before teardown, only after the unchanged wait failed.
+            # Capture before teardown, only after the fixture wait failed.
             # Frames contain locations only, never locals/credentials/messages.
             task = self.store.task(started['job']['id'], owner)
             native = self.store.native_db.get_job(task['run_id']) or {}
@@ -551,7 +555,7 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         self.prove_released(body, started)
         self.assertGreaterEqual(self.mcp.delete_chunks, 2)
 
-    def test_sdk_exit_failure_keeps_capacity_and_never_redispatches(self):
+    def test_sdk_exit_failure_keeps_original_unknown_without_blocking_unrelated_work(self):
         exit_failed = threading.Event()
 
         class BrokenExitSession(ClientSession):
@@ -573,11 +577,18 @@ class PersonalMCPCapacityPostgresTests(unittest.TestCase):
         self.assertFalse(self.store.task(task['id'])['terminal'])
         request_count = len(self.mcp.requests)
         self.assert_original_receipt(body, task, effects, request_count)
-        self.request('POST', '/application-interface/v1/starts',
-                     {**body, 'requestId': 'held-before-restart'}, expected=429)
         self.stop()
         self.start()
         self.assert_original_receipt(body, task, effects, request_count)
         self.assertFalse(self.store.task(task['id'])['terminal'])
-        self.request('POST', '/application-interface/v1/starts',
-                     {**body, 'requestId': 'held-after-restart'}, expected=429)
+        independent = self.request('POST', '/application-interface/v1/starts',
+                     {**body, 'requestId': 'independent-after-restart'}, expected=202)
+        self.assertNotEqual(independent['job']['id'], task['id'])
+        independent_task = self.wait(independent, 'alice', expected={'failed', 'completed', 'cancelled'})
+        independent_effects = self.store.effects(independent_task['id'])
+        self.assertEqual(len(independent_effects), 1)
+        self.assertEqual(independent_effects[0]['status'], 'DONE')
+        self.assertEqual(independent_effects[0]['result']['outcome'], 'failed')
+        self.assertTrue(independent_effects[0]['result']['stopped'])
+        self.assertEqual(self.store.effects(task['id']), effects)
+        self.assertFalse(self.store.task(task['id'])['terminal'])

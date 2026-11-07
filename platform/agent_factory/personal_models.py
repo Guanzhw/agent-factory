@@ -5,6 +5,7 @@ owner, protocol, TLS destination and credential revision; stale plans fail close
 """
 from __future__ import annotations
 
+import asyncio
 from uuid import uuid4
 from typing import Literal
 
@@ -100,7 +101,7 @@ class PersonalModels:
         body = dict(row['body'])
         default_binding_current = True
         if row['owner_id'] != owner:
-            body = {key: body[key] for key in ('ownerId', 'reference', 'revision', 'updatedAt', 'provider', 'baseURL', 'model', 'protocol', 'thinkingMode', 'maxOutputTokens') if key in body}
+            body = {key: body[key] for key in ('ownerId', 'reference', 'revision', 'updatedAt', 'provider', 'baseURL', 'model', 'protocol', 'thinkingMode', 'maxOutputTokens', 'contextWindow', 'autoCompactTokenLimit') if key in body}
             binding = conn.execute(select(self.shared_defaults).where(self.shared_defaults.c.actor_id == owner,
                 self.shared_defaults.c.reference == reference)).mappings().first()
             if binding:
@@ -242,9 +243,12 @@ class PersonalModels:
             handle = context.connection
             if not isinstance(handle, OwnerModelHandle) or handle.actor != context.plan['ownerId']:
                 raise HTTPException(403, 'PERSONAL_MODEL_OWNER_REQUIRED')
+            async def on_text(text, response_id):
+                await asyncio.to_thread(context.store.event, context.run_context.session_id,
+                    'model_content_delta', '正在生成回答', {'text': text, 'responseId': response_id})
             return OwnerChatModel(handle.body, handle.credential, transport_factory=self.transport_factory,
                 recheck=handle.check, session_id='af-plan-' + context.plan['id'], trusted_proxy=handle.trusted_proxy,
-                timeout_seconds=context.settings.native_timeout_seconds)
+                on_text=on_text)
         bindings.register('model', ADAPTER_ID, '1', create, connection_kind='model',
             required_capabilities=(CAPABILITY,), validator=validate)
 
@@ -302,12 +306,14 @@ class ConfigureModel(BaseModel):
     model_config = ConfigDict(extra='forbid')
     provider: str = Field(min_length=1, max_length=100)
     baseURL: str = Field(min_length=1, max_length=512)
-    model: str = Field(min_length=1, max_length=120)
+    model: str = Field(min_length=1)
     credentialRef: str | None = Field(default=None, min_length=1, max_length=200)
     credentialRevision: str | None = Field(default=None, min_length=1, max_length=200)
     protocol: Literal['chat-completions', 'responses'] | None = None
     thinkingMode: Literal['default', 'disabled'] | None = None
     maxOutputTokens: int | None = None
+    contextWindow: int | None = Field(default=None, strict=True, ge=1)
+    autoCompactTokenLimit: int | None = Field(default=None, strict=True, ge=1)
     requestId: str = Field(min_length=8, max_length=100)
 
     @model_validator(mode='after')

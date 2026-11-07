@@ -121,7 +121,7 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
         self.adapter = SyntheticAuthenticatedTool()
         self.retry_unknown = self._testMethodName in {
             'test_native_unknown_stops_new_call_id_and_preserves_restart_custody',
-            'test_failed_business_without_stop_proof_keeps_capacity_and_result_after_restart'}
+            'test_failed_business_without_stop_proof_preserves_original_and_admits_independent_work'}
         self.pause = ((threading.Event(), threading.Event()) if self._testMethodName ==
             'test_fresh_services_replay_done_then_revocation_denies_next_native_call' else None)
         self.settings = Settings(db_url=database.url, workspace=Path(directory.name), max_workers=2, max_user_tasks=1,
@@ -220,9 +220,9 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
         started = self.request('POST', '/application-interface/v1/starts', body, owner=owner, expected=202)
         return body, started
 
-    def wait(self, started, owner, *, expected='completed'):
+    def wait(self, started, owner, *, expected='completed', timeout=20):
         task_id = started['job']['id']
-        deadline = time.monotonic() + 20
+        deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             task = self.store.task(task_id, owner)
             native = self.store.native_db.get_job(task['run_id']) or {}
@@ -351,7 +351,7 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
         self.assertEqual(len(self.adapter.calls), 1, 'Revocation must not select a fallback for the next native call')
         self.assertEqual(self.store.effects(task['id']), effects)
 
-    def test_failed_business_without_stop_proof_keeps_capacity_and_result_after_restart(self):
+    def test_failed_business_without_stop_proof_preserves_original_and_admits_independent_work(self):
         connection = self.configure('alice')
         self.adapter.failed_unstopped_item = 'stock-2'
         body, started = self.submit('alice', connection)
@@ -371,8 +371,6 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
         self.assertEqual(stopped.result, 'PERSONAL_TOOL_FAILED_CLEANUP_UNCONFIRMED')
         self.assertEqual(self.request('POST', '/application-interface/v1/starts', body, expected=202)['job']['id'], task['id'])
         self.assertFalse(self.store.task(task['id'])['terminal'])
-        self.request('POST', '/application-interface/v1/starts',
-            {**body, 'requestId': 'held-capacity-before-restart'}, expected=429)
 
         self.stop()
         self.start()
@@ -381,11 +379,15 @@ class PersonalToolNativePostgresTests(unittest.TestCase):
         self.assertFalse(receipt['automaticReplay'])
         self.assertFalse(self.store.task(task['id'])['terminal'])
         self.assertEqual(self.store.effects(task['id']), effects)
-        self.request('POST', '/application-interface/v1/starts',
-            {**body, 'requestId': 'held-capacity-after-restart'}, expected=429)
         with self.assertRaises(RunCancelledException):
             self.retained_call(task, call_id='native-inventory-2', item='stock-2')
         self.assertEqual(len(self.adapter.calls), 2, 'Known business failure with unconfirmed cleanup must never redispatch')
+        self.assertEqual(self.store.effects(task['id']), effects)
+        independent = self.request('POST', '/application-interface/v1/starts',
+            {**body, 'requestId': 'independent-after-restart'}, expected=202)
+        self.assertNotEqual(independent['job']['id'], task['id'])
+        self.wait(independent, 'alice', expected={'completed', 'cancelled'})
+        self.assertFalse(self.store.task(task['id'])['terminal'])
         self.assertEqual(self.store.effects(task['id']), effects)
 
 if __name__ == '__main__':

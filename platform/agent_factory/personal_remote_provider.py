@@ -58,21 +58,21 @@ def reject_credential_echo(value, lease):
         raise RemoteConnectionError('REMOTE_CREDENTIAL_UNAVAILABLE')
     encoded = base64.b64encode((lease.username + ':' + lease.password).encode()).decode()
     needles = (lease.password, encoded, 'Basic ' + encoded, 'Bearer ' + lease.password)
-    pending, seen, count = [(value, 0)], set(), 0
+    pending, active = [(value, False)], set()
     while pending:
-        item, depth = pending.pop()
-        count += 1
-        if count > 100000 or depth > 32:
-            raise RemoteConnectionError('REMOTE_RESPONSE_REJECTED')
-        if isinstance(item, str):
+        item, leaving = pending.pop()
+        if leaving:
+            active.remove(id(item))
+        elif isinstance(item, str):
             if any(secret in item for secret in needles):
                 raise RemoteConnectionError('REMOTE_CREDENTIAL_ECHO_REJECTED')
         elif isinstance(item, (dict, list)):
-            if id(item) in seen:
+            if id(item) in active:
                 raise RemoteConnectionError('REMOTE_RESPONSE_REJECTED')
-            seen.add(id(item))
+            active.add(id(item))
+            pending.append((item, True))
             children = [*item.keys(), *item.values()] if isinstance(item, dict) else item
-            pending.extend((child, depth + 1) for child in children)
+            pending.extend((child, False) for child in children)
 
 
 class SecretProvider(Protocol):

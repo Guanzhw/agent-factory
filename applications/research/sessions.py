@@ -20,7 +20,7 @@ from agent_factory.control_commands import ControlCommand
 from agent_factory.runtime_hooks import effect_unresolved, runtime_custody_held
 from agent_factory.store import digest, now
 from .assistants import CreateAssistant
-from .session_setup import CONTEXT_CHARACTERS, MODE, ResearchSessionSetup, rejected
+from .session_setup import MODE, ResearchSessionSetup, rejected
 from .session_memory import ResearchSessionMemory
 from .session_tools import EFFECT_PREFIX
 from . import session_context
@@ -98,20 +98,11 @@ class ResearchSessions:
     def _context(row, turns, instruction=None):
         return session_context.project(row, turns, instruction)
 
-    @staticmethod
-    def _bounded(context):
-        if len(context) > CONTEXT_CHARACTERS:
-            raise rejected('RESEARCH_CONTEXT_LIMIT', '会话上下文超过当前容量；原历史已保留，未启动新执行。')
-        return context
-
     def _capacity(self, row, turns):
         pending = turns[-1]['body'].get('compaction') if turns else None
         if pending and pending['status'] in {'pending', 'started', 'unknown', 'failed'}:
-            protected = session_context.project(row, turns, protected=True)
-            if session_context.summary_capacity(protected, pending['throughSequence']) > CONTEXT_CHARACTERS:
-                raise rejected('RESEARCH_CONTEXT_LIMIT', '必要上下文与摘要预留超过容量；原历史已保留。')
-            return protected
-        return self._bounded(self._context(row, turns))
+            return session_context.project(row, turns, protected=True)
+        return self._context(row, turns)
 
     def _sources(self, owner, identifiers):
         for identifier in identifiers:
@@ -168,7 +159,6 @@ class ResearchSessions:
                 body.update(projectId=project['id'], projectGoalVersion=project['currentGoalVersion'])
             body.update(configuration=configuration, createdAt=stamp, updatedAt=stamp,
                         stopped=False, stopRequestId=None, sharedSourceIds=[])
-            self._bounded(self._context({'body': body}, []))
             conn.execute(self.sessions.insert().values(id=identifier, owner_id=owner, assistant_id=assistant['id'], body=body))
             self._command(conn, owner, request.requestId, fingerprint, 'create', identifier)
             return identifier
@@ -272,11 +262,23 @@ class ResearchSessions:
 
     @staticmethod
     def _start(row, turn):
-        configuration = row['body']['configuration']
+        configuration = turn['body'].get('configuration', row['body']['configuration'])
         return ApplicationStart(requestId=turn['application_request_id'],
             application=configuration['applicationRef']['id'], applicationRef=configuration['applicationRef'],
             mode=MODE, goal=row['body']['goal'], connectionRefs=configuration['connectionRefs'],
             inputValues={'sessionId': row['id'], 'turnId': turn['id'], 'sessionContext': turn['body']['context']})
+
+    def _prepare_turn_configuration(self, conn, owner, row, turns):
+        previous = row['body']['configuration']
+        limits = {'maxTurns': None, 'toolCallsPerTurn': None, 'operationSeconds': None}
+        configuration = self.setup.prepare(owner, previous['connectionRefs']['model'], limits)
+        # Pin each original turn before refreshing the session's selected tools.
+        # Native plans and request identities remain unchanged for recovery.
+        for prior in turns:
+            if 'configuration' not in prior['body']:
+                self._save_turn(conn, prior, {**prior['body'], 'configuration': deepcopy(previous)})
+        row = {**row, 'body': {**row['body'], 'configuration': configuration, 'limits': limits}}
+        return row
 
     def _reserve(self, owner, identifier, request):
         question_id = request.model_dump().get('assistantQuestionId')
@@ -291,8 +293,11 @@ class ResearchSessions:
                 raise rejected('RESEARCH_TURN_ACTIVE_OR_UNCONFIRMED', '原轮次尚未安全结束，请先核对其状态。')
             self._sources(owner, row['body']['sharedSourceIds'])
             self._replies(owner, identifier, turns)
+            row = self._prepare_turn_configuration(conn, owner, row, turns)
+            configuration = row['body']['configuration']
             turn_id, stamp = str(uuid4()), now()
-            body = {'requestId': request.requestId, 'taskId': None, 'runId': None, 'status': 'reserved',
+            body = {'requestId': request.requestId, 'configuration': deepcopy(configuration),
+                'taskId': None, 'runId': None, 'status': 'reserved',
                 'createdAt': stamp, 'completedAt': None, 'result': None, 'failure': None, 'terminal': False,
                 'blockReason': None, 'messages': [self._message('instruction', request.text)],
                 'lastAttempt': 0, 'dispatchStarted': False, 'events': [], 'toolResults': [], 'sharedSourceIds': []}
@@ -416,9 +421,13 @@ class ResearchSessions:
         if turn is None or original_task['request_id'] != factory_request_id(turn['application_request_id']):
             raise PermissionError('RESEARCH_SESSION_ORIGINAL_TURN_REQUIRED')
         row = self._row(conn, context.user_id, turn['session_id'])
-        expected = row['body']['configuration']
-        if plan.get('applicationRef') != expected['applicationRef'] or plan.get('mode') != MODE:
+        expected = turn['body'].get('configuration', row['body']['configuration'])
+        if plan.get('applicationRef') != expected['applicationRef'] or plan.get('mode') not in {MODE, 'command'}:
             raise PermissionError('RESEARCH_SESSION_PLAN_MISMATCH')
+        if plan.get('mode') == 'command' and (task['id'] == original_task['id']
+                or not expected.get('commandWorkflow')
+                or plan.get('nativeComponent') != expected['commandWorkflow']):
+            raise PermissionError('RESEARCH_COMMAND_WORKFLOW_MISMATCH')
         if ((plan.get('inputValues') or {}).get('turnId') != turn['id']
                 or (plan.get('inputValues') or {}).get('sessionId') != row['id']):
             raise PermissionError('RESEARCH_SESSION_INPUT_MISMATCH')
@@ -562,9 +571,6 @@ class ResearchSessions:
                         raise rejected('RESEARCH_CONTEXT_CHANGED', '原历史与整理结果不一致。')
                     saved = {**identity, 'summary': summary, 'turnId': current_turn['id'], 'runId': context.run_id}
                     session_body = {**current_row['body'], 'contextCheckpoint': saved}
-                    projected = self._context({**current_row, 'body': session_body}, self._turns(conn, current_row['id']))
-                    if len(projected) > CONTEXT_CHARACTERS:
-                        raise ValueError('RESEARCH_CONTEXT_LIMIT')
                     self._save_session(conn, current_row, session_body)
                     self._save_turn(conn, current_turn, {**current_turn['body'], 'compaction': {**claim, 'status': 'ready'}})
             if blocked:
@@ -589,7 +595,7 @@ class ResearchSessions:
             row, turn, task, ticket, blocked = self._model_boundary(conn, context)
             if not blocked:
                 body = deepcopy(turn['body'])
-                current_context = self._bounded(self._context(row, self._turns(conn, row['id'])))
+                current_context = self._context(row, self._turns(conn, row['id']))
                 body['lastAttempt'] = ticket['attempt']
                 if body.get('compaction') or body.get('assistantReplies') or any(
                         item['kind'] == 'correction' for previous in self._turns(conn, row['id'])
@@ -729,7 +735,7 @@ class ResearchSessions:
                 'model': deepcopy(body['configuration']['model']), 'state': state, 'allowedActions': actions,
                 'capabilities': {'memory': body['configuration'].get('personalMemory') is True},
                 'collaboration': {'enabled': body['configuration'].get('autonomousCollaboration') is True},
-                'blockReason': block, 'context': {'characters': characters, 'maximumCharacters': CONTEXT_CHARACTERS,
+                'blockReason': block, 'context': {'characters': characters, 'maximumCharacters': None,
                     'rawCharacters': raw_characters, **({'compaction': compact_view} if compact_view else {})},
                 'turns': [{'id': item['id'], 'sequence': item['sequence'],
                     **({'assistantReply': self._reply_projection(owner, identifier, item['body']['assistantReply'])}

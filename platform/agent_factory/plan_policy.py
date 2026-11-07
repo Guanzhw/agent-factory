@@ -198,12 +198,6 @@ class PlanPolicyService:
         for ancestor in ancestors:
             if not set(current["tools"]) <= set(ancestor["tools"]) or not set(current["capabilities"]) <= set(ancestor["capabilities"]):
                 raise HTTPException(403, "Child exceeds its original parent task scope")
-            from .application_schema import time_budget_key
-            if current.get("contractVersion", 1) != ancestor.get("contractVersion", 1):
-                raise HTTPException(403, "Child differs from its parent budget contract")
-            for key in ("toolCalls", time_budget_key(current), "outputBytes", "maxDepth", "maxChildren"):
-                if not 0 < current["budget"][key] <= ancestor["budget"][key]:
-                    raise HTTPException(403, "Child exceeds its parent task budget")
         return {"allowed": True, "ownerId": owner, "planId": current["id"],
                 "planDigest": digest(current), "planFingerprint": current["fingerprint"],
                 "source": "member-self-service", "reviewId": None}

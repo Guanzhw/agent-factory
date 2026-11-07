@@ -142,13 +142,13 @@ export function SchedulesPanel({ ownerId, canManage, seed, api, onTask, selected
     finally { guard.current.release(epoch); if (current()) setBusy(false); }
   }
   return <section aria-label="计划任务" className="schedules-panel" style={{ minWidth: 0, overflowWrap: 'anywhere' }}><h1>计划任务</h1>
-    <p>复用本人已保存的不可变方案；每次触发仍检查当前权限和预算。计划准入成功不代表研究任务完成。</p>
+    <p>复用本人已保存的不可变方案；每次触发使用当前可用资源。计划准入成功不代表研究任务完成。</p>
     <p className="state-note">暂停后续计划不会停止已创建的执行；停止本次执行需在任务中单独操作。UNKNOWN 保留原执行记录，不能当作失败重新运行；请查看原任务核对。</p>
     <button type="button" className="secondary" disabled={disabled || busy} onClick={() => { setError(''); setAfter(undefined); setRefresh(n => n + 1); }}>刷新计划任务</button>
     {(selected || selectedId) && <button type="button" className="text-button" disabled={disabled || busy} onClick={() => { setChosen(undefined); setHistory(undefined); setPreview(undefined); setError(''); onSelect?.(''); }}>返回计划列表</button>}
     {busy && <p role="status">正在核对计划记录…</p>}{error && <p role="alert" className="error-message">{error}</p>}
     {uncertain && <div className="policy-note"><p>原变更请求未确认：{pending.pointer.requestId}。刷新仅 GET 核对；重新打开页面后不保存或重建原输入。</p>{intent.current?.epoch === epoch && <button type="button" className="secondary" disabled={disabled || busy || !manages} onClick={() => void retryOriginal()}>显式重试原变更请求</button>}</div>}
-    {state && <p className="quiet">单个调度轮询器；错过的时刻合并处理，不逐次补跑。允许任务重叠，但仍受当前预算准入限制（每用户 {state.metadata.policy.maxUserTasks}、总计 {state.metadata.policy.maxTotalTasks}）。IANA 时区和夏令时以服务端 Cron 计算为准，预览不是预约保证。</p>}
+    {state && <p className="quiet">单个调度轮询器；错过的时刻合并处理，不逐次补跑。允许任务重叠，由执行队列调度。IANA 时区和夏令时以服务端 Cron 计算为准，预览不是预约保证。</p>}
     {state && !manages && <p className="policy-note">当前身份只能读取自己的计划与历史；管理本人计划需要当前任务运行权限。</p>}
     {state?.page.items.map(row => <article className="material-row" key={row.id}><div style={{ minWidth: 0 }}><h3>{row.name}</h3><p>{row.enabled ? '已启用' : '已暂停'} · {row.cron} · {row.timezone}</p><p>下次计算时刻：{row.nextRunAt ?? '尚未提供'}</p><button type="button" className="secondary" disabled={disabled || busy} onClick={() => onSelect ? onSelect(row.id) : void inspect(row.id)}>查看计划任务 {row.name}</button></div></article>)}
     {state?.page.items.length === 0 && <p>当前页没有计划任务。</p>}{state?.page.nextCursor && <button type="button" disabled={disabled || busy} onClick={() => setAfter(state.page.nextCursor!)}>读取下一页计划</button>}

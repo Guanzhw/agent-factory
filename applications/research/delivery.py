@@ -56,7 +56,7 @@ class ResearchDelivery:
         return [selected[identifier] for identifier in row['body']['recordIds']] if include_records else []
 
     def _check_size(self, size):
-        if size > self.maximum:
+        if self.maximum is not None and size > self.maximum:
             raise HTTPException(413, 'RESEARCH_DELIVERY_TOO_LARGE')
 
     def _parts(self, actor, row):

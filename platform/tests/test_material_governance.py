@@ -181,7 +181,7 @@ class MaterialGovernanceTests(unittest.TestCase):
                definition(provenance={"kind": "upstream", "source": "https://[broken", "revision": "v1", "notice": "MIT"}),
                definition(content="Do not store this credential URL: https://user:synthetic@fixtures.invalid/"),
                definition(inputSchema={"ghp_" + "X" * 30: "forbidden-key"}),
-               definition(outputSchema={"value": float("inf")}), definition(content="x" * 16001)]
+               definition(outputSchema={"value": float("inf")})]
         absent = definition()
         del absent["license"]
         bad.append(absent)
@@ -238,14 +238,17 @@ class MaterialGovernanceTests(unittest.TestCase):
         nested = {}
         for _ in range(14):
             nested = {"nested": nested}
-        for invalid in [definition(inputSchema=nested), definition(inputSchema={"many": list(range(3001))})]:
-            with self.assertRaises(HTTPException):
-                self.service.import_definitions("manager", [invalid], str(uuid4()))
-        for values in ([], [definition()] * 31):
-            with self.assertRaises(HTTPException):
-                self.service.import_definitions("manager", values, str(uuid4()))
+        for valid in [definition(inputSchema=nested), definition(inputSchema={"many": list(range(3001))}),
+                      definition(content="x" * 70000)]:
+            result = self.service.import_definitions("manager", [valid], str(uuid4()))
+            self.assertEqual(len(result["materials"]), 1)
+        result = self.service.import_definitions("manager", [definition()] * 31, str(uuid4()))
+        self.assertEqual(len(result["materials"]), 31)
+        with self.assertRaises(HTTPException):
+            self.service.import_definitions("manager", [], str(uuid4()))
         material, _ = self.publish()
-        for plan in ({}, {"materialRefs": []}, {"materialRefs": [ref(material)] * 31},
+        self.assertTrue(self.service.require_materials_current({"materialRefs": [ref(material)] * 31})["allowed"])
+        for plan in ({}, {"materialRefs": []},
                      {"materialRefs": [{**ref(material), "version": True}]},
                      {"materialRefs": [{**ref(material), "credentials": "forbidden"}]}):
             with self.assertRaises(HTTPException):

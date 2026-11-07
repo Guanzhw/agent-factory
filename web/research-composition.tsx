@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import App, { Workspace, type WorkspaceSessionProps } from './App.js';
 import { Pages } from './composition.js';
-import { ResourceCenter } from './ResourceCenter.js';
 import { ResearchWorkbench } from './apps/research/ResearchWorkspace.js';
 import { clearSessionDrafts } from './apps/research/researchSessionStorage.js';
 import { authEpoch } from './browserAuth.js';
@@ -22,10 +21,12 @@ function ResearchSession(props: WorkspaceSessionProps) {
     // auth epoch before unmounting a confirmed logout or expired identity.
     return () => { if (authEpoch() !== sessionEpoch) clearSessionDrafts(props.user.id); };
   }, [props.user.id]);
-  return <Workspace {...props} navigation={researchNavigation} applicationView={context => context.route.tab === 'research'
-    ? <ResearchWorkbench key={context.user.id} user={context.user} route={context.route} navigate={context.navigate} onLogout={props.logout} sessionBusy={props.sessionBusy} sessionError={props.sessionError}/>
-    : undefined}>{context => context.route.tab === 'resources' && context.route.modelReturn === 'research'
-      ? <ResourceCenter applicationLabel="AutoResearch" onModels={() => context.navigate({ tab: 'models', modelReturn: 'research' })} onConnections={resource => context.navigate({ tab: 'connections', resource, modelReturn: 'research' })} onBack={() => context.navigate({ tab: 'research', modelReturn: '' })}/>
-      : <Pages context={context} applications={applications} taskReturn={context.route.task && context.route.taskReturn === 'research' && context.route.taskReturnTask === context.route.task ? { label: '原研究', onBack: () => context.navigate({ tab: 'research' }) } : undefined} resourceReturn={context.route.modelReturn === 'research' && ['models', 'connections'].includes(context.route.tab) ? { label: '原研究', onBack: () => context.navigate({ tab: 'research', modelReturn: '' }) } : undefined}/>}</Workspace>;
+  return <Workspace {...props} navigation={researchNavigation} applicationView={context =>
+    <ResearchWorkbench key={context.user.id} user={context.user} route={context.route} navigate={context.navigate} onTab={context.selectTab}
+      onLogout={props.logout} sessionBusy={props.sessionBusy} sessionError={props.sessionError}
+      workspaceContent={context.route.tab === 'research' ? undefined : <>{context.feedback}<Pages context={context} applications={applications}
+        taskReturn={context.route.task && context.route.taskReturn === 'research' && context.route.taskReturnTask === context.route.task ? { label: '原研究', onBack: () => context.navigate({ tab: 'research' }) } : undefined}
+        resourceReturn={{ label: '对话', onBack: () => context.navigate({ tab: 'research', modelReturn: '' }) }}/></>}/>
+  }/>;
 }
 export default function ResearchApp() { return <App workspace={ResearchSession}/>; }

@@ -16,13 +16,13 @@ Core owns execution and resource interfaces. Research concepts belong in `applic
 
 The platform serves a trusted small team. Members create and use components, publish their own content, and connect resources. Account administrators manage accounts. Resource owners choose personal or team sharing. Shared use never exposes their credentials. Input validation belongs at the boundary that owns the operation.
 
-Keep owner isolation, original-operation receipts, explicit budgets, and evidence that owned processes stopped. Missing acknowledgements remain uncertain until the original operation is reconciled. A request timeout or canceled queue ticket is not proof that compute stopped. These operational rules do not require a new approval system or a fixed research workflow.
+Keep correct user/resource association, original-operation receipts, and evidence that owned processes stopped. Missing acknowledgements remain uncertain until the original operation is reconciled. A request timeout or canceled queue ticket is not proof that compute stopped. These operational rules do not require a new approval system or a fixed research workflow.
 
 ## Implement and review
 
 1. Inspect callers and the pinned SDK before changing a shared contract.
 2. Reproduce the user-visible failure or run one small authorized real task.
-3. Make the smallest complete change. New limits, abstractions, or compatibility paths need a present requirement or reproduced failure.
+3. Prefer installed Agno capabilities over duplicate implementations. Remove project restrictions that obstruct Agent execution or add user steps. For autonomous-session limits, compare the same scope and units against the pinned Codex reference; do not replace a lifetime quota with an unrelated concurrency value. New abstractions or compatibility paths need a present requirement or reproduced failure.
 4. Run relevant checks and review the complete diff. Independent review checks correctness, removable code, and reusable native capabilities.
 5. Open a Draft PR using the repository template. Report behavior, evidence, remaining limitations, and next steps. Merge only with applicable user authorization.
 

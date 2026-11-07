@@ -268,32 +268,31 @@ class BoundedApplicationClosureTests(unittest.TestCase):
                 f.store.material_governance.require_materials_current.assert_not_called()
                 self.assertEqual(len(f.fetched), 1)
 
-    def test_unbounded_or_malformed_candidates_are_rejected_before_query(self):
+    def test_malformed_candidates_are_rejected_before_query(self):
         f = self.fixture()
-        for candidates in ([], [pin(f.selected[0])] * 31, [{'id': 'missing-version'}], 'not-pins'):
+        for candidates in ([], [{'id': 'missing-version'}], 'not-pins'):
             with self.subTest(candidates=candidates), self.assertRaises(HTTPException):
                 f.service.closure([pin(f.selected[0])], candidate_refs=candidates)
         self.assertEqual(f.fetched, [])
         f.store.materials.assert_not_called()
 
-    def test_bounded_lookup_preserves_dependency_depth_limit(self):
+    def test_candidate_lookup_accepts_deep_dependencies(self):
         nodes = [material('depth-leaf')]
         for depth in range(8):
             nodes.insert(0, material('depth-' + str(depth), [pin(nodes[0])]))
         f = self.fixture(selected=nodes)
         for options in ({}, {'candidate_refs': [pin(item) for item in nodes]}):
-            with self.subTest(bounded=bool(options)), self.assertRaises(HTTPException) as raised:
-                f.service.closure([pin(nodes[0])], **options)
-            self.assertIn('depth/count', str(raised.exception.detail))
-        f.store.material_governance.require_materials_current.assert_not_called()
+            with self.subTest(bounded=bool(options)):
+                self.assertEqual(f.service.closure([pin(nodes[0])], **options), list(reversed(nodes)))
+        self.assertEqual(f.store.material_governance.require_materials_current.call_count, 2)
 
-    def test_thirty_material_boundary_preserves_dfs_order(self):
-        leaves = [material('count-leaf-' + str(index)) for index in range(29)]
+    def test_large_material_closure_preserves_dfs_order(self):
+        leaves = [material('count-leaf-' + str(index)) for index in range(40)]
         root = material('count-root', [pin(leaf) for leaf in leaves])
         f = self.fixture(selected=[root, *leaves])
         candidates = [pin(item) for item in f.selected]
         self.assertEqual(f.service.closure([pin(root)], candidate_refs=candidates), [*leaves, root])
-        self.assertEqual(f.fetched, [30])
+        self.assertEqual(f.fetched, [41])
 
     def test_bounded_lookup_preserves_cycle_check(self):
         root = material('cycle-root')

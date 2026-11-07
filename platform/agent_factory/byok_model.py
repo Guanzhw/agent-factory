@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import json
+from queue import Queue
+from threading import Thread
 from typing import Callable
 from urllib.parse import urlsplit
 from uuid import uuid4
@@ -18,7 +19,6 @@ from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 
-from .config import Settings
 
 # Re-export the established names for callers while keeping endpoint policy,
 # transport and protocol conversion independent of the Agno execution adapter.
@@ -33,7 +33,8 @@ from .model_protocol import (
     assistant_message_matches, decode_response, encode_request, function_call as function_call,
     protocol_name, protocol_path,
 )
-from .model_transport import MAX_BYTES as MAX_BYTES, PinnedChatTransport as PinnedChatTransport, read_response_json
+from .model_transport import MAX_BYTES as MAX_BYTES, PinnedChatTransport as PinnedChatTransport
+from .model_stream import read_model_stream
 from .personal_remote_provider import PinnedHTTPSProbe as PinnedHTTPSProbe
 
 PROVIDER_ID = 'byok-chat-v1'
@@ -47,7 +48,7 @@ def rejected(code='PERSONAL_MODEL_RESPONSE_REJECTED'):
 
 class OwnerChatModel(Model):
     def __init__(self, configuration, credential: Callable, *, transport_factory=None, recheck=None, session_id=None,
-            trusted_proxy=None, timeout_seconds=Settings.native_timeout_seconds):
+            trusted_proxy=None, timeout_seconds=300, on_text=None):
         super().__init__(id=model_id(configuration['model']), provider=configuration['provider'],
             name='Owner Model', retries=0)
         self._base = base_url(configuration['baseURL'])
@@ -58,6 +59,10 @@ class OwnerChatModel(Model):
         self._thinking_mode = configuration.get('thinkingMode')
         self._credential = credential
         self._timeout_seconds = timeout_seconds
+        self._on_text = on_text
+        self.context_window = configuration.get("contextWindow")
+        self.auto_compact_token_limit = configuration.get("autoCompactTokenLimit")
+        self.factory_wire_stream = True
         self._transport_factory = transport_factory
         if transport_factory is not None and trusted_proxy is not None:
             raise ValueError('TRUSTED_MODEL_PROXY_CONFIGURATION_INVALID')
@@ -103,7 +108,7 @@ class OwnerChatModel(Model):
                 elif required:
                     raise rejected('PERSONAL_MODEL_CONTINUATION_REQUIRED')
             encoded.append(item)
-        chat = {'model': self.id, 'messages': encoded, 'max_tokens': self._max_output_tokens, 'stream': False}
+        chat = {'model': self.id, 'messages': encoded, 'max_tokens': self._max_output_tokens, 'stream': True}
         if tools:
             provider_tools = []
             for tool in tools:
@@ -112,7 +117,7 @@ class OwnerChatModel(Model):
                     function = {key: value for key, value in function.items() if key != 'external_execution'}
                     tool = {**tool, 'function': function}
                 provider_tools.append(tool)
-            chat.update(tools=provider_tools, parallel_tool_calls=False)
+            chat.update(tools=provider_tools)
         if tool_choice is not None:
             chat['tool_choice'] = tool_choice
         body = encode_request(self._protocol, chat, continuation=continuation)
@@ -121,10 +126,15 @@ class OwnerChatModel(Model):
         if self._protocol == 'chat-completions':
             body.update(generation_options({'baseURL': self._base, 'model': self.id,
                 'thinkingMode': self._thinking_mode}))
-        if len(json.dumps(body).encode()) > MAX_BYTES: raise rejected('PERSONAL_MODEL_REQUEST_TOO_LARGE')
         return body
 
-    async def _request(self, messages, **kwargs):
+    async def _request(self, messages, *, on_text=None, **kwargs):
+        response_id = uuid4().hex
+        async def progress(text):
+            if self._on_text is not None:
+                await self._on_text(text, response_id)
+            if on_text is not None:
+                await on_text(text)
         try:
             body = self._body(messages, **kwargs)
             if self._trusted_proxy is not None and self.id != self._trusted_proxy.model_id:
@@ -136,19 +146,34 @@ class OwnerChatModel(Model):
                 trusted_proxy=self._trusted_proxy, protocol=self._protocol)
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
-            async with asyncio.timeout(self._timeout_seconds), httpx.AsyncClient(transport=transport, trust_env=False,
-                    follow_redirects=False, timeout=None, auth=None) as client:
-                async with client.stream('POST', self._base + protocol_path(self._protocol), json=body,
-                        headers=chat_headers(self._base, lease, self._session_id)) as response:
-                    value = await read_response_json(response, lease)
+            async with httpx.AsyncClient(transport=transport, trust_env=False,
+                    follow_redirects=False, timeout=self._timeout_seconds, auth=None) as client:
+                request = client.build_request('POST', self._base + protocol_path(self._protocol), json=body,
+                    headers=chat_headers(self._base, lease, self._session_id))
+                async with asyncio.timeout(self._timeout_seconds):
+                    response = await client.send(request, stream=True)
+                try:
+                    if response.status_code != 200:
+                        raise rejected('PERSONAL_MODEL_HTTP_' + str(response.status_code))
+                    value = await read_model_stream(response, lease, self._protocol, progress,
+                        idle_seconds=self._timeout_seconds)
+                finally:
+                    await response.aclose()
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except ModelProviderError:
+            raise
+        except Exception as error:
             # Remote bodies, authentication values, URLs and transport errors do
             # not enter native persisted error events or product logs.
-            raise rejected('PERSONAL_MODEL_REQUEST_FAILED') from None
+            code = str(error)
+            known = {'REMOTE_DNS_FAILED', 'REMOTE_CREDENTIAL_ECHO_REJECTED', 'REMOTE_RESPONSE_REJECTED',
+                'REMOTE_CREDENTIAL_UNAVAILABLE', 'REMOTE_ORIGIN_DENIED', 'REMOTE_PATH_DENIED', 'REMOTE_DEADLINE',
+                'TRUSTED_MODEL_PROXY_REQUEST_DENIED', 'PERSONAL_MODEL_STREAM_INCOMPLETE'}
+            raise rejected(code if code in known else
+                'PERSONAL_MODEL_REQUEST_FAILED_' + type(error).__name__.upper()) from None
         result = self._parse_provider_response(value)
         declared_tools = {tool['function']['name'] if self._protocol == 'chat-completions' else tool['name']
             for tool in body.get('tools', [])}
@@ -164,10 +189,67 @@ class OwnerChatModel(Model):
         return self._parse_provider_response(await self._request(messages, **kwargs))
 
     def invoke_stream(self, messages, **kwargs):
-        yield self.invoke(messages, **kwargs)
+        values = Queue()
+        loop = asyncio.new_event_loop()
+        async def forward():
+            try:
+                async for value in self.ainvoke_stream(messages, **kwargs):
+                    values.put(value)
+            except BaseException as error:
+                values.put(error)
+            finally:
+                values.put(None)
+        task = loop.create_task(forward())
+        def run():
+            try:
+                loop.run_until_complete(task)
+            finally:
+                loop.close()
+        thread = Thread(target=run, daemon=True)
+        thread.start()
+        try:
+            while True:
+                value = values.get()
+                if value is None:
+                    break
+                if isinstance(value, BaseException):
+                    raise value
+                yield value
+        finally:
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(task.cancel)
+            thread.join()
 
     async def ainvoke_stream(self, messages, **kwargs):
-        yield await self.ainvoke(messages, **kwargs)
+        chunks = asyncio.Queue()
+        async def text(value):
+            await chunks.put(ModelResponse(role='assistant', content=value))
+        async def request():
+            try:
+                result = await self._request(messages, on_text=text, **kwargs)
+                await chunks.put(result)
+            except BaseException as error:
+                await chunks.put(error)
+            finally:
+                await chunks.put(None)
+        task = asyncio.create_task(request())
+        streamed = False
+        try:
+            while True:
+                value = await chunks.get()
+                if value is None:
+                    break
+                if isinstance(value, BaseException):
+                    raise value
+                if value.provider_data:
+                    if streamed:
+                        value.content = None
+                else:
+                    streamed = True
+                yield value
+        finally:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
     def _parse_provider_response(self, response, **kwargs):
         if isinstance(response, ModelResponse): return response

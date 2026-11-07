@@ -21,7 +21,7 @@ describe('schedule management boundaries', () => {
   });
   it('requires the current permission metadata and declared native scheduling semantics', () => {
     expect(scheduleMetadata(meta, 'alice').policy.pauseCancelsRunning).toBe(false);
-    for (const patch of [{ singlePoller: false }, { missed: 'catch-up' }, { pauseCancelsRunning: true }, { maxUserTasks: 0 }]) expect(() => scheduleMetadata({ ...meta, policy: { ...meta.policy, ...patch } }, 'alice')).toThrow();
+    for (const patch of [{ singlePoller: false }, { missed: 'catch-up' }, { pauseCancelsRunning: true }, { maxUserTasks: -1 }]) expect(() => scheduleMetadata({ ...meta, policy: { ...meta.policy, ...patch } }, 'alice')).toThrow();
     expect(scheduleMetadata({ ...meta, canManage: false }, 'alice').canManage).toBe(false);
   });
   it('accepts bounded owner pages while rejecting duplicate rows and wrong continuation', () => {
@@ -98,4 +98,8 @@ it('preserves only the explicit server prewrite rejection evidence from the HTTP
     await expect(factoryRequest('/schedule-management', 'POST', {})).rejects.toMatchObject({ status: 409, rejected: true });
     await expect(factoryRequest('/schedule-management', 'POST', {})).rejects.toMatchObject({ status: 409, rejected: false });
   } finally { vi.unstubAllGlobals(); }
+});
+
+it('accepts zero admission ceilings as uncapped scheduling metadata', () => {
+  expect(scheduleMetadata({ ...meta, policy: { ...meta.policy, maxUserTasks: 0, maxTotalTasks: 0 } }, 'alice').policy.maxUserTasks).toBe(0);
 });

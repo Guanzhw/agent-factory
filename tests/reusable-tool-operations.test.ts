@@ -1,3 +1,4 @@
+import { publicToolConfiguration } from '../web/personalToolConnectionApi.js';
 // @vitest-environment happy-dom
 import { webcrypto } from 'node:crypto';
 import { act, createElement } from 'react';
@@ -95,4 +96,8 @@ it('keeps the original public payload visible after an uncertain creation is rel
   await act(async () => root.unmount()); root = createRoot(host); await mount();
   expect(host.querySelector('[aria-label="待确认原请求"]')!.textContent).toContain('PUBLIC_MODE');
   expect(tools.createOperation).toHaveBeenCalledTimes(1);
+});
+
+it('accepts unbounded tool recipe fields returned by the actual backend', () => {
+  expect(publicToolConfiguration({ transport: 'cli', toolName: 'inspect', description: '', inputSchema: { type: 'object' }, executable: 'python', timeoutSeconds: null, maxOutputBytes: null })).toMatchObject({ timeoutSeconds: null, maxOutputBytes: null });
 });

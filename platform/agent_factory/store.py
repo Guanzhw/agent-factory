@@ -272,7 +272,7 @@ class Store:
     def reserve_task(self, plan, request_id, *, allocation_id=None, delivery_id=None, private_event_id=None, remote_target=False):
         owner, fp = plan["ownerId"], digest({"planId": plan["id"], "planHash": digest(plan)})
         with self.transaction() as conn:
-            # Serialize admission globally so simultaneous users cannot evade total quotas.
+            # Coordinate original admissions with application completion transactions.
             conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             if self.local_budget_scopes is not None:
                 plan_request = conn.execute(text('''SELECT r.request_id FROM af_plan_requests p
@@ -305,25 +305,6 @@ class Store:
                         delivery_id = required_delivery
             if remote_target and allocation_id is not None:
                 raise HTTPException(409, 'LOCAL_BUDGET_ORIGINAL_ROOT_REQUIRED')
-            if self.native_db is not None:
-                active = conn.execute(text("SELECT id,run_id FROM af_tasks WHERE NOT terminal AND run_id IS NOT NULL")).mappings().all()
-                for candidate in active:
-                    current = conn.execute(text("SELECT id,run_id,terminal FROM af_tasks WHERE id=:id FOR UPDATE"),
-                        {"id": candidate["id"]}).mappings().first()
-                    if current is None or current["terminal"] or current["run_id"] is None:
-                        continue
-                    candidate = current
-                    native = self.native_db.get_job(candidate["run_id"]) or {}
-                    uncertain = any(effect_unresolved(effect, self) for effect in conn.execute(
-                        text("SELECT effect_key,status,result FROM af_effects WHERE task_id=:id"),
-                        {"id": candidate["id"]}).mappings())
-                    descendants_pending = getattr(self, "delegation", None) and self.delegation.has_pending_children(candidate["id"])
-                    custody_held = runtime_custody_held(self, candidate["id"])
-                    completion_owned = self.completion_context(self.task(candidate["id"])) is not None
-                    if native.get("status") in {"completed", "failed", "cancelled"} and not uncertain and not descendants_pending and not custody_held and not completion_owned:
-                        conn.execute(text("UPDATE af_tasks SET terminal=TRUE WHERE id=:id"), {"id": candidate["id"]})
-                        if self.storage is not None:
-                            self.storage.release(candidate["id"])
             old = conn.execute(text("SELECT * FROM af_tasks WHERE owner_id=:owner AND request_id=:request"), {"owner": owner, "request": request_id}).mappings().first()
             if old:
                 if old["fingerprint"] != fp:
@@ -346,10 +327,6 @@ class Store:
                 self.assistant_events.validate_private_admission(conn, owner, private_event_id, request_id, plan)
             if self.assistant_messages is not None:
                 self.assistant_messages.validate_admission(conn, owner, request_id, plan, allocation_id)
-            count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal")).scalar()
-            user_count = conn.execute(text("SELECT COUNT(*) FROM af_tasks WHERE NOT terminal AND owner_id=:owner"), {"owner": owner}).scalar()
-            if count >= self.settings.max_total_tasks or user_count >= self.settings.max_user_tasks:
-                raise HTTPException(429, "ACTIVE_TASK_CAPACITY_EXHAUSTED")
             task_id = str(uuid4())
             body = {"createdAt": now(), "updatedAt": now(), "lastStatus": "queued", "requestId": request_id}
             row = conn.execute(text("INSERT INTO af_tasks(id,owner_id,plan_id,request_id,fingerprint,body) VALUES(:id,:owner,:plan,:request,:fp,CAST(:body AS JSONB)) RETURNING *"),
@@ -639,7 +616,7 @@ class Store:
     def artifact_write(self, run_id, name, content, media_type="application/json", metadata=None):
         task = self.task(run_id)
         raw = content.encode() if isinstance(content, str) else bytes(content)
-        if len(raw) > self.settings.experiment_output_bytes:
+        if self.settings.experiment_output_bytes is not None and len(raw) > self.settings.experiment_output_bytes:
             raise ValueError("Artifact exceeds task output budget")
         if len(name) > 120 or any(char in name for char in "/\\\r\n"):
             raise ValueError("Artifact name must be a single safe filename")

@@ -84,27 +84,33 @@ class RuntimeBindingGovernanceTests(unittest.TestCase):
         self.assertEqual(normalized, self.service.validate_definition({**original, "runtimeBinding": None}))
         self.assertNotIn("runtimeBinding", self.service.create_draft("manager", original, "no-binding"))
 
-    def test_runtime_config_code_credentials_paths_urls_and_bounds_fail_closed(self):
+    def test_runtime_config_code_credentials_paths_urls_and_invalid_values_fail_closed(self):
         invalid = [binding(factory="subprocess.Popen"), binding(modelFactory="subprocess.Popen"), binding(command="python"), binding(shell=True),
             binding(module="os"), binding(path="relative.py"), binding(connectionRef="owner-secret-ref"),
             binding(connectionName="https://fixtures.invalid"), binding(connectionName=True), binding(endpoint="loopback"),
             binding(apiKey="synthetic-forbidden"), binding(token="synthetic-forbidden"),
             binding(value="https://fixtures.invalid"), binding(value="C:\\owned\\file"),
             binding(value="../owned"), binding(value="print('synthetic')"), binding(value="module:factory"),
-            binding(value=float("inf")), binding(value=10**1000), binding(value=list(range(33))),
+            binding(value=float("inf")), binding(value=10**1000),
             {**binding(), "adapterId": 1}, {**binding(), "revision": 1}, {**binding(), "extra": "x"},
             {**binding(), "adapterId": "sk-proj-" + "X" * 30},
             {"adapterId": "fixture-checksum-v1", "revision": "1"}]
-        nested = {}
-        for _ in range(8):
-            nested = {"next": nested}
-        invalid += [binding(nested=nested), binding(**{f"item{i}": i for i in range(33)})]
         for index, value in enumerate(invalid):
             with self.subTest(index=index), self.assertRaises(HTTPException) as denied:
                 self.service.import_definitions("manager", [governance_fixture.definition(kind="model", runtimeBinding=value)], f"invalid-{index}")
             self.assertEqual(denied.exception.status_code, 422)
         with self.store.engine.connect() as connection:
             self.assertEqual(list(connection.execute(select(self.store.materials))), [])
+
+    def test_deep_and_large_inert_runtime_configuration_is_allowed(self):
+        nested = {}
+        for _ in range(12):
+            nested = {'next': nested}
+        for config in (binding(value=list(range(33))), binding(nested=nested),
+                       binding(**{f'item{i}': i for i in range(33)})):
+            created = self.service.create_draft('manager',
+                governance_fixture.definition(kind='model', runtimeBinding=config), str(uuid4()))
+            self.assertEqual(created['runtimeBinding'], config)
 
     def test_only_runtime_kinds_bind_and_managers_cannot_register_new_callables(self):
         for kind in ("prompt", "skill"):

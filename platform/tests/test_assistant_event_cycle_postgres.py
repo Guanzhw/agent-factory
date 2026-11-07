@@ -33,6 +33,8 @@ class AssistantEventCyclePostgresTests(unittest.TestCase):
                         self.assertEqual(completion['settlement']['state'], 'SETTLED')
                         origin = events.delivery_for_task(task['owner_id'], task['id'])
                         self.assertIsNotNone(origin)
+                        if origin['depth'] == 2:
+                            return  # This synthetic conversation is complete after three replies.
                         peer = 'alice' if task['owner_id'] == 'bob' else 'bob'
                         publication = content.publish(task['owner_id'], ContentPublication(source={
                             'application': 'cycle-fixture', 'record': task['id'], 'revision': '1'},
@@ -56,7 +58,7 @@ class AssistantEventCyclePostgresTests(unittest.TestCase):
         self.addCleanup(self.fixture.doCleanups)
         self.fixture.setUp()
 
-    def test_two_native_receivers_cycle_until_original_scope_refuses_third_admission(self):
+    def test_two_native_receivers_complete_three_replies_beyond_legacy_scope_budget(self):
         fixture = self.fixture
         app = fixture.publish_http()
         events, content = fixture.state['assistant_events'], fixture.state['application_content']
@@ -81,39 +83,30 @@ class AssistantEventCyclePostgresTests(unittest.TestCase):
         deliveries = []
         while time.monotonic() < deadline:
             deliveries = fixture.store.sql('SELECT * FROM af_assistant_event_deliveries')
-            if sorted(row['state'] for row in deliveries) == ['rejected', 'settled', 'settled']:
+            if sorted(row['state'] for row in deliveries) == ['settled', 'settled', 'settled']:
                 break
             time.sleep(.05)
-        self.assertEqual(sorted(row['state'] for row in deliveries), ['rejected', 'settled', 'settled'], deliveries)
-        rejected = next(row for row in deliveries if row['state'] == 'rejected')
-        self.assertEqual(rejected['error'], 'LOCAL_BUDGET_EXHAUSTED')
-        self.assertIsNone(rejected['allocation_id'])
+        self.assertEqual(sorted(row['state'] for row in deliveries), ['settled', 'settled', 'settled'], deliveries)
         lineage = fixture.store.sql('SELECT id,root_id,depth,scanned FROM af_assistant_events ORDER BY depth')
         self.assertEqual([row['depth'] for row in lineage], [0, 1, 2])
         self.assertEqual({row['root_id'] for row in lineage}, {original['id']})
         self.assertTrue(all(row['scanned'] for row in lineage))
-        identities = []
+        identities = {}
         for owner in ('alice', 'bob'):
             tasks = fixture.store.tasks(owner)
-            self.assertEqual(len(tasks), 1)
-            task = tasks[0]
-            self.assertTrue(task['terminal'])
-            self.assertEqual(task['body']['stoppedStatus'], 'completed')
-            self.assertEqual(fixture.store.native_db.get_job(task['run_id'])['status'], 'completed')
+            expected = 1 if owner == 'alice' else 2
+            self.assertEqual(len(tasks), expected)
             scope = scopes.inspect(owner, 'cycle-' + owner)
-            self.assertEqual(scope['allocatedRounds'], 1)
-            self.assertEqual(len(scope['allocations']), 1)
-            allocation = scope['allocations'][0]
-            self.assertEqual(allocation['state'], 'SETTLED')
-            self.assertEqual(allocation['taskId'], task['id'])
-            identities.append((task['id'], task['run_id'], allocation['allocationId']))
+            self.assertEqual(scope['allocatedRounds'], expected)
+            self.assertEqual(len(scope['allocations']), expected)
+            self.assertTrue(all(item['state'] == 'SETTLED' for item in scope['allocations']))
+            for task in tasks:
+                self.assertTrue(task['terminal'])
+                self.assertEqual(task['body']['stoppedStatus'], 'completed')
+                self.assertEqual(fixture.store.native_db.get_job(task['run_id'])['status'], 'completed')
+            identities[owner] = {(task['id'], task['run_id']) for task in tasks}
         for _ in range(3):
             self.assertEqual(fixture.client.portal.call(events.deliver_batch), (0, 0))
         self.assertEqual(fixture.store.sql('SELECT id,root_id,depth,scanned FROM af_assistant_events ORDER BY depth'), lineage)
-        for index, owner in enumerate(('alice', 'bob')):
-            task = fixture.store.tasks(owner)
-            self.assertEqual(len(task), 1)
-            scope = scopes.inspect(owner, 'cycle-' + owner)
-            self.assertEqual(scope['allocatedRounds'], 1)
-            self.assertEqual(len(scope['allocations']), 1)
-            self.assertEqual((task[0]['id'], task[0]['run_id'], scope['allocations'][0]['allocationId']), identities[index])
+        for owner in ('alice', 'bob'):
+            self.assertEqual({(task['id'], task['run_id']) for task in fixture.store.tasks(owner)}, identities[owner])

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
-import json
 import math
 import re
 from typing import Any, Literal, Mapping
@@ -21,6 +20,7 @@ from sqlalchemy import Boolean, Column, Integer, JSON, MetaData, String, Table, 
 
 from .plan_policy import ToolContract, application_tool_catalog, tools_for_contract
 from .store import digest, now
+from .input_schema import bounded_json
 
 KINDS = Literal["skill", "tool", "prompt", "knowledge", "model", "environment"]
 LICENSES = ("MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "CC0-1.0", "CC-BY-4.0")
@@ -35,13 +35,9 @@ def _inert_runtime_config(value: Any, *, depth: int = 0, count: list[int] | None
     references. In particular, importing a material never imports Python from
     its content/config, opens a path/URL, or selects a credential.
     """
-    count = count if count is not None else [0]
-    count[0] += 1
-    if depth > 6 or count[0] > 256:
-        raise ValueError("Runtime config exceeds bounded JSON complexity")
+    if depth == 0:
+        bounded_json(value)
     if isinstance(value, dict):
-        if len(value) > 32:
-            raise ValueError("Runtime config object exceeds field budget")
         result = {}
         for key, item in value.items():
             if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]{0,63}", key):
@@ -61,8 +57,6 @@ def _inert_runtime_config(value: Any, *, depth: int = 0, count: list[int] | None
             result[key] = _inert_runtime_config(item, depth=depth + 1, count=count)
         return result
     if isinstance(value, list):
-        if len(value) > 32:
-            raise ValueError("Runtime config list exceeds item budget")
         return [_inert_runtime_config(item, depth=depth + 1, count=count) for item in value]
     if isinstance(value, str):
         if SECRET_TEXT.search(value) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@+-]{0,255}", value):
@@ -92,8 +86,6 @@ class RuntimeBinding(BaseModel):
     @classmethod
     def inert_config(cls, value: dict[str, Any]) -> dict[str, Any]:
         result = _inert_runtime_config(value)
-        if len(json.dumps(result, ensure_ascii=False, allow_nan=False).encode()) > 8192:
-            raise ValueError("Runtime binding config exceeds 8 KiB")
         return result
 
 
@@ -124,12 +116,12 @@ class MaterialDefinition(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     kind: KINDS
-    name: str = Field(min_length=1, max_length=120)
-    description: str = Field(default="", max_length=2000)
-    content: str = Field(min_length=1, max_length=16000)
-    dependencies: list[PinnedRef] = Field(default_factory=list, max_length=30)
-    permissions: list[str] = Field(default_factory=list, max_length=30)
-    compatibility: list[str] = Field(default_factory=lambda: ["agno:3.1.0"], max_length=30)
+    name: str = Field(min_length=1)
+    description: str = ""
+    content: str = Field(min_length=1)
+    dependencies: list[PinnedRef] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
+    compatibility: list[str] = Field(default_factory=lambda: ["agno:3.1.0"])
     inputSchema: dict[str, Any] = Field(default_factory=dict)
     outputSchema: dict[str, Any] = Field(default_factory=dict)
     license: str = "MIT"
@@ -278,10 +270,11 @@ class MaterialGovernance:
 
     @staticmethod
     def _safe_data(value, depth=0, count=None):
-        count = count if count is not None else [0]
-        count[0] += 1
-        if depth > 12 or count[0] > 3000:
-            raise HTTPException(422, "Structured material exceeds bounded JSON complexity")
+        if depth == 0:
+            try:
+                bounded_json(value)
+            except ValueError as error:
+                raise HTTPException(422, "Structured material must be JSON data") from error
         if isinstance(value, dict):
             for key, item in value.items():
                 if not isinstance(key, str) or SECRET_KEYS.fullmatch(key) or SECRET_TEXT.search(key):
@@ -308,8 +301,6 @@ class MaterialGovernance:
             value = MaterialDefinition.model_validate(definition).model_dump(exclude_none=True)
         except ValidationError as error:
             raise HTTPException(422, "Invalid structured material fields") from error
-        if len(json.dumps(value, ensure_ascii=False, allow_nan=False).encode()) > 65536:
-            raise HTTPException(422, "Material definition exceeds 64 KiB")
         if value["license"] not in LICENSES or "agno:3.1.0" not in value["compatibility"]:
             raise HTTPException(422, "Material license or runtime compatibility is unsupported")
         provenance = value["provenance"]
@@ -381,8 +372,6 @@ class MaterialGovernance:
                 raise HTTPException(409, "Pinned material dependency cycle")
             if key in visited:
                 return
-            if depth > 8 or len(visited) + len(visiting) >= 30:
-                raise HTTPException(409, "Pinned dependency closure exceeds bounds")
             if allowed_refs is not None and key not in allowed_refs:
                 raise HTTPException(409, "Plan omitted a pinned transitive material dependency")
             material = self._material(conn, ref["id"], ref["version"], rows=materials)
@@ -418,11 +407,9 @@ class MaterialGovernance:
 
     def _create(self, actor, definitions, request_id, imported):
         self._require_write(actor)
-        if not isinstance(definitions, list) or not 1 <= len(definitions) <= 30:
-            raise HTTPException(422, "Import must contain one through thirty structured definitions")
+        if not isinstance(definitions, list) or not definitions:
+            raise HTTPException(422, "Import must contain structured definitions")
         values = [self.validate_definition(value, imported=imported) for value in definitions]
-        if len(json.dumps(values, ensure_ascii=False).encode()) > 262144:
-            raise HTTPException(422, "Structured import exceeds 256 KiB")
         fingerprint = digest({"operation": "import" if imported else "draft", "definitions": values})
         with self._write() as conn:
             old = self._old_command(conn, actor, request_id, fingerprint)
@@ -554,7 +541,7 @@ class MaterialGovernance:
 
     def require_materials_current(self, plan):
         refs = plan.get("materialRefs")
-        if not isinstance(refs, list) or not 1 <= len(refs) <= 30:
+        if not isinstance(refs, list) or not refs:
             raise HTTPException(409, "Plan must bind exact approved material versions")
         try:
             pins = [PinnedRef.model_validate(ref).model_dump() for ref in refs]
@@ -614,7 +601,7 @@ class DraftCommand(Command):
 
 
 class ImportCommand(Command):
-    definitions: list[dict[str, Any]] = Field(min_length=1, max_length=30)
+    definitions: list[dict[str, Any]] = Field(min_length=1)
 
 
 class ReviewCommand(Command):

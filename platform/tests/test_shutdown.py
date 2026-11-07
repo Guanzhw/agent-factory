@@ -75,7 +75,7 @@ core.create_app = fixture_app
 deployment.create_core_app = fixture_app
 if launcher == 'agent_factory_server.research':
     import agent_factory_server.research as research
-    research._session_tools_from_env = lambda: None
+    research._session_tools_from_env = lambda settings=None: None
     research.create_app = lambda settings, **kwargs: fixture_app(settings, shutdown_guard=shutdown.shutdown_guard)
     research.main()
 else:

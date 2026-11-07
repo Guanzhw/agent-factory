@@ -35,7 +35,7 @@ export function scheduleMetadata(v: unknown, owner: string): ScheduleMetadata {
   if (!record(v) || v.schema !== 1 || v.ownerId !== owner || typeof v.canManage !== 'boolean' || !record(v.policy)
       || v.policy.singlePoller !== true || v.policy.overlap !== 'allow-with-current-budget-admission' || v.policy.missed !== 'coalesce'
       || v.policy.pauseCancelsRunning !== false || v.policy.timeSemantics !== 'cron-iana-timezone'
-      || !Number.isSafeInteger(v.policy.maxUserTasks) || Number(v.policy.maxUserTasks) < 1 || !Number.isSafeInteger(v.policy.maxTotalTasks) || Number(v.policy.maxTotalTasks) < 1) throw fail();
+      || !Number.isSafeInteger(v.policy.maxUserTasks) || Number(v.policy.maxUserTasks) < 0 || !Number.isSafeInteger(v.policy.maxTotalTasks) || Number(v.policy.maxTotalTasks) < 0) throw fail();
   return v as unknown as ScheduleMetadata;
 }
 export function schedulePage(v: unknown, owner: string): SchedulePage {

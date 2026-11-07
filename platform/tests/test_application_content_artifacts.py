@@ -64,7 +64,7 @@ class ContentArtifactTests(ApplicationCompositionFixture):
         self.assertEqual(missing.exception.status_code, 404)
 
     def test_body_reference_cannot_bypass_json_shape_safety_or_owner(self):
-        for content in ([], {'password': 'synthetic-secret'}, {'text': 'x' * 17000}, {'n': float('nan')}):
+        for content in ([], {'password': 'synthetic-secret'}, {'n': float('nan')}):
             with self.subTest(content_type=type(content).__name__):
                 body = self.body(content)
                 with self.assertRaises(HTTPException) as invalid:
@@ -88,3 +88,8 @@ class ContentArtifactTests(ApplicationCompositionFixture):
         self.assertEqual(fingerprint, digest({'action': 'publish', **original}))
         self.assertNotIn('contentArtifact', published)
         self.assertEqual(self.service.publish('alice', ContentPublication(**original), 'old-inline-request'), published)
+
+    def test_large_body_artifact_is_not_rejected_by_inline_content_limits(self):
+        content = {'text': 'x' * 17000}
+        published = self.service.publish('alice', self.body(content), 'long-body')
+        self.assertEqual(self.service.read('alice', published['id'])['content'], content)

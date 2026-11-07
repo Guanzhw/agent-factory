@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import json
 from dataclasses import asdict, replace
 
 from agno.exceptions import RunCancelledException, StopAgentRun
@@ -16,6 +17,7 @@ from .execution_bindings import AdapterRegistration, BindingContext, ExecutionBi
 from .personal_remote_provider import SecretLease, reject_credential_echo
 from .personal_tool_contract import PersonalToolAdapter, ToolInvocation, ToolInvocationError, validate_tool_arguments, bounded_tool_json
 from .store import canonical, digest
+from .tool_output import output_preview, DEFAULT_OUTPUT_TOKENS
 
 
 def _configuration(config):
@@ -37,7 +39,12 @@ def _receipt(receipt):
     if not isinstance(receipt, dict):
         raise _unknown()
     if receipt.get('outcome') == 'completed' and 'output' in receipt:
-        return receipt['output']
+        output = receipt['output']
+        text = json.dumps(output, ensure_ascii=False, allow_nan=False)
+        if len(text.encode()) > DEFAULT_OUTPUT_TOKENS * 4:
+            return {'preview': output_preview(text), 'truncated': True,
+                    'fullOutput': receipt.get('outputArtifact')}
+        return output
     if receipt.get('outcome') == 'failed':
         if receipt.get('stopped') is True:
             raise ToolInvocationError('PERSONAL_TOOL_FAILED', outcome='failed', stopped=True)
@@ -150,26 +157,37 @@ def personal_tool_registration(adapter: PersonalToolAdapter, *, operation_sha256
             invocation = ToolInvocation(owner_id=expected[0], connection_ref=connection['ref'],
                 connection_revision=connection['revision'], call_id=call_id, arguments=values,
                 run_context=run_context, check_authorized=check_authorized, resolve_credential=resolve_credential)
+            event = {'toolName': descriptor.tool_name, 'callId': call_id}
+            await asyncio.to_thread(store.event, expected[1], 'tool_started', '开始执行工具', event)
             try:
                 # Adapters own finally cleanup and positive stop evidence. A
                 # naked cancellation exception is not proof of remote stop.
                 output = await adapter.invoke(invocation)
-                output = bounded_tool_json(output, maximum=descriptor.max_output_bytes)
+                output = bounded_tool_json(output, maximum=None)
                 for lease in leases:
                     reject_credential_echo(output, lease)
                 receipt = {'outcome': 'completed', 'output': output}
+                text = json.dumps(output, ensure_ascii=False, allow_nan=False)
+                if len(text.encode()) > DEFAULT_OUTPUT_TOKENS * 4:
+                    artifact = await asyncio.to_thread(store.artifact_write, expected[2],
+                        'tool-' + digest(call_id)[:24] + '.json', text, 'application/json')
+                    receipt['outputArtifact'] = artifact
             except ToolInvocationError as error:
                 if error.outcome == 'cancelled' and error.stopped is True:
                     receipt = {'outcome': 'cancelled', 'cancelled': True, 'stopped': True}
                 elif error.outcome == 'failed':
                     receipt = {'outcome': 'failed', 'stopped': error.stopped is True}
                 else:
+                    await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具结果待核对',
+                        {**event, 'outcome': 'unknown'})
                     raise _unknown() from None
             except RunCancelledException:
                 raise RunCancelledException('PERSONAL_TOOL_CANCELLED') from None
             except asyncio.CancelledError:
                 raise asyncio.CancelledError() from None
             except Exception:
+                await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具结果待核对',
+                    {**event, 'outcome': 'unknown'})
                 raise _unknown() from None
             finally:
                 leases.clear()
@@ -197,6 +215,7 @@ def personal_tool_registration(adapter: PersonalToolAdapter, *, operation_sha256
             # Preserve a known completion even if authority was revoked during
             # execution, but do not disclose its result without current access.
             await asyncio.to_thread(check_authorized)
+            await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具执行记录', {**event, **receipt})
             return _receipt(receipt)
 
         return Function(name=descriptor.tool_name, description=descriptor.description,

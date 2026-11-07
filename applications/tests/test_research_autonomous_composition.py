@@ -22,7 +22,9 @@ class ResearchAutonomousCompositionTests(unittest.TestCase):
         with patch.object(research, 'create_deployment') as deployment, patch.object(research, 'install') as install:
             research.create_app(settings)
             configured = deployment.call_args.args[0]
-            self.assertEqual([entry.component.id for entry in configured.native_workflows], ['research-qa'])
+            self.assertEqual([entry.component.id for entry in configured.native_workflows], ['research-qa', 'research-command'])
+            command = next(entry for entry in configured.native_workflows if entry.component.id == 'research-command')
+            self.assertEqual(command.tool_names, ('research_run',))
             names = {entry.tool_name for entry in configured.runtime_adapters}
             self.assertNotIn('research_launch', names)
             self.assertNotIn('research_record_decision', names)

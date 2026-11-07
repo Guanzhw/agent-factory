@@ -18,11 +18,11 @@ class ApplicationStart(BaseModel):
     requestId: ApplicationRequestId
     application: str = Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_.:-]+$')
     mode: str = Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9_.:-]+$')
-    goal: str = Field(min_length=2, max_length=2000)
+    goal: str = Field(min_length=1)
     applicationRef: dict | None = None
     inputValues: dict | None = None
-    materialChoices: dict = Field(default_factory=dict, max_length=30)
-    connectionRefs: dict = Field(default_factory=dict, max_length=30)
+    materialChoices: dict = Field(default_factory=dict)
+    connectionRefs: dict = Field(default_factory=dict)
 
 
 @dataclass(frozen=True)

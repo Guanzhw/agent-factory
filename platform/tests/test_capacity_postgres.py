@@ -43,7 +43,6 @@ class CapacityPostgresTests(unittest.TestCase):
         cls.addClassCleanup(cls.store.native_db.db_engine.dispose)
         for index, owner in enumerate(cls.users):
             cls.auth.directory.upsert(owner, name=f"Synthetic capacity user {index:02d}")
-        cls.tokens = {owner: access_token(owner) for owner in cls.users}
         cls.client = TestClient(cls.app, base_url="https://testserver").__enter__()
         cls.addClassCleanup(cls.client.__exit__, None, None, None)
 
@@ -54,7 +53,8 @@ class CapacityPostgresTests(unittest.TestCase):
             self.cancel_and_confirm(row["owner_id"], row["id"])
 
     def headers(self, owner):
-        return {"Authorization": "Bearer " + self.tokens[owner]}
+        # Long capacity/cancellation runs must not test fixture token expiry.
+        return {"Authorization": "Bearer " + access_token(owner)}
 
     def request(self, owner, method, path, *, expected=200, **kwargs):
         response = self.client.request(method, "/api/factory" + path, headers=self.headers(owner), **kwargs)
@@ -110,7 +110,7 @@ class CapacityPostgresTests(unittest.TestCase):
         with db.db_engine.connect() as connection:
             return connection.execute(query).scalar()
 
-    def test_01_twenty_concurrent_users_twelve_held_two_native_workers_and_scoped_release(self):
+    def test_01_twenty_concurrent_users_are_admitted_with_two_native_workers_and_scoped_release(self):
         worker = self.app.app.state.queue_worker
         self.assertTrue(worker.config.durable)
         self.assertEqual(worker.config.max_concurrency, 2)
@@ -146,13 +146,13 @@ class CapacityPostgresTests(unittest.TestCase):
             monitor_engine.dispose()
         accepted = [(owner, response.json()) for owner, response in responses if response.status_code == 202]
         rejected = [(owner, response) for owner, response in responses if response.status_code == 429]
-        self.assertEqual(len(accepted), 12, [(owner, r.status_code, r.text) for owner, r in responses])
-        self.assertEqual(len(rejected), 8)
+        self.assertEqual(len(accepted), 20, [(owner, r.status_code, r.text) for owner, r in responses])
+        self.assertEqual(len(rejected), 0)
         self.assertFalse(observation_errors, observation_errors)
         self.assertTrue(observations)
-        self.assertLessEqual(max(observations), 12)
-        self.assertEqual(self.held(), 12)
-        self.assertEqual(self.tickets() - baseline, 12)
+        self.assertLessEqual(max(observations), 20)
+        self.assertEqual(self.held(), 20)
+        self.assertEqual(self.tickets() - baseline, 20)
         for owner, job in accepted:
             paused = self.wait(owner, job["id"], {"waiting_input", "failed", "unknown"})
             self.assertEqual(paused["job"]["status"], "waiting_input", paused)
@@ -170,20 +170,13 @@ class CapacityPostgresTests(unittest.TestCase):
         self.assertTrue(all(response.status_code == 202 for response in duplicates), [response.text for response in duplicates])
         self.assertEqual({response.json()["id"] for response in duplicates}, {first_job["id"]})
         self.assertEqual(self.tickets(first_job["id"]), 1)
-        self.assertEqual(self.held(), 12)
+        self.assertEqual(self.held(), 20)
         with ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(lambda pair: self.cancel_and_confirm(pair[0], pair[1]["id"]), accepted))
         self.assertEqual(self.held(), 0)
-        self.assertEqual(self.tickets() - baseline, 12)
-        # A quota-denied key had no reservation and can recover after known stop.
-        recovered_owner = rejected[0][0]
-        recovered = self.request(recovered_owner, "POST", "/instances", expected=202,
-                                 json=requests[recovered_owner]).json()
-        self.assertEqual(self.wait(recovered_owner, recovered["id"], {"waiting_input"})["job"]["status"], "waiting_input")
-        self.cancel_and_confirm(recovered_owner, recovered["id"])
-        self.assertEqual(self.held(), 0)
+        self.assertEqual(self.tickets() - baseline, 20)
 
-    def test_02_per_user_third_denied_with_global_room_and_native_current_grant(self):
+    def test_02_per_user_third_is_admitted_and_current_member_state_still_applies(self):
         owner, peer = self.users[:2]
         first, _ = self.submit(owner, self.plan(owner))
         second, _ = self.submit(owner, self.plan(owner))
@@ -193,11 +186,12 @@ class CapacityPostgresTests(unittest.TestCase):
         self.assertEqual(self.held(owner), 2)
         self.assertLess(self.held(), 12)
         denied_body = {"planId": self.plan(owner)["id"], "requestId": str(uuid4())}
-        self.request(owner, "POST", "/instances", expected=429, json=denied_body)
-        self.request(owner, "GET", "/requests/" + denied_body["requestId"], expected=404)
+        third = self.request(owner, "POST", "/instances", expected=202, json=denied_body).json()
+        self.wait(owner, third["id"], {"waiting_input"})
+        self.request(owner, "GET", "/requests/" + denied_body["requestId"], expected=200)
         peer_job, _ = self.submit(peer, self.plan(peer))
         self.wait(peer, peer_job["id"], {"waiting_input"})
-        self.assertEqual(self.held(), 3)
+        self.assertEqual(self.held(), 4)
         self.auth.directory.set_disabled(owner, True)
         try:
             disabled_member_request(self, self.state, self.client, 'POST', '/api/factory/instances', owner=owner, json=denied_body)
@@ -207,16 +201,12 @@ class CapacityPostgresTests(unittest.TestCase):
             self.auth.directory.set_disabled(owner, False)
         self.cancel_and_confirm(owner, first["id"])
         recovered = self.request(owner, "POST", "/instances", expected=202, json=denied_body).json()
-        self.wait(owner, recovered["id"], {"waiting_input"})
-        # The earlier current-rights revocation may also have positively
-        # stopped the second original ticket in the background. The newly
-        # accepted paused ticket holds capacity; the hard per-user cap remains.
-        self.assertIn(self.held(owner), {1, 2})
-        for subject, job in ((owner, second), (owner, recovered), (peer, peer_job)):
+        self.assertEqual(recovered["id"], third["id"], "Account restoration must not redispatch an existing request")
+        for subject, job in ((owner, second), (owner, third), (peer, peer_job)):
             self.cancel_and_confirm(subject, job["id"])
         self.assertEqual(self.held(), 0)
 
-    def test_03_unknown_no_ticket_persists_holds_quota_and_cancel_never_manufactures_stop(self):
+    def test_03_unknown_original_stays_unknown_without_blocking_unrelated_work(self):
         owner = self.users[2]
         with mock.patch.object(self.state["bridge"], "submit", side_effect=HTTPException(503, "Controlled absent native acknowledgement")) as submit:
             unknown, body = self.submit(owner, self.plan(owner))
@@ -233,7 +223,7 @@ class CapacityPostgresTests(unittest.TestCase):
         self.wait(owner, actual["id"], {"waiting_input"})
         self.assertEqual(self.held(owner), 2)
         blocked = {"planId": self.plan(owner)["id"], "requestId": str(uuid4())}
-        self.request(owner, "POST", "/instances", expected=429, json=blocked)
+        independent = self.request(owner, "POST", "/instances", expected=202, json=blocked).json()
         self.request(owner, "POST", f'/jobs/{unknown["id"]}/cancel')
         self.request(owner, "POST", f'/jobs/{unknown["id"]}/reconcile')
         observed = self.request(owner, "GET", "/jobs/" + unknown["id"]).json()
@@ -244,9 +234,10 @@ class CapacityPostgresTests(unittest.TestCase):
         receipt = self.request(owner, "GET", "/requests/" + body["requestId"]).json()
         self.assertEqual(receipt["admission"], "unknown")
         self.assertIsNone(receipt["runId"])
-        self.request(owner, "POST", "/instances", expected=429, json=blocked)
+        repeated = self.request(owner, "POST", "/instances", expected=202, json=blocked).json()
+        self.assertEqual(repeated["id"], independent["id"])
         self.cancel_and_confirm(owner, actual["id"])
-        self.assertEqual(self.held(owner), 1)
+        self.assertEqual(self.held(owner), 2)
         recovered = self.request(owner, "POST", "/instances", expected=202, json=blocked).json()
         self.wait(owner, recovered["id"], {"waiting_input"})
         self.cancel_and_confirm(owner, recovered["id"])

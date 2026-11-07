@@ -19,7 +19,7 @@ from fastapi import HTTPException
 
 from agent_factory.application_content import ContentPublication
 from research import session_context
-from research.session_routes import SessionCommand, SessionText
+from research.session_routes import MAX_USER_INPUT_TEXT_CHARS, CreateSession, SessionCommand, SessionText
 import test_research_sessions as fixture
 
 
@@ -41,9 +41,23 @@ class ResearchContextContracts(unittest.TestCase):
             self.service._save_turn(conn, turn, {**turn['body'], 'terminal': True, 'status': status,
                 'taskId': task['id'], 'runId': task['run_id'], 'result': result, 'completedAt': 'synthetic-final'})
 
+    def known_window(self):
+        original = self.service.setup.models.list
+        catalog = patch.object(self.service.setup.models, 'list', side_effect=lambda owner: [
+            {**item, 'contextWindow': 1000} for item in original(owner)])
+        catalog.start()
+        self.addCleanup(catalog.stop)
+
     def long_turn(self, result=None):
+        self.known_window()
         _, prior = self.reserved()
         self.finish(prior, result or 'Confirmed synthetic observation. ' * 500)
+        # Known model window triggers the native summary path, not a character cap.
+        with self.service.db.write() as conn:
+            row = self.service._row(conn, 'alice', self.identifier)
+            body = deepcopy(row['body'])
+            body['configuration']['model']['contextWindow'] = 1000
+            self.service._save_session(conn, row, body)
         _, task = self.reserved('continue-original', 'Keep the original contract and continue')
         return prior, task
 
@@ -135,24 +149,17 @@ class ResearchContextContracts(unittest.TestCase):
         self.assertEqual(turns[-1]['body']['messages'][-1]['state'], 'included')
         self.assertEqual(provider.call_count, 1)
 
-    def test_known_final_capacity_failure_is_failed_not_unknown(self):
-        _, task = self.long_turn()
+    def test_large_current_goal_survives_native_summary(self):
+        self.long_turn()
         def response(**kwargs):
             with self.service.db.write() as conn:
                 row = self.service._row(conn, 'alice', self.identifier)
                 self.service._save_session(conn, row, {**row['body'], 'goal': 'x' * 12000})
             return ModelResponse(role='assistant', content='{"summary":"Historical notes","topics":[]}')
-        factory, provider = self.model(action=response)
-        with self.assertRaises(StopAgentRun):
-            self.before(factory)
-        row, turns = self.rows()
-        self.assertEqual(turns[-1]['body']['compaction']['status'], 'failed')
-        self.assertEqual(turns[-1]['body']['compaction']['code'], 'RESEARCH_CONTEXT_LIMIT')
-        self.assertNotIn('contextCheckpoint', row['body'])
-        self.assertTrue(all(message['state'] == 'pending' for message in turns[-1]['body']['messages']))
-        with self.assertRaises(StopAgentRun):
-            self.before(factory)
-        self.assertEqual(provider.call_count, 1)
+        factory, _ = self.model(action=response)
+        messages = self.before(factory)
+        self.assertEqual(self.rows()[1][-1]['body']['compaction']['status'], 'ready')
+        self.assertIn('x' * 12000, messages[-1].content)
 
     def test_invalid_summary_preserves_pending_messages_and_explicit_retry_requires_safe_task(self):
         _, task = self.long_turn()
@@ -224,12 +231,18 @@ class ResearchContextContracts(unittest.TestCase):
         self.assertTrue(all(message['state'] == 'pending' for message in turns[-1]['body']['messages']))
 
     def test_shared_source_revoked_during_summary_does_not_apply_reply(self):
+        self.known_window()
         _, prior = self.reserved()
         source = self.service.content.publish('bob', ContentPublication(
             source={'application': 'research', 'record': 'synthetic-context', 'revision': '1'},
             content={'result': 'synthetic'}, visibility='team'), 'share-context')
         self.service.record_source(self.context, source['id'])
         self.finish(prior, 'Evidence remains uncertain. ' * 600)
+        with self.service.db.write() as conn:
+            row = self.service._row(conn, 'alice', self.identifier)
+            body = deepcopy(row['body'])
+            body['configuration']['model']['contextWindow'] = 1000
+            self.service._save_session(conn, row, body)
         self.reserved('shared-summary', 'Continue with the shared source')
         def revoke(**kwargs):
             self.service.content.set_visibility('bob', source['id'], 'personal', 'revoke-context')
@@ -341,7 +354,7 @@ class ResearchContextContracts(unittest.TestCase):
         self.assertEqual(self.rows()[0]['body']['contextCheckpoint'], saved)
         self.assertEqual(saved['summary']['summary'], 'New checkpoint')
 
-    def test_manual_consent_continues_after_saved_lifetime_limit_without_recharging_automatic_budget(self):
+    def test_large_summary_and_manual_continuation_preserve_history(self):
         _, task = self.long_turn()
         factory, _ = self.model()
         self.before(factory)
@@ -349,25 +362,48 @@ class ResearchContextContracts(unittest.TestCase):
         self.finish(task, 'New confirmed synthetic result. ' * 500)
         _, later = self.reserved('third-turn', 'Continue again')
         too_large, _ = self.model(content=json.dumps({'summary': 'x' * 3001, 'topics': []}))
-        with self.assertRaises(StopAgentRun):
-            self.before(too_large)
+        self.before(too_large)
         row, turns = self.rows()
-        self.assertEqual(row['body']['contextCheckpoint'], saved)
-        self.assertEqual(turns[-1]['body']['compaction']['code'], 'RESEARCH_SUMMARY_TOO_LARGE')
+        self.assertNotEqual(row['body']['contextCheckpoint'], saved)
+        self.assertEqual(turns[-1]['body']['compaction']['status'], 'ready')
         self.finish(later, status='failed')
         _, final_task = self.reserved('fourth-turn', 'Explicit retry')
         self.finish(final_task, status='failed')
         row, turns = self.rows()
         saved_limits = deepcopy(row['body']['limits'])
-        with self.service._write() as conn, self.assertRaises(HTTPException) as caught:
-            self.service.collaboration._reserve(conn, row, turns, [], 'automatic-after-cap')
-        self.assertEqual(caught.exception.detail['code'], 'RESEARCH_TURN_LIMIT')
         self.reserved('manual-after-cap', 'Explicitly authorize one more task')
         self.assertEqual(self.rows()[0]['body']['limits'], saved_limits)
         self.assertEqual(len(self.rows()[1]), 5)
 
 
 class NativeSummaryContract(unittest.TestCase):
+    def test_unconfigured_model_has_no_invented_window_or_default_turn_budget(self):
+        request = CreateSession(requestId='large-goal', title='Long request', goal='需' * 3000,
+            boundaries='Stop when finished', modelConnectionRef='model')
+        self.assertEqual(request.limits.model_dump(),
+            {'maxTurns': None, 'toolCallsPerTurn': None, 'operationSeconds': None})
+        self.assertEqual(SessionText(requestId='long-input', text='长' * 20000).text, '长' * 20000)
+        self.assertIsNone(session_context.compact_token_limit({}))
+        short = CreateSession(requestId='one-char', title='标题' * 100, goal='嗨', modelConnectionRef='model')
+        self.assertEqual(short.boundaries, '')
+
+    def test_user_input_limit_matches_codex_combined_character_scope(self):
+        text = '文' * (MAX_USER_INPUT_TEXT_CHARS - 1)
+        CreateSession(requestId='limit-edge', title='Title', goal=text, boundaries='界', modelConnectionRef='model')
+        with self.assertRaisesRegex(ValueError, '1048576'):
+            CreateSession(requestId='over-edge', title='Title', goal=text, boundaries='边界', modelConnectionRef='model')
+        SessionText(requestId='text-edge', text=text + '界')
+        with self.assertRaises(ValueError):
+            SessionText(requestId='text-over', text=text + '边界')
+
+    def test_compaction_uses_codex_model_token_window_policy(self):
+        self.assertEqual(session_context.compact_token_limit({'contextWindow': 10000}), 9000)
+        self.assertEqual(session_context.compact_token_limit(
+            {'contextWindow': 10000, 'autoCompactTokenLimit': 12000}), 9000)
+        self.assertEqual(session_context.compact_token_limit(
+            {'contextWindow': 10000, 'autoCompactTokenLimit': 8000}), 8000)
+        self.assertEqual(session_context.compact_token_limit({'autoCompactTokenLimit': 8000}), 8000)
+
     def test_ended_diagnostics_are_summary_background_but_current_unknown_identity_remains(self):
         turns = [{'id': 'old-' + status, 'sequence': index + 1, 'body': {
             'messages': [], 'status': status, 'terminal': True, 'result': status + ' original diagnostic'}}
@@ -397,10 +433,10 @@ class NativeSummaryContract(unittest.TestCase):
             {'id': 'latest', 'kind': 'correction', 'text': 'Preserve the public API'}],
             'sharedSourceIds': ['current-source'], 'status': 'reserved', 'terminal': False}}
         packet, pending = session_context.prepare(row, turns, prospective=current)
-        self.assertLessEqual(len(packet), 12000)
+        self.assertGreater(len(packet), 12000)
         self.assertEqual(json.loads(packet)['latestCorrection']['text'], 'Preserve the public API')
         self.assertEqual(json.loads(packet)['sharedSourceIds'], ['current-source'])
-        self.assertEqual(pending['projectionVersion'], 2)
+        self.assertIsNone(pending)
         source, identity = session_context.summary_source(row, turns)
         self.assertGreater(len(session_context.canonical(source)), 48000)
         self.assertEqual(len(source['historicalMessages']), 30)

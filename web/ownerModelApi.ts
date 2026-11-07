@@ -11,6 +11,8 @@ interface ModelMetadata {
   updatedAt: string;
   thinkingMode?: 'disabled';
   maxOutputTokens?: number;
+  contextWindow?: number;
+  autoCompactTokenLimit?: number;
   status: 'configured' | 'credential_unavailable' | 'revoked'; available: boolean; isDefault: boolean;
 }
 export type OwnerModel = ModelMetadata & ({ isOwner: true; credentialRef: string | null; credentialRevision: string | null }
@@ -22,6 +24,8 @@ export interface ModelConfiguration {
   protocol?: ModelProtocol;
   thinkingMode?: 'default' | 'disabled';
   maxOutputTokens?: number;
+  contextWindow?: number;
+  autoCompactTokenLimit?: number;
 }
 export interface OwnerModelReceipt {
   ownerId: string; requestId: string; action: 'model.configure' | 'model.default' | 'model.revoke' | 'model.sharing';
@@ -52,11 +56,13 @@ export function ownerModel(value: unknown, owner: string): OwnerModel {
         : 'credentialRef' in m || 'credentialRevision' in m)
       || m.isOwner && typeof m.connectionRef !== 'string'
       || 'connectionRef' in m && (typeof m.connectionRef !== 'string' || !/^[A-Za-z0-9_.:-]{1,200}$/.test(m.connectionRef))
-      || typeof m.baseURL !== 'string' || typeof m.model !== 'string' || !m.model || m.model.length > 120
+      || typeof m.baseURL !== 'string' || typeof m.model !== 'string' || !m.model
       || typeof m.updatedAt !== 'string' || !Number.isFinite(Date.parse(m.updatedAt))
       || Object.prototype.hasOwnProperty.call(m, 'protocol') && !validModelProtocol(m.protocol)
       || !validThinkingMetadata(m as { baseURL: string; model: string; thinkingMode?: unknown })
       || Object.prototype.hasOwnProperty.call(m, 'maxOutputTokens') && !validOutputTokens(m.maxOutputTokens)
+      || Object.prototype.hasOwnProperty.call(m, 'autoCompactTokenLimit') && !validOutputTokens(m.autoCompactTokenLimit)
+      || Object.prototype.hasOwnProperty.call(m, 'contextWindow') && !validOutputTokens(m.contextWindow)
       || !['configured', 'credential_unavailable', 'revoked'].includes(String(m.status))
       || typeof m.isDefault !== 'boolean' || typeof m.available !== 'boolean' || m.available !== (m.status === 'configured')) {
     throw new ModelRequestError(200, 'INVALID_RESPONSE');
@@ -73,6 +79,8 @@ export function ownerModel(value: unknown, owner: string): OwnerModel {
     updatedAt: m.updatedAt as string, ...(Object.prototype.hasOwnProperty.call(m, 'protocol') ? { protocol: m.protocol as ModelProtocol } : {}),
     ...(Object.prototype.hasOwnProperty.call(m, 'thinkingMode') ? { thinkingMode: m.thinkingMode as 'disabled' } : {}),
     ...(Object.prototype.hasOwnProperty.call(m, 'maxOutputTokens') ? { maxOutputTokens: m.maxOutputTokens as number } : {}),
+    ...(Object.prototype.hasOwnProperty.call(m, 'autoCompactTokenLimit') ? { autoCompactTokenLimit: m.autoCompactTokenLimit as number } : {}),
+    ...(Object.prototype.hasOwnProperty.call(m, 'contextWindow') ? { contextWindow: m.contextWindow as number } : {}),
     status: m.status as OwnerModel['status'], available: m.available as boolean, isDefault: m.isDefault as boolean,
   } as OwnerModel;
 }

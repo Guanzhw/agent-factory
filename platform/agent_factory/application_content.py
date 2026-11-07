@@ -117,7 +117,7 @@ class ApplicationContent:
             task=reference['taskId'], id=reference['artifactId'])
         if not sizes:
             raise HTTPException(404, 'Artifact not found')
-        if sizes[0]['size'] > self.store.settings.experiment_output_bytes:
+        if self.store.settings.experiment_output_bytes is not None and sizes[0]['size'] > self.store.settings.experiment_output_bytes:
             raise HTTPException(409, 'APPLICATION_CONTENT_ARTIFACT_TOO_LARGE')
         metadata, raw = self.store.artifact(reference['taskId'], reference['artifactId'])
         if metadata['sha256'] != reference['sha256']:
@@ -149,8 +149,8 @@ class ApplicationContent:
         MaterialGovernance._safe_data(value)
         try:
             if 'content' in value:
-                bounded_json(value['content'], maximum=16384)
-            bounded_json(value.get('sourceContentIds', []), maximum=16384)
+                bounded_json(value['content'])
+            bounded_json(value.get('sourceContentIds', []))
         except ValueError as error:
             raise HTTPException(422, 'APPLICATION_CONTENT_INVALID') from error
         fingerprint = digest({'action': 'publish', **value})

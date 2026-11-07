@@ -11,10 +11,11 @@ const original: ResearchAssistant = { id: 'stable-a', ownerId: 'alice', configur
 const draft: QASetup = { id: 'setup-a', state: 'draft', applicationRef: null, connectionRefs: { model: 'connection-actual' }, preview: { mode: 'qa', name: '个人问答', modelConnectionRef: 'connection-actual', budget: { toolCalls: 8, maxDepth: 1, maxChildren: 1, operationSeconds: 30, outputBytes: 65536 } } };
 const published: QASetup = { ...draft, state: 'published', applicationRef: { id: 'qa-published', version: 1, sha256: 'a'.repeat(64) } };
 const caps = { rounds: 3, toolCalls: 12, tokenLimit: null, amountMicros: null, currency: null };
-const budget = { caps, perQuestionCaps: { ...caps, rounds: 1, toolCalls: 4 }, deadline: new Date('2099-10-26T10:00').getTime() / 1000 };
-const configured: ResearchAssistant = { ...original, configurationRevision: 1, qa: { state: 'configured', endpointId: 'e', scopeId: 's', available: true, applicationRef: published.applicationRef!, connectionRefs: published.connectionRefs, budget, accounting: { mode: 'operational_limits_only', tokenMetered: false, costMetered: false, notice: '操作额度受限，token/费用未计量' } } };
+const budget = { caps: { ...caps, rounds: null, toolCalls: null }, perQuestionCaps: { ...caps, rounds: 1, toolCalls: null }, deadline: null };
+const executionBudget = { toolCalls: null, maxDepth: null, maxChildren: null, operationSeconds: null, outputBytes: null };
+const configured: ResearchAssistant = { ...original, configurationRevision: 1, qa: { state: 'configured', endpointId: 'e', scopeId: 's', available: true, applicationRef: published.applicationRef!, connectionRefs: published.connectionRefs, budget, accounting: { mode: 'operational_limits_only', tokenMetered: false, costMetered: false, notice: 'token/费用未计量' } } };
 const configKey = 'factory:research-assistant-config:alice';
-const candidates: SetupCandidates = { workflowPin: { kind: 'workflow', id: 'qa', revision: '1', sha256: 'a'.repeat(64) }, qaMinimumToolCalls: 2, models: [{ reference: 'registration', model: 'my-model', provider: 'openai-compatible', available: true }], connections: [{ ref: 'connection-actual', registrationRef: 'registration', kind: 'model', capabilities: ['model:invoke'], available: true }], environments: [], experimentMaterials: [] };
+const candidates: SetupCandidates = { workflowPin: { kind: 'workflow', id: 'qa', revision: '1', sha256: 'a'.repeat(64) }, qaAvailable: true, models: [{ reference: 'registration', model: 'my-model', provider: 'openai-compatible', available: true }], connections: [{ ref: 'connection-actual', registrationRef: 'registration', kind: 'model', capabilities: ['model:invoke'], available: true }], environments: [], experimentMaterials: [] };
 const resources = vi.fn();
 function Harness({ initial = original, ownerId = 'alice', initialSetupId = '' }: { initial?: ResearchAssistant | null; ownerId?: string; initialSetupId?: string }) {
   const [assistant, setAssistant] = useState(initial); const [setup, setSetup] = useState(initialSetupId);
@@ -35,39 +36,35 @@ async function field(label: string, value: string) {
 async function mount(initial: ResearchAssistant | null = original, ownerId = 'alice', initialSetupId = '') { await act(async () => root.render(createElement(Harness, { initial, ownerId, initialSetupId }))); }
 async function remount(initial: ResearchAssistant | null = original, ownerId = 'alice', setupId = '') { await act(async () => root.unmount()); root = createRoot(host); await mount(initial, ownerId, setupId); }
 async function allowance() {
-  await field('个人模型连接', 'connection-actual'); await field('最多回答问题数', '3'); await field('总工具操作额度', '12'); await field('每问工具操作上限', '4'); await field('问答授权截止时间', '2099-10-26T10:00');
+  await field('个人模型连接', 'connection-actual');
 }
 async function submit() { await act(async () => host.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))); }
 
-it('enables exact QA publication and finite consent in one action, without calling a model', async () => {
+it('enables exact QA publication and model configuration in one action, without calling a model', async () => {
   await mount(null); expect(assistantApi.create).not.toHaveBeenCalled(); expect(assistantApi.draft).not.toHaveBeenCalled(); expect(assistantApi.configure).not.toHaveBeenCalled();
   await allowance(); await submit();
   const id = vi.mocked(assistantApi.create).mock.calls[0][1].requestId.replace(/:assistant$/, '');
-  expect(assistantApi.draft).toHaveBeenCalledWith('alice', expect.objectContaining({ requestId: id + ':draft', modelConnectionRef: 'connection-actual', budget: { ...draft.preview.budget, toolCalls: 4 } }));
+  expect(assistantApi.draft).toHaveBeenCalledWith('alice', expect.objectContaining({ requestId: id + ':draft', modelConnectionRef: 'connection-actual', budget: executionBudget }));
   expect(assistantApi.publish).toHaveBeenCalledWith('alice', 'setup-a', { requestId: id + ':publish' });
-  expect(assistantApi.configure).toHaveBeenCalledWith('alice', { requestId: id + ':configure', expectedRevision: 0, applicationRef: published.applicationRef, connectionRefs: { model: 'connection-actual' }, budget, associations: { enabled: true, maxRecipients: 2 } });
-  expect(sessionStorage.getItem(configKey)).toBeNull(); expect(host.textContent).toContain('操作额度受限，token/费用未计量'); expect(host.textContent).toContain('配置修订：1'); expect(host.querySelector('form')).toBeNull(); expect(assistantApi.ask).not.toHaveBeenCalled();
+  expect(assistantApi.configure).toHaveBeenCalledWith('alice', { requestId: id + ':configure', expectedRevision: 0, applicationRef: published.applicationRef, connectionRefs: { model: 'connection-actual' }, budget, associations: { enabled: true, maxRecipients: null } });
+  expect(sessionStorage.getItem(configKey)).toBeNull(); expect(host.textContent).toContain('token/费用未计量'); expect(host.textContent).toContain('配置修订：1'); expect(host.querySelector('form')).toBeNull(); expect(assistantApi.ask).not.toHaveBeenCalled();
 });
-it.each([{ minimum: 2, total: '1', perQuestion: '2' }, { minimum: 2, total: '2', perQuestion: '1' }, { minimum: 3, total: '2', perQuestion: '2' }])('refuses insufficient processing allowance before any mutation: %j', async ({ minimum, total, perQuestion }) => {
-  vi.mocked(setupApi.candidates).mockResolvedValue({ ...candidates, qaMinimumToolCalls: minimum }); await mount(null); await allowance(); await field('总工具操作额度', total); await field('每问工具操作上限', perQuestion); await submit();
-  expect(input('总工具操作额度').getAttribute('min')).toBe(String(minimum)); expect(input('每问工具操作上限').getAttribute('min')).toBe(String(minimum)); expect(host.textContent).toContain(`每次问答至少需要 ${minimum} 次处理额度`);
-  expect(input('总工具操作额度').value).toBe(total); expect(input('每问工具操作上限').value).toBe(perQuestion); expect(sessionStorage.getItem(configKey)).toBeNull();
-  for (const action of ['create', 'draft', 'publish', 'configure', 'ask'] as const) expect(assistantApi[action]).not.toHaveBeenCalled();
+it('enables without budget, expiry or minimum processing allowance fields', async () => {
+  await mount(null); await allowance();
+  expect(host.querySelectorAll('input[type=number],input[type=datetime-local]')).toHaveLength(0);
+  await submit();
+  expect(assistantApi.draft).toHaveBeenCalledWith('alice', expect.objectContaining({ budget: executionBudget }));
+  expect(assistantApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ budget }));
 });
-it('accepts exactly the installed minimum of two operations without increasing consent', async () => {
-  await mount(null); await allowance(); await field('最多回答问题数', '1'); await field('总工具操作额度', '2'); await field('每问工具操作上限', '2'); await submit();
-  expect(assistantApi.draft).toHaveBeenCalledWith('alice', expect.objectContaining({ budget: { ...draft.preview.budget, toolCalls: 2 } }));
-  expect(assistantApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ budget: { ...budget, caps: { ...caps, rounds: 1, toolCalls: 2 }, perQuestionCaps: { ...budget.perQuestionCaps, toolCalls: 2 } } })); expect(assistantApi.ask).not.toHaveBeenCalled();
-});
-it.each([null, undefined])('does not enable QA when the deployment has no minimum capability: %s', async minimum => {
-  vi.mocked(setupApi.candidates).mockResolvedValue({ ...candidates, qaMinimumToolCalls: minimum }); await mount(null); await allowance(); expect(button('按修订 0 启用离线问答').disabled).toBe(true); await submit();
+it('does not enable QA when the deployment has no QA component', async () => {
+  vi.mocked(setupApi.candidates).mockResolvedValue({ ...candidates, qaAvailable: false }); await mount(null); await allowance(); expect(button('按修订 0 启用离线问答').disabled).toBe(true); await submit();
   expect(host.textContent).toContain('当前部署未提供离线问答能力'); for (const action of ['create', 'draft', 'publish', 'configure', 'ask'] as const) expect(assistantApi[action]).not.toHaveBeenCalled();
 });
 it('retains inputs after a CAS refusal and requires a new consent for the refreshed revision', async () => {
   const configure = vi.mocked(assistantApi.configure).mockRejectedValueOnce(new ApiError('配置修订冲突', 409, 'RESEARCH_ASSISTANT_REVISION_CONFLICT'));
   await mount(); await allowance(); await submit(); const first = configure.mock.calls[0][1];
   expect(host.textContent).toContain('配置修订冲突'); expect(sessionStorage.getItem(configKey)).toBeNull(); expect(assistantApi.create).not.toHaveBeenCalled();
-  await act(async () => button('读取最新助手配置').click()); expect(configure).toHaveBeenCalledOnce(); expect(input('最多回答问题数').value).toBe('3'); expect(button('按修订 2 启用离线问答')).toBeDefined();
+  await act(async () => button('读取最新助手配置').click()); expect(configure).toHaveBeenCalledOnce(); expect(input('个人模型连接').value).toBe('connection-actual'); expect(button('按修订 2 启用离线问答')).toBeDefined();
   await submit(); expect(configure.mock.calls[1][1]).toEqual({ ...first, expectedRevision: 2, requestId: expect.any(String) }); expect(configure.mock.calls[1][1].requestId).not.toBe(first.requestId); expect(assistantApi.draft).toHaveBeenCalledOnce(); expect(assistantApi.publish).toHaveBeenCalledOnce();
 });
 it.each(['draft', 'publish', 'configure'] as const)('unlocks new consent after an uncertain %s recovers to a definitive configuration CAS refusal', async stage => {
@@ -75,7 +72,7 @@ it.each(['draft', 'publish', 'configure'] as const)('unlocks new consent after a
   const configure = vi.mocked(assistantApi.configure).mockRejectedValueOnce(new ApiError('配置修订冲突', 409, 'RESEARCH_ASSISTANT_REVISION_CONFLICT')).mockResolvedValue({ ...configured, configurationRevision: 3 });
   await mount(); await allowance(); await submit(); const consent = JSON.parse(sessionStorage.getItem(configKey)!).body;
   expect(host.querySelector('fieldset')!.disabled).toBe(true); await act(async () => button('重试原操作').click());
-  expect(sessionStorage.getItem(configKey)).toBeNull(); expect(button('重试原操作')).toBeUndefined(); expect(host.textContent).toContain('配置修订冲突'); expect(host.querySelector('fieldset')!.disabled).toBe(false); expect(input('最多回答问题数').value).toBe('3');
+  expect(sessionStorage.getItem(configKey)).toBeNull(); expect(button('重试原操作')).toBeUndefined(); expect(host.textContent).toContain('配置修订冲突'); expect(host.querySelector('fieldset')!.disabled).toBe(false); expect(input('个人模型连接').value).toBe('connection-actual');
   expect(configure.mock.calls.every(([, body]) => body.requestId === consent.requestId + ':configure' && body.expectedRevision === 0)).toBe(true);
   const oldCalls = configure.mock.calls.length; const drafts = vi.mocked(assistantApi.draft).mock.calls.length; const publications = vi.mocked(assistantApi.publish).mock.calls.length;
   await act(async () => button('读取最新助手配置').click()); expect(configure).toHaveBeenCalledTimes(oldCalls); await submit();
@@ -104,12 +101,12 @@ it.each(['publish', 'configure'] as const)('recovers an uncertain %s with every 
 it('shows missing real model connections and reuses the resource entry without mutation', async () => {
   vi.mocked(setupApi.candidates).mockResolvedValue({ ...candidates, models: [], connections: [] });
   await mount(null); expect(button('按修订 0 启用离线问答').disabled).toBe(true); expect(host.textContent).toContain('缺少可用模型连接');
-  await act(async () => button('配置我的模型与资源').click()); expect(resources).toHaveBeenCalledOnce(); expect(assistantApi.create).not.toHaveBeenCalled(); expect(assistantApi.draft).not.toHaveBeenCalled();
+  await act(async () => button('配置模型').click()); expect(resources).toHaveBeenCalledOnce(); expect(assistantApi.create).not.toHaveBeenCalled(); expect(assistantApi.draft).not.toHaveBeenCalled();
 });
 it('preserves old association opt-out and leaves the existing allowance unchanged when opened', async () => {
   await mount(configured); expect(host.textContent).toContain('主动关联未启用'); expect(assistantApi.configure).not.toHaveBeenCalled();
-  await act(async () => button('修改离线问答设置').click()); expect((host.querySelector('input[type=checkbox]') as HTMLInputElement).checked).toBe(false); expect(input('最多回答问题数').value).toBe('');
-  await allowance(); await submit(); expect(assistantApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ associations: { enabled: false, maxRecipients: 2 } }));
+  await act(async () => button('修改离线问答设置').click()); expect((host.querySelector('input[type=checkbox]') as HTMLInputElement).checked).toBe(false); expect(host.querySelector('input[type=number]')).toBeNull();
+  await allowance(); await submit(); expect(assistantApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ associations: { enabled: false, maxRecipients: null } }));
 });
 it('resumes an old deep-link publication request only on recovery, using its original target and ID', async () => {
   const key = 'factory:research-qa-setup:alice:old-setup'; sessionStorage.setItem(key, JSON.stringify({ action: 'publish', body: { requestId: 'original-publish-id' } }));
@@ -117,12 +114,10 @@ it('resumes an old deep-link publication request only on recovery, using its ori
   await act(async () => button('重试原操作').click()); expect(assistantApi.publish).toHaveBeenCalledWith('alice', 'old-setup', { requestId: 'original-publish-id' }); expect(sessionStorage.getItem(key)).toBeNull();
   expect(assistantApi.configure).not.toHaveBeenCalled(); await allowance(); await submit(); expect(assistantApi.draft).not.toHaveBeenCalled(); expect(assistantApi.publish).toHaveBeenCalledOnce(); expect(assistantApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ applicationRef: published.applicationRef }));
 });
-it('refuses a larger allowance on an old pin and creates a new definition only after the member chooses it', async () => {
-  await mount(original, 'alice', 'old-setup'); await allowance(); await field('每问工具操作上限', '12'); await submit();
-  expect(host.textContent).toContain('超过原问答版本上限'); expect(assistantApi.draft).not.toHaveBeenCalled(); expect(assistantApi.configure).not.toHaveBeenCalled(); expect(sessionStorage.getItem(configKey)).toBeNull();
-  await act(async () => button('为当前模型生成新配置').click()); expect(assistantApi.draft).not.toHaveBeenCalled();
-  vi.mocked(assistantApi.draft).mockResolvedValue({ ...draft, preview: { ...draft.preview, budget: { ...draft.preview.budget, toolCalls: 12 } } }); await submit();
-  expect(assistantApi.draft).toHaveBeenCalledWith('alice', expect.objectContaining({ budget: { ...draft.preview.budget, toolCalls: 12 } })); expect(assistantApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ budget: { ...budget, perQuestionCaps: { ...budget.perQuestionCaps, toolCalls: 12 } } }));
+it('reuses an old published setup without requiring another budget form', async () => {
+  await mount(original, 'alice', 'old-setup'); await allowance(); await submit();
+  expect(assistantApi.draft).not.toHaveBeenCalled();
+  expect(assistantApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ budget, applicationRef: published.applicationRef }));
 });
 it.each(['create', 'draft', 'configure'] as const)('retains an older pending %s without showing normal draft/publication controls', async action => {
   const body = action === 'configure' ? { requestId: 'old-configure-id', expectedRevision: 0, applicationRef: published.applicationRef, connectionRefs: published.connectionRefs, budget } : action === 'draft' ? { requestId: 'old-draft-id', name: '原草稿', modelConnectionRef: draft.preview.modelConnectionRef, budget: draft.preview.budget } : { requestId: 'old-create-id' };

@@ -1,18 +1,13 @@
 """Portable QA governance and native rejection; synthetic execution ports, no provider IO."""
-import asyncio
-from copy import deepcopy
-import json
-import httpx
-from agent_factory.byok_model import OwnerChatModel
 from research.qa_workflow import ResearchQAWorkflow
-from research.qa import ResearchQA
 from research.setup import ResearchSetup, PrepareQASetup, PublishSetup
 from research.assistants import ConfigureAssistant, CreateAssistant, ResearchAssistants
 from contextlib import nullcontext
-from unittest.mock import Mock, patch
-from fastapi import HTTPException
+from unittest.mock import AsyncMock, Mock, patch
 import unittest
-from sqlalchemy import select
+import asyncio
+from fastapi import HTTPException
+from agent_factory.assistant_messages import SendAssistantMessage
 import test_research_setup as fixtures
 
 
@@ -65,105 +60,104 @@ class ResearchQASetupTests(unittest.TestCase):
         self.assertEqual(result['mode'], 'qa')
         self.assertEqual(self.setup.publish('alice', draft['id'], PublishSetup(requestId='qa-publish-original')), result)
         self.assertNotIn(model['connectionRef'], str(app))
-        self.assertEqual(self.setup.candidates('alice')['qaMinimumToolCalls'], len(qa.tool_registrations))
+        self.assertEqual(self.setup.candidates('alice')['qaAvailable'], True)
 
-    def test_configuration_rejects_insufficient_processing_budget_before_any_execution(self):
-        qa, _, _, published = self.publish_qa(tool_calls=2)
+    def test_configuration_needs_no_budget_or_expiry_and_replays_exact_request(self):
+        qa, _, _, published = self.publish_qa(tool_calls=None)
         service, endpoints, scopes = self.assistant_service(qa)
-        for total, per_question in ((1, 1), (2, 1)):
-            with self.subTest(total=total, per_question=per_question):
-                caps = {'rounds': 1, 'toolCalls': total}
-                body = ConfigureAssistant(requestId=f'insufficient-{total}-{per_question}', expectedRevision=0,
-                    applicationRef=published['applicationRef'], connectionRefs=published['connectionRefs'],
-                    budget={'caps': caps, 'perQuestionCaps': {**caps, 'toolCalls': per_question}, 'deadline': 9999999999.0})
-                with self.assertRaises(HTTPException) as rejected:
-                    service.configure('alice', body)
-                self.assertEqual(rejected.exception.detail, 'RESEARCH_QA_BUDGET_INSUFFICIENT')
-                scopes.create_scope.assert_not_called()
-                endpoints.configure.assert_not_called()
-        caps = {'rounds': 1, 'toolCalls': len(qa.tool_registrations)}
-        body = ConfigureAssistant(requestId='minimum-usable-qa', expectedRevision=0,
-            applicationRef=published['applicationRef'], connectionRefs=published['connectionRefs'],
-            budget={'caps': caps, 'perQuestionCaps': caps, 'deadline': 9999999999.0})
+        body = ConfigureAssistant(requestId='qa-without-budget', expectedRevision=0,
+            applicationRef=published['applicationRef'], connectionRefs=published['connectionRefs'])
         with patch.object(service, '_availability', return_value={'available': True}):
             saved = service.configure('alice', body)
-        self.assertEqual(saved['qa']['budget']['perQuestionCaps']['toolCalls'], len(qa.tool_registrations))
-        self.assertEqual(saved['configurationRevision'], 1)
+            self.assertEqual(service.configure('alice', body), saved)
+        self.assertEqual(saved['qa']['budget']['caps']['rounds'], None)
+        self.assertEqual(saved['qa']['budget']['perQuestionCaps']['toolCalls'], None)
+        self.assertEqual(saved['qa']['budget']['deadline'], None)
         scopes.create_scope.assert_called_once()
         endpoints.configure.assert_called_once()
 
-    def test_legacy_one_call_configuration_is_unavailable_and_rejected_before_native_model(self):
-        qa, _, _, published = self.publish_qa(tool_calls=2)
+    def test_legacy_small_expired_allowance_does_not_hide_available_assistant(self):
+        qa, _, _, published = self.publish_qa(tool_calls=1)
         service, endpoints, scopes = self.assistant_service(qa)
-        allowance = self.allowance(published)
+        body = ConfigureAssistant(requestId='qa-legacy-budget', expectedRevision=0,
+            applicationRef=published['applicationRef'], connectionRefs=published['connectionRefs'],
+            budget={'caps': {'rounds': 1, 'toolCalls': 1},
+                    'perQuestionCaps': {'rounds': 1, 'toolCalls': 1}, 'deadline': 1.0})
         with patch.object(service, '_availability', return_value={'available': True}):
-            original = service.configure('alice', allowance)
-        with service.db.write() as conn:
-            row = service._configuration_row(conn, 'alice', 'original-qa-endpoint')
-            legacy = deepcopy(row['body'])
-            legacy['budget']['perQuestionCaps']['toolCalls'] = 1
-            conn.execute(service.configurations.update().where(service.configurations.c.assistant_id == original['id'],
-                service.configurations.c.revision == 1).values(body=legacy))
+            saved = service.configure('alice', body)
         endpoints.resolve.return_value = {'applicationRef': published['applicationRef'],
             'defaults': {'connectionRefs': published['connectionRefs']},
-            'automaticBudget': {'scopeId': original['qa']['scopeId'], 'caps': legacy['budget']['perQuestionCaps']}}
-        scopes.inspect.return_value = {'caps': legacy['budget']['caps'], 'allocatedRounds': 0,
-                                      'heldToolCalls': 0, 'settledToolCalls': 0}
-        self.assertEqual(service.me('alice')['assistant']['qa']['unavailableCode'], 'RESEARCH_QA_BUDGET_INSUFFICIENT')
-        endpoints.configure.return_value = {'id': 'replacement-endpoint'}
-        with patch.object(service, '_availability', return_value={'available': True}):
-            replacement = service.configure('alice', allowance.model_copy(update={
-                'requestId': 'replace-qa-configuration', 'expectedRevision': 1}))
-        self.assertEqual(replacement['qa']['endpointId'], 'replacement-endpoint')
-        endpoints.resolve.reset_mock()
-        endpoints.resolve.side_effect = HTTPException(409, 'Old endpoint disabled after replacement')
-        self.store.task = Mock(return_value={'plan_id': 'original-plan'})
-        self.store.plan = Mock(return_value={'budget': {'toolCalls': 2}})
-        runs, messages = Mock(), Mock()
-        runs.request.return_value = {'taskId': 'original-task', 'runId': 'original-run'}
-        messages.message_for_task.return_value = {'messageId': 'original-message', 'senderId': 'bob',
-            'recipientId': 'alice', 'endpointId': 'original-qa-endpoint', 'text': 'Prior experience?'}
-        messages.read.return_value = {'reply': None}
-        consumer = ResearchQA(self.store, service, messages, runs, Mock())
-        qa.bind(consumer)
-        wire = Mock(return_value=httpx.Response(200, json={'choices': [{'finish_reason': 'stop', 'message': {
-            'role': 'assistant', 'content': json.dumps({'answer': 'Insufficient shared evidence.',
-                'citations': [], 'evidenceLevel': 'agent_analysis'})}}]}))
-        qa.registration.component.steps[1].agent.model = OwnerChatModel({'provider': 'openai-compatible',
-            'model': 'synthetic-qa', 'baseURL': 'http://localhost:8899/v1'}, lambda: None,
-            transport_factory=lambda: httpx.MockTransport(wire))
-        with patch.object(consumer, '_select') as select_sources:
-            try:
-                result = asyncio.run(qa.registration.component.arun({'goal': 'Prior experience?'},
-                    user_id='alice', session_id='original-task', run_id='original-run',
-                    session_state={'factory_envelope': {'request_id': 'application-start:original-question'}}))
-            except Exception as error:
-                self.assertIn('RESEARCH_QA_BUDGET_INSUFFICIENT', str(error))
-            else:
-                self.assertIn('RESEARCH_QA_BUDGET_INSUFFICIENT', str(result))
-            select_sources.assert_not_called()
-        wire.assert_not_called()
-        messages.reply_for_task.assert_not_called()
-        endpoints.resolve.assert_not_called()
-        self.assertEqual(service.configuration_for_endpoint('alice', 'original-qa-endpoint'), {
-            'id': original['id'], 'revision': 1, 'endpointId': 'original-qa-endpoint'})
-        with consumer.db.read() as conn:
-            self.assertEqual(conn.execute(select(consumer.inputs)).mappings().all(), [])
-        with service.db.read() as conn:
-            self.assertEqual(service._configuration_row(conn, 'alice', 'original-qa-endpoint')['body'], legacy)
+            'automaticBudget': {'scopeId': saved['qa']['scopeId'], 'caps': saved['qa']['budget']['perQuestionCaps']}}
+        self.assertTrue(service.me('alice')['assistant']['qa']['available'])
+        scopes.inspect.assert_not_called()
 
-    def test_original_plan_budget_is_checked_without_current_endpoint_or_budget_changes(self):
-        qa, _, _, published = self.publish_qa(tool_calls=2)
+    def test_answer_accepts_long_text_and_more_than_eight_citations(self):
+        from research.qa_workflow import Answer
+        answer = Answer(answer='Detailed result. ' * 1000, citations=[str(i) for i in range(30)],
+                        evidenceLevel='agent_analysis')
+        self.assertGreater(len(answer.answer), 2000)
+        self.assertEqual(len(answer.citations), 30)
+
+    def test_new_question_upgrades_old_pin_once_without_replaying_old_question(self):
+        qa, _, _, published = self.publish_qa()
         service, endpoints, _ = self.assistant_service(qa)
         with patch.object(service, '_availability', return_value={'available': True}):
             saved = service.configure('alice', self.allowance(published))
-        self.store.task = Mock(return_value={'plan_id': 'original-plan'})
-        self.store.plan = Mock(return_value={'budget': {'toolCalls': 1}})
-        with self.assertRaises(HTTPException) as rejected:
-            service.require_question_budget('alice', saved['qa']['endpointId'], 'original-task')
-        self.assertEqual(rejected.exception.detail, 'RESEARCH_QA_BUDGET_INSUFFICIENT')
-        self.store.plan.return_value['budget']['toolCalls'] = 2
-        service.require_question_budget('alice', saved['qa']['endpointId'], 'original-task')
-        endpoints.resolve.assert_not_called()
-        self.store.task.assert_called_with('original-task', 'alice')
-        self.store.plan.assert_called_with('original-plan', 'alice')
+        original_config = saved['qa']
+        service.setup = self.setup
+        self.pin['sha256'] = 'b' * 64
+        endpoints.owned.return_value = {'enabled': True,
+            'automaticBudget': {'scopeId': original_config['scopeId'], 'caps': original_config['budget']['perQuestionCaps']},
+            'applicationRef': published['applicationRef'], 'defaults': {'connectionRefs': published['connectionRefs']}}
+        endpoints.configure.return_value = {'id': 'upgraded-endpoint'}
+        service.messages.request.side_effect = HTTPException(404, 'ASSISTANT_MESSAGE_NOT_FOUND')
+        service.messages.send = AsyncMock(return_value={'id': 'new-message'})
+        body = SendAssistantMessage(requestId='new-after-upgrade', text='New question')
+        with patch.object(service, '_availability', return_value={'available': True}):
+            self.assertEqual(asyncio.run(service.question('bob', saved['id'], body)), {'id': 'new-message'})
+        service.messages.send.assert_awaited_once_with('bob', 'upgraded-endpoint', body)
+        with service.db.read() as conn:
+            current = service._identity(conn, saved['id'])
+            self.assertEqual(current['configuration_revision'], 2)
+            old = service._configuration_row(conn, 'alice', 'original-qa-endpoint')['body']
+            new = service._configuration_row(conn, 'alice', 'upgraded-endpoint')['body']
+        self.assertEqual(old['applicationRef'], original_config['applicationRef'])
+        self.assertEqual(self.apps.require_current(new['applicationRef'])['modes']['qa']['nativeComponent'], self.pin)
+        asyncio.run(service.question('bob', saved['id'], body.model_copy(update={'requestId': 'second-new-question'})))
+        self.assertEqual(service.messages.send.await_count, 2)
+        self.assertEqual(endpoints.configure.call_count, 2)
+        original = {'recipientId': 'alice', 'endpointId': 'original-qa-endpoint', 'text': 'Old question'}
+        service.messages.request.side_effect = None
+        service.messages.request.return_value = original
+        old_body = SendAssistantMessage(requestId='old-request-id', text='Old question')
+        self.assertEqual(asyncio.run(service.question('bob', saved['id'], old_body)), original)
+        self.assertEqual(service.messages.send.await_count, 2)
+        self.assertEqual(endpoints.configure.call_count, 2)
+
+    def test_upgrade_does_not_reenable_a_disabled_assistant(self):
+        qa, _, _, published = self.publish_qa()
+        service, endpoints, _ = self.assistant_service(qa)
+        with patch.object(service, '_availability', return_value={'available': True}):
+            saved = service.configure('alice', self.allowance(published))
+        service.setup = self.setup
+        self.pin['sha256'] = 'b' * 64
+        endpoints.owned.return_value = {'enabled': False}
+        service.messages.request.side_effect = HTTPException(404, 'ASSISTANT_MESSAGE_NOT_FOUND')
+        with self.assertRaises(HTTPException) as denied:
+            service.question_target('bob', saved['id'], SendAssistantMessage(requestId='new-question-id', text='Question'))
+        self.assertEqual(denied.exception.detail, 'ASSISTANT_ENDPOINT_DISABLED')
+        self.assertEqual(endpoints.configure.call_count, 1)
+
+    def test_upgrade_does_not_publish_when_model_is_unavailable(self):
+        qa, _, _, published = self.publish_qa()
+        service, endpoints, _ = self.assistant_service(qa)
+        with patch.object(service, '_availability', return_value={'available': True}):
+            saved = service.configure('alice', self.allowance(published))
+        service.setup = self.setup
+        self.pin['sha256'] = 'b' * 64
+        endpoints.owned.return_value = {'enabled': True}
+        service.messages.request.side_effect = HTTPException(404, 'ASSISTANT_MESSAGE_NOT_FOUND')
+        with patch.object(self.connections, 'preflight', side_effect=HTTPException(409, 'MODEL_UNAVAILABLE')),                 patch.object(self.setup, 'prepare_qa') as prepare, self.assertRaises(HTTPException):
+            service.question_target('bob', saved['id'], SendAssistantMessage(requestId='unavailable-model', text='Question'))
+        prepare.assert_not_called()
+        self.assertEqual(endpoints.configure.call_count, 1)

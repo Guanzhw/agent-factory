@@ -37,9 +37,43 @@ class _UnixHTTP(HTTPConnection):
 
 
 class OwnerRuntimeBrokerTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == 'linux', 'Native broker requires AF_UNIX')
+    def test_local_sse_arrives_before_completion_and_repeated_request_does_not_dispatch(self):
+        from test_owner_model_stream import chunk
+        release = threading.Event()
+        class WireStream(httpx.AsyncByteStream):
+            async def __aiter__(self):
+                yield ('data: ' + json.dumps(chunk({'role': 'assistant', 'content': 'first'})) + '\n\n').encode()
+                await asyncio.to_thread(release.wait, 5)
+                yield ('data: ' + json.dumps(chunk({'content': ' final'}, 'stop')) + '\n\ndata: [DONE]\n\n').encode()
+        def wire(request):
+            self.calls.append(request)
+            return httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=WireStream())
+        self.handle.service.transport_factory = lambda: httpx.MockTransport(wire)
+        self.broker.start(); self.addCleanup(self.broker.close)
+        client = _UnixHTTP(self.broker.path)
+        body = {'model': 'owner-model', 'stream': True, 'messages': [{'role': 'user', 'content': 'fixture'}]}
+        try:
+            client.request('POST', '/v1/chat/completions', body=json.dumps(body), headers={
+                'Authorization': 'Bearer ' + self.broker.capability, 'Content-Type': 'application/json',
+                'x-opencode-session-id': 'ses_streamfixture123', 'x-opencode-request': 'msg_streamfixture123'})
+            response = client.getresponse()
+            first = response.readline().decode()
+            self.assertIn('first', first)
+            self.assertFalse(next(iter(self.broker.native_calls.values())).done.is_set())
+            release.set()
+            rest = response.read().decode()
+            self.assertIn('[DONE]', rest)
+            original = self.broker.native_completion(body, 'ses_streamfixture123', 'msg_streamfixture123')
+            self.assertEqual(original['choices'][0]['message']['content'], 'first final')
+            self.assertEqual(len(self.calls), 1)
+        finally:
+            release.set()
+            client.close()
+
     def test_owner_output_limit_is_used_for_both_protocols_instead_of_native_override(self):
         for protocol, field in (('chat-completions', 'max_tokens'), ('responses', 'max_output_tokens')):
-            for configured, expected in ((None, 4096), (16384, 16384)):
+            for configured, expected in ((None, None), (16384, 16384)):
                 with self.subTest(protocol=protocol, configured=configured):
                     self.handle.body['protocol'] = protocol
                     if configured is None:
@@ -55,7 +89,7 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
                     asyncio.run(broker.completion({'model': 'owner-model', 'max_tokens': 1,
                         'max_output_tokens': 2, 'messages': [{'role': 'user', 'content': 'Synthetic goal'}]},
                         'ses_syntheticoutput123'))
-                    self.assertEqual(json.loads(self.calls[-1].content)[field], expected)
+                    self.assertEqual(json.loads(self.calls[-1].content).get(field), expected)
         self.assertEqual(len(self.calls), 4)
 
     def test_compaction_retained_suffix_distinguishes_identical_final_text_and_keeps_unknown_receipt(self):
@@ -203,8 +237,8 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         asyncio.run(self.broker.completion(body,'ses_syntheticnative123'))
         sent=json.loads(self.calls[-1].content)
         self.assertEqual(sent['thinking'],{'type':'disabled'})
-        self.assertEqual(sent['max_tokens'],4096)
-        self.assertEqual(self.broker.remaining,64)
+        self.assertNotIn('max_tokens', sent)
+        self.assertIsNone(self.broker.remaining)
         self.handle.body.pop('thinkingMode')
         asyncio.run(self.broker.completion(body,'ses_syntheticnative123'))
         self.assertNotIn('thinking',json.loads(self.calls[-1].content))
@@ -220,7 +254,7 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
                 'function': {'name': 'synthetic_tool', 'arguments': '{}'}}]}, 'finish_reason': 'tool_calls'}]}
         second = self.broker.native_completion(second_body, 'ses_syntheticnative123', 'msg_syntheticturn0002')
         self.assertEqual(len(self.calls), 2)
-        self.assertEqual(self.broker.remaining, 62)
+        self.assertIsNone(self.broker.remaining)
         # A changed tool-loop input is a separate call within the same user turn.
         next_body = {**body, 'messages': second_body['messages'] + [
             second['choices'][0]['message'],
@@ -247,7 +281,7 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         self.assertEqual(diagnostics[0], diagnostics[1]); self.assertEqual(len(self.calls), 1)
         self.assertTrue(all(type(record.error) is tuple for record in self.broker.native_calls.values()))
         with self.assertRaises(ValueError): self.broker.native_completion(body, 'ses_syntheticnative123', None)
-        self.assertEqual(len(self.calls), 1); self.assertEqual(self.broker.remaining, 63)
+        self.assertEqual(len(self.calls), 1); self.assertIsNone(self.broker.remaining)
 
     def test_concurrent_native_retries_share_the_original_inflight_call(self):
         admitted, release = threading.Event(), threading.Event()
@@ -263,7 +297,7 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
             second = pool.submit(self.broker.native_completion, body, 'ses_syntheticnative123', 'msg_syntheticturn0001')
             release.set()
             self.assertEqual(first.result(timeout=3), second.result(timeout=3))
-        self.assertEqual(len(self.calls), 1); self.assertEqual(self.broker.remaining, 63)
+        self.assertEqual(len(self.calls), 1); self.assertIsNone(self.broker.remaining)
 
     def test_go_preserves_native_conversation_header_and_requires_it_before_dispatch(self):
         self.handle.body['baseURL'] = 'https://opencode.ai/zen/go/v1'
@@ -332,7 +366,7 @@ class OwnerRuntimeBrokerTests(unittest.TestCase):
         self.assertEqual(value['choices'][0]['message']['content'], 'Synthetic native response')
         outgoing = json.loads(self.calls[0].content)
         self.assertEqual(outgoing['model'], 'owner-selected-model')
-        self.assertFalse(outgoing['stream'])
+        self.assertTrue(outgoing['stream'])
         self.assertEqual(outgoing['messages'][0]['content'], 'Synthetic native input')
         self.assertEqual(self.calls[0].headers['Authorization'], 'Bearer synthetic-private-key')
         self.assertNotIn('synthetic-private-key', json.dumps(body))

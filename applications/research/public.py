@@ -67,6 +67,8 @@ def install(state, *, qa_workflow=None, session_tools=None):
         setup = ResearchSetup(state['store'], state['auth'], state['connections'], state['store'].personal_models,
             qa_workflow=qa_workflow)
         state['research_setup'] = setup
+        if assistants is not None:
+            assistants.setup = setup
         state['http_app'].include_router(setup_router(state['auth'], setup))
     runs = history
     if session_tools is not None:

@@ -26,7 +26,7 @@ export function readToolOperationRequest(raw: string | null, owner: string): Req
   } catch { /* Corrupt or private configuration never becomes a public retry. */ }
   return null;
 }
-const blankRecipe = JSON.stringify({ transport: 'cli', toolName: '', description: '', inputSchema: { type: 'object', properties: {} }, executable: '', arguments: [], environment: {}, argumentOptions: {}, stdinJson: true, outputFormat: 'json', readOnly: false, timeoutSeconds: 30, maxOutputBytes: 65536 }, null, 2);
+const blankRecipe = JSON.stringify({ transport: 'cli', toolName: '', description: '', inputSchema: { type: 'object', properties: {} }, executable: '', arguments: [], environment: {}, argumentOptions: {}, stdinJson: true, outputFormat: 'json', readOnly: false }, null, 2);
 const pin = (value: ToolOperation) => `${value.operationRef.id}:${value.operationRef.version}:${value.operationRef.sha256}`;
 
 export function ReusableToolOperations({ ownerId, credentials, disabled, onChanged }: {

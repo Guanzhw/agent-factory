@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .model_endpoint_policy import base_url
-from .personal_remote_provider import PinnedHTTPSProbe, origin, reject_credential_echo
+from .personal_remote_provider import origin, reject_credential_echo
 
 MAX_BYTES = 1_048_576
 
@@ -34,26 +34,23 @@ class PinnedChatTransport(httpx.AsyncBaseTransport):
             if (not isinstance(trusted_proxy, TrustedModelProxy) or self.base != trusted_proxy.base_url
                     or protocol != trusted_proxy.protocol):
                 raise ValueError('TRUSTED_MODEL_PROXY_REQUEST_DENIED')
-        self.probe = (PinnedHTTPSProbe(dns_timeout_seconds=trusted_proxy.dns_timeout_seconds)
-            if trusted_proxy else PinnedHTTPSProbe())
         self.transport = None if trusted_proxy else httpx.AsyncHTTPTransport(retries=0, trust_env=False)
 
     async def handle_async_request(self, request):
         if request.method != 'POST' or str(request.url) != self.base + self.path:
             raise ValueError('PERSONAL_MODEL_DESTINATION_DENIED')
-        addresses = await asyncio.to_thread(self.probe.addresses, self.destination)
         if self.before_send is not None:
             await asyncio.to_thread(self.before_send)
-        # Connect the resolved IP while preserving the configured HTTP authority
-        # and HTTPS certificate identity.
-        forwarded = httpx.Request('POST', request.url.copy_with(host=addresses[0]),
+        # Let the HTTP transport (or configured gateway) resolve the original
+        # hostname; no subprocess DNS deadline or address-count gate.
+        forwarded = httpx.Request('POST', request.url,
             headers={**dict(request.headers), 'host': urlsplit(self.destination).netloc}, content=await request.aread(),
             extensions={**request.extensions, 'sni_hostname': request.url.host})
         if self.trusted_proxy is not None:
             if self.transport is not None:
                 raise ValueError('TRUSTED_MODEL_PROXY_REQUEST_DENIED')
             self.trusted_proxy.validate_payload(forwarded.content)
-            self.transport = self.trusted_proxy.transport(addresses[0], request.url.host)
+            self.transport = self.trusted_proxy.transport(request.url.host, request.url.host)
         transport = self.transport
         if transport is None:
             raise ValueError('PERSONAL_MODEL_TRANSPORT_REQUIRED')
@@ -66,14 +63,11 @@ class PinnedChatTransport(httpx.AsyncBaseTransport):
             await self.transport.aclose()
 
 
-async def read_response_json(response, lease):
+async def read_response_json(response, lease, idle_seconds=300):
     if response.status_code != 200 or response.headers.get('content-encoding', 'identity') != 'identity':
         raise ValueError('PERSONAL_MODEL_REQUEST_FAILED')
-    chunks, size = [], 0
-    async for chunk in response.aiter_bytes():
-        size += len(chunk)
-        if size > MAX_BYTES:
-            raise ValueError('PERSONAL_MODEL_RESPONSE_TOO_LARGE')
+    chunks = []
+    async for chunk in with_idle_timeout(response.aiter_bytes(), idle_seconds):
         chunks.append(chunk)
     try:
         value = json.loads(b''.join(chunks))
@@ -81,3 +75,15 @@ async def read_response_json(response, lease):
         raise ValueError('PERSONAL_MODEL_RESPONSE_REJECTED') from None
     reject_credential_echo(value, lease)
     return value
+
+
+async def with_idle_timeout(iterator, seconds=300):
+    """Bound a stalled network read, not the duration or size of active output."""
+    iterator = aiter(iterator)
+    while True:
+        try:
+            async with asyncio.timeout(seconds):
+                value = await anext(iterator)
+        except StopAsyncIteration:
+            return
+        yield value

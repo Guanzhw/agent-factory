@@ -20,7 +20,7 @@ from agent_factory.personal_remote_provider import origin
 from core_native_fixture import publish_owner_application
 from agent_factory.application_runs import factory_request_id
 from pg_fixture import IsolatedPostgres
-from test_trusted_model_proxy import GatewayBackend, GENERIC_BASE, IP, PROTOCOL_PATHS, grant
+from test_trusted_model_proxy import GatewayBackend, GENERIC_BASE, PROTOCOL_PATHS, grant
 
 
 @unittest.skipUnless(os.getenv('FACTORY_TEST_DATABASE_URL'), 'Requires independent disposable PostgreSQL')
@@ -74,8 +74,7 @@ class TrustedModelProxyPostgresTests(unittest.TestCase):
                 model, configuration = self.configure(base_url=GENERIC_BASE, protocol=protocol, suffix='-'+protocol)
                 backend = GatewayBackend(configuration, target_host='models.example.com', protocol=protocol)
                 request_id = 'fixture-generic-proxy-research-' + protocol
-                with patch('agent_factory.byok_model.PinnedHTTPSProbe.addresses', return_value=[IP]), \
-                        patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
+                with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend', return_value=backend):
                     self.request('POST', '/application-interface/v1/starts', {
                         'application': 'fixture-owner-checksum', 'mode': 'literature',
                         'connectionRefs': {'ownerModel': model['connectionRef']}, 'goal': 'Synthetic scoped model flow',
@@ -91,7 +90,7 @@ class TrustedModelProxyPostgresTests(unittest.TestCase):
                 self.assertEqual(len(backend.connections), 1)
                 wire = b''.join(backend.writes)
                 self.assertEqual(wire.count(b'POST '), 1)
-                self.assertIn(f'CONNECT {IP}:443 HTTP/1.1\r\n'.encode(), wire)
+                self.assertIn(b'CONNECT models.example.com:443 HTTP/1.1\r\n', wire)
                 post = wire.split(b'POST ', 1)[1]
                 self.assertTrue(post.startswith(f'/v1{path} HTTP/1.1\r\n'.encode()))
                 headers, payload = post.split(b'\r\n\r\n', 1)
@@ -100,7 +99,7 @@ class TrustedModelProxyPostgresTests(unittest.TestCase):
                 self.assertNotIn(b'x-opencode-session:', headers.lower())
                 sent = json.loads(payload)
                 self.assertEqual(sent['model'], 'fixture-model')
-                self.assertIs(sent['stream'], False)
+                self.assertIs(sent['stream'], True)
                 if protocol == 'responses':
                     self.assertIs(sent['store'], False)
                     self.assertIn('input', sent)
@@ -137,8 +136,7 @@ class TrustedModelProxyPostgresTests(unittest.TestCase):
     def test_registered_agno_path_uses_existing_owner_vault_and_scoped_gateway(self):
         model, configuration = self.configure()
         backend = GatewayBackend(configuration)
-        with patch('agent_factory.byok_model.PinnedHTTPSProbe.addresses',return_value=[IP]), \
-                patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend',return_value=backend):
+        with patch('agent_factory.trusted_model_proxy.httpcore.AnyIOBackend',return_value=backend):
             self.request('POST','/application-interface/v1/starts', {
                 'application': 'fixture-owner-checksum', 'mode': 'literature',
                 'connectionRefs': {'ownerModel': model['connectionRef']}, 'goal': 'Synthetic scoped model flow',

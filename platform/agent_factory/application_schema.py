@@ -11,11 +11,11 @@ from .input_schema import validate_input_schema, validate_input_values
 
 class LegacyBudget(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    toolCalls: int = Field(default=8, strict=True, ge=1, le=128)
-    maxDepth: int = Field(default=2, strict=True, ge=1, le=8)
-    maxChildren: int = Field(default=4, strict=True, ge=1, le=64)
-    experimentSeconds: int = Field(default=8, strict=True, ge=1, le=600)
-    outputBytes: int = Field(default=65536, strict=True, ge=1024, le=1048576)
+    toolCalls: int = Field(default=8, strict=True, ge=1)
+    maxDepth: int = Field(default=2, strict=True, ge=1)
+    maxChildren: int = Field(default=4, strict=True, ge=1)
+    experimentSeconds: int = Field(default=8, strict=True, ge=1)
+    outputBytes: int = Field(default=65536, strict=True, ge=1024)
 
 
 class LegacyTaskConfig(BaseModel):
@@ -28,14 +28,14 @@ class MaterialChoice(BaseModel):
     model_config = ConfigDict(extra="forbid")
     kind: Literal["skill", "tool", "prompt", "knowledge", "model", "environment"]
     defaultRef: PinnedRef
-    allowedRefs: list[PinnedRef] = Field(min_length=1, max_length=8)
+    allowedRefs: list[PinnedRef] = Field(min_length=1)
 
 
 class ConnectionRequirement(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     kind: Literal["model", "tool", "knowledge", "environment", "orx"]
-    requiredCapabilities: list[str] = Field(default_factory=list, max_length=30)
+    requiredCapabilities: list[str] = Field(default_factory=list)
     required: StrictBool = True
 
 
@@ -49,13 +49,13 @@ class ModeDefinition(BaseModel):
         return validate_input_schema(value) if value is not None else None
 
     model_config = ConfigDict(extra="forbid")
-    materialRefs: list[PinnedRef] = Field(min_length=1, max_length=30)
-    materialChoices: dict[str, MaterialChoice] = Field(default_factory=dict, max_length=12)
-    capabilities: list[str] = Field(default_factory=list, max_length=30)
+    materialRefs: list[PinnedRef] = Field(min_length=1)
+    materialChoices: dict[str, MaterialChoice] = Field(default_factory=dict)
+    capabilities: list[str] = Field(default_factory=list)
     budget: LegacyBudget = Field(default_factory=LegacyBudget)
     config: LegacyTaskConfig = Field(default_factory=LegacyTaskConfig)
-    toolOrder: list[str] = Field(default_factory=list, max_length=30)
-    connectionRequirements: list[ConnectionRequirement] = Field(default_factory=list, max_length=12)
+    toolOrder: list[str] = Field(default_factory=list)
+    connectionRequirements: list[ConnectionRequirement] = Field(default_factory=list)
 
 
 class ApplicationDefinition(BaseModel):
@@ -63,20 +63,20 @@ class ApplicationDefinition(BaseModel):
     id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=2000)
-    discoveryKeywords: list[str] = Field(default_factory=list, max_length=30)
+    discoveryKeywords: list[str] = Field(default_factory=list)
     defaultForDiscovery: StrictBool = False
     defaultMode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
-    modes: dict[str, ModeDefinition] = Field(min_length=1, max_length=8)
+    modes: dict[str, ModeDefinition] = Field(min_length=1)
 
 
 class Budget(BaseModel):
     """Neutral per-operation resource ceiling, independent of workload domain."""
     model_config = ConfigDict(extra="forbid")
-    toolCalls: int = Field(default=8, strict=True, ge=1, le=128)
-    maxDepth: int = Field(default=2, strict=True, ge=1, le=8)
-    maxChildren: int = Field(default=4, strict=True, ge=1, le=64)
-    operationSeconds: int = Field(default=8, strict=True, ge=1, le=600)
-    outputBytes: int = Field(default=65536, strict=True, ge=1024, le=1048576)
+    toolCalls: int | None = Field(default=None, strict=True, ge=1)
+    maxDepth: int | None = Field(default=None, strict=True, ge=1)
+    maxChildren: int | None = Field(default=None, strict=True, ge=1)
+    operationSeconds: int | None = Field(default=None, strict=True, ge=1)
+    outputBytes: int | None = Field(default=None, strict=True, ge=1)
 
 
 class ModeDefinitionV2(ModeDefinition):
@@ -103,10 +103,10 @@ class ApplicationDefinitionV2(BaseModel):
     id: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     name: str = Field(min_length=1, max_length=120)
     description: str = Field(default="", max_length=2000)
-    discoveryKeywords: list[str] = Field(default_factory=list, max_length=30)
+    discoveryKeywords: list[str] = Field(default_factory=list)
     defaultForDiscovery: StrictBool = False
     defaultMode: str = Field(min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
-    modes: dict[str, ModeDefinitionV2] = Field(min_length=1, max_length=8)
+    modes: dict[str, ModeDefinitionV2] = Field(min_length=1)
 
 
 def definition_model(value):
@@ -119,7 +119,7 @@ def definition_model(value):
 
 
 def budget_limits(settings, contract_version=1):
-    return {"toolCalls": settings.max_tool_calls, "maxDepth": 8, "maxChildren": 64,
+    return {"toolCalls": settings.max_tool_calls, "maxDepth": None, "maxChildren": None,
             "operationSeconds" if contract_version == 2 else "experimentSeconds": settings.experiment_timeout_seconds,
             "outputBytes": settings.experiment_output_bytes}
 
@@ -148,7 +148,15 @@ def time_budget_key(plan):
 
 def time_budget(plan, default):
     key = time_budget_key(plan)
+    if plan.get("contractVersion", 1) == 2 and key not in plan.get("budget", {}):
+        raise ValueError("V2 plan requires an operationSeconds field (null means no timeout)")
     value = plan.get("budget", {}).get(key)
-    if plan.get("contractVersion", 1) == 2 and (type(value) is not int or value <= 0):
-        raise ValueError("V2 plan requires a positive operationSeconds ceiling")
-    return value if value is not None else default
+    if value is not None and (type(value) is not int or value <= 0):
+        raise ValueError("Operation timeout must be positive or absent")
+    return value if key in plan.get("budget", {}) else default
+
+
+def optional_min(*values):
+    """Combine explicitly configured limits; None means no ceiling."""
+    finite = [value for value in values if value is not None]
+    return min(finite) if finite else None

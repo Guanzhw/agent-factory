@@ -203,8 +203,8 @@ class ApplicationRuns:
                 utf8_valid = True
             except UnicodeDecodeError:
                 utf8_valid = False
-            private_output = {'text': output_bytes[:16384].decode('utf-8', errors='replace'),
-                'truncated': len(output_bytes) > 16384, 'utf8Valid': utf8_valid, 'artifact': deepcopy(artifacts[0])}
+            private_output = {'text': output_bytes.decode('utf-8', errors='replace'),
+                'truncated': False, 'utf8Valid': utf8_valid, 'artifact': deepcopy(artifacts[0])}
         return {'kind': 'ssh-process', 'taskId': child_task_id, 'runId': run_id, 'planId': task['plan_id'],
             'operationId': operation_id, 'materials': selected, 'receipt': deepcopy(receipt),
             'receiptArtifact': {'taskId': child_task_id, 'artifactId': metadata['id'], 'sha256': metadata['sha256']},

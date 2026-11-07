@@ -458,7 +458,7 @@ class ResearchRounds:
                 raw = json.dumps(body, ensure_ascii=False, allow_nan=False).encode()
                 bounded_json(body, maximum=len(raw), ensure_ascii=False)
                 maximum = self.db.store.settings.experiment_output_bytes
-                if len(raw) > maximum:
+                if maximum is not None and len(raw) > maximum:
                     terminal.update(sharing='publication_failed', continuationBlocked='RESEARCH_PUBLICATION_TOO_LARGE',
                         publicationBytes=len(raw), publicationLimit=maximum)
                 else:

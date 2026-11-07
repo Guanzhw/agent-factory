@@ -82,10 +82,10 @@ class ApplicationContentTests(ApplicationCompositionFixture):
         with TestClient(app) as client:
             body = {**self.body.model_dump(), 'requestId': 'http-content-1'}
             for extra in ({'ownerId': 'bob'}, {'verificationStatus': 'verified'},
-                          {'content': {'password': 'synthetic-secret'}}, {'content': {'text': 'x' * 17000}},
+                          {'content': {'password': 'synthetic-secret'}},
                           {'artifacts': [{'path': '/tmp/private-file'}]}):
                 response = client.post('/api/factory/application-content', json={**body, **extra})
                 self.assertEqual(response.status_code, 422, response.text)
-            response = client.post('/api/factory/application-content', json=body)
+            response = client.post('/api/factory/application-content', json={**body, 'content': {'text': 'x' * 17000}})
             self.assertEqual(response.status_code, 201, response.text)
             self.assertEqual(client.get('/api/factory/application-content?limit=0').status_code, 422)

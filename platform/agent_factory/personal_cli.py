@@ -20,7 +20,6 @@ import re
 import shutil
 import sys
 import tempfile
-import time
 from typing import Any, Callable, Literal, Mapping
 
 from ._personal_cli_process import CLIProcessError, CLIProcessResult, run_cli_process
@@ -73,7 +72,7 @@ class MemberCliAdapter:
             try:
                 result = await run_cli_process(executable=self._executable, argv=argv, env=env,
                     cwd=self.configuration.get('workingDirectory') or root, stdin=stdin,
-                    timeout_seconds=self.descriptor.timeout_seconds, max_output_bytes=self.descriptor.max_output_bytes,
+                    timeout_seconds=None, max_output_bytes=None,
                     before_spawn=invocation.check_authorized, check_authorized=invocation.check_authorized)
                 stopped, dispatched = result.stopped, result.dispatched
             except CLIProcessError as error:
@@ -188,8 +187,7 @@ class PersonalCliAdapter:
                 or any(not isinstance(key, str) or not _option(option) or option in protected
                        for key, option in business_options.items())
                 or len(set(business_options.values())) != len(business_options)
-                or not math.isfinite(descriptor.timeout_seconds) or not 0 < descriptor.timeout_seconds <= 300
-                or not 1024 <= descriptor.max_output_bytes <= 1048576):
+                or descriptor.timeout_seconds is not None and (not math.isfinite(descriptor.timeout_seconds) or descriptor.timeout_seconds <= 0)):
             raise ValueError("CLI_REGISTRATION_INVALID")
         self.descriptor = descriptor
         self._executable = str(path.resolve(strict=True))
@@ -278,15 +276,12 @@ class PersonalCliAdapter:
         value = self._parse_output(result.stdout)
         reject_credential_echo(value, lease)
         encoded = json.dumps(value, allow_nan=False).encode()
-        if len(encoded) > self.descriptor.max_output_bytes:
-            raise ValueError("CLI_OUTPUT_REJECTED")
         # Normalize parser results to plain JSON without retaining custom objects.
         return json.loads(encoded)
 
     async def invoke(self, invocation: ToolInvocation) -> Any:
         root: Path | None = None
         stopped, business_dispatched = True, False
-        deadline = time.monotonic() + self.descriptor.timeout_seconds
 
         def check_authorized() -> None:
             if asyncio.get_running_loop().get_debug():
@@ -311,13 +306,10 @@ class PersonalCliAdapter:
 
             async def run(extra: tuple[str, ...], stdin: bytes, *, business: bool = False) -> CLIProcessResult:
                 nonlocal stopped, business_dispatched
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise ToolInvocationError("CLI_TIMEOUT", outcome="unknown" if business_dispatched else "failed")
                 try:
                     result = await run_cli_process(executable=self._executable,
                         argv=(*self._fixed, *auth_arguments, *extra), env=env, cwd=root, stdin=stdin,
-                        timeout_seconds=remaining, max_output_bytes=self.descriptor.max_output_bytes,
+                        timeout_seconds=None, max_output_bytes=None,
                         before_spawn=guard, check_authorized=check_authorized)
                     stopped = result.stopped
                     if business:

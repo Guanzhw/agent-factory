@@ -23,7 +23,7 @@ def validate_tool_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
     """
     from jsonschema import Draft202012Validator
     try:
-        value = bounded_tool_json(dict(schema), maximum=32768)
+        value = bounded_tool_json(dict(schema), maximum=None)
         if value.get('type') != 'object' or {'fc', 'run_context', '_agno_run_context'} & set(value.get('properties', {})):
             raise ValueError()
         Draft202012Validator.check_schema(value)
@@ -32,7 +32,7 @@ def validate_tool_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
         raise ValueError('PERSONAL_TOOL_DESCRIPTOR_INVALID') from None
 
 
-def bounded_tool_json(value: Any, *, maximum: int) -> Any:
+def bounded_tool_json(value: Any, *, maximum: int | None) -> Any:
     """Use the tool's byte budget, not application-form shape limits."""
     def check(item):
         if type(item) is dict:
@@ -49,7 +49,7 @@ def bounded_tool_json(value: Any, *, maximum: int) -> Any:
     try:
         check(value)
         encoded = json.dumps(value, allow_nan=False)
-        if len(encoded.encode()) > maximum:
+        if maximum is not None and len(encoded.encode()) > maximum:
             raise ValueError()
         return json.loads(encoded)
     except (TypeError, ValueError, OverflowError, RecursionError):
@@ -60,7 +60,7 @@ def validate_tool_arguments(schema: Mapping[str, Any], arguments: Mapping[str, A
     from jsonschema import Draft202012Validator
     from referencing import Registry
     try:
-        value = bounded_tool_json(dict(arguments), maximum=65536)
+        value = bounded_tool_json(dict(arguments), maximum=None)
         if {'fc', 'run_context', '_agno_run_context'} & set(value):
             raise ValueError()
         Draft202012Validator(dict(schema), registry=Registry()).validate(value)
@@ -80,12 +80,16 @@ class ToolDescriptor:
     credential_provider_id: str
     credential_destination: str
     capabilities: tuple[str, ...]
-    timeout_seconds: float = 30.0
-    max_output_bytes: int = 65536
+    timeout_seconds: float | None = None
+    max_output_bytes: int | None = None
     permission: str = "tool:invoke"
     read_only: bool = False
 
     def __post_init__(self):
+        # Codex MCP's DEFAULT_TOOL_TIMEOUT at 0ed34eb9 is 300 seconds.
+        # This is a remote protocol request timeout, not an Agent task deadline.
+        if self.transport == 'mcp' and self.timeout_seconds is None:
+            object.__setattr__(self, 'timeout_seconds', 300.0)
         from .connections import _capabilities, _identifier
         identifier = re.compile(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,119}')
         if (any(type(value) is not str or not identifier.fullmatch(value) for value in
@@ -99,9 +103,9 @@ class ToolDescriptor:
                 or any(type(value) is not str or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}', value)
                     for value in self.capabilities)
                 or len(set(self.capabilities)) != len(self.capabilities)
-                or type(self.timeout_seconds) not in (int, float) or not math.isfinite(self.timeout_seconds)
-                or not 0.1 <= self.timeout_seconds <= 300
-                or type(self.max_output_bytes) is not int or not 1 <= self.max_output_bytes <= 1048576
+                or self.timeout_seconds is not None and (type(self.timeout_seconds) not in (int, float)
+                    or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0)
+                or self.max_output_bytes is not None and (type(self.max_output_bytes) is not int or self.max_output_bytes <= 0)
                 or type(self.read_only) is not bool):
             raise ValueError('PERSONAL_TOOL_DESCRIPTOR_INVALID')
         _capabilities(self.capabilities)

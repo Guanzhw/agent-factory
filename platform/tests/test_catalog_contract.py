@@ -49,22 +49,19 @@ class CatalogContractTests(ApplicationCompositionFixture):
         self.assertEqual(service.inspect_version("manager", "fixture-question-tool", 1), original)
         self.assertEqual(self.plan()["status"], "ready")
 
-    def test_forward_cycles_deep_chains_and_closure_count_are_bounded(self):
+    def test_forward_cycles_are_rejected_and_deep_large_closures_are_allowed(self):
         absent = {"id": "self-cycle", "version": 1, "sha256": "0" * 64}
         with self.assertRaises(HTTPException):
             self.material(id="self-cycle", dependencies=[absent])
         previous = None
         for index in range(8):
-            previous = self.material(kind="knowledge", id=f"bounded-depth-{index}", dependencies=[pin(previous)] if previous else [])
+            previous = self.material(kind="knowledge", id=f"deep-chain-{index}", dependencies=[pin(previous)] if previous else [])
         ninth = self.material(kind="knowledge", dependencies=[pin(previous)])
-        with self.assertRaises(HTTPException):
-            self.applications.closure([pin(ninth)])
-        with self.assertRaises(HTTPException):
-            self.material(kind="knowledge", dependencies=[pin(ninth)])
-        refs = [pin(self.material(kind="knowledge", id=f"bounded-count-{index}")) for index in range(31)]
-        with self.assertRaises(HTTPException):
-            self.applications.closure(refs)
-        self.assertEqual(len(self.applications.closure(refs[:30])), 30)
+        self.assertEqual(len(self.applications.closure([pin(ninth)])), 9)
+        tenth = self.material(kind="knowledge", dependencies=[pin(ninth)])
+        self.assertEqual(len(self.applications.closure([pin(tenth)])), 10)
+        refs = [pin(self.material(kind="knowledge", id=f"large-closure-{index}")) for index in range(31)]
+        self.assertEqual(len(self.applications.closure(refs)), 31)
 
     def test_snapshot_remains_exact_after_material_and_application_revisions(self):
         application = self.publish()

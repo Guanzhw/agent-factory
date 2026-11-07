@@ -38,12 +38,14 @@ class AssistantEndpointsTests(ApplicationCompositionFixture):
         endpoint = self.service.configure('alice', configuration, 'budget-endpoint')
         self.assertEqual(endpoint['automaticBudget']['scopeId'], 'alice-scope')
         self.assertNotIn('automaticBudget', self.service.get('bob', endpoint['id']))
-        for index, change in enumerate(({'scopeId': 'bobs-scope'}, {'deadline': deadline + 1},
-                                       {'deadline': time.time() - 1}, {'caps': {**caps, 'rounds': 2}},
-                                       {'caps': {**caps, 'toolCalls': 4}})):
+        for index, change in enumerate(({'scopeId': 'bobs-scope'}, {'caps': {**caps, 'rounds': 2}})):
             invalid = configuration.model_copy(update={'automaticBudget': configuration.automaticBudget.model_copy(update=change)})
             with self.subTest(change=change), self.assertRaises(HTTPException):
                 self.service.configure('alice', invalid, 'invalid-budget-' + str(index))
+        for index, change in enumerate(({'deadline': None}, {'deadline': 1.0},
+                                       {'caps': {**caps, 'toolCalls': None}}, {'caps': {**caps, 'toolCalls': 4}})):
+            updated = configuration.model_copy(update={'automaticBudget': configuration.automaticBudget.model_copy(update=change)})
+            self.assertTrue(self.service.configure('alice', updated, 'unrestricted-budget-' + str(index))['enabled'])
 
     def test_restart_repeated_configuration_retains_identity_and_conflicts_do_not_rewrite(self):
         original = self.configure()

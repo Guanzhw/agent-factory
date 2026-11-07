@@ -58,20 +58,20 @@ class AuthorityCheck(BaseModel):
 
 class AuthorityBudget(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    toolCalls: StrictInt = Field(ge=1, le=128)
-    maxDepth: StrictInt = Field(ge=1, le=8)
-    maxChildren: StrictInt = Field(ge=1, le=64)
-    experimentSeconds: StrictInt = Field(ge=1, le=600)
-    outputBytes: StrictInt = Field(ge=1024, le=1048576)
+    toolCalls: StrictInt = Field(ge=1)
+    maxDepth: StrictInt = Field(ge=1)
+    maxChildren: StrictInt = Field(ge=1)
+    experimentSeconds: StrictInt = Field(ge=1)
+    outputBytes: StrictInt = Field(ge=1024)
 
 
 class AuthorityBudgetV2(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    toolCalls: StrictInt = Field(ge=1, le=128)
-    maxDepth: StrictInt = Field(ge=1, le=8)
-    maxChildren: StrictInt = Field(ge=1, le=64)
-    operationSeconds: StrictInt = Field(ge=1, le=600)
-    outputBytes: StrictInt = Field(ge=1024, le=1048576)
+    toolCalls: StrictInt | None = Field(default=None, ge=1)
+    maxDepth: StrictInt | None = Field(default=None, ge=1)
+    maxChildren: StrictInt | None = Field(default=None, ge=1)
+    operationSeconds: StrictInt | None = Field(default=None, ge=1)
+    outputBytes: StrictInt | None = Field(default=None, ge=1)
 
 
 class AuthorityScopeBase(BaseModel):

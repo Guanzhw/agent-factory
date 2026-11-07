@@ -1,6 +1,5 @@
 """Stable member endpoints with immutable application defaults, not native sessions."""
 from copy import deepcopy
-import time
 from typing import Annotated
 from uuid import uuid4
 
@@ -22,7 +21,7 @@ class AutomaticBudget(BaseModel):
     model_config = ConfigDict(extra='forbid')
     scopeId: Identifier
     caps: dict
-    deadline: float = Field(allow_inf_nan=False)
+    deadline: float | None = Field(default=None, allow_inf_nan=False)
 
 
 class EndpointConfiguration(BaseModel):
@@ -97,14 +96,14 @@ class AssistantEndpoints:
         if caps['rounds'] != 1:
             raise HTTPException(422, 'LOCAL_BUDGET_ONE_ROUND_REQUIRED')
         scope = self.store.local_budget_scopes._scope(conn, owner, budget['scopeId'])
-        if (scope['state'] != 'ACTIVE' or not time.time() < budget['deadline'] <= scope['body']['deadline']):
+        if (scope['state'] != 'ACTIVE'):
             raise HTTPException(409, 'LOCAL_BUDGET_CLOSED_OR_EXPIRED')
         total = scope['body']['caps']
         if ((caps['tokenLimit'] is None) != (total['tokenLimit'] is None)
                 or caps['currency'] != total['currency']):
             raise HTTPException(409, 'LOCAL_BUDGET_METERING_MISMATCH')
-        if any(caps[key] is not None and caps[key] > total[key]
-               for key in ('toolCalls', 'tokenLimit', 'amountMicros')):
+        if any(caps[key] is not None and total[key] is not None and caps[key] > total[key]
+               for key in ('tokenLimit', 'amountMicros')):
             raise HTTPException(422, 'LOCAL_BUDGET_CAPS_INVALID')
 
     def configure(self, owner, configuration: EndpointConfiguration, request_id):

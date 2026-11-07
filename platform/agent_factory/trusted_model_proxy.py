@@ -111,10 +111,8 @@ class TrustedModelProxy:
 
     def validate_payload(self, value):
         try:
-            if len(value) > 1_048_576:
-                raise ValueError()
             body = json.loads(value)
-            if type(body) is not dict or body.get('model') != self.model_id or body.get('stream') is not False:
+            if type(body) is not dict or body.get('model') != self.model_id or type(body.get('stream')) is not bool:
                 raise ValueError()
         except (ValueError, TypeError):
             raise ValueError('TRUSTED_MODEL_PROXY_REQUEST_DENIED') from None
@@ -122,8 +120,8 @@ class TrustedModelProxy:
     def transport(self, checked_ip, hostname):
         self.validate_tls()
         try:
-            address = ipaddress.ip_address(checked_ip)
-            if str(address) != checked_ip or hostname != self._target_host:
+            address = checked_ip if checked_ip == self._target_host else str(ipaddress.ip_address(checked_ip))
+            if address != checked_ip or hostname != self._target_host:
                 raise ValueError()
         except (ValueError, TypeError):
             raise ValueError('TRUSTED_MODEL_PROXY_TARGET_DENIED') from None

@@ -70,12 +70,10 @@ class AssistantRepliesTests(unittest.TestCase):
         self.assertEqual(self.service.read('alice', self.message['id'])['reply'], {'state': 'source_unavailable'})
         self.assertEqual(len(self.fixture.runs.calls), 1)
 
-    def test_original_identity_and_limits_and_unexpected_errors_are_not_hidden(self):
+    def test_original_identity_and_unexpected_errors_are_not_hidden(self):
         for owner, task in [('alice', self.task_id), ('bob', 'another-task')]:
             with self.assertRaises(HTTPException): self.service.reply_for_task(owner, task, 'No reply')
-        for value in ('x', 'x' * 2001):
-            with self.assertRaises(ValidationError): self.reply(answer=value)
-        with self.assertRaises(ValidationError): self.reply([self.source['id']] * 21)
+        with self.assertRaises(ValidationError): self.reply(answer='')
         with self.assertRaises(ValidationError): self.reply(['not-content-id'])
         self.reply()
         for error in (RuntimeError('database failed'), HTTPException(409, 'INTEGRITY_FAILED')):
@@ -83,6 +81,21 @@ class AssistantRepliesTests(unittest.TestCase):
                 self.service.read('alice', self.message['id'])
         self.auth.members.remove('alice')
         with self.assertRaises(HTTPException): self.reply()
+
+    def test_long_reply_and_more_than_twenty_sources_preserve_full_receipt(self):
+        sources = [self.source['id']]
+        for index in range(20):
+            source = self.content.publish('bob', ContentPublication(source={
+                'application': 'example', 'record': 'evidence-' + str(index), 'revision': '1'},
+                content={'observation': str(index)}, visibility='team'), 'extra-source-' + str(index))
+            sources.append(source['id'])
+        answer = 'Complete evidence. ' * 200
+        first = self.reply(sources, answer)
+        self.assertEqual(first, self.reply(sources, answer))
+        self.assertEqual(first, self.service.read('alice', self.message['id']))
+        self.assertEqual(first['reply']['text'], answer)
+        self.assertEqual(set(first['reply']['contentIds']), set(sources))
+        self.assertEqual(len(self.fixture.runs.calls), 1)
 
     def test_legacy_table_migrates_without_losing_original_message_or_command(self):
         with self.store.engine.begin() as conn:

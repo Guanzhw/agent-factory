@@ -122,7 +122,7 @@ class AssistantEventsTests(ApplicationCompositionFixture):
             self.service.validate_admission(conn, 'bob', delivery['id'], request, plan, delivery['allocation_id'])
         self.assertEqual(self.service.prepare(event['id'], self.endpoint['id'])['subscription_id'], subscription['id'])
 
-    def test_expiry_content_revocation_and_depth_are_enforced_before_allocation(self):
+    def test_content_visibility_still_applies_but_expiry_and_depth_do_not_block(self):
         self.service.configure('bob', self.config, 'subscribe-peer')
         self.content.set_visibility('alice', self.publication['id'], 'personal', 'content-revoke')
         event = self.emit()
@@ -132,15 +132,14 @@ class AssistantEventsTests(ApplicationCompositionFixture):
         self.content.set_visibility('alice', self.publication['id'], 'team', 'content-restore')
         with self.service.db.write() as conn:
             conn.execute(self.service.events.update().where(self.service.events.c.id == event['id']).values(depth=2))
-        with self.assertRaises(HTTPException):
-            self.service.prepare(event['id'], self.endpoint['id'])
+        first = self.service.prepare(event['id'], self.endpoint['id'])
+        self.assertEqual(first['state'], 'pending')
         with self.service.db.write() as conn:
             conn.execute(self.service.events.update().where(self.service.events.c.id == event['id']).values(depth=0, deadline=0))
-        with self.assertRaises(HTTPException):
-            self.service.prepare(event['id'], self.endpoint['id'])
-        self.scopes.allocate.assert_not_called()
+        self.assertEqual(self.service.prepare(event['id'], self.endpoint['id'])['id'], first['id'])
+        self.scopes.allocate.assert_called_once()
 
-    def test_automatic_lineage_uses_bound_original_task_and_cannot_extend_deadline(self):
+    def test_automatic_lineage_uses_bound_original_task_without_deadline_constraint(self):
         self.service.configure('bob', self.config, 'subscribe-peer')
         event = self.emit()
         delivery = self.service.prepare(event['id'], self.endpoint['id'])
@@ -152,7 +151,7 @@ class AssistantEventsTests(ApplicationCompositionFixture):
             with self.assertRaises(HTTPException):
                 self.service.emit(conn, 'bob', reply, 'reply-event', parent_delivery_id=delivery['id'], task_id='other-task')
             child = self.service.emit(conn, 'bob', reply, 'reply-event', parent_delivery_id=delivery['id'], task_id='original-task')
-        self.assertEqual((child['root_id'], child['depth'], child['deadline']), (event['id'], 1, event['deadline']))
+        self.assertEqual((child['root_id'], child['depth'], child['deadline']), (event['id'], 1, self.deadline + 100))
 
     def test_stopping_before_scan_and_after_prepare_never_admits_a_new_message(self):
         self.service.configure('bob', self.config, 'subscribe-peer')
@@ -278,7 +277,7 @@ class AssistantEventsTests(ApplicationCompositionFixture):
         self.scopes.bind_request.assert_not_called()
         self.messages.recover.assert_not_called()
 
-    def test_depth_above_twenty_remains_bounded_by_receiver_configuration(self):
+    def test_legacy_depth_limit_does_not_block_event_delivery(self):
         config = EventSubscription.model_validate({**self.config.model_dump(), 'maxDepth': 40})
         self.service.configure('bob', config, 'deep-subscription')
         event = self.emit()
@@ -289,10 +288,8 @@ class AssistantEventsTests(ApplicationCompositionFixture):
         second = self.emit('too-deep-event')
         with self.service.db.write() as conn:
             conn.execute(self.service.events.update().where(self.service.events.c.id == second['id']).values(depth=41))
-        with self.assertRaises(HTTPException) as denied:
-            self.service.prepare(second['id'], self.endpoint['id'])
-        self.assertEqual(denied.exception.detail, 'ASSISTANT_EVENT_PROPAGATION_LIMIT')
-        self.scopes.allocate.assert_called_once()
+        self.assertEqual(self.service.prepare(second['id'], self.endpoint['id'])['state'], 'pending')
+        self.assertEqual(self.scopes.allocate.call_count, 2)
         self.assertEqual(self.scopes.allocate.call_args.args[-1]['rounds'], 1)
 
     def test_safe_error_codes_and_arbitrary_messages_are_distinguished(self):

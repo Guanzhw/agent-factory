@@ -23,7 +23,7 @@ export function AskAssistant({ ownerId, peerId, onQuestion }: { ownerId: string;
   const [text, setText] = useState('');
   const command = useResearchCommand<{ action: 'ask'; body: { requestId: string; text: string } }, ResearchQuestion>(`factory:research-question:${encodeURIComponent(ownerId)}:${encodeURIComponent(peerId)}`, ['ask'], value => assistantApi.ask(ownerId, peerId, value.body), result => onQuestion(result.id));
   return <form className="rw-form" aria-label="私密经验询问" onSubmit={event => { event.preventDefault(); void command.run({ action: 'ask', body: { requestId: crypto.randomUUID(), text: text.trim() } }); }}><h3>私密经验询问</h3><p className="rw-id">接收助手：{peerId}</p><p>只向这位助手发送，使用对方已确认的操作额度。token/费用未计量；不会因此获得训练或GPU权限。</p>{command.feedback}
-    <fieldset disabled={command.disabled}><label>问题<textarea required minLength={2} maxLength={2000} value={text} onChange={event => setText(event.target.value)}/></label><button className="rw-primary" disabled={text.trim().length < 2}>发送私密问题</button></fieldset>
+    <fieldset disabled={command.disabled}><label>问题<textarea required minLength={1} value={text} onChange={event => setText(event.target.value)}/></label><button className="rw-primary" disabled={text.trim().length < 1}>发送私密问题</button></fieldset>
   </form>;
 }
 

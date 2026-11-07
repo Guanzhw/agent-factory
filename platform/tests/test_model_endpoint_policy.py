@@ -54,7 +54,7 @@ class ModelEndpointPolicyTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 generation_options({**old, **changes})
 
-    def test_both_routes_pin_tls_identity_recheck_owner_and_never_use_environment(self):
+    def test_both_routes_preserve_hostname_tls_identity_owner_and_ignore_environment(self):
         async def run():
             for protocol, suffix in [('chat-completions', '/chat/completions'), ('responses', '/responses')]:
                 observed, order = [], []
@@ -69,19 +69,14 @@ class ModelEndpointPolicyTests(unittest.TestCase):
                         on_dispatch=lambda: order.append('dispatch'))
                 await transport.transport.aclose()
                 transport.transport = httpx.MockTransport(wire)
-                def addresses(destination):
-                    order.append('dns')
-                    self.assertEqual(destination, 'https://opencode.ai')
-                    return ['93.184.216.34']
-                transport.probe.addresses = addresses
                 async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
                     await client.post(GO_CURRENT_BASE + suffix, json={'fixture': True})
-                    self.assertEqual(order, ['dns', 'owner', 'dispatch', 'wire'])
-                    self.assertEqual(str(observed[0].url), 'https://93.184.216.34/inference/go/v1' + suffix)
+                    self.assertEqual(order, ['owner', 'dispatch', 'wire'])
+                    self.assertEqual(str(observed[0].url), GO_CURRENT_BASE + suffix)
                     self.assertEqual(observed[0].headers['host'], 'opencode.ai')
                     self.assertEqual(observed[0].extensions['sni_hostname'], 'opencode.ai')
                     def revoked():
-                        raise PermissionError('synthetic revocation during DNS')
+                        raise PermissionError('synthetic revocation before dispatch')
                     transport.before_send = revoked
                     with self.assertRaises(PermissionError):
                         await client.post(GO_CURRENT_BASE + suffix, json={})
@@ -92,11 +87,13 @@ class ModelEndpointPolicyTests(unittest.TestCase):
                     self.assertEqual(len(observed), 1)
         asyncio.run(run())
 
-    def test_response_limits_and_credential_echo_are_shared(self):
+    def test_response_has_no_project_byte_cap_and_credential_echo_is_rejected(self):
         async def run():
             lease = SecretLease('api-key', 'synthetic-policy-secret')
             valid = httpx.Response(200, json={'choices': []})
             self.assertEqual(await read_response_json(valid, lease), {'choices': []})
+            large = {'content': 'x' * 1_048_577}
+            self.assertEqual(await read_response_json(httpx.Response(200, json=large), lease), large)
             for response in (httpx.Response(302), httpx.Response(200, content=b'{broken'),
                     httpx.Response(200, content=b' ' * 1_048_577),
                     httpx.Response(200, json={'content': lease.password})):

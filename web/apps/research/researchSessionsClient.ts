@@ -1,19 +1,20 @@
+import { authEpoch, assertAuthEpoch, expireBrowserSession } from '../../browserAuth.js';
 import { ApiError, factoryRequest } from '../../api.js';
 import type { ResearchQuestion } from './live/assistantClient.js';
 
-export interface SessionLimits { maxTurns: number; toolCallsPerTurn: number; operationSeconds: number }
-type Limit = { min: number; max: number | null; default: number };
+export interface SessionLimits { maxTurns: number | null; toolCallsPerTurn: number | null; operationSeconds: number | null }
+type Limit = { min: number; max: number | null; default: number | null };
 export interface SessionOptions {
   available: boolean; unavailableCode: string | null;
   collaboration?: { available: boolean };
   models: { connectionRef: string; provider: string; model: string; available: boolean }[];
-  limits: { maxTurns: Limit; toolCallsPerTurn: Limit; operationSeconds: Limit; contextCharacters: number };
+  limits: { maxTurns: Limit; toolCallsPerTurn: Limit; operationSeconds: Limit; contextCharacters: number | null };
   workspace: { configured: boolean; hostCommands: boolean; isolation: 'host-user-not-os-sandbox' };
   accounting: { tokenMetered: boolean; costMetered: boolean };
 }
 export interface SessionMessage { id: string; kind: 'instruction' | 'correction'; text: string; state: 'pending' | 'included'; createdAt: string; includedAt: string | null }
 export interface SessionEvent { id: number; jobId: string; type: string; message: string; data: Record<string, unknown>; createdAt: string }
-export interface SessionChild { childTaskId: string; runId: string | null; goal: string; status: string; result: string | null }
+export interface SessionChild { mode?: string; commandResult?: Record<string, unknown>; childTaskId: string; runId: string | null; goal: string; status: string; result: string | null }
 export type SessionAssistantReply = { questionId: string; state: 'unavailable'; code: string } | {
   questionId: string; state: 'available'; senderId: string; recipientId: string; endpointId: string;
   questionText: string; reply: Extract<ResearchQuestion['reply'], { state: 'available' }>; delivery: ResearchQuestion['delivery'];
@@ -36,7 +37,7 @@ export interface SessionSummary {
   capabilities?: { memory: boolean };
   model: { connectionRef: string; provider: string; model: string }; limits: SessionLimits;
   context: {
-    characters: number; maximumCharacters: number; rawCharacters?: number;
+    characters: number; maximumCharacters: number | null; rawCharacters?: number;
     compaction?: { status: 'needed' | 'preparing' | 'ready' | 'failed' | 'unknown'; throughSequence: number; code?: string };
   };
   allowedActions: ('start' | 'correct' | 'stop')[];
@@ -64,6 +65,31 @@ export const researchSessionsApi = {
   options: (owner: string, signal?: AbortSignal) => factoryRequest<SessionOptions>(`${base}/options`, 'GET', undefined, signal, owner),
   list: (owner: string, after = '', signal?: AbortSignal) => factoryRequest<SessionPage>(`${base}${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal, owner),
   get: async (owner: string, id: string, signal?: AbortSignal) => detail(await factoryRequest<ResearchSession>(path(id), 'GET', undefined, signal, owner), id),
+  watch: async (owner: string, id: string, signal: AbortSignal, onSession: (value: ResearchSession) => void): Promise<void> => {
+    const epoch = authEpoch();
+    const response = await fetch(`/api/factory${path(id)}/events`, { credentials: 'same-origin', cache: 'no-store', signal,
+      headers: { Accept: 'text/event-stream', 'X-Factory-Expected-Owner': owner } });
+    assertAuthEpoch(epoch);
+    if (response.status === 401) expireBrowserSession();
+    if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) throw new ApiError('实时连接暂时中断，正在重连。', response.status);
+    const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+    try {
+      while (!signal.aborted) {
+        const chunk = await reader.read(); if (chunk.done) break;
+        assertAuthEpoch(epoch);
+        buffer = (buffer + decoder.decode(chunk.value, { stream: true })).replace(/\r\n/g, '\n');
+        let end: number;
+        while ((end = buffer.indexOf('\n\n')) >= 0) {
+          const frame = buffer.slice(0, end); buffer = buffer.slice(end + 2);
+          const event = frame.split('\n').find(line => line.startsWith('event:'))?.slice(6).trim();
+          const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
+          if (event === 'session' && data) onSession(detail(JSON.parse(data) as ResearchSession, id));
+          if (event === 'error') throw new Error('实时更新暂时不可用，正在重连。');
+        }
+      }
+    } finally { await reader.cancel().catch(() => undefined); reader.releaseLock(); }
+    if (!signal.aborted) throw new Error('实时连接已断开，正在重连。');
+  },
   create: async (owner: string, body: CreateSession) => detail(await factoryRequest<ResearchSession>(base, 'POST', body, undefined, owner)),
   turn: async (owner: string, id: string, body: { requestId: string; text: string; assistantQuestionId?: string }) => detail(await factoryRequest<ResearchSession>(`${path(id)}/turns`, 'POST', body, undefined, owner), id),
   questions: (owner: string, id: string, after = '', requestId = '', signal?: AbortSignal) => factoryRequest<{ items: ResearchQuestion[]; nextCursor: string | null }>(`${path(id)}/questions?limit=20&after=${encodeURIComponent(after)}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}`, 'GET', undefined, signal, owner),

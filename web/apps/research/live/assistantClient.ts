@@ -1,10 +1,11 @@
 import { factoryRequest } from '../../../api.js';
 import type { MaterialReference } from '../../../models.js';
-import type { ResearchAgreement, Page } from '../types.js';
+import type { Page } from '../types.js';
 import type { SetupIntent } from './setupClient.js';
 
-export type QuestionBudget = { caps: ResearchAgreement['budget']; perQuestionCaps: ResearchAgreement['budget']; deadline: number };
-export interface AssistantConfiguration { associations?: { enabled: boolean; maxRecipients: number } | null; applicationRef: MaterialReference; connectionRefs: Record<string, string>; budget: QuestionBudget }
+type QuestionCaps = { rounds: number | null; toolCalls: number | null; tokenLimit: number | null; amountMicros: number | null; currency: 'USD' | 'EUR' | 'CNY' | null };
+export type QuestionBudget = { caps: QuestionCaps; perQuestionCaps: QuestionCaps; deadline: number | null };
+export interface AssistantConfiguration { associations?: { enabled: boolean; maxRecipients: number | null } | null; applicationRef: MaterialReference; connectionRefs: Record<string, string>; budget: QuestionBudget }
 export interface ResearchAssistant {
   id: string; ownerId: string; configurationRevision: number;
   qa: { state: 'unconfigured' } | (AssistantConfiguration & { state: 'configured'; endpointId: string; scopeId: string; available: boolean; unavailableCode?: string; accounting: { mode: 'operational_limits_only'; tokenMetered: false; costMetered: false; notice: string } });

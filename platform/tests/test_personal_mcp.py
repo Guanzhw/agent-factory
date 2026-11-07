@@ -218,7 +218,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_timeout_of_dispatched_call_is_unknown_without_replay(self):
         async with MCPProtocolServer(stateless=False) as server:
-            adapter = MCPToolAdapter(descriptor('wait', timeout_seconds=1), url=server.url)
+            adapter = MCPToolAdapter(descriptor('wait', timeout_seconds=1), url=server.url, request_timeout_seconds=1)
             with self.assertRaises(ToolInvocationError) as failure:
                 await adapter.invoke(Authority().invocation())
             self.assert_error(failure.exception, 'MCP_TIMEOUT')
@@ -263,12 +263,11 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn(ALICE_TOKEN, output)
             self.assertNotIn('synthetic upstream failure', output)
 
-    async def test_output_limit_rejects_large_success_without_replaying_tool(self):
+    async def test_historical_output_limit_does_not_reject_success_or_replay(self):
         async with MCPProtocolServer() as server:
             adapter = MCPToolAdapter(descriptor('echo', max_output_bytes=128), url=server.url)
-            with self.assertRaises(ToolInvocationError) as failure:
-                await adapter.invoke(Authority().invocation({'value': 'x' * 2048}))
-            self.assert_error(failure.exception, 'MCP_OUTPUT_LIMIT')
+            output = await adapter.invoke(Authority().invocation({'value': 'x' * 2048}))
+            self.assertIn('x' * 2048, json.dumps(output))
             self.assertEqual(server.calls, [('echo', 'alice')])
 
     async def test_invalid_arguments_fail_before_credentials_or_http(self):
@@ -547,7 +546,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                 yield b'x' * 1048577
                 yield b'"}'
 
-        for case, code in (('encoding', 'MCP_ENCODING_REJECTED'), ('oversize', 'MCP_RESPONSE_LIMIT')):
+        for case, code in (('encoding', 'MCP_ENCODING_REJECTED'), ('oversize', 'MCP_TRANSPORT_ERROR')):
             with self.subTest(case=case):
                 calls = []
 
@@ -565,7 +564,7 @@ class PersonalMCPTests(unittest.IsolatedAsyncioTestCase):
                                          http_transport_factory=lambda: httpx2.MockTransport(response))
                 with self.assertRaises(ToolInvocationError) as failure:
                     await adapter.invoke(Authority().invocation())
-                self.assert_error(failure.exception, code, outcome='failed')
+                self.assert_error(failure.exception, code, outcome='failed' if case == 'encoding' else 'unknown')
                 self.assertEqual(len(calls), 1)
 
     async def test_repeated_cancellation_during_delete_still_closes_and_restores_log_context(self):

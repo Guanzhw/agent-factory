@@ -181,3 +181,15 @@ class ResearchQATests(fixtures.ApplicationCompositionFixture):
         self.assertEqual(len(calls), 1)
         self.assertNotIn('response_format', calls[0])
         self.assertNotIn('tools', calls[0])
+
+    def test_search_reads_later_pages_and_keeps_large_evidence_and_all_citations(self):
+        sources = [self.source('source-' + str(index)) for index in range(55)]
+        long_source = self.content.publish('alice', ContentPublication(source={'application': 'research',
+            'record': 'long', 'revision': '1'}, content={'conclusion': 'measurement ' * 2000}, visibility='team'),
+            'publish-long-source')
+        result = self.service.context(self.ctx)
+        self.assertEqual({item['id'] for item in result['sources']}, {item['id'] for item in [*sources, long_source]})
+        answer = Answer(answer='Detailed analysis. ' * 200, citations=[item['id'] for item in sources],
+                        evidenceLevel='agent_analysis')
+        self.service.record(self.ctx, answer)
+        self.assertEqual(len(self.messages.reply_for_task.call_args.kwargs['content_ids']), 56)

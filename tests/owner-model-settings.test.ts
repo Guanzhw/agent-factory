@@ -26,7 +26,7 @@ it('uses a team model as default while preserving owner-only credential controls
   await mount();
   expect(button('更新密钥')).toBeUndefined(); expect(button('撤销模型')).toBeUndefined();
   expect(button('共享给团队')).toBeUndefined();
-  expect(button('调整输出额度')).toBeUndefined();
+  expect(button('模型参数')).toBeUndefined();
   expect(host.textContent).toContain('单次输出上限：16384 token');
   await act(async () => button('设为默认').click());
   expect(ownerModelApi.default).toHaveBeenCalledWith('alice', row.reference, expect.any(String));
@@ -149,11 +149,13 @@ it('keeps the current form when another model becomes the default, including ori
 });
 it('restores only non-secret model inputs after leaving and returning', async () => {
   await mount(); await choose('模型提供方', 'openai-compatible'); await fill('模型名称', 'draft-model');
-  await fill('API 端点', 'http://localhost:11434/v1'); await fill('单次输出上限（token）', '16384'); await fill('API 密钥', secret);
+  await fill('API 端点', 'http://localhost:11434/v1'); await fill('单次输出上限（token）', '16384'); await fill('上下文窗口（token）', '128000'); await fill('自动整理阈值（token）', '100000'); await fill('API 密钥', secret);
   expect(JSON.stringify(sessionStorage)).not.toContain(secret);
   await act(async () => root.unmount()); root = createRoot(host); await mount();
   expect(host.querySelector<HTMLInputElement>('[aria-label="模型名称"]')?.value).toBe('draft-model');
   expect(host.querySelector<HTMLInputElement>('[aria-label="API 端点"]')?.value).toBe('http://localhost:11434/v1');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="上下文窗口（token）"]')?.value).toBe('128000');
+  expect(host.querySelector<HTMLInputElement>('[aria-label="自动整理阈值（token）"]')?.value).toBe('100000');
   expect(host.querySelector<HTMLInputElement>('[aria-label="单次输出上限（token）"]')?.value).toBe('16384');
   expect(host.querySelector<HTMLInputElement>('[aria-label="API 密钥"]')?.value).toBe('');
   expect(ownerModelApi.configure).not.toHaveBeenCalled(); expect(ownerModelApi.default).not.toHaveBeenCalled();
@@ -273,7 +275,7 @@ it('settles a failed read with a retry action and exposes no secret field when c
   expect(host.textContent).toContain('暂时无法读取模型设置'); expect(host.textContent).not.toContain('正在读取模型设置');
   vi.mocked(ownerModelApi.capabilities).mockResolvedValue({ enabled: false, providers: ['openai'], liveCompatibilityVerified: false });
   await act(async () => button('重新读取设置').click());
-  expect(host.textContent).toContain('无需向管理员发送 API 密钥'); expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
+  expect(host.textContent).toContain('此部署尚未启用模型设置'); expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
 });
 it('projects harmless/secret unknown model fields while rejecting malformed required fields', () => {
   for (const value of [{ ...row, ownerId: 'bob' }, { ...row, available: false }, { ...row, status: 'odd' }, { ...row, protocol: 'unknown' }, { ...row, baseURL: 'javascript:alert(1)' }]) expect(() => ownerModel(value, 'alice')).toThrow();
@@ -360,7 +362,7 @@ it.each(['rotate', 'rebind'] as const)('keeps protocol absent for legacy Go reco
   expect(localStorage.getItem(storage)).toBeNull();
 });
 it('retains Responses protocol through rotation and receipt recovery', async () => {
-  const original = { ...legacyGoRow, protocol: 'responses' as const, isDefault: true, maxOutputTokens: 16384 };
+  const original = { ...legacyGoRow, protocol: 'responses' as const, isDefault: true, maxOutputTokens: 16384, contextWindow: 128000, autoCompactTokenLimit: 100000 };
   const updated = { ...original, credentialRevision: 'rotated-r2', revision: 'model-r2', status: 'configured' as const, available: true };
   vi.mocked(ownerModelApi.list).mockResolvedValue([original]);
   vi.mocked(personalRemoteApi.credentials).mockResolvedValue([goCredential]);
@@ -370,19 +372,19 @@ it('retains Responses protocol through rotation and receipt recovery', async () 
   await mount(); await act(async () => button('更新密钥').click()); await fill('API 密钥', secret); await act(async () => button('保存新密钥').click());
   const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
   expect(request.protocol).toBe('responses'); expect(localStorage.getItem(storage)).toContain('"protocol":"responses"');
-  expect(request.maxOutputTokens).toBe(16384); expect(localStorage.getItem(storage)).toContain('"maxOutputTokens":16384');
+  expect(request.contextWindow).toBe(128000); expect(request.autoCompactTokenLimit).toBe(100000); expect(request.maxOutputTokens).toBe(16384); expect(localStorage.getItem(storage)).toContain('"maxOutputTokens":16384');
   vi.mocked(ownerModelApi.recover).mockResolvedValue({ ownerId: 'alice', requestId: request.requestId, action: 'model.configure', result: updated, completedAt: '2026-10-09T00:00:01Z' });
   await act(async () => root.unmount()); root = createRoot(host); await mount(); await act(async () => button('核对并继续原保存').click());
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1); expect(ownerModelApi.recover).toHaveBeenCalledWith('alice', request.requestId);
   expect(host.textContent).toContain('原保存已核对完成'); expect(localStorage.getItem(storage)).toBeNull();
 });
 it('retains Responses protocol during credential rebind', async () => {
-  const stale = { ...legacyGoRow, protocol: 'responses' as const, isDefault: false, maxOutputTokens: 16384 };
+  const stale = { ...legacyGoRow, protocol: 'responses' as const, isDefault: false, maxOutputTokens: 16384, contextWindow: 128000, autoCompactTokenLimit: 100000 };
   vi.mocked(ownerModelApi.list).mockResolvedValue([stale]);
   vi.mocked(personalRemoteApi.credentials).mockResolvedValue([{ ...goCredential, credentialRevision: 'rotated-r2' }]);
   vi.mocked(ownerModelApi.configure).mockResolvedValue({ ...stale, credentialRevision: 'rotated-r2', status: 'configured', available: true });
   await mount(); await act(async () => button('绑定更新后的凭据').click());
-  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ protocol: 'responses', maxOutputTokens: 16384 }), stale.reference);
+  expect(ownerModelApi.configure).toHaveBeenCalledWith('alice', expect.objectContaining({ protocol: 'responses', maxOutputTokens: 16384, contextWindow: 128000, autoCompactTokenLimit: 100000 }), stale.reference);
   expect(localStorage.getItem(storage)).toBeNull();
 });
 it('keeps thinking disabled on credential rebind and refuses a receipt that silently loses it', async () => {
@@ -505,11 +507,11 @@ it('keeps an old Go configuration when updating output and recovering its lost a
   vi.mocked(ownerModelApi.configure).mockRejectedValueOnce(new ModelRequestError(0));
   vi.mocked(ownerModelApi.default).mockResolvedValue(updated);
   const rotate = vi.spyOn(personalRemoteApi, 'rotateCredential');
-  await mount(); await act(async () => button('调整输出额度').click());
+  await mount(); await act(async () => button('模型参数').click());
   expect(host.querySelector('[aria-label="API 密钥"]')).toBeNull();
   expect(host.textContent).toContain('已有会话不会自动切换');
   await fill('单次输出上限（token）', '16384');
-  await act(async () => { button('保存输出额度').click(); button('保存输出额度').click(); });
+  await act(async () => { button('保存模型参数').click(); button('保存模型参数').click(); });
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
   const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
   expect(request).toEqual({ requestId: expect.any(String), provider: 'openai-compatible',
@@ -538,13 +540,13 @@ it('keeps an old Go configuration when updating output and recovering its lost a
 
 it('shows an invalid output limit at the field and keeps a mismatched saved limit unresolved', async () => {
   vi.mocked(ownerModelApi.list).mockResolvedValue([row]);
-  await mount(); await act(async () => button('调整输出额度').click());
+  await mount(); await act(async () => button('模型参数').click());
   await fill('单次输出上限（token）', '1.5');
   expect(host.querySelector('[aria-label="单次输出上限（token）"]')?.getAttribute('aria-invalid')).toBe('true');
   expect(host.querySelector('#model-output-error')?.textContent).toContain('请输入正整数');
-  expect(button('保存输出额度').disabled).toBe(true);
+  expect(button('保存模型参数').disabled).toBe(true);
   expect(ownerModelApi.configure).not.toHaveBeenCalled();
-  await fill('单次输出上限（token）', '16384'); await act(async () => button('保存输出额度').click());
+  await fill('单次输出上限（token）', '16384'); await act(async () => button('保存模型参数').click());
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
   expect(ownerModelApi.default).not.toHaveBeenCalled();
   expect(localStorage.getItem(storage)).toContain('"maxOutputTokens":16384');
@@ -556,8 +558,8 @@ it('can restore the default output limit on a model with no credentials without 
   const original = { ...row, credentialRef: null, credentialRevision: null, maxOutputTokens: 16384 };
   vi.mocked(ownerModelApi.list).mockResolvedValue([original]);
   vi.mocked(ownerModelApi.configure).mockResolvedValue({ ...row, credentialRef: null, credentialRevision: null });
-  await mount(); await act(async () => button('调整输出额度').click());
-  await fill('单次输出上限（token）', ''); await act(async () => button('保存输出额度').click());
+  await mount(); await act(async () => button('模型参数').click());
+  await fill('单次输出上限（token）', ''); await act(async () => button('保存模型参数').click());
   expect(ownerModelApi.configure).toHaveBeenCalledTimes(1);
   const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
   expect(request).not.toHaveProperty('maxOutputTokens');
@@ -582,4 +584,20 @@ it('keeps a server-accepted Unicode endpoint through list, default selection and
   const setup: ModelSetup = { owner: 'alice', provider: configured.provider, baseURL: configured.baseURL, model: configured.model,
     credentialRequest: 'request-credential', modelRequest: 'request-model', defaultRequest: 'request-default', stage: 'model', chooseDefault: true, noCredentials: true };
   expect(readModelSetup(JSON.stringify(setup), 'alice')?.baseURL).toBe(configured.baseURL);
+});
+
+it('saves optional context metadata and refuses a receipt that loses it', async () => {
+  vi.mocked(ownerModelApi.configure).mockResolvedValue(row);
+  await mount(); await fill('上下文窗口（token）', '128000'); await fill('自动整理阈值（token）', '100000'); await save();
+  const request = vi.mocked(ownerModelApi.configure).mock.calls[0][1];
+  expect(request).toMatchObject({ contextWindow: 128000, autoCompactTokenLimit: 100000 });
+  expect(localStorage.getItem(storage)).toContain('"contextWindow":128000');
+  expect(host.textContent).toContain('设置尚未确认');
+  expect(ownerModelApi.default).not.toHaveBeenCalled();
+  vi.mocked(ownerModelApi.recover).mockResolvedValue({ ownerId: 'alice', requestId: request.requestId,
+    action: 'model.configure', result: { ...row, contextWindow: 128000, autoCompactTokenLimit: 100000 }, completedAt: row.updatedAt });
+  vi.mocked(ownerModelApi.default).mockResolvedValue({ ...row, contextWindow: 128000, autoCompactTokenLimit: 100000, isDefault: true });
+  await act(async () => button('核对并继续原保存').click());
+  expect(ownerModelApi.configure).toHaveBeenCalledOnce();
+  expect(localStorage.getItem(storage)).toBeNull();
 });

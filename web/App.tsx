@@ -12,6 +12,7 @@ import type { ComposerSeed } from './ApplicationComposer.js';
 
 export interface WorkspaceSessionProps { user: User; logout: () => void; sessionBusy: boolean; sessionError: string }
 export interface WorkspaceContext {
+  feedback?: ReactNode; selectTab?: (tab: WorkspaceTab) => void;
   user: User; route: WorkspaceRoute; navigate: (patch: Partial<WorkspaceRoute>) => void;
   status?: FactoryStatus; materials: FactoryMaterial[]; targets: ExecutionTarget[]; jobs: JobSummary[];
   jobsLoaded: boolean; jobsError: string; historyError: string; historyLoading: boolean; nextCursor: string | null; loadEarlier: () => void;
@@ -231,10 +232,10 @@ export function Workspace({ user, logout, sessionBusy, sessionError, navigation 
     finally { mutationLock.current = false; setBusy(''); }
   }, []);
   const retry = () => setRefresh(n => n + 1);
-  const context: WorkspaceContext = { user, route, navigate, status, materials, targets, jobs, jobsLoaded, jobsError: readErrors.jobs, historyError, historyLoading, nextCursor, loadEarlier: () => void loadEarlier(), detail, detailError, busy, syncedAt, act, notice: setNotice, retry, onTask: setSelected, drafts: childDrafts.current, onCompose };
+  const context: WorkspaceContext = { selectTab: setTab, feedback: <><ErrorMessage message={readErrors.status && `运行状态更新失败：${readErrors.status}`} retry={retry}/><ErrorMessage message={readErrors.targets && `执行目标更新失败：${readErrors.targets}`} retry={retry}/>{['catalog', 'developer', 'materials', 'applications'].includes(tab) && <ErrorMessage message={readErrors.materials} retry={retry}/>}<ErrorMessage message={actionError}/>{notice && <p role="status">{notice}</p>}</>, user, route, navigate, status, materials, targets, jobs, jobsLoaded, jobsError: readErrors.jobs, historyError, historyLoading, nextCursor, loadEarlier: () => void loadEarlier(), detail, detailError, busy, syncedAt, act, notice: setNotice, retry, onTask: setSelected, drafts: childDrafts.current, onCompose };
   const tabs = navigation.tabs;
   const appView = applicationView?.(context);
-  if (appView !== undefined) return appView;
+  if (appView !== undefined) return <FeeVisibility enabled={status?.feeManagementEnabled === true}>{appView}</FeeVisibility>;
   return <FeeVisibility enabled={status?.feeManagementEnabled === true}><div className="factory-shell">
     <aside className="sidebar"><div className="brand"><span className="brand-symbol" aria-hidden="true">F</span><div><strong>Agent Factory</strong><small>{navigation.homeTab ? '工作与资源' : '应用与任务'}</small></div></div>
     <nav aria-label="工作区"><span className="nav-group-label">日常工作</span><button aria-current={['catalog', 'templates'].includes(tab) || navigation.applicationTabs?.includes(tab) ? 'page' : undefined} onClick={() => setTab(navigation.homeTab ?? 'catalog')}>{navigation.homeTab ? '我的工作' : '应用'}</button><button aria-current={tab === 'tasks' ? 'page' : undefined} onClick={() => setTab('tasks')}>{navigation.homeTab ? '执行记录' : '我的任务'}</button><button aria-current={['resources', 'models', 'connections'].includes(tab) ? 'page' : undefined} onClick={() => setTab('resources')}>我的资源</button>

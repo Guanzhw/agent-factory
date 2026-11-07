@@ -113,12 +113,22 @@ class Store:
         self.execution_bindings.recheck = self.recheck
         self.execution_guards = {'execution-bindings': self.execution_bindings.require_execution}
         self.effects = {}
+        self.events = []
+        self.artifacts = []
         self.contexts = {}
         self.plans = {}
         self.plan_allowed = self.binding_allowed = self.tool_allowed = True
         self.cancelled = False
         self.checks = {'plan': 0, 'binding': 0, 'tool': 0}
         self.lock = threading.Lock()
+
+    def event(self, task_id, kind, message, data):
+        self.events.append({'type': kind, 'data': data})
+
+    def artifact_write(self, run_id, name, content, media_type):
+        value = {'id': str(len(self.artifacts)), 'jobId': run_id, 'name': name, 'content': content}
+        self.artifacts.append(value)
+        return {key: value[key] for key in ('id', 'jobId', 'name')}
 
     def require_plan_execution(self, owner, plan, *, run_context):
         self.checks['plan'] += 1
@@ -696,7 +706,7 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
         cycle = []
         cycle.append(cycle)
         for index, value in enumerate((b'bytes', float('nan'), float('inf'), {1: 'key'},
-                ('tuple',), cycle, {'large': 'x' * 65536})):
+                ('tuple',), cycle)):
             async def behavior(invocation):
                 return value
             self.adapter.behavior = behavior
@@ -715,16 +725,26 @@ class PersonalToolExecutionTests(unittest.IsolatedAsyncioTestCase):
             self.adapter.descriptor = replace(self.adapter.descriptor, max_output_bytes=limit)
             self.registration = personal_tool_registration(self.adapter)
             fc, _, _ = self.call(call_id='budget-' + str(limit))
-            if limit == size:
-                self.assertEqual(await self.invoke(fc), value)
-                self.assertEqual(self.effect(call_id=fc.call_id)['status'], 'DONE')
-            else:
-                with self.assertRaises(StopAgentRun):
-                    await self.invoke(fc)
-                self.assertIsNone(self.effect(call_id=fc.call_id)['result'])
+            self.assertEqual(await self.invoke(fc), value)
+            self.assertEqual(self.effect(call_id=fc.call_id)['status'], 'DONE')
         value['text'] = 'changed after dispatch'
         self.assertEqual(self.effect(call_id='budget-' + str(size))['result']['output'],
             {'text': '"' * 16001})
+
+    async def test_large_output_is_previewed_with_complete_original_artifact(self):
+        value = {'text': '大' * 50000}
+        async def behavior(invocation):
+            return value
+        self.adapter.behavior = behavior
+        fc, _, _ = self.call()
+        result = await self.invoke(fc)
+        self.assertTrue(result['truncated'])
+        self.assertIn('tokens truncated', result['preview'])
+        self.assertEqual(json.loads(self.store.artifacts[0]['content']), value)
+        self.assertEqual(self.effect()['status'], 'DONE')
+        self.assertEqual(await self.invoke(fc), result)
+        self.assertEqual(len(self.store.artifacts), 1)
+        self.assertEqual(len(self.adapter.calls), 1)
 
     async def test_tool_payload_cannot_forge_cancelled_effect(self):
         async def behavior(invocation):

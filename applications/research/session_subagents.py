@@ -53,9 +53,21 @@ class ResearchSubagents:
                   and facts.get('persistedRunStatus') == 'completed' else None)
         if result is not None and not isinstance(result, str):
             result = canonical(result)
+        plan = self.store.plan(child['plan_id'], child['owner_id'])
+        command_result = {}
+        if plan.get('mode') == 'command' and (plan.get('nativeComponent') or {}).get('id') == 'research-command':
+            original = next((item for item in self.store.effects(child['id'])
+                if item['effect_key'] == (child.get('run_id') or '') + ':research-command-process'
+                and item['status'] in {'DONE', 'CANCELLED'}), None)
+            receipt = (original or {}).get('result') or {}
+            output = receipt.get('output')
+            if isinstance(output, dict):
+                command_result['commandResult'] = {**deepcopy(output), 'status': (
+                    'cancelled' if receipt.get('cancelled') else 'completed'
+                    if receipt.get('outcome') == 'completed' and output.get('exitCode') == 0 else 'failed')}
         return {'childTaskId': child['id'], 'runId': child.get('run_id'),
-                'goal': self.store.plan(child['plan_id'], child['owner_id'])['normalizedGoal'],
-                'status': status, 'result': result}
+                'goal': plan['normalizedGoal'], 'mode': plan.get('mode'),
+                'status': status, 'result': result, **command_result}
 
     async def children(self, task):
         result = []
@@ -134,7 +146,9 @@ class ResearchSubagents:
             return
         snapshot = await self.commands.bridge.detail(task['run_id'], task['id'], task['owner_id'])
         for requirement in native_requirements(snapshot):
-            if (requirement.get('tool_execution') or {}).get('tool_name') != WAIT:
+            if ((requirement.get('tool_execution') or {}).get('tool_name') != WAIT
+                    or (requirement.get('tool_execution') or {}).get('result') is not None
+                    or not RunRequirement.from_dict(requirement).needs_external_execution):
                 continue
             child = self._linked(task, requirement)
             group = await observer.inspect_subtree(task['owner_id'], child['id'])

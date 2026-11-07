@@ -15,8 +15,8 @@ export interface CompositionIssue { materialId?: string; code: 'dependency' | 'c
 export interface Definition {
   id: string; version: number; name: string; description: string;
   instructions: string; skills: string[]; tools: string[]; knowledge: string[];
-  modelPolicy: { providerId: string; modelId: string; maxSteps: number };
-  runtimePolicy: { timeoutSeconds: number; allowExperiment: boolean };
+  modelPolicy: { providerId: string; modelId: string; maxSteps: number | null };
+  runtimePolicy: { timeoutSeconds: number | null; allowExperiment: boolean };
   materialRefs?: MaterialReference[]; published: boolean; createdAt: string;
 }
 export interface Connection { id: string; ownerId: string; name: string; providerId: string; status: 'configured' | 'unavailable' }

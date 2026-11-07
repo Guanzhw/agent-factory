@@ -12,12 +12,13 @@ from .main import create_app as create_deployment
 
 
 def create_app(settings=None, *, session_tools=None):
-    if settings is None and session_tools is None:
-        session_tools = _session_tools_from_env()
     settings = copy(settings or Settings.from_env())
+    if session_tools is None:
+        session_tools = _session_tools_from_env(settings)
     qa_workflow = ResearchQAWorkflow()
     session_tools = session_tools or ResearchSessionTools()
-    settings.native_workflows = (*settings.native_workflows, qa_workflow.registration)
+    settings.native_workflows = (*settings.native_workflows, qa_workflow.registration,
+                                 session_tools.command_workflow.registration)
     settings.runtime_adapters = [*settings.runtime_adapters,
         *qa_workflow.tool_registrations, qa_workflow.environment_registration,
         *session_tools.tool_registrations, session_tools.environment_registration]
@@ -26,19 +27,22 @@ def create_app(settings=None, *, session_tools=None):
             session_tools=session_tools)),))
 
 
-def _session_tools_from_env():
-    enabled = os.environ.get('FACTORY_RESEARCH_HOST_COMMANDS', '0')
+def _session_tools_from_env(settings=None):
+    enabled = os.environ.get('FACTORY_RESEARCH_HOST_COMMANDS', '1')
     if enabled not in {'0', '1'}:
         raise ValueError('FACTORY_RESEARCH_HOST_COMMANDS must be 0 or 1')
     root = os.environ.get('FACTORY_RESEARCH_WORKSPACE_ROOT')
-    return ResearchSessionTools(workspace_root=Path(root) if root else None,
-        host_commands=enabled == '1', command_path=os.environ.get('FACTORY_RESEARCH_COMMAND_PATH', os.defpath))
+    workspace = Path(root) if root else Path(settings.workspace if settings is not None else os.environ.get('FACTORY_WORKSPACE', '.local')) / 'research'
+    workspace = workspace.resolve()
+    workspace.mkdir(parents=True, exist_ok=True)
+    return ResearchSessionTools(workspace_root=workspace,
+        host_commands=enabled == '1', command_path=os.environ.get('FACTORY_RESEARCH_COMMAND_PATH'))
 
 
 def main():
     import uvicorn
     settings = Settings.from_env()
-    uvicorn.run(create_app(settings, session_tools=_session_tools_from_env()),
+    uvicorn.run(create_app(settings, session_tools=_session_tools_from_env(settings)),
         host=settings.host, port=settings.port, access_log=False, timeout_graceful_shutdown=35)
 
 

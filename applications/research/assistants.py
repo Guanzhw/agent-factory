@@ -2,9 +2,10 @@
 from copy import deepcopy
 from contextlib import nullcontext
 from uuid import uuid4
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, select
 
 from agent_factory.applications import GovernedStorage
@@ -16,30 +17,31 @@ from agent_factory.store import digest
 from .projects import Budget, Reference, RequestId
 
 
+if TYPE_CHECKING:
+    from .setup import ResearchSetup
+
+
 class CreateAssistant(BaseModel):
     model_config = ConfigDict(extra='forbid')
     requestId: RequestId
 
 
+class QuestionCaps(Budget):
+    rounds: int | None = Field(default=None, strict=True, ge=1)
+    toolCalls: int | None = Field(default=None, strict=True, ge=1)
+
+
 class QuestionBudget(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    caps: Budget
-    perQuestionCaps: Budget
-    deadline: float = Field(strict=True, allow_inf_nan=False)
-
-    @model_validator(mode='after')
-    def bounded(self):
-        if self.perQuestionCaps.rounds != 1:
-            raise ValueError('One question consumes one native root allocation')
-        if self.perQuestionCaps.toolCalls > self.caps.toolCalls:
-            raise ValueError('Question caps exceed the total commitment')
-        return self
+    caps: QuestionCaps = Field(default_factory=QuestionCaps)
+    perQuestionCaps: QuestionCaps = Field(default_factory=lambda: QuestionCaps(rounds=1))
+    deadline: float | None = Field(default=None, strict=True, allow_inf_nan=False)
 
 
 class AssociationConfiguration(BaseModel):
     model_config = ConfigDict(extra='forbid')
     enabled: bool
-    maxRecipients: int = Field(default=2, strict=True, ge=1, le=20)
+    maxRecipients: int | None = Field(default=None, strict=True, ge=1)
 
 
 class ConfigureAssistant(BaseModel):
@@ -47,8 +49,8 @@ class ConfigureAssistant(BaseModel):
     requestId: RequestId
     expectedRevision: int = Field(strict=True, ge=0)
     applicationRef: PinnedRef
-    connectionRefs: dict[Reference, Reference] = Field(max_length=12)
-    budget: QuestionBudget
+    connectionRefs: dict[Reference, Reference]
+    budget: QuestionBudget = Field(default_factory=QuestionBudget)
     associations: AssociationConfiguration | None = None
 
 
@@ -58,6 +60,7 @@ class ResearchAssistants:
         self.store, self.auth, self.endpoints, self.messages, self.scopes = store, auth, endpoints, messages, scopes
         self.pin, self.tools, self.environment = pin, tuple(tool_registrations), environment_registration
         self.events = events
+        self.setup: ResearchSetup | None = None
         self.db = GovernedStorage(store, 'research_assistants_v1')
         metadata = MetaData()
         self.identities = Table('research_assistants', metadata,
@@ -92,18 +95,6 @@ class ResearchAssistants:
         row = self._configuration_row(conn, owner, endpoint_id)
         return {'id': row['assistant_id'], 'revision': row['revision'], 'endpointId': row['endpoint_id']}
 
-    def _require_budget(self, execution_budget, total, per_question):
-        if min(total['toolCalls'], per_question['toolCalls'], execution_budget['toolCalls']) < len(self.tools):
-            raise HTTPException(422, 'RESEARCH_QA_BUDGET_INSUFFICIENT')
-
-    def require_question_budget(self, owner, endpoint_id, task_id):
-        with self.db.read() as conn:
-            configuration = self._configuration_row(conn, owner, endpoint_id)['body']
-        task = self.store.task(task_id, owner)
-        plan = self.store.plan(task['plan_id'], owner)
-        budget = configuration['budget']
-        self._require_budget(plan['budget'], budget['caps'], budget['perQuestionCaps'])
-
     def _projection(self, conn, row):
         qa = {'state': 'unconfigured'}
         if row['qa_endpoint_id']:
@@ -112,7 +103,7 @@ class ResearchAssistants:
                 self.configurations.c.revision == row['configuration_revision'])).scalar_one()
             qa = {'state': 'configured', 'endpointId': row['qa_endpoint_id'], **deepcopy(configuration),
                 'accounting': {'mode': 'operational_limits_only', 'tokenMetered': False, 'costMetered': False,
-                               'notice': '操作额度受限，token/费用未计量'},
+                               'notice': 'token/费用未计量'},
                 **self._availability(row)}
         return {'id': row['id'], 'ownerId': row['owner_id'],
             'configurationRevision': row['configuration_revision'], 'qa': qa}
@@ -146,12 +137,13 @@ class ResearchAssistants:
                 row = self._identity(conn, identifier)
             return self.db.record(conn, self.commands, owner, body.requestId, fingerprint, 'create', self._projection(conn, row))
 
-    def _validate_execution(self, owner, application_ref, connection_refs):
+    def _validate_execution(self, owner, application_ref, connection_refs, *, allow_previous=False):
         app = self.store.applications.require_current(application_ref)
         if set(app['modes']) != {'qa'}:
             raise HTTPException(422, 'RESEARCH_QA_ONLY_MODE_REQUIRED')
         mode = app['modes']['qa']
-        if mode.get('nativeComponent') != self.pin or self.store.native_workflows.pin(self.pin['id']) != self.pin or mode['materialChoices']:
+        if (not allow_previous and mode.get('nativeComponent') != self.pin
+                or self.store.native_workflows.pin(self.pin['id']) != self.pin or mode['materialChoices']):
             raise HTTPException(409, 'RESEARCH_QA_COMPONENT_MISMATCH')
         materials = self.store.applications.closure(mode['materialRefs'])
         expected_tools = {(entry.adapter_id, entry.revision, entry.tool_name) for entry in self.tools}
@@ -200,8 +192,7 @@ class ResearchAssistants:
                     raise HTTPException(404, 'RESEARCH_ASSISTANT_NOT_FOUND')
                 if row['configuration_revision'] != body.expectedRevision:
                     raise HTTPException(409, 'RESEARCH_ASSISTANT_REVISION_CONFLICT')
-                mode = self._validate_execution(owner, value['applicationRef'], value['connectionRefs'])
-                self._require_budget(mode['budget'], value['budget']['caps'], value['budget']['perQuestionCaps'])
+                self._validate_execution(owner, value['applicationRef'], value['connectionRefs'])
                 scope_id = str(uuid4())
                 budget = value['budget']
                 self.scopes.create_scope(owner, scope_id, digest(value), budget['caps'], budget['deadline'])
@@ -213,7 +204,7 @@ class ResearchAssistants:
                         raise HTTPException(409, 'RESEARCH_ASSOCIATIONS_NOT_INSTALLED')
                     self.events.configure(owner, EventSubscription(endpointId=endpoint['id'], namespace='research',
                         eventType='evidence.available', scopeId=scope_id, caps=budget['perQuestionCaps'],
-                        deadline=budget['deadline'], maxDepth=0, maxCandidates=20), 'research-associations:' + endpoint['id'])
+                        deadline=budget['deadline'], maxDepth=None, maxCandidates=None), 'research-associations:' + endpoint['id'])
                 if row['qa_endpoint_id']:
                     self.endpoints.set_enabled(owner, row['qa_endpoint_id'], False, str(uuid4()))
                 revision = row['configuration_revision'] + 1
@@ -237,22 +228,24 @@ class ResearchAssistants:
                 return None
             if not self._availability(row)['available']:
                 return None
-            return {'assistantId': row['id'], 'endpointId': row['qa_endpoint_id'], **deepcopy(configuration)}
+            result = {'assistantId': row['id'], 'endpointId': row['qa_endpoint_id'], **deepcopy(configuration)}
+        if self.setup is not None and self._upgrade_for_new_question(row) != row['qa_endpoint_id']:
+            return self.association_configuration(owner)
+        return result
 
     def _availability(self, row):
         if row['qa_endpoint_id'] is None:
             return {'available': False, 'unavailableCode': 'RESEARCH_ASSISTANT_UNCONFIGURED'}
         try:
-            endpoint = self.endpoints.resolve(row['qa_endpoint_id'])
+            endpoint = (self.endpoints.owned(row['owner_id'], row['qa_endpoint_id'])
+                        if self.setup is not None else self.endpoints.resolve(row['qa_endpoint_id']))
+            if endpoint.get('enabled') is False:
+                raise HTTPException(409, 'ASSISTANT_ENDPOINT_DISABLED')
             budget = endpoint['automaticBudget']
             with self.db.read() as conn:
                 self.endpoints.require_budget(conn, row['owner_id'], budget)
-            mode = self._validate_execution(row['owner_id'], endpoint['applicationRef'], endpoint['defaults']['connectionRefs'])
-            scope = self.scopes.inspect(row['owner_id'], budget['scopeId'])
-            caps, per = scope['caps'], budget['caps']
-            self._require_budget(mode['budget'], caps, per)
-            if scope['allocatedRounds'] + 1 > caps['rounds'] or scope['heldToolCalls'] + scope['settledToolCalls'] + per['toolCalls'] > caps['toolCalls']:
-                return {'available': False, 'unavailableCode': 'LOCAL_BUDGET_EXHAUSTED'}
+            self._validate_execution(row['owner_id'], endpoint['applicationRef'], endpoint['defaults']['connectionRefs'],
+                allow_previous=self.setup is not None)
             return {'available': True}
         except HTTPException as error:
             if error.status_code not in {403, 404, 409, 422}:
@@ -298,7 +291,47 @@ class ResearchAssistants:
             endpoint_id = row['qa_endpoint_id']
             if endpoint_id is None:
                 raise HTTPException(409, 'RESEARCH_ASSISTANT_UNCONFIGURED')
-        return endpoint_id, None
+        return self._upgrade_for_new_question(row), None
+
+    def _upgrade_for_new_question(self, row):
+        """Publish a successor configuration, leaving old questions and pins intact."""
+        endpoint_id = row['qa_endpoint_id']
+        if self.setup is None:
+            return endpoint_id
+        owner = row['owner_id']
+        with self.store.transaction() as conn:
+            if self.store.engine.dialect.name == 'postgresql':
+                self.scopes.admission_lock(conn)
+            current = self._identity(conn, row['id'])
+            endpoint_id = current['qa_endpoint_id']
+            endpoint = self.endpoints.owned(owner, endpoint_id)
+            if not endpoint['enabled']:
+                raise HTTPException(409, 'ASSISTANT_ENDPOINT_DISABLED')
+            configuration = self._configuration_row(conn, owner, endpoint_id)['body']
+            mode = self._validate_execution(owner, configuration['applicationRef'],
+                configuration['connectionRefs'], allow_previous=True)
+            if mode.get('nativeComponent') == self.pin:
+                return endpoint_id
+            # Existing stopped scopes/subscriptions stay stopped. Only an enabled,
+            # usable model configuration is eligible for the successor revision.
+            self.endpoints.require_budget(conn, owner, endpoint['automaticBudget'])
+            from .setup import PrepareQASetup, PublishSetup
+            request = 'qa-upgrade-' + digest({'assistant': row['id'],
+                'revision': current['configuration_revision'], 'pin': self.pin})[:48]
+            draft = self.setup.prepare_qa(owner, PrepareQASetup(requestId=request + '-draft',
+                name='离线代答', modelConnectionRef=configuration['connectionRefs']['model']))
+            published = self.setup.publish(owner, draft['id'], PublishSetup(requestId=request + '-publish'))
+            associations = configuration.get('associations')
+            if associations and associations.get('enabled') and self.events is not None:
+                enabled = conn.execute(select(self.events.subscriptions.c.id).where(
+                    self.events.subscriptions.c.endpoint_id == endpoint_id,
+                    self.events.subscriptions.c.enabled.is_(True))).first() is not None
+                associations = {**associations, 'enabled': enabled}
+            result = self.configure(owner, ConfigureAssistant(requestId=request + '-configure',
+                expectedRevision=current['configuration_revision'], applicationRef=published['applicationRef'],
+                connectionRefs=published['connectionRefs'],
+                associations=AssociationConfiguration.model_validate(associations) if associations is not None else None))
+            return result['qa']['endpointId']
 
     async def question(self, sender, identifier, body: SendAssistantMessage):
         endpoint_id, original = self.question_target(sender, identifier, body)

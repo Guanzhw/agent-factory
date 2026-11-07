@@ -145,7 +145,7 @@ class FactoryPostgresTests(unittest.TestCase):
         self.assertNotEqual(second.json()["sha256"], material["sha256"])
         self.assertEqual(self.client.post("/agents/factory-executor/runs", data={"message": "bypass", "background": "true"}).status_code, 403)
 
-    def test_05_current_member_state_and_quota_recovery(self):
+    def test_05_current_member_state_and_admission_without_per_user_quota(self):
         from uuid import uuid4
         self.login()
         ready, _ = self.plan("Ready immutable plan before account disable")
@@ -163,14 +163,15 @@ class FactoryPostgresTests(unittest.TestCase):
                 task, _ = self.submit(plan)
                 held.append(task["id"])
                 self.assertEqual(self.wait(task["id"], {"waiting_input","failed"})["job"]["status"],"waiting_input")
-            plan, _ = self.plan("Known quota rejection can recover after confirmed cancellation")
+            plan, _ = self.plan("New work is admitted while earlier tasks remain active")
             body = {"planId":plan["id"],"requestId":str(uuid4())}
             rejected = self.client.post("/api/factory/instances",json=body)
-            self.assertEqual(rejected.status_code,429,rejected.text)
+            self.assertEqual(rejected.status_code,202,rejected.text)
             self.client.post('/api/factory/jobs/'+held[0]+'/cancel')
             self.assertEqual(self.wait(held[0],{"canceled","unknown","failed"})["job"]["status"],"canceled")
             accepted = self.client.post("/api/factory/instances",json=body)
             self.assertEqual(accepted.status_code,202,accepted.text)
+            self.assertEqual(accepted.json()["id"], rejected.json()["id"])
             completed = self.wait(accepted.json()["id"],{"completed","failed","unknown"})
             self.assertEqual(completed["job"]["status"],"completed",completed)
             cancelled = self.client.post('/api/factory/jobs/'+accepted.json()["id"]+'/cancel')

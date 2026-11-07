@@ -14,27 +14,22 @@ def require(value):
         raise ValueError(ERROR)
 
 
-def bounded_json(value, *, maximum=65536, ensure_ascii=True):
-    count = 0
+def bounded_json(value, *, maximum=None, ensure_ascii=True):
     def walk(item, depth):
-        nonlocal count
-        count += 1
-        require(depth <= 12 and count <= 4096)
         if type(item) is dict:
-            require(len(item) <= 64 and all(type(k) is str and len(k) <= 100 for k in item))
+            require(all(type(k) is str for k in item))
             for child in item.values(): walk(child, depth + 1)
         elif type(item) is list:
-            require(len(item) <= 256)
             for child in item: walk(child, depth + 1)
         elif type(item) is str:
-            require(len(item) <= 16000)
-        elif type(item) in (int, float):
+            pass
+        elif type(item) is float:
             require(math.isfinite(item))
         else:
-            require(item is None or type(item) is bool)
+            require(item is None or type(item) in (bool, int))
     try:
         walk(value, 0)
-        require(len(json.dumps(value, allow_nan=False, ensure_ascii=ensure_ascii).encode()) <= maximum)
+        require(maximum is None or len(json.dumps(value, allow_nan=False, ensure_ascii=ensure_ascii).encode()) <= maximum)
         return deepcopy(value)
     except (TypeError, ValueError, OverflowError, RecursionError):
         raise ValueError(ERROR) from None
@@ -54,20 +49,20 @@ def _annotation(schema, *, root=False) -> Any:
     if kind == 'object':
         required = set(schema.get('required', []))
         fields = {}
-        for index, (name, child) in enumerate(schema['properties'].items()):
+        for index, (name, child) in enumerate(sorted(schema['properties'].items())):
             # Aliases preserve arbitrary JSON property names without colliding
             # with BaseModel methods or protected/internal field names.
             fields['field_' + str(index)] = (_annotation(child), Field(
                 default=... if name in required else None, alias=name,
                 **{key: child[key] for key in ('title', 'description') if key in child}))
-        return create_model('ApplicationInputs', __base__=_BoundedInputs if root else BaseModel, __config__=ConfigDict(strict=True, extra='forbid',
+        return create_model(schema.get('title', 'ApplicationInputs'), __base__=_BoundedInputs if root else BaseModel, __config__=ConfigDict(strict=True, extra='forbid',
             populate_by_name=False, validate_default=False), **fields)
     if kind == 'array':
         annotation = list[_annotation(schema['items'])]
-        metadata.update(min_length=schema.get('minItems', 0), max_length=schema['maxItems'])
+        metadata.update(min_length=schema.get('minItems', 0), max_length=schema.get('maxItems'))
     elif kind == 'string':
         annotation = StrictStr
-        metadata.update(min_length=schema.get('minLength', 0), max_length=schema['maxLength'])
+        metadata.update(min_length=schema.get('minLength', 0), max_length=schema.get('maxLength'))
     elif kind in ('number', 'integer'):
         annotation = StrictInt if kind == 'integer' else Union[StrictInt, StrictFloat]
         metadata.update({target: schema[source] for source, target in (('minimum', 'ge'), ('maximum', 'le')) if source in schema})
@@ -89,20 +84,17 @@ def _annotation(schema, *, root=False) -> Any:
 
 
 def validate_input_schema(schema):
-    value = bounded_json(schema, maximum=32768)
-    count = 0
+    value = bounded_json(schema)
     def node(item: dict[str, Any], depth: int):
-        nonlocal count
-        count += 1
-        require(type(item) is dict and depth <= 6 and count <= 256)
+        require(type(item) is dict)
         kind = item.get('type')
         allowed = {'object': {'properties', 'required', 'additionalProperties'},
             'array': {'items', 'minItems', 'maxItems'}, 'string': {'minLength', 'maxLength', 'enum'},
             'integer': {'minimum', 'maximum', 'enum'}, 'number': {'minimum', 'maximum', 'enum'},
             'boolean': {'enum'}, 'null': {'enum'}}
         require(type(kind) is str and kind in allowed and set(item) <= allowed[kind] | {'type', 'title', 'description'})
-        for key, limit in (('title', 120), ('description', 2000)):
-            if key in item: require(type(item[key]) is str and len(item[key]) <= limit)
+        for key in ('title', 'description'):
+            if key in item: require(type(item[key]) is str)
         if kind == 'object':
             require(type(item.get('properties')) is dict and item.get('additionalProperties') is False)
             keys = item.get('required', [])
@@ -110,16 +102,17 @@ def validate_input_schema(schema):
                     and len(keys) == len(set(keys)) and set(keys) <= set(item['properties']))
             for child in item['properties'].values(): node(child, depth + 1)
         elif kind in ('array', 'string'):
-            lower, upper, ceiling = ('minItems', 'maxItems', 256) if kind == 'array' else ('minLength', 'maxLength', 16000)
-            require(type(item.get(upper)) is int and 0 <= item[upper] <= ceiling
-                    and type(item.get(lower, 0)) is int and 0 <= item.get(lower, 0) <= item[upper])
+            lower, upper = ('minItems', 'maxItems') if kind == 'array' else ('minLength', 'maxLength')
+            require(type(item.get(lower, 0)) is int and item.get(lower, 0) >= 0)
+            if upper in item:
+                require(type(item[upper]) is int and item[upper] >= item.get(lower, 0))
             if kind == 'array': node(item['items'], depth + 1)
         elif kind in ('number', 'integer'):
             for key in ('minimum', 'maximum'):
-                if key in item: require(type(item[key]) in (int, float) and math.isfinite(item[key]))
+                if key in item: require(type(item[key]) is int or type(item[key]) is float and math.isfinite(item[key]))
             if 'minimum' in item and 'maximum' in item: require(item['minimum'] <= item['maximum'])
         if 'enum' in item:
-            require(type(item['enum']) is list and 1 <= len(item['enum']) <= 32)
+            require(type(item['enum']) is list and len(item['enum']) >= 1)
             base = {key: val for key, val in item.items() if key != 'enum'}
             for entry in item['enum']: TypeAdapter(_annotation(base)).validate_python(entry, strict=True)
             require(len({json.dumps(v, sort_keys=True) for v in item['enum']}) == len(item['enum']))

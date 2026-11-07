@@ -5,7 +5,7 @@ export interface SetupConnection { ref: string; registrationRef: string; kind: s
 export interface SetupRequirement { name: string; kind: string; requiredCapabilities: string[] }
 export interface SetupCandidates {
   workflowPin: { kind: 'workflow'; id: string; revision: string; sha256: string };
-  qaMinimumToolCalls?: number | null;
+  qaAvailable?: boolean;
   models: { reference: string; provider: string; model: string; available: boolean; connectionRef?: string }[];
   connections: SetupConnection[];
   environments: { adapterId: string; revision: string; connectionKind: string | null; requiredCapabilities: string[] }[];
@@ -15,7 +15,7 @@ export interface SetupIntent {
   name: string; modelConnectionRef: string;
   environment: { adapterId: string; revision: string; connectionRef?: string };
   experimentMaterialRefs: MaterialReference[]; connectionRefs: Record<string, string>;
-  budget: { toolCalls: number; maxDepth: number; maxChildren: number; operationSeconds: number; outputBytes: number };
+  budget: { toolCalls: number | null; maxDepth: number | null; maxChildren: number | null; operationSeconds: number | null; outputBytes: number | null };
 }
 export interface ResearchSetup {
   id: string; state: 'draft' | 'published'; applicationRef: MaterialReference | null;

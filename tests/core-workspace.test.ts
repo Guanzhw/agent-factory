@@ -36,7 +36,7 @@ it('renders the actual empty composition and retains resources, tasks and logout
   expect(host.querySelector('.brand-symbol')?.textContent).toBe('F');
   expect(host.textContent).toContain('暂无已接入的应用。');
   expect(host.textContent).not.toMatch(/OpenResearch|Auto-Research/);
-  await click('我的资源'); expect(host.querySelector('h1')?.textContent).toBe('我的资源');
+  await click('我的资源'); expect(host.querySelector('h1')?.textContent).toBe('设置');
   expect(host.textContent).toContain('设置我的模型/API'); expect(host.textContent).toContain('管理服务器');
   await click('我的任务'); expect(host.querySelector('h1')?.textContent).toBe('我的任务');
   expect(host.textContent).toContain('尚无任务。');
@@ -46,7 +46,7 @@ it('renders the actual empty composition and retains resources, tasks and logout
 });
 it.each(['catalog', 'resources', 'tasks'])('restores the generic %s view directly', async tab => {
   await mount(`/?tab=${tab}`);
-  const headings = { catalog: '应用目录', resources: '我的资源', tasks: '我的任务' };
+  const headings = { catalog: '应用目录', resources: '设置', tasks: '我的任务' };
   expect(host.querySelector('h1')?.textContent).toBe(headings[tab as keyof typeof headings]);
   expect(new URL(window.location.href).searchParams.get('tab')).toBe(tab);
   expect(fetch).not.toHaveBeenCalled();

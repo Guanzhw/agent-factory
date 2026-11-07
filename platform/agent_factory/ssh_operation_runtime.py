@@ -229,7 +229,7 @@ class SSHOperationRuntime(ProcessRuntimeService):
         archive_limit = self.store.settings.experiment_output_bytes
         output_limit = (profile.limits.output_bytes if isinstance(profile.limits, ResearchProcessLimits)
                         else profile.limits.file_size_bytes)
-        if archive_limit < 65536 or output_limit > min(OUTPUT_BYTES, archive_limit):
+        if archive_limit is not None and (archive_limit < 65536 or output_limit > min(OUTPUT_BYTES, archive_limit)):
             raise ValueError('SSH_PROCESS_OUTPUT_LIMIT_UNSUPPORTED')
         require(self.ensure_target(task, plan, checked) == target_ref)
         provider = self.resources._provider(self.resources._authorize(context.user_id, target_ref))

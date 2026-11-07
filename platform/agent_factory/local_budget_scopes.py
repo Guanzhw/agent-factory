@@ -10,7 +10,6 @@ from __future__ import annotations
 import copy
 import math
 import json
-import time
 from contextlib import nullcontext
 
 from fastapi import HTTPException
@@ -37,8 +36,10 @@ def _caps(value):
     if type(value) is not dict or set(value) != {'rounds', 'toolCalls', 'tokenLimit', 'amountMicros', 'currency'}:
         raise HTTPException(422, 'LOCAL_BUDGET_CAPS_INVALID')
     try:
-        integer(value['rounds'], 'rounds', minimum=1)
-        integer(value['toolCalls'], 'tools', minimum=1)
+        if value['rounds'] is not None:
+            integer(value['rounds'], 'rounds', minimum=1)
+        if value['toolCalls'] is not None:
+            integer(value['toolCalls'], 'tools', minimum=1)
         if value['tokenLimit'] is None:
             if value['amountMicros'] is not None or value['currency'] is not None:
                 raise ValueError()
@@ -152,7 +153,7 @@ class LocalBudgetScopes:
     def create_scope(self, owner, scope_id, commitment_sha, caps, deadline):
         _key(owner); _key(scope_id); _sha(commitment_sha)
         caps = _caps(caps)
-        if type(deadline) not in {float, int} or not math.isfinite(deadline):
+        if deadline is not None and (type(deadline) not in {float, int} or not math.isfinite(deadline)):
             raise HTTPException(422, 'LOCAL_BUDGET_DEADLINE_INVALID')
         if caps['tokenLimit'] is not None and (self.ledger is None or caps['currency'] != self.ledger.policy.currency):
             raise HTTPException(409, 'LOCAL_BUDGET_METERING_UNAVAILABLE')
@@ -165,8 +166,6 @@ class LocalBudgetScopes:
                 if old['body'] != body or old['hash'] != digest(body):
                     raise HTTPException(409, 'LOCAL_BUDGET_SCOPE_CONFLICT')
             else:
-                if deadline <= time.time():
-                    raise HTTPException(409, 'LOCAL_BUDGET_EXPIRED')
                 conn.execute(self.scopes.insert().values(id=scope_id, owner_id=owner, body=body,
                     hash=digest(body), state='ACTIVE', rounds=0, held_tools=0, settled_tools=0))
                 if caps['tokenLimit'] is not None:
@@ -188,10 +187,8 @@ class LocalBudgetScopes:
                 raise HTTPException(409, 'LOCAL_BUDGET_ALLOCATION_CONFLICT')
             return self._projection(self._allocation(conn, owner, allocation_id))
         total = scope['body']['caps']
-        if scope['state'] != 'ACTIVE' or time.time() >= scope['body']['deadline']:
+        if scope['state'] != 'ACTIVE':
             raise HTTPException(409, 'LOCAL_BUDGET_CLOSED_OR_EXPIRED')
-        if (scope['rounds'] >= total['rounds'] or scope['held_tools'] + scope['settled_tools'] + caps['toolCalls'] > total['toolCalls']):
-            raise HTTPException(429, 'LOCAL_BUDGET_EXHAUSTED')
         if (caps['tokenLimit'] is None) != (total['tokenLimit'] is None) or caps['currency'] != total['currency']:
             raise HTTPException(409, 'LOCAL_BUDGET_METERING_MISMATCH')
         if caps['tokenLimit'] is not None:
@@ -203,7 +200,7 @@ class LocalBudgetScopes:
         conn.execute(self.allocations.insert().values(id=allocation_id, owner_id=owner, scope_id=scope_id,
             body=body, hash=digest(body), state='ALLOCATED'))
         conn.execute(self.scopes.update().where(self.scopes.c.id == scope_id).values(
-            rounds=self.scopes.c.rounds + 1, held_tools=self.scopes.c.held_tools + caps['toolCalls']))
+            rounds=self.scopes.c.rounds + 1, held_tools=self.scopes.c.held_tools + (caps['toolCalls'] or 0)))
         return self._projection(self._allocation(conn, owner, allocation_id))
 
     def bind_root(self, conn, owner, allocation_id, task_id, plan_sha):
@@ -214,7 +211,7 @@ class LocalBudgetScopes:
                 raise HTTPException(409, 'LOCAL_BUDGET_BINDING_CONFLICT')
             return self._projection(row)
         scope = self._scope(conn, owner, row['scope_id'])
-        if scope['state'] != 'ACTIVE' or time.time() >= scope['body']['deadline']:
+        if scope['state'] != 'ACTIVE':
             raise HTTPException(409, 'LOCAL_BUDGET_CLOSED_OR_EXPIRED')
         task = self.store.task(task_id, owner)
         plan = self.store.plan(task['plan_id'], owner)
@@ -240,7 +237,7 @@ class LocalBudgetScopes:
         if digest(self.store.plan(task['plan_id'], owner)) != row['plan_sha']:
             raise HTTPException(409, 'LOCAL_BUDGET_PLAN_CHANGED')
         scope = self._scope(conn, owner, row['scope_id'])
-        if row['state'] != 'BOUND' or scope['state'] != 'ACTIVE' or time.time() >= scope['body']['deadline']:
+        if row['state'] != 'BOUND' or scope['state'] != 'ACTIVE':
             raise HTTPException(409, 'LOCAL_BUDGET_CLOSED_OR_EXPIRED')
         return row
 
@@ -257,9 +254,6 @@ class LocalBudgetScopes:
         row = self._root_allocation(conn, owner, root_id)
         if row is None:
             return
-        used = self.store.sql('SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE root_id=:root', root=root_id)[0]['n']
-        if used >= row['body']['caps']['toolCalls']:
-            raise HTTPException(429, 'LOCAL_BUDGET_TOOL_CALLS_EXHAUSTED')
 
     def require_current(self, owner, plan, context=None, tool=None):
         if context is None:
@@ -340,10 +334,10 @@ class LocalBudgetScopes:
                 conn.execute(table.update().where(table.c.id == parent['id']).values(
                     held_tokens=table.c.held_tokens - caps['tokenLimit'], held_amount=table.c.held_amount - caps['amountMicros'],
                     settled_tokens=table.c.settled_tokens + tokens, settled_amount=table.c.settled_amount + amount))
-            if scope['held_tools'] < caps['toolCalls']:
+            if scope['held_tools'] < (caps['toolCalls'] or 0):
                 raise HTTPException(409, 'LOCAL_BUDGET_HOLD_INTEGRITY')
             conn.execute(self.scopes.update().where(self.scopes.c.id == row['scope_id']).values(
-                held_tools=self.scopes.c.held_tools - caps['toolCalls'], settled_tools=self.scopes.c.settled_tools + tools))
+                held_tools=self.scopes.c.held_tools - (caps['toolCalls'] or 0), settled_tools=self.scopes.c.settled_tools + tools))
             statement = {'state': 'SETTLED', 'allocationId': allocation_id, 'toolCalls': tools,
                 'settledTokens': tokens, 'settledAmountMicros': amount}
             conn.execute(self.allocations.update().where(self.allocations.c.id == allocation_id).values(state='SETTLED', statement=statement))

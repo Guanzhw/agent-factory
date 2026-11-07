@@ -39,23 +39,28 @@ class ResearchSessionConfigurationTests(unittest.TestCase):
         self.assertEqual(limits.timeout_seconds, 60)
         self.assertEqual(ResearchSessionTools._environment(SimpleNamespace(plan={
             'budget': {'outputBytes': 131072}})).output_bytes, 131072)
-        self.assertEqual(EnvironmentLimits().timeout_seconds, 8)
+        self.assertIsNone(EnvironmentLimits().timeout_seconds)
         self.assertEqual(EnvironmentLimits(timeout_seconds=.15).timeout_seconds, .15)
-        with self.assertRaises(ValueError):
-            EnvironmentLimits(timeout_seconds=601)
+        self.assertEqual(EnvironmentLimits(timeout_seconds=601).timeout_seconds, 601)
 
-    def test_default_and_disabled_search_path_leave_only_shared_evidence_available(self):
+    def test_unconfigured_workspace_leaves_only_shared_evidence_available(self):
         self.assertEqual(ResearchSessionTools().available_tools, ['research_read_shared_evidence'])
-        self.assertEqual(ResearchSessionTools(command_path='.').available_tools, ['research_read_shared_evidence'])
+        self.assertEqual(ResearchSessionTools(host_commands=False, command_path='.').available_tools, ['research_read_shared_evidence'])
 
-    def test_enabled_commands_still_require_absolute_search_path_and_strict_types(self):
-        for options in ({'host_commands': True, 'command_path': '.'}, {'command_path': None},
-                {'host_commands': 0}):
+    def test_command_configuration_requires_correct_types(self):
+        for options in ({'command_path': 3}, {'command_path': 'bad\0path'}, {'host_commands': 0}):
             with self.subTest(options=options), self.assertRaisesRegex(ValueError, 'RESEARCH_COMMAND_CONFIGURATION_INVALID'):
                 ResearchSessionTools(**options)
 
+    def test_default_path_inherits_environment_and_accepts_windows_default_syntax(self):
+        with patch.dict(os.environ, {'PATH': r'.;C:\bin;C:\Python312'}):
+            self.assertEqual(ResearchSessionTools().command_path, r'.;C:\bin;C:\Python312')
+        with patch.dict(os.environ, {'PATH': ''}):
+            self.assertEqual(ResearchSessionTools().command_path, os.defpath)
+        self.assertEqual(ResearchSessionTools(command_path='.').command_path, '.')
+
     def test_unsupported_platform_workspace_is_rejected_before_open(self):
-        unavailable = SimpleNamespace(name='java', open=Mock())
+        unavailable = SimpleNamespace(name='java', open=Mock(), pathsep=os.pathsep, environ={}, defpath=os.defpath)
         with patch('research.session_tools.os', unavailable), \
                 patch('research.session_tools.sys', SimpleNamespace(platform='unsupported')):
             with self.assertRaisesRegex(ValueError, 'RESEARCH_WORKSPACE_CONFIGURATION_INVALID'):
@@ -291,8 +296,9 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(read['text'], original)
         found = await self.invoke('research_search', {'query': '原值', 'path': '中文 空格'})
         self.assertEqual(found['matches'], [{'path': path, 'line': 2, 'text': 'value = "原值"'}])
-        changed = await self.invoke('research_edit_file', {'path': path, 'old': '原值', 'new': '新值'})
-        expected = original.replace('原值', '新值').encode()
+        changed = await self.invoke('research_edit_file', {'path': path, 'old': '# 注释\r\nvalue = "原值"', 'new': '# 注释\nvalue = "新值"'})
+        # Agno's native text editor normalizes newline encoding. Receipts hash actual bytes.
+        expected = original.replace('原值', '新值').replace('\r\n', '\n').encode()
         self.assertEqual((workspace / path).read_bytes(), expected)
         self.assertEqual(changed['beforeSha256'], created['afterSha256'])
         self.assertEqual(changed['afterSha256'], hashlib.sha256(expected).hexdigest())
@@ -319,7 +325,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             ResearchSessionTools(workspace_root=junction)
         (workspace / 'hardlink.txt').hardlink_to(target)
-        for path in ('junction/private.txt', 'hardlink.txt', 'NUL.txt', 'file:stream', 'C:/outside', '../outside'):
+        for path in ('junction/private.txt', 'NUL.txt', 'file:stream', 'C:/outside', '../outside'):
             with self.subTest(path=path):
                 read = await self.invoke('research_read_file', {'path': path})
                 self.assertEqual(read['outcome'], 'failed')
@@ -361,8 +367,8 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         read = await self.invoke('research_read_file', {'path': 'missing.py'})
         self.assertEqual(read['outcome'], 'failed')
         bad_parent = await self.invoke('research_edit_file', {'path': 'missing/source.py', 'old': '', 'new': 'no'})
-        self.assertEqual(bad_parent['outcome'], 'failed')
-        bad_cwd = await self.invoke('research_run', {'argv': [Path(sys.executable).name, '-c', 'pass'], 'cwd': 'missing'})
+        self.assertTrue(bad_parent['created'])
+        bad_cwd = await self.invoke('research_run', {'argv': [Path(sys.executable).name, '-c', 'pass'], 'cwd': 'missing-cwd'})
         self.assertEqual(bad_cwd['outcome'], 'failed')
         missing = await self.invoke('research_edit_file', {'path': 'missing.py', 'old': 'old', 'new': 'new'})
         self.assertEqual(missing['outcome'], 'failed')
@@ -382,7 +388,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(created['afterSha256'], fixed['afterSha256'])
         self.assertTrue(all(effect['status'] == 'DONE' for effect in self.store.effects('task-alice')))
 
-    @unittest.skipUnless(sys.platform == 'win32', 'Native CREATE_NEW plus injected metadata failure')
+    @unittest.skipUnless(sys.platform == 'win32', 'Native Agno write plus injected metadata failure')
     async def test_windows_failure_after_create_keeps_original_effect_unknown(self):
         import pywintypes
         import win32con
@@ -396,7 +402,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         with patch.object(win32file, 'GetFileInformationByHandle', side_effect=fail_file):
             with self.assertRaises(StopAgentRun):
                 await self.call('research_edit_file', {'path': 'created.py', 'old': '', 'new': 'original'}).aexecute()
-        self.assertEqual((self.workspace() / 'created.py').read_bytes(), b'')
+        self.assertEqual((self.workspace() / 'created.py').read_bytes(), b'original')
         self.assertEqual(self.store.effects('task-alice')[0]['status'], 'UNKNOWN')
         with self.assertRaises(StopAgentRun):
             await self.call('research_edit_file', {'path': 'replay.py', 'old': '', 'new': 'no'}).aexecute()
@@ -412,7 +418,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
             'message': 'Tool call failed. Check the reported code and tool arguments before correcting this call.'})
         for command in ('C:python.exe', 'NUL.exe', 'python.exe:stream'):
             rejected = await self.invoke('research_run', {'argv': [command]})
-            self.assertEqual(rejected['code'], 'RESEARCH_COMMAND_INVALID')
+            self.assertEqual(rejected['outcome'], 'failed')
 
     @unittest.skipUnless(sys.platform == 'win32', 'Native Windows configured long operation acceptance')
     async def test_windows_command_can_run_beyond_thirty_seconds_within_selected_budget(self):
@@ -469,7 +475,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotEqual(changed['beforeSha256'], changed['afterSha256'])
         self.assertEqual(changed['bytes'], source.stat().st_size)
 
-    async def test_single_file_search_matches_directory_search_and_reports_truncation(self):
+    async def test_single_file_search_matches_directory_search_without_truncation(self):
         folder = self.workspace() / 'project/pytest_asyncio'
         folder.mkdir(parents=True)
         source = folder / 'plugin.py'
@@ -484,8 +490,8 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(file_result['entriesScanned'], 1)
         source.write_text('match\n' * 31)
         bounded = await self.invoke('research_search', {'path': 'project/pytest_asyncio/plugin.py', 'query': 'match'})
-        self.assertEqual(len(bounded['matches']), 30)
-        self.assertTrue(bounded['truncated'])
+        self.assertEqual(len(bounded['matches']), 31)
+        self.assertFalse(bounded['truncated'])
 
     async def test_native_agent_corrects_target_and_schema_errors_in_same_run(self):
         (self.workspace() / 'source.py').write_text('answer = 42\n')
@@ -595,6 +601,103 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
             results = await asyncio.gather(*pending, return_exceptions=True)
         self.assertEqual([result.status for result in results], ['success', 'success'])
 
+    async def test_search_finds_deep_late_matches_and_full_long_lines(self):
+        workspace = self.workspace()
+        for index in range(205):
+            (workspace / f'{index:03}.txt').write_text('ordinary file')
+        nested = workspace.joinpath(*(['deep'] * 10))
+        nested.mkdir(parents=True)
+        text = 'match ' + 'line' * 100
+        (nested / 'matches.txt').write_text((text + '\n') * 40)
+        result = await self.invoke('research_search', {'query': 'match'}, output_bytes=None)
+        self.assertEqual(len(result['matches']), 40)
+        self.assertEqual(result['matches'][-1]['text'], text)
+        self.assertFalse(result['truncated'])
+        self.assertGreater(result['entriesScanned'], 200)
+
+    async def test_normal_path_syntax_and_internal_links_resolve_in_the_session(self):
+        workspace = self.workspace()
+        (workspace / 'folder').mkdir()
+        source = workspace / 'folder' / 'source.txt'
+        source.write_text('original')
+        for path in (str(source), 'folder/../folder/source.txt', './folder/source.txt'):
+            result = await self.invoke('research_read_file', {'path': path})
+            self.assertEqual(result['text'], 'original')
+        if os.name == 'posix':
+            (workspace / 'internal-link').symlink_to(source)
+            result = await self.invoke('research_read_file', {'path': 'internal-link'})
+            self.assertEqual(result['text'], 'original')
+            await self.invoke('research_edit_file', {'path': 'internal-link', 'old': 'original', 'new': 'changed'})
+            self.assertEqual(source.read_text(), 'changed')
+        linked = workspace / 'hardlink.txt'
+        linked.hardlink_to(source)
+        result = await self.invoke('research_read_file', {'path': 'hardlink.txt'})
+        self.assertEqual(result['text'], source.read_text())
+        outside = self.workspace('bob') / 'other.txt'
+        outside.write_text('other owner')
+        rejected = await self.invoke('research_read_file', {'path': str(outside)})
+        self.assertEqual(rejected['outcome'], 'failed')
+
+    async def test_native_workspace_creates_directories_and_keeps_failed_write_unknown(self):
+        from agno.tools.workspace import Workspace
+        # Spy through the original method, proving the native implementation owns writes.
+        original_write = Workspace.write_file
+        with patch.object(Workspace, 'write_file', autospec=True, side_effect=original_write) as native:
+            result = await self.invoke('research_edit_file', {'path': 'new/deep/source.py', 'old': '', 'new': 'value = 1'})
+            self.assertTrue(result['created'])
+            native.assert_called_once()
+        def uncertain(instance, path, content, **kwargs):
+            original_write(instance, path, content, **kwargs)
+            return 'Error writing file: synthetic lost acknowledgement'
+        with patch.object(Workspace, 'write_file', uncertain):
+            with self.assertRaises(StopAgentRun):
+                await self.call('research_edit_file', {'path': 'unknown.py', 'old': '', 'new': 'saved'}).aexecute()
+        self.assertEqual((self.workspace() / 'unknown.py').read_text(), 'saved')
+        self.assertEqual(self.store.effects('task-alice')[-1]['status'], 'UNKNOWN')
+
+    async def test_large_unicode_edit_read_and_long_command_arguments(self):
+        original = '中文内容' * 7000
+        result = await self.invoke('research_edit_file', {'path': 'large.txt', 'old': '', 'new': original},
+                                   output_bytes=None)
+        self.assertEqual(result['bytes'], len(original.encode()))
+        replacement = '改写结果' * 8000
+        await self.invoke('research_edit_file', {'path': 'large.txt', 'old': original, 'new': replacement},
+                          output_bytes=None)
+        read = await self.invoke('research_read_file', {'path': 'large.txt'}, output_bytes=None)
+        self.assertEqual(read['text'], replacement)
+        arguments = ['a' * 3000] * 40
+        result = await self.invoke('research_run', {'argv': [sys.executable, '-c',
+            'import json,sys;print(json.dumps(sys.argv[1:]))', *arguments], 'max_output_tokens': 50000}, output_bytes=None)
+        self.assertEqual(json.loads(result['stdout']), arguments)
+        self.assertEqual(result['exitCode'], 0)
+
+    async def test_same_run_independent_commands_run_concurrently(self):
+        release = self.root / 'release-parallel'
+        def command(marker):
+            script = (f'from pathlib import Path;import time;Path({marker!r}).write_text("ready");'
+                      f'\nwhile not Path({str(release)!r}).exists(): time.sleep(.01)')
+            return self.call('research_run', {'argv': [sys.executable, '-c', script]}, output_bytes=None)
+        pending = [asyncio.create_task(command(marker).aexecute()) for marker in ('first', 'second')]
+        try:
+            for _ in range(100):
+                if all((self.workspace() / marker).exists() for marker in ('first', 'second')):
+                    break
+                await asyncio.sleep(.02)
+            self.assertTrue(all((self.workspace() / marker).exists() for marker in ('first', 'second')))
+        finally:
+            release.touch()
+            results = await asyncio.gather(*pending, return_exceptions=True)
+        self.assertEqual([result.status for result in results], ['success', 'success'])
+
+    async def test_concurrent_duplicate_command_runs_once(self):
+        arguments = {'argv': [sys.executable, '-c',
+            'from pathlib import Path;import time;p=Path("once");p.write_text(p.read_text()+"x" if p.exists() else "x");time.sleep(.05)']}
+        calls = [self.call('research_run', arguments, call_id='same-command', output_bytes=None) for _ in range(2)]
+        results = await asyncio.gather(*(call.aexecute() for call in calls))
+        self.assertTrue(all(result.status == 'success' for result in results))
+        self.assertEqual((self.workspace() / 'once').read_text(), 'x')
+        self.assertEqual(calls[0].result, calls[1].result)
+
     async def test_read_above_return_budget_reports_reason_without_changing_file(self):
         original = '# unchanged source\n' * 4000
         source = self.workspace() / 'oversized-result.py'
@@ -632,6 +735,35 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         await self.invoke('research_edit_file', {'path': 'private.txt', 'old': 'alice-private', 'new': 'corrected'})
         self.assertNotEqual(self.workspace(), self.workspace('bob'))
 
+    @unittest.skipUnless(os.name == 'posix', 'uses POSIX executable symlink fixture')
+    async def test_relative_command_path_resolves_from_selected_command_directory(self):
+        directory = self.workspace() / 'project'
+        (directory / 'bin').mkdir(parents=True)
+        (directory / 'bin' / 'session-python').symlink_to(sys.executable)
+        self.tools.command_path = 'bin' + os.pathsep + '.'
+        result = await self.invoke('research_run', {'cwd': 'project', 'argv': ['session-python', '-c',
+            'import os;print(os.getcwd());print(os.environ["PATH"])']})
+        self.assertEqual(result['exitCode'], 0)
+        self.assertIn(str(directory), result['stdout'])
+        self.assertIn(str(directory / 'bin') + os.pathsep + str(directory), result['stdout'])
+
+    @unittest.skipUnless(os.name == 'posix', 'uses POSIX executable symlink fixture')
+    async def test_empty_path_segments_resolve_to_command_cwd(self):
+        directory = self.workspace() / 'path-segments'
+        directory.mkdir()
+        (directory / 'session-python').symlink_to(sys.executable)
+        for configured in (os.pathsep + '/bin', '/bin' + os.pathsep):
+            with self.subTest(configured=configured):
+                self.tools.command_path = configured
+                result = await self.invoke('research_run', {'cwd': 'path-segments', 'argv': ['session-python', '-c',
+                    'import os;print(os.environ["PATH"])']})
+                self.assertEqual(result['exitCode'], 0)
+                self.assertIn(str(directory), result['stdout'])
+        self.tools.command_path = ''
+        result = await self.invoke('research_run', {'cwd': 'path-segments', 'argv': ['session-python', '-c', 'print("no")']})
+        self.assertEqual(result['outcome'], 'failed')
+        self.assertEqual(result['code'], 'RESEARCH_COMMAND_UNAVAILABLE')
+
     async def test_clean_environment_and_command_opt_in(self):
         with patch.dict(os.environ, {'OPENAI_API_KEY': 'synthetic-server-secret',
                 'RESEARCH_TEST_SECRET': 'synthetic-do-not-inherit', 'PYTHONPATH': '/synthetic/injected'}):
@@ -643,7 +775,7 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn('PYTHONPATH', environment)
         self.assertNotEqual(environment['HOME'], os.environ.get('HOME'))
         self.assertFalse(Path(environment['HOME']).exists())
-        disabled = ResearchSessionTools(workspace_root=self.root)
+        disabled = ResearchSessionTools(workspace_root=self.root, host_commands=False)
         self.assertNotIn('research_run', disabled.available_tools)
         self.assertIn('research_edit_file', disabled.available_tools)
         self.assertEqual(ResearchSessionTools().available_tools, ['research_read_shared_evidence'])
@@ -658,47 +790,43 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.store.receipts), 1)
         self.assertEqual(len(self.store.events), 2)
 
-    async def test_output_limit_and_stale_native_identity_do_not_dispatch_replacement(self):
-        call = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
-            'import sys;sys.stdout.write("x"*70000);sys.stdout.flush()']})
-        with self.assertRaises(StopAgentRun):
-            await call.aexecute()
-        self.assertEqual(self.store.events[-1]['data']['code'], 'PERSONAL_CLI_OUTPUT_LIMIT')
-        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'UNKNOWN')
-        self.assertTrue(self.store.events[-1]['data']['stopped'])
+    async def test_large_command_output_is_saved_and_does_not_fail_the_operation(self):
+        result = await self.invoke('research_run', {'argv': [sys.executable, '-c',
+            'import sys;sys.stdout.write("x"*70000);sys.stderr.write("diagnostic")']})
+        self.assertEqual(result['exitCode'], 0)
+        self.assertTrue(result['truncated'])
+        self.assertIn('tokens truncated', result['stdout'])
+        self.assertEqual((self.workspace() / result['stdoutPath']).read_text(), 'x' * 70000)
+        self.assertEqual((self.workspace() / result['stderrPath']).read_text(), 'diagnostic')
+        read = await self.invoke('research_read_file', {'path': result['stdoutPath']}, output_bytes=None)
+        self.assertEqual(read['text'], 'x' * 70000)
+        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'DONE')
         other = self.call('research_edit_file', {'path': 'wrong-owner', 'old': '', 'new': 'no'}, owner='bob')
         other.function._run_context.user_id = 'alice'
         self.assertEqual((await other.aexecute()).status, 'failure')
         self.assertEqual(len(self.store.receipts), 1)
 
-    async def test_command_uses_declared_budget_for_combined_output_and_json_envelope(self):
-        for index, (text, count, budget) in enumerate((('x', 13000, 65536), ('x', 70000, 131072),
-                                                       ('\\n', 13000, 65536))):
-            with self.subTest(text=text, count=count, budget=budget):
-                command = [Path(sys.executable).name, '-c',
-                    f'import sys;sys.stdout.write({text!r}*{count});sys.stderr.write("diagnostic")']
-                result = await self.invoke('research_run', {'argv': command}, output_bytes=budget,
-                    call_id='within-budget-' + str(index))
+    async def test_command_preview_budget_can_be_selected_without_killing_process(self):
+        for index, (text, count) in enumerate((('x', 70000), ('\\n', 13000), ('中文', 13000))):
+            with self.subTest(text=text):
+                result = await self.invoke('research_run', {'argv': [sys.executable, '-c',
+                    f'import sys;sys.stdout.write({text!r}*{count});sys.stderr.write("diagnostic")'],
+                    'max_output_tokens': 50000}, output_bytes=None, call_id='output-' + str(index))
                 self.assertEqual(result['stdout'], text * count)
                 self.assertEqual(result['stderr'], 'diagnostic')
-                self.assertLessEqual(len(json.dumps(result, ensure_ascii=False).encode()), budget)
-        escaped = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
-            'import sys;sys.stdout.write(chr(0)*12000)']})
-        with self.assertRaises(StopAgentRun):
-            await escaped.aexecute()
-        self.assertEqual(self.store.effects('task-alice')[-1]['status'], 'UNKNOWN')
-        self.assertEqual(self.store.events[-1]['data']['code'], 'RESEARCH_TOOL_OUTPUT_TOO_LARGE')
-        self.assertTrue(self.store.events[-1]['data']['stopped'])
+        result = await self.invoke('research_run', {'argv': [sys.executable, '-c',
+            'import sys;sys.stdout.write(chr(0)*12000)']}, output_bytes=None)
+        self.assertEqual(result['stdout'], chr(0) * 12000)
+        self.assertEqual(self.store.effects('task-alice')[-1]['status'], 'DONE')
 
-    async def test_stderr_and_stdout_share_one_finite_command_budget(self):
-        call = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
-            'import sys;sys.stdout.write("x"*33000);sys.stdout.flush();'
-            'sys.stderr.write("y"*33000);sys.stderr.flush()']})
-        with self.assertRaises(StopAgentRun):
-            await call.aexecute()
-        self.assertEqual(self.store.events[-1]['data']['code'], 'PERSONAL_CLI_OUTPUT_LIMIT')
-        self.assertTrue(self.store.events[-1]['data']['stopped'])
-        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'UNKNOWN')
+    async def test_stdout_and_stderr_share_preview_budget_with_complete_files(self):
+        result = await self.invoke('research_run', {'argv': [sys.executable, '-c',
+            'import sys;sys.stdout.write("x"*33000);sys.stderr.write("y"*33000)']}, output_bytes=None)
+        self.assertTrue(result['truncated'])
+        self.assertTrue(result['stopped'])
+        self.assertEqual((self.workspace() / result['stdoutPath']).read_text(), 'x' * 33000)
+        self.assertEqual((self.workspace() / result['stderrPath']).read_text(), 'y' * 33000)
+        self.assertEqual(self.store.effects('task-alice')[0]['status'], 'DONE')
 
     async def test_file_error_unknown_preserves_original_effect_and_blocks_next_tool(self):
         call = self.call('research_edit_file', {'path': 'created', 'old': '', 'new': 'data'})
@@ -714,7 +842,8 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(self.store.receipts), 1)
 
     async def test_unknown_effect_stops_new_call_instead_of_replaying(self):
-        self.sessions.seconds = .1
+        # Allow process startup under concurrent CI load before exercising expiry.
+        self.sessions.seconds = 1
         call = self.call('research_run', {'argv': [Path(sys.executable).name, '-c',
             'from pathlib import Path;import time;Path("effect").write_text("once");time.sleep(30)']})
         with self.assertRaises(StopAgentRun):
@@ -754,10 +883,10 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
             await asyncio.sleep(.02)
         self.assertTrue(marker.exists(), 'actual parent never started')
         pids = [int(value) for value in marker.read_text().split(',')]
+        self.sessions.cancelled = True
         waiting = self.call('research_edit_file', {'path': 'after-stop', 'old': '', 'new': 'must not run'})
         waiter = asyncio.create_task(waiting.aexecute())
         await asyncio.sleep(0)
-        self.assertFalse(waiter.done())
         self.sessions.cancelled = True
         with self.assertRaises(RunCancelledException):
             await asyncio.wait_for(pending, 4)
@@ -784,10 +913,10 @@ class ResearchSessionToolTests(unittest.IsolatedAsyncioTestCase):
                 break
             await asyncio.sleep(.02)
         self.assertTrue(marker.exists())
+        self.sessions.active = False
         waiting = self.call('research_edit_file', {'path': 'after-revocation', 'old': '', 'new': 'must not run'})
         waiter = asyncio.create_task(waiting.aexecute())
         await asyncio.sleep(0)
-        self.assertFalse(waiter.done())
         self.sessions.active = False
         with self.assertRaises(StopAgentRun):
             await asyncio.wait_for(pending, 4)

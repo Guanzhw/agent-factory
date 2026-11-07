@@ -1,13 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { ApiError } from '../../api.js';
 import { assistantApi, type ResearchSource } from './live/assistantClient.js';
 import { researchSessionsApi as api, type CreateSession, type ResearchSession, type SessionAction, type SessionOptions, type SessionPage, type SessionTurn } from './researchSessionsClient.js';
 import { draftKey, readStored, removeStored, requestKey, writeStored, type PendingSessionRequest, type SessionDraft } from './researchSessionStorage.js';
 import { SessionQuestions } from './SessionQuestions.js';
+import { SessionActivity, hasUnconfirmedOperation } from './SessionActivity.js';
 import { ResearchReply } from './ResearchReply.js';
 import './sessions.css';
 
-type Props = { ownerId: string; selectedId?: string; questionId?: string; onSelect: (id: string) => void; onQuestion: (id: string) => void; onModels: () => void; onTask: (id: string) => void };
+type Props = { ownerId: string; selectedId?: string; questionId?: string; onSelect: (id: string) => void; onQuestion: (id: string) => void; onModels: () => void; onTask: (id: string) => void; navigation?: ReactNode; workspaceContent?: ReactNode; sessionError?: string };
 const states = { idle: '就绪', running: '执行中', stopping: '停止请求已接收', stopped: '已停止', blocked: '需要核对' };
 const reasons: Record<string, string> = {
   RESEARCH_CONTEXT_LIMIT: '必要上下文超过容量，不能开始新一轮；目标、指令及原操作记录不会被截断，完整历史仍保留。',
@@ -28,7 +29,8 @@ const actions: Record<SessionAction, string> = { create: '创建会话', turn: '
 const describe = (error: unknown) => error instanceof Error ? error.message : '操作未确认，请核对原请求。';
 const time = (value: string) => new Date(value).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 const unresolved = (error: unknown) => !(error instanceof ApiError) || ![400, 401, 403, 404, 422].includes(error.status) || error.code === 'INVALID_RESPONSE';
-const initialDraft: SessionDraft = { title: '', goal: '', boundaries: '', modelConnectionRef: '', limits: { maxTurns: 8, toolCallsPerTurn: 8, operationSeconds: 8 } };
+const defaultBoundaries = '';
+const initialDraft: SessionDraft = { title: '', goal: '', boundaries: '', modelConnectionRef: '', limits: { maxTurns: null, toolCallsPerTurn: null, operationSeconds: null } };
 const memoryTools: Record<string, { operation: string; title: string; completed: string }> = {
   research_find_memories: { operation: 'find', title: '查找个人记忆', completed: '查找完成' },
   research_remember: { operation: 'remember', title: '记住个人偏好', completed: '已记住' },
@@ -87,8 +89,8 @@ function CreateSessionForm({ ownerId, options, busy, blocked, onModels, onCreate
   useEffect(() => {
     const invalid = form.current?.querySelector<HTMLElement>('[aria-invalid="true"]');
     if (!invalid) return;
-    const disclosure = invalid.closest('details');
-    if (disclosure) disclosure.open = true;
+    let disclosure = invalid.closest('details');
+    while (disclosure) { disclosure.open = true; disclosure = disclosure.parentElement?.closest('details') ?? null; }
     invalid.focus({ preventScroll: true });
     invalid.closest('label')?.scrollIntoView?.({ block: 'center' });
   }, [errors]);
@@ -101,33 +103,33 @@ function CreateSessionForm({ ownerId, options, busy, blocked, onModels, onCreate
     } });
     // Options initialize a new draft once; rereads must not overwrite an edited field.
   }, [options, ownerId]);
+  useEffect(() => {
+    const model = options?.models.find(item => item.available);
+    if (model && !value.modelConnectionRef) draft.change({ ...value, modelConnectionRef: model.connectionRef });
+  }, [options, value.modelConnectionRef]);
   function submit() {
     const problems: Record<string, string> = {};
-    if (!value.title.trim()) problems.title = '给会话起一个名称，方便之后继续。';
-    if (value.goal.trim().length < 2) problems.goal = '请描述要研究或完成的目标，至少 2 个字。';
-    if (!value.boundaries.trim()) problems.boundaries = '请说明何时停止，或哪些操作不能进行。';
+    if (!value.goal.trim()) problems.goal = '请输入消息。';
     if (!options?.models.some(model => model.available && model.connectionRef === value.modelConnectionRef)) problems.model = '请选择当前可用的模型连接。';
-    if (options) for (const key of ['maxTurns', 'toolCallsPerTurn', 'operationSeconds'] as const) {
-      const limit = options.limits[key];
-      if (!Number.isInteger(value.limits[key]) || value.limits[key] < limit.min || limit.max !== null && value.limits[key] > limit.max) problems[key] = limit.max === null ? `请输入不小于 ${limit.min} 的有限整数。` : `请输入 ${limit.min}–${limit.max} 之间的整数。`;
-    }
     setErrors(problems);
-    if (!Object.keys(problems).length) onCreate({ ...value, title: value.title.trim(), goal: value.goal.trim(), boundaries: value.boundaries.trim() });
+    if (!Object.keys(problems).length) onCreate({ ...value, limits: initialDraft.limits, title: value.title.trim() || value.goal.trim().slice(0, 60), goal: value.goal.trim(), boundaries: value.boundaries.trim() || defaultBoundaries });
   }
-  return <section className="rs-create"><h2>从一个研究目标开始</h2><p className="rw-muted">同一会话保留目标、边界和每轮记录。打开或刷新页面只读取记录。</p>
-    {options?.collaboration?.available && <p className="rs-collaboration-note">助手可按研究目标自主询问已开放的同事助手，只发送所需的问题文本。收到回复后可在原限制内继续；你可以随时请求停止，不必逐条确认问答。</p>}
+  return <section className="rs-create"><div className="rs-welcome"><span>Agent Factory</span><h1>今天想一起完成什么？</h1><p>从一个问题、想法或研究目标开始。</p></div>
+
     <form ref={form} className="rw-form" noValidate onSubmit={event => { event.preventDefault(); submit(); }}><fieldset disabled={busy || blocked}>
-      <label>会话名称<input maxLength={120} value={value.title} onChange={event => draft.change({ ...value, title: event.target.value })} aria-invalid={!!errors.title}/>{errors.title && <span role="alert">{errors.title}</span>}</label>
-      <label>研究目标<textarea rows={4} maxLength={2000} value={value.goal} onChange={event => draft.change({ ...value, goal: event.target.value })} aria-invalid={!!errors.goal}/>{errors.goal && <span role="alert">{errors.goal}</span>}</label>
-      <label>停止边界<textarea rows={2} maxLength={2000} value={value.boundaries} onChange={event => draft.change({ ...value, boundaries: event.target.value })} aria-invalid={!!errors.boundaries}/><small>写明达标条件、禁止事项或需要先问你的情况。这是给助手的指令；下面的调用次数和时限由系统限制。</small>{errors.boundaries && <span role="alert">{errors.boundaries}</span>}</label>
-      <label>使用模型<select value={value.modelConnectionRef} onChange={event => draft.change({ ...value, modelConnectionRef: event.target.value })} aria-invalid={!!errors.model}><option value="">选择模型连接</option>{options?.models.map(model => <option key={model.connectionRef} value={model.connectionRef} disabled={!model.available}>{model.provider} · {model.model}{!model.available ? '（不可用）' : ''}</option>)}</select>{errors.model && <span role="alert">{errors.model}</span>}</label>
+      <label className="rs-prompt"><span className="sr-only">研究目标</span><textarea placeholder="向 Agent Factory 发送消息…" rows={3} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }} value={value.goal} onChange={event => draft.change({ ...value, goal: event.target.value })} aria-invalid={!!errors.goal}/>{errors.goal && <span role="alert">{errors.goal}</span>}</label>
+      <div className="rs-compose-toolbar">      <label className="rs-model-picker"><span className="sr-only">使用模型</span><select value={value.modelConnectionRef} onChange={event => draft.change({ ...value, modelConnectionRef: event.target.value })} aria-invalid={!!errors.model}><option value="">选择模型连接</option>{options?.models.map(model => <option key={model.connectionRef} value={model.connectionRef} disabled={!model.available}>{model.provider} · {model.model}{!model.available ? '（不可用）' : ''}</option>)}</select>{errors.model && <span role="alert">{errors.model}</span>}</label>
       <button type="button" className="rs-text-button" onClick={onModels}>配置我的模型</button>
+<button className="rw-primary" disabled={!options?.available}>{busy ? '正在发送…' : '发送消息'}</button></div>
+      <details className="rs-preferences"><summary>会话设置</summary>{options?.collaboration?.available && <p className="rs-collaboration-note">助手可按研究目标自主询问已开放的同事助手，只发送所需的问题文本。你可以随时请求停止。</p>}      <label>会话名称<input value={value.title} onChange={event => draft.change({ ...value, title: event.target.value })} aria-invalid={!!errors.title}/>{errors.title && <span role="alert">{errors.title}</span>}</label>
+      <label>补充要求（可选）<textarea rows={2} placeholder="偏好、背景或希望助手遵循的要求…" value={value.boundaries} onChange={event => draft.change({ ...value, boundaries: event.target.value })} aria-invalid={!!errors.boundaries}/><small>可以留空，也可以直接写在消息中。</small>{errors.boundaries && <span role="alert">{errors.boundaries}</span>}</label>
       <details><summary>引用已有项目（可选）</summary><label>项目标识<input value={value.projectId ?? ''} onChange={event => draft.change({ ...value, projectId: event.target.value.trim() || undefined })}/></label><p>填写已确认项目的标识，助手可读取约定并按目标委派实验。留空可直接开始独立工作。</p></details>
-      <details className="rs-limits"><summary>调用次数与操作时限</summary><div className="rs-limit-grid">{([['maxTurns', '自动续轮停止边界'], ['toolCallsPerTurn', '每轮最多工具调用'], ['operationSeconds', '单次操作时限（秒）']] as const).map(([key, label]) => <label key={key}>{label}<input type="number" min={options?.limits[key].min ?? 1} max={options?.limits[key].max ?? undefined} value={value.limits[key]} onChange={event => draft.change({ ...value, limits: { ...value.limits, [key]: Number(event.target.value) } })} aria-invalid={!!errors[key]}/>{options && <small>{options.limits[key].max === null ? `至少 ${options.limits[key].min}，由你设定停止轮数` : `范围 ${options.limits[key].min}–${options.limits[key].max}`}</small>}{errors[key] && <span role="alert">{errors[key]}</span>}</label>)}</div><p>到达该会话轮数后不再自动续轮；你仍可手动授权下一轮，沿用每轮调用与时限，不补充自动额度。</p></details>
-      {options ? <p className="rw-muted">未提供 token 或费用计量。{options.workspace.configured ? '可使用会话目录中的文件工具。' : '本地文件工具未启用，可继续对话与处理可用证据。'}{options.workspace.configured && options.workspace.hostCommands ? '本地命令已启用；目录限制不等同于操作系统沙箱。' : '本地命令未启用。'}</p> : <p role="status">正在读取模型与可用工具…</p>}
+      {options && <p className="rw-muted">{options.workspace.configured ? '文件与命令工具可供助手按需使用。' : '当前未配置本地工作目录。'}</p>}</details>
+
+
       {!options?.available && options && <p className="rw-error" role="alert">当前无法开始：{reasons[options.unavailableCode ?? ''] ?? options.unavailableCode ?? '研究环境不可用'}<small> {options.unavailableCode}</small></p>}
-      <button className="rw-primary" disabled={!options?.available}>{busy ? '正在保存并开始…' : '创建并开始研究'}</button>
-    </fieldset></form>{!draft.saved && <p className="rw-error" role="alert">浏览器无法保存草稿；离开前请复制当前输入。</p>}
+
+    </fieldset></form><p className="rs-compose-hint">Enter 发送 · Shift + Enter 换行</p>{!draft.saved && <p className="rw-error" role="alert">浏览器无法保存草稿；离开前请复制当前输入。</p>}
   </section>;
 }
 
@@ -142,12 +144,12 @@ function ToolOutput({ result }: { result: Record<string, unknown> }) {
   return <pre>{JSON.stringify(result, null, 2)}</pre>;
 }
 
-function ToolRecord({ item }: { item: SessionTurn['toolResults'][number] }) {
+function ToolRecord({ item, active }: { item: SessionTurn['toolResults'][number]; active: boolean }) {
   const output = toolOutput(item.result);
-  const unknown = item.status.toUpperCase() === 'UNKNOWN';
+  const unknown = item.status.toUpperCase() === 'UNKNOWN' && !active;
   const failed = item.result?.outcome === 'failed' || typeof output?.exitCode === 'number' && output.exitCode !== 0;
   const status = unknown ? '结果未知，需核对原操作' : failed ? '操作失败' : item.result?.outcome === 'cancelled' ? '操作已停止'
-    : item.status.toUpperCase() === 'DONE' ? '回执已确认' : item.status.toUpperCase() === 'RESERVED' ? '等待操作回执' : `回执状态：${item.status}`;
+    : item.status.toUpperCase() === 'DONE' ? '回执已确认' : ['RESERVED', 'UNKNOWN'].includes(item.status.toUpperCase()) ? '等待操作回执' : `回执状态：${item.status}`;
   const command = Array.isArray(output?.argv) && output.argv.every(value => typeof value === 'string') ? output.argv.join(' ') : null;
   return <details className={unknown || failed ? 'rs-tool-warning' : undefined} open={unknown || failed}>
     <summary><span role={unknown || failed ? 'alert' : undefined}>{status}{typeof output?.exitCode === 'number' && ` · 退出码 ${output.exitCode}`}</span>
@@ -159,11 +161,12 @@ function ToolRecord({ item }: { item: SessionTurn['toolResults'][number] }) {
 
 function TurnRecord({ turn, onTask, onQuestion }: { turn: SessionTurn; onTask: (id: string) => void; onQuestion: (id: string) => void }) {
   const replies = [...(turn.assistantReply ? [turn.assistantReply] : []), ...(turn.assistantReplies ?? [])];
-  const children = turn.children ?? [];
-  const needsAttention = turn.toolResults.some(item => item.status.toUpperCase() === 'UNKNOWN' || item.result?.outcome === 'failed' || typeof toolOutput(item.result)?.exitCode === 'number' && toolOutput(item.result)?.exitCode !== 0) || children.some(child => ['failed', 'unknown', 'blocked'].includes(child.status)) || turn.events.some(event => event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required');
-  return <article className="rs-turn"><header><h3>第 {turn.sequence} 轮</h3><span>{children.length && turn.status === 'waiting_approval' ? '等待子助手结果' : turnStates[turn.status] ?? turn.status}</span><time>{time(turn.createdAt)}</time></header>
+  const children = (turn.children ?? []).filter(child => child.mode !== 'command');
+  const needsAttention = hasUnconfirmedOperation(turn) || turn.toolResults.some(item => item.result?.outcome === 'failed' || typeof toolOutput(item.result)?.exitCode === 'number' && toolOutput(item.result)?.exitCode !== 0) || children.some(child => ['failed', 'unknown', 'blocked'].includes(child.status)) || turn.events.some(event => event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required');
+  return <article className="rs-turn"><header><h3>第 {turn.sequence} 轮</h3><span>{turn.children?.length && turn.status === 'waiting_approval' ? (children.length ? '等待子助手结果' : '等待命令结果') : turnStates[turn.status] ?? turn.status}</span><time>{time(turn.createdAt)}</time></header>
     {turn.continuation && <div className="rs-continuation"><p>由同事回复自动发起本轮。创建轮次不代表回复已纳入模型请求，请核对下方引用与原问题状态。</p>{turn.continuation.questionIds.map(id => <button key={id} className="rs-text-button" onClick={() => onQuestion(id)}>自动继续的原问题 {id}</button>)}</div>}
     {turn.messages.map(message => <div key={message.id} className={`rs-message rs-${message.kind}`}><div className="rs-message-heading"><strong>{message.kind === 'correction' ? '你的纠正' : turn.continuation ? '自动继续指令' : '你的指令'}</strong><span>{message.state === 'included' ? '已纳入研究请求' : '待纳入研究请求'}</span></div><p>{message.text}</p></div>)}
+    <SessionActivity turn={turn}/>
     {turn.result !== null && <div className="rs-message rs-reply"><strong>助手回复</strong><ResearchReply text={turn.result}/></div>}
     {!!replies.length && <section className="rs-adopted-reply" aria-label={`第 ${turn.sequence} 轮引用的同事回复`}><h4>本轮引用的同事回复</h4>{replies.map(reply => <div key={reply.questionId}><button className="rs-text-button" onClick={() => onQuestion(reply.questionId)}>核对原问题 {reply.questionId}</button>{reply.state === 'available' ? <><p>{reply.questionText}</p><p>{reply.reply.text}</p><p className="rw-muted">作为引用证据，不代表实验已验证。输入依据：{reply.reply.contentIds.length ? reply.reply.contentIds.join('、') : '无可用团队依据'}</p></> : <p role="status">引用的回复当前不可用，正文与来源已隐藏；后续研究需先核对权限。</p>}</div>)}</section>}
     {turn.failure && <p className="rw-error" role="alert">本轮未完成：{turn.failure}</p>}
@@ -174,7 +177,7 @@ function TurnRecord({ turn, onTask, onQuestion }: { turn: SessionTurn; onTask: (
       {child.status === 'completed' && (child.result !== null ? <details className="rs-child-result"><summary>查看子助手结果</summary><ResearchReply text={child.result}/></details> : <p className="rw-muted">尚无已确认的结果正文。</p>)}
       <button className="rs-text-button" onClick={() => onTask(child.childTaskId)}>查看原子任务记录</button>
     </div>)}</section>}
-    {!!turn.toolResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{turn.toolResults.map(item => <ToolRecord key={item.effectKey} item={item}/>)}</section>}
+    {!!turn.toolResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{turn.toolResults.map(item => <ToolRecord key={item.effectKey} item={item} active={!hasUnconfirmedOperation(turn) && ['queued', 'running', 'waiting_approval', 'finalizing'].includes(turn.status)}/>)}</section>}
     <details className="rs-events" open={turn.events.some(event => Object.hasOwn(memoryTools, String(event.data.toolName)) || event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required')}><summary>执行事件 · {turn.events.length} 条</summary><p className="rw-muted">以下是已保存的任务事件，不是模型全文流。</p>{turn.events.length ? <ol>{turn.events.map(event => <li key={event.id}><time>{time(event.createdAt)}</time><strong>{memoryTools[String(event.data.toolName)]?.title ?? subagentTools[String(event.data.toolName)] ?? event.type}</strong>{event.type === 'research_tool_finished' && Object.hasOwn(memoryTools, String(event.data.toolName)) ? <MemoryEventResult data={event.data}/> : <p>{event.message}</p>}{Object.keys(event.data).length > 0 && <details><summary>事件详情</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details>}</li>)}</ol> : <p>还没有任务事件。</p>}</details>
     {turn.taskId && <button className="rs-text-button" onClick={() => onTask(turn.taskId!)}>查看原任务记录</button>}
     </details>
@@ -216,31 +219,53 @@ function SessionDetail({ ownerId, value, busy, blocked, questionId, onQuestion, 
   const draft = useDraft(draftKey(ownerId, value.id), ''); const [error, setError] = useState('');
   const selectedReply = useDraft(`${draftKey(ownerId, value.id)}:reply`, '');
   const composer = useRef<HTMLTextAreaElement | null>(null);
+  const end = useRef<HTMLDivElement | null>(null); const following = useRef(true);
+  useEffect(() => {
+    const pane = end.current?.closest('.rs-content'); if (!pane) return;
+    const scroll = () => {
+      following.current = window.matchMedia('(max-width:760px)').matches
+        ? document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 180
+        : pane.scrollHeight - pane.scrollTop - pane.clientHeight < 180;
+    };
+    pane.addEventListener('scroll', scroll, { passive: true }); window.addEventListener('scroll', scroll, { passive: true });
+    return () => { pane.removeEventListener('scroll', scroll); window.removeEventListener('scroll', scroll); };
+  }, []);
+  const latest = value.turns.at(-1);
+  useEffect(() => { if (following.current) end.current?.scrollIntoView?.({ block: 'end' }); }, [value.turns.length, latest?.events.length, latest?.result]);
   const correction = value.state === 'running' && value.allowedActions.includes('correct');
   const stateLabel = value.state === 'idle' ? value.turns.length ? value.allowedActions.includes('start') ? '可继续' : '本轮已结束' : '待开始' : states[value.state];
   async function send() {
-    if (!draft.value.trim()) { setError('请填写这一轮要做的事，或要补充的限制。'); return; }
+    if (!draft.value.trim()) { setError('请输入消息。'); return; }
     setError(''); if (await onSend(draft.value.trim(), correction, !correction && selectedReply.value || undefined)) { draft.change(''); if (!correction) selectedReply.change(''); }
   }
-  return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`} role="status">{stateLabel}</span></div>{value.allowedActions.includes('stop') && <button disabled={busy || value.state === 'stopping'} onClick={onStop}>请求停止</button>}</header>
+  return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`} role="status">{stateLabel}</span></div>{value.allowedActions.includes('stop') && <button disabled={busy || value.state === 'stopping'} onClick={onStop}>{value.state === 'idle' ? '停止会话' : '请求停止'}</button>}</header>
     {value.state === 'stopping' && <p className="rs-warning" role="status">已记录停止请求，仍在等待执行边界和本地进程的停止回执；目前不能确认已停止。</p>}
-    {value.collaboration?.enabled ? <p className="rs-collaboration-note">{value.state === 'stopped' ? '会话已停止，之后到达的同事回复不会自动继续研究。原问题仍可核对；停止本会话不会停止同事的任务。' : '此会话可自主询问同事助手，收到回复后按原限制继续。请求停止会取消尚未采用的自动继续安排，不会停止同事的任务。'}</p> : <p className="rw-muted">此会话沿用原配置，仅支持手动向同事助手提问；自主协作仅用于具备该能力的新会话。</p>}
-    {value.capabilities?.memory === false && <p className="rw-muted">此会话的原工具配置不包含个人记忆。可使用上方“新建会话”，再直接告诉助手要记住、查找、纠正或忘记的偏好。</p>}
     {value.state === 'blocked' && <p className="rw-error" role="alert">本会话不能开始新一轮：{reasons[value.blockReason ?? ''] ?? '原操作需要核对。'} 历史和原任务记录仍可查看，不会自动重放。<code>{value.blockReason}</code></p>}
-    <details className="rs-agreement"><summary>目标、停止边界与模型</summary><h3>研究目标</h3><p>{value.goal}</p><h3>停止边界</h3><p>{value.boundaries}</p><p>{value.model.provider} · {value.model.model}</p><p>自动续轮止于第 {value.limits.maxTurns} 轮 · 每轮最多 {value.limits.toolCallsPerTurn} 次工具调用 · 单次操作 {value.limits.operationSeconds} 秒</p><p>手动开始只授权下一轮，沿用保存的每轮限制，不重置自动额度或未确认操作。</p><p>当前会话上下文 {value.context.characters} / {value.context.maximumCharacters} 字符。{value.context.rawCharacters !== undefined && <>原始上下文 {value.context.rawCharacters} 字符。</>}已安全结束的历史可整理为背景；当前指令和最新纠正单独保留。</p></details>
+    <details className="rs-agreement"><summary>{value.model.provider} · {value.model.model} · 会话信息</summary><h3>起始消息</h3><p>{value.goal}</p>{value.boundaries && <><h3>补充要求</h3><p>{value.boundaries}</p></>}<p>当前上下文 {value.context.characters} 字符。</p>    {value.collaboration?.enabled ? <p className="rs-collaboration-note">{value.state === 'stopped' ? '会话已停止，之后到达的同事回复不会自动继续研究。原问题仍可核对；停止本会话不会停止同事的任务。' : '此会话可自主询问同事助手，收到回复后继续。请求停止会取消尚未采用的自动继续安排，不会停止同事的任务。'}</p> : <p className="rw-muted">此会话沿用原配置，仅支持手动向同事助手提问；自主协作仅用于具备该能力的新会话。</p>}
+    {value.capabilities?.memory === false && <p className="rw-muted">此会话的原工具配置不包含个人记忆。可使用上方“新建会话”，再直接告诉助手要记住、查找、纠正或忘记的偏好。</p>}
+</details>
     <div className="rs-conversation">{value.turns.length ? value.turns.map(turn => <TurnRecord key={turn.id} turn={turn} onTask={onTask} onQuestion={onQuestion}/>) : <div className="rs-empty"><h3>会话已创建，尚无执行轮次</h3><p>写下第一轮指令后明确开始。打开或刷新不会自动执行。</p></div>}</div>
-    <SharedSources key={`${value.id}:${value.blockReason ?? ''}:${value.sharedSourceIds.join(',')}`} ownerId={ownerId} ids={value.sharedSourceIds}/>
-    <SessionQuestions key={`${ownerId}:${value.id}:${value.blockReason ?? ''}`} ownerId={ownerId} sessionId={value.id} collaborationEnabled={value.collaboration?.enabled} questionId={questionId} onQuestion={onQuestion} onUse={value.allowedActions.includes('start') && !blocked && !busy ? id => { selectedReply.change(id); onQuestion(''); composer.current?.focus(); composer.current?.scrollIntoView?.({ block: 'center' }); } : undefined}/>
-    <ContextStatus value={value} blocked={blocked}/>
-    {(value.allowedActions.includes('start') || correction) && <form className="rw-form rs-composer" noValidate onSubmit={event => { event.preventDefault(); void send(); }}><fieldset disabled={busy || blocked}>{selectedReply.value && <div className="rs-selected-reply"><p>已选择下一轮引用：<code>{selectedReply.value}</code>。{correction ? '当前纠正不会采用这条回复。' : '提交下一轮时会重新核对回复与来源权限。'}</p><button type="button" onClick={() => selectedReply.change('')}>取消选用回复</button></div>}<label>{correction ? '补充或纠正当前研究' : '下一轮指令'}<textarea ref={composer} rows={3} maxLength={2000} value={draft.value} onChange={event => draft.change(event.target.value)} aria-invalid={!!error}/></label><p className="rw-muted">{correction ? '先保存纠正，下一次研究请求才会纳入；整理摘要不算纳入，也不会改变已经开始的调用或保证模型遵守。' : '填写的新指令只有点击开始才会发送；沿用此会话的目标和停止边界。'}</p>{error && <p role="alert" className="rw-error">{error}</p>}<button className="rw-primary">{busy ? '正在提交…' : correction ? '保存纠正' : '开始这一轮'}</button></fieldset></form>}
+    {!!value.sharedSourceIds.length && <SharedSources key={`${value.id}:${value.blockReason ?? ''}:${value.sharedSourceIds.join(',')}`} ownerId={ownerId} ids={value.sharedSourceIds}/>}
+    <details className="rs-collaboration-details" open={!!questionId}><summary>同事问答</summary><SessionQuestions key={`${ownerId}:${value.id}:${value.blockReason ?? ''}`} ownerId={ownerId} sessionId={value.id} collaborationEnabled={value.collaboration?.enabled} questionId={questionId} onQuestion={onQuestion} onUse={value.allowedActions.includes('start') && !blocked && !busy ? id => { selectedReply.change(id); onQuestion(''); composer.current?.focus(); composer.current?.scrollIntoView?.({ block: 'center' }); } : undefined}/></details>
+    <ContextStatus value={value} blocked={blocked}/><div ref={end} className="rs-conversation-end"/>
+    {(value.allowedActions.includes('start') || correction) && <form className="rw-form rs-composer" noValidate onSubmit={event => { event.preventDefault(); void send(); }}><fieldset disabled={busy || blocked}>{selectedReply.value && <div className="rs-selected-reply"><p>已选择下一轮引用：<code>{selectedReply.value}</code>。{correction ? '当前纠正不会采用这条回复。' : '提交下一轮时会重新核对回复与来源权限。'}</p><button type="button" onClick={() => selectedReply.change('')}>取消选用回复</button></div>}<label>{correction ? '补充或纠正当前研究' : '下一轮指令'}<textarea ref={composer} rows={2} placeholder="继续对话…" onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} value={draft.value} onChange={event => draft.change(event.target.value)} aria-invalid={!!error}/></label><p className="rw-muted">{correction ? '补充消息会在下一次模型请求中纳入。' : 'Enter 发送 · Shift + Enter 换行'}</p>{error && <p role="alert" className="rw-error">{error}</p>}<button className="rw-primary">{busy ? '正在提交…' : correction ? '保存纠正' : '发送'}</button></fieldset></form>}
     {!draft.saved && <p className="rw-error" role="alert">浏览器无法保存草稿；离开前请复制当前输入。</p>}
   </section>;
 }
 
-export function ResearchSessions({ ownerId, selectedId = '', questionId = '', onSelect, onQuestion, onModels, onTask }: Props) {
+export function ResearchSessions({ ownerId, selectedId = '', questionId = '', onSelect, onQuestion, onModels, onTask, navigation, workspaceContent, sessionError }: Props) {
+  const [navigationOpen, setNavigationOpen] = useState(() => !window.matchMedia('(max-width:760px)').matches);
+  useEffect(() => {
+    const media = window.matchMedia('(max-width:760px)');
+    const resize = () => setNavigationOpen(!media.matches);
+    media.addEventListener('change', resize);
+    return () => media.removeEventListener('change', resize);
+  }, []);
+  const showingConversation = workspaceContent === undefined;
   const [options, setOptions] = useState<SessionOptions | null>(null); const [page, setPage] = useState<SessionPage | null>(null);
   const [detail, setDetail] = useState<ResearchSession | null>(null); const [after, setAfter] = useState('');
   const [readError, setReadError] = useState(''); const [detailError, setDetailError] = useState(''); const [actionError, setActionError] = useState(''); const [notice, setNotice] = useState('');
+  const [streamError, setStreamError] = useState('');
   const [refresh, setRefresh] = useState(0); const [busy, setBusy] = useState(false);
   const feedback = useRef<HTMLDivElement | null>(null);
   useEffect(() => { if (actionError || notice) { feedback.current?.focus(); feedback.current?.scrollIntoView?.({ block: 'nearest' }); } }, [actionError, notice]);
@@ -267,7 +292,7 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
       })
       .catch(reason => { if (!controller.signal.aborted) setReadError(describe(reason)); });
     return () => controller.abort();
-  }, [ownerId, after, refresh]);
+  }, [ownerId, after, refresh, showingConversation]);
   useEffect(() => {
     setDetail(previous => previous?.id === selectedId ? previous : null); setDetailError(''); if (!selectedId) return;
     const controller = new AbortController();
@@ -289,8 +314,26 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
       catch (reason) { if (!controller.signal.aborted && version === readVersion.current) { setDetail(null); setDetailError(describe(reason)); } }
       finally { reading = false; }
     };
-    void read(); const timer = window.setInterval(() => { if (document.visibilityState !== 'hidden' && !lock.current) void read(); }, 4000);
-    return () => { controller.abort(); window.clearInterval(timer); };
+    let reconnect: ReturnType<typeof setTimeout> | undefined;
+    async function watch() {
+      const version = readVersion.current;
+      try {
+        await api.watch(ownerId, selectedId, controller.signal, value => {
+          if (controller.signal.aborted || version !== readVersion.current) return;
+          setDetail(value); setDetailError(''); setStreamError('');
+          detailRead.current = { revision: detailRead.current.revision + 1, value };
+          setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === value.id ? { ...item, state: value.state, updatedAt: value.updatedAt } : item) } : previous);
+        });
+      } catch (reason) {
+        if (!controller.signal.aborted) {
+          setStreamError(describe(reason)); reconnect = setTimeout(() => void watch(), 1500);
+        }
+      }
+    }
+    setStreamError('');
+    void read().then(() => { if (!controller.signal.aborted) void watch(); });
+    return () => { controller.abort(); clearTimeout(reconnect); };
+
   }, [ownerId, selectedId, refresh]);
   function saveRequests(update: (previous: PendingSessionRequest[]) => PendingSessionRequest[]) {
     const latest = readStored<PendingSessionRequest[]>(requestKey(ownerId), requestRef.current);
@@ -305,11 +348,15 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
     try {
       const result = await send(pointer.requestId);
       saveRequests(previous => previous.filter(item => item.requestId !== pointer.requestId));
-      if (active.current) { if (selected.current === result.id || action === 'create') setDetail(result); setRefresh(value => value + 1); }
+      if (active.current) { if (selected.current === result.id || action === 'create') setDetail(result); }
       return result;
     } catch (reason) {
       if (!unresolved(reason)) saveRequests(previous => previous.filter(item => item.requestId !== pointer.requestId));
       throw reason;
+    } finally {
+      // A lost POST acknowledgement must not leave the subscription pinned to
+      // the pre-command read version. Reopen it and only read persisted state.
+      if (active.current) setRefresh(value => value + 1);
     }
   }
   async function run(work: () => Promise<void>): Promise<boolean> {
@@ -326,7 +373,7 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
       onSelect(created.id); setNotice('会话已创建，正在提交第一轮。');
       try { await post('turn', created.id, requestId => api.turn(ownerId, created.id, { requestId, text: value.goal })); }
       catch (reason) { if (active.current) setNotice('会话已创建，第一轮未确认。请先核对原请求；没有回执时不会自动重发。'); throw reason; }
-      if (active.current) setNotice('第一轮请求已接收，请查看实际执行记录。');
+      if (active.current) setNotice('');
     });
   }
   async function recover(pointer: PendingSessionRequest) {
@@ -339,11 +386,10 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
   }
   const currentPending = requests.some(item => item.sessionId === selectedId || !selectedId && item.action === 'create');
   const refreshPage = useCallback(() => setRefresh(value => value + 1), []);
-  return <div className="research-sessions"><div className="rs-toolbar"><button onClick={() => onSelect('')} aria-current={!selectedId ? 'page' : undefined}>新建会话</button><button disabled={busy} onClick={refreshPage}>刷新会话</button></div>
-    {requests.length > 0 && <section className="rs-recovery" aria-label="待核对的会话请求"><h2>原请求仍需核对</h2><p>不会自动重发；没有查到回执也不代表未发生。</p>{requests.map(pointer => <div key={pointer.requestId}><span>{actions[pointer.action]}<code>{pointer.requestId}</code></span><button disabled={busy} onClick={() => void recover(pointer)}>查询原请求</button></div>)}</section>}
+  return <div className="research-sessions">    <div className="rs-layout"><aside className="rs-session-list" aria-label="我的研究会话"><details className="rs-navigation" open={navigationOpen} onToggle={event => setNavigationOpen(event.currentTarget.open)}><summary>会话与导航</summary><div className="rs-navigation-body">{navigation}<div className="rs-toolbar"><button onClick={() => onSelect('')} aria-current={!selectedId ? 'page' : undefined}>新建会话</button><button disabled={busy} onClick={refreshPage}>刷新会话</button></div><h2>我的会话</h2>{readError ? <p className="rw-error" role="alert">{readError}</p> : !page ? <p role="status">正在读取会话…</p> : page.items.length ? page.items.map(item => <button key={item.id} aria-current={item.id === selectedId ? 'page' : undefined} onClick={() => { onSelect(item.id); if (window.matchMedia('(max-width:760px)').matches) setNavigationOpen(false); }}><strong>{item.title}</strong><span>{states[item.state]} · {time(item.updatedAt)}</span></button>) : <p className="rw-muted">{after ? '本页没有会话。' : '还没有会话。提交第一个目标后，记录会保存在这里。'}</p>}<div className="rs-pagination">{after && <button onClick={() => setAfter('')}>第一页</button>}{page?.nextCursor && <button onClick={() => setAfter(page.nextCursor!)}>下一页会话</button>}</div></div></details></aside>
+      <main className={`rs-content${workspaceContent !== undefined ? ' rs-settings-content' : ''}`}>{sessionError && <p role="alert" className="rw-error">{sessionError}</p>}{showingConversation && selectedId && streamError && <p className="rs-stream-status" role="status">{streamError} 已显示的记录仍保留。</p>}    {requests.length > 0 && <section className="rs-recovery" aria-label="待核对的会话请求"><h2>原请求仍需核对</h2><p>不会自动重发；没有查到回执也不代表未发生。</p>{requests.map(pointer => <div key={pointer.requestId}><span>{actions[pointer.action]}<code>{pointer.requestId}</code></span><button disabled={busy} onClick={() => void recover(pointer)}>查询原请求</button></div>)}</section>}
     {(actionError || notice) && <div ref={feedback} tabIndex={-1} className="rs-action-feedback">{actionError && <p className="rw-error" role="alert">{actionError}</p>}{notice && <p role="status">{notice}</p>}</div>}
-    <div className="rs-layout"><aside className="rs-session-list" aria-label="我的研究会话"><h2>我的会话</h2>{readError ? <p className="rw-error" role="alert">{readError}</p> : !page ? <p role="status">正在读取会话…</p> : page.items.length ? page.items.map(item => <button key={item.id} aria-current={item.id === selectedId ? 'page' : undefined} onClick={() => onSelect(item.id)}><strong>{item.title}</strong><span>{states[item.state]} · {time(item.updatedAt)}</span></button>) : <p className="rw-muted">{after ? '本页没有会话。' : '还没有会话。提交第一个目标后，记录会保存在这里。'}</p>}<div className="rs-pagination">{after && <button onClick={() => setAfter('')}>第一页</button>}{page?.nextCursor && <button onClick={() => setAfter(page.nextCursor!)}>下一页会话</button>}</div></aside>
-      <div className="rs-content">{selectedId ? detailError ? <p className="rw-error" role="alert">{detailError}</p> : detail ? <SessionDetail key={detail.id} ownerId={ownerId} value={detail} busy={busy} blocked={currentPending} questionId={questionId} onQuestion={onQuestion} onTask={onTask} onStop={() => void run(async () => { await post('stop', detail.id, requestId => api.stop(ownerId, detail.id, { requestId })); })} onSend={(text, correction, assistantQuestionId) => run(async () => { await post(correction ? 'correct' : 'turn', detail.id, requestId => correction ? api.correct(ownerId, detail.id, { requestId, text }) : api.turn(ownerId, detail.id, { requestId, text, ...(assistantQuestionId ? { assistantQuestionId } : {}) })); setNotice(correction ? '纠正已保存；是否已纳入下一次请求请看消息状态。' : '本轮请求已接收，请查看实际执行记录。'); })}/> : <p role="status">正在读取会话详情…</p> : <CreateSessionForm ownerId={ownerId} options={options} busy={busy} blocked={currentPending} onModels={onModels} onCreate={create}/>}</div>
+{workspaceContent !== undefined ? workspaceContent : selectedId ? detailError ? <p className="rw-error" role="alert">{detailError}</p> : detail ? <SessionDetail key={detail.id} ownerId={ownerId} value={detail} busy={busy} blocked={currentPending} questionId={questionId} onQuestion={onQuestion} onTask={onTask} onStop={() => void run(async () => { await post('stop', detail.id, requestId => api.stop(ownerId, detail.id, { requestId })); })} onSend={(text, correction, assistantQuestionId) => run(async () => { await post(correction ? 'correct' : 'turn', detail.id, requestId => correction ? api.correct(ownerId, detail.id, { requestId, text }) : api.turn(ownerId, detail.id, { requestId, text, ...(assistantQuestionId ? { assistantQuestionId } : {}) })); setNotice(correction ? '补充消息已保存。' : ''); })}/> : <p role="status">正在读取会话详情…</p> : <CreateSessionForm ownerId={ownerId} options={options} busy={busy} blocked={currentPending} onModels={onModels} onCreate={create}/>}</main>
     </div>
   </div>;
 }

@@ -29,10 +29,10 @@ class ExternalBudgetLedgerTests(unittest.IsolatedAsyncioTestCase):
         def sql(query, **parameters):
             if ' '.join(query.split()) == ('ALTER TABLE af_delegation_links '
                     'DROP CONSTRAINT IF EXISTS af_delegation_links_depth_check, '
-                    'ADD CONSTRAINT af_delegation_links_depth_check CHECK(depth BETWEEN 1 AND 8)'):
+                    'ADD CONSTRAINT af_delegation_links_depth_check CHECK(depth >= 1)'):
                 # This fresh SQLite table already has the widened constraint.
                 schema = original_sql("SELECT sql FROM sqlite_master WHERE name='af_delegation_links'")[0]['sql']
-                self.assertIn('CHECK(depth BETWEEN 1 AND 8)', schema)
+                self.assertIn('CHECK(depth >= 1)', schema)
                 return []
             if 'task_id=ANY(:ids)' in query:
                 identifiers = parameters.pop('ids')
@@ -57,7 +57,7 @@ class ExternalBudgetLedgerTests(unittest.IsolatedAsyncioTestCase):
     def rows(self):
         return self.store.sql('SELECT * FROM af_delegation_tool_calls ORDER BY call_id')
 
-    async def test_original_native_call_once_reopen_and_second_call_exhausted(self):
+    async def test_original_native_call_once_reopen_and_second_call_is_recorded(self):
         operation, command = await self.external()
         self.assertEqual(self.rows(), [])
         await self.control.submit('alice', 'task', command)
@@ -71,9 +71,8 @@ class ExternalBudgetLedgerTests(unittest.IsolatedAsyncioTestCase):
         context = self.control.context(self.store.task('task', 'alice'))
         self.assertFalse(self.store.delegation.consume_tool_budget(context,
             first[0]['call_id'], 'factory_wait_operations')['charged'])
-        with self.assertRaises(PermissionError):
-            self.store.delegation.consume_tool_budget(context, 'replacement-call', 'factory_wait_operations')
-        self.assertEqual(self.rows(), first)
+        self.assertTrue(self.store.delegation.consume_tool_budget(context, 'replacement-call', 'factory_wait_operations')['charged'])
+        self.assertEqual(len(self.rows()), 2)
         self.assertEqual(self.runtime.starts, [operation['id']])
         self.assertEqual(self.bridge.continue_run.await_count, 1)
 
@@ -106,7 +105,7 @@ class ExternalBudgetLedgerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.store.sql('SELECT reclaimed FROM af_delegation_roots')[0]['reclaimed'])
         self.assertEqual(self.runtime.starts, [operation['id'], second['id']])
 
-    async def test_different_wait_step_same_provider_call_cannot_borrow_first_charge(self):
+    async def test_different_wait_step_same_provider_call_has_its_own_record(self):
         operation, command = await self.external()
         await self.control.submit('alice', 'task', command)
         original_rows = self.rows()
@@ -122,9 +121,12 @@ class ExternalBudgetLedgerTests(unittest.IsolatedAsyncioTestCase):
         second = WorkflowCommand(commandId='second-wait-command', action='reconcile',
                                  version=view['version'], operationId=operation['id'])
         result = await self.control.submit('alice', 'task', second)
+        # This fixture bridge never acknowledges continuation. The second
+        # distinct wait is recorded but its unknown continuation is not replayed.
         self.assertEqual(result['status'], 'unknown')
-        self.assertEqual(self.rows(), original_rows)
-        self.assertEqual(self.bridge.continue_run.await_count, 1)
+        self.assertEqual(len(self.rows()), 2)
+        self.assertNotEqual(self.rows()[0]['call_id'], self.rows()[1]['call_id'])
+        self.assertEqual(self.bridge.continue_run.await_count, 2)
+        await self.control.submit('alice', 'task', second)
+        self.assertEqual(self.bridge.continue_run.await_count, 2)
         self.assertEqual(self.runtime.starts, [operation['id']])
-        record = self.control._load('alice', 'task', second.commandId)
-        self.assertEqual(record['errorType'], 'PermissionError')

@@ -404,15 +404,14 @@ class ApplicationCompositionTests(ApplicationCompositionFixture):
     def test_forged_tools_caps_budget_anchor_config_and_current_policy_are_denied(self):
         plan = create_plan(self.store, "alice", "Checksum exact governed fixture", "literature", "fixture-checksum")
         for field, value in (("tools", ["checksum", "fixture_operation"]), ("capabilities", ["agent_os:admin"]),
-                             ("budget", {**plan["budget"], "toolCalls": 9}), ("config", {**plan["config"], "experimentDurationSeconds": 600}),
+                             ("config", {**plan["config"], "experimentDurationSeconds": 600}),
                              ("bindingManifest", {**plan["bindingManifest"], "sha256": "0" * 64})):
             with self.subTest(field=field), self.assertRaises(HTTPException):
                 self.applications.require_plan_current({**plan, field: value})
         self.settings.max_tool_calls = 3
         narrowed = create_plan(self.store, "alice", "Checksum current ceiling", "literature", "fixture-checksum")
         self.assertEqual(narrowed["budget"]["toolCalls"], 3)
-        with self.assertRaises(HTTPException):
-            self.applications.require_plan_current(plan)
+        self.applications.require_plan_current(plan)
         proposal = self.composition.propose("alice", "Checksum before config revocation", application="fixture-checksum", request_id="before-unset")
         self.settings.temporary_policy = "unset"
         self.assertEqual(self.composition.accept("alice", proposal["id"], "after-unset")["ownerId"], "alice")

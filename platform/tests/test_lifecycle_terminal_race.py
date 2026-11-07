@@ -67,6 +67,20 @@ class LifecycleTerminalRaceTests(unittest.TestCase):
         store.observed.assert_not_called()
         self.assertNotIn("release-root", actions)
 
+    def test_running_original_effect_is_in_flight_then_unknown_without_receipt(self):
+        observer, store, task, _, _ = self.fixture()
+        store.process_runtime = SimpleNamespace(task_held=lambda _: True)
+        observer._binding.return_value = {'status': 'running'}
+        facts = observer._facts(task)
+        self.assertFalse(facts['stopped'])
+        self.assertFalse(facts['unknown'])
+        self.assertEqual(facts['displayStatus'], 'running')
+        observer._binding.return_value = {'status': 'completed'}
+        facts = observer._facts(task)
+        self.assertFalse(facts['stopped'])
+        self.assertTrue(facts['unknown'])
+        self.assertEqual(facts['displayStatus'], 'unknown')
+
     def test_failure_after_positive_stop_records_cleanup_before_terminal_release(self):
         observer, store, task, failure, actions = self.fixture()
         requested, errors = observer._request_cleanup(task)

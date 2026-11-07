@@ -170,7 +170,7 @@ class ApplicationService:
             # Execution plans already bind the complete closure. Read only
             # those exact versions, freshly on every check; this is neither a
             # cached graph nor permission to omit a transitive dependency.
-            if not isinstance(candidate_refs, list) or not 1 <= len(candidate_refs) <= 30:
+            if not isinstance(candidate_refs, list) or not candidate_refs:
                 raise HTTPException(409, "Plan must bind a bounded complete material closure")
             try:
                 candidates = [PinnedRef.model_validate(ref).model_dump() for ref in candidate_refs]
@@ -194,8 +194,6 @@ class ApplicationService:
                 raise HTTPException(409, "Pinned application dependency cycle")
             if key in chosen:
                 return
-            if depth > 8 or len(chosen) + len(visiting) >= 30:
-                raise HTTPException(409, "Application material closure exceeds depth/count bounds")
             item = known.get(key)
             if item is None or item.get("kind") not in MATERIAL_KINDS or item.get("archived") or "agno:3.1.0" not in item.get("compatibility", []):
                 raise HTTPException(409, "Approved pinned application material is unavailable or incompatible")
@@ -326,8 +324,6 @@ class ApplicationService:
             normalized = self.validate_definition(definition, check_materials=False)
             canonical_snapshot = canonical(value)
             canonical_definition = canonical(definition)
-            if len(canonical_snapshot.encode("utf-8")) > 131072:
-                raise HTTPException(422, "Application snapshot exceeds its bounded payload")
             if canonical_definition != canonical(normalized):
                 raise HTTPException(422, "Application snapshot definition must be complete and canonical")
         except (TypeError, ValueError, UnicodeError) as error:
@@ -527,10 +523,10 @@ class ApplicationService:
             duration = config.get("experimentDurationSeconds")
             if type(duration) is not int or not 1 <= duration <= min(mode["config"]["experimentDurationSeconds"], plan.get("budget", {}).get("experimentSeconds", 0)):
                 raise HTTPException(403, "Plan environment duration exceeds its governed ceiling")
-        for key, ceiling in mode["budget"].items():
-            ceiling = min(ceiling, operator_limits[key])
-            if type(plan.get("budget", {}).get(key)) is not int or not 1 <= plan["budget"][key] <= ceiling:
-                raise HTTPException(403, "Plan budget exceeds its application ceiling")
+        for key in operator_limits:
+            value = plan["budget"][key]
+            if value is not None and (type(value) is not int or value < 1):
+                raise HTTPException(403, "Plan budget metadata must be positive or absent")
         return application
 
 

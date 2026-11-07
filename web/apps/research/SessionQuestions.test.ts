@@ -75,7 +75,7 @@ it('shows field errors near the draft and does not send on reads, refresh or sel
   await mount(); await act(async () => button('向同事助手提问').click()); await act(async () => button('向 Bob 的助手提问').click());
   await act(async () => button('确认发送问题').click());
   expect(document.activeElement).toBe(host.querySelector('textarea')); expect(host.querySelector('textarea')?.getAttribute('aria-invalid')).toBe('true');
-  expect(host.querySelector('#rs-question-error')?.textContent).toContain('至少 2 个字'); expect(api.ask).not.toHaveBeenCalled();
+  expect(host.querySelector('#rs-question-error')?.textContent).toContain('填写问题'); expect(api.ask).not.toHaveBeenCalled();
   const answered: ResearchQuestion = { ...question, reply: { state: 'available', text: '先验证数据边界', contentIds: [], createdAt: question.createdAt } };
   vi.mocked(api.questions).mockResolvedValue({ items: [answered], nextCursor: null }); vi.mocked(assistantApi.question).mockResolvedValue(answered);
   await act(async () => button('刷新已发问题').click()); await act(async () => button(question.text).click()); await act(async () => button('用于下一轮').click());

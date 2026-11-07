@@ -133,16 +133,16 @@ class AssistantMessagesTests(unittest.TestCase):
         self.assertEqual(self.send(), result)
         self.assertEqual(len(self.runs.calls), 1)
 
-    def test_http_rejects_owner_config_override_and_unbounded_input(self):
+    def test_http_rejects_owner_override_and_accepts_long_messages(self):
         app = FastAPI(); app.include_router(assistant_messages_router(self.auth, self.service))
         with TestClient(app) as client:
             path = '/api/factory/assistants/bobs-assistant/messages'
-            for changes in ({'owner': 'alice'}, {'connectionRefs': {}}, {'text': 'x' * 2001}):
+            for changes in ({'owner': 'alice'}, {'connectionRefs': {}}):
                 response = client.post(path, headers={'x-test-member': 'alice'},
                     json={**self.body.model_dump(), **changes})
                 self.assertEqual(response.status_code, 422, response.text)
             self.assertEqual(self.runs.calls, [])
-            response = client.post(path, headers={'x-test-member': 'alice'}, json=self.body.model_dump())
+            response = client.post(path, headers={'x-test-member': 'alice'}, json={**self.body.model_dump(), 'text': 'x' * 20001})
             self.assertEqual(response.status_code, 202, response.text)
             receipt = client.get('/api/factory/assistant-message-requests/' + self.body.requestId,
                 headers={'x-test-member': 'alice'})

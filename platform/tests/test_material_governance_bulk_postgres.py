@@ -121,17 +121,14 @@ class MaterialGovernanceBulkPostgresTests(unittest.TestCase):
             self.require(material)
         self.assertIn('bootstrap', str(bootstrap.exception.detail))
 
-    def test_dependency_depth_and_corrupted_cycle_are_rejected(self):
+    def test_deep_dependency_closure_is_allowed_and_corrupted_cycle_is_rejected(self):
         chain = [self.published()]
         for _ in range(8):
             chain.append(self.published(dependencies=[ref(chain[-1])]))
         self.assertTrue(self.require(*chain)['allowed'])
-        # A valid digest/immutable row with a ninth dependency edge exceeds the
-        # same DFS depth limit. Build only this fault via the fixture writer.
-        too_deep = self.rewrite_fixture({**self.published(), 'dependencies': [ref(chain[-1])]})
-        with self.assertRaises(HTTPException) as depth:
-            self.require(too_deep, *chain)
-        self.assertIn('closure exceeds bounds', str(depth.exception.detail))
+        # A valid deeper immutable graph is accepted without a project depth cap.
+        deeper = self.published(dependencies=[ref(chain[-1])])
+        self.assertTrue(self.require(deeper, *chain)['allowed'])
         # Content-addressed cycles cannot all retain valid SHA256 pins. Corrupt
         # the leaf into a back-edge and verify it is rejected before authority.
         leaf = chain[0]

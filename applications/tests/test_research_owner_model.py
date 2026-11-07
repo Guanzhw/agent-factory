@@ -140,7 +140,8 @@ class ResearchOwnerModelTests(unittest.IsolatedAsyncioTestCase):
         response = await h.steps['research_decide'].agent.arun('Synthetic original evidence',
             session_id=ctx.session_id, user_id=ctx.user_id, session_state=ctx.session_state)
         self.assertEqual(response.status.value, 'ERROR')
-        self.assertEqual(response.content, 'PERSONAL_MODEL_REQUEST_FAILED')
+        self.assertEqual(response.content, 'PERSONAL_MODEL_REQUEST_FAILED_PERMISSIONERROR')
+        self.assertNotIn('Synthetic credential revoked', response.content)
         self.assertEqual(h.credentials.call_count, 1)
         self.assertEqual(h.calls, [])
         h.rounds.launch.assert_not_awaited()

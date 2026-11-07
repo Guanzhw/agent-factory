@@ -93,8 +93,6 @@ class FactoryLifecycleObserver:
 
     def _group(self, root: dict) -> tuple[list[dict], list[dict]]:
         links = self.store.sql("SELECT * FROM af_delegation_links WHERE root_id=:root ORDER BY depth,created_at", root=root["id"])
-        if len(links) > 4:
-            raise ValueError("Persisted delegation group exceeds its bounded contract")
         tasks, depths = [root], {root["id"]: 0}
         for link in links:
             if link["owner_id"] != root["owner_id"] or link["parent_id"] not in depths or link["depth"] != depths[link["parent_id"]] + 1:
@@ -231,7 +229,8 @@ class FactoryLifecycleObserver:
         effects_unknown = effects_unknown or runtime_custody_held(self.store, task['id'])
         stopped = not effects_unknown and bool(ticket and ticket["status"] in TERMINAL or not ticket and task["admission"] == "rejected")
         return {"taskId": task["id"], "stopped": stopped,
-                "unknown": effects_unknown or ticket is None and task["admission"] != "rejected",
+                "unknown": (effects_unknown and (not ticket or ticket["status"] != "running"))
+                    or ticket is None and task["admission"] != "rejected",
                 "nativeStatus": ticket["status"] if ticket else None,
                 "persistedRunStatus": ticket.get("persistedRunStatus") if ticket else None,
                 "failed": (task["body"]["stoppedStatus"] == "failed" if task["body"].get("stoppedStatus") is not None
@@ -321,7 +320,7 @@ class FactoryLifecycleObserver:
             descendants = [link for link in links if link["parent_id"] == task["id"]]
             children_unknown = any(not link["child_id"] or facts.get(link["child_id"], {}).get("unknown", True)
                                    for link in descendants)
-            if (fact["unknown"] and status not in {"running", "canceling"}) or children_unknown:
+            if status not in {"running", "canceling"} and (fact["unknown"] or children_unknown):
                 status = "unknown"
             elif status == "completed" and descendants:
                 status = "waiting_children"

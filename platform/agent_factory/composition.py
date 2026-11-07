@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
-from .application_schema import budget_limits, task_config
+from .application_schema import optional_min, budget_limits, task_config
 from .input_schema import bounded_json, validate_input_values
 from .applications import ApplicationService, GovernedStorage
 from .material_governance import MaterialGovernance, PinnedRef
@@ -36,8 +36,8 @@ class CompositionService:
         metadata.create_all(store.engine)
 
     def _input(self, goal, mode, application, application_ref, material_choices, connection_refs, source_snapshot_ref=None, input_values=None):
-        if not isinstance(goal, str) or not 2 <= len(goal.strip()) <= 2000:
-            raise HTTPException(422, "Goal must contain 2–2000 characters")
+        if not isinstance(goal, str) or not goal.strip():
+            raise HTTPException(422, "Goal must contain text")
         values = {"goal": goal.strip(), "mode": mode, "application": application, "applicationRef": application_ref,
                   "materialChoices": material_choices or {}, "connectionRefs": connection_refs or {}}
         if source_snapshot_ref is not None:
@@ -64,7 +64,7 @@ class CompositionService:
             if application is not None and application != values["applicationRef"]["id"]:
                 raise HTTPException(422, "Application ID differs from its exact reference")
         for name in ("materialChoices", "connectionRefs"):
-            if not isinstance(values[name], dict) or len(values[name]) > 12:
+            if not isinstance(values[name], dict):
                 raise HTTPException(422, "Bounded named material/connection choices are required")
         try:
             values["materialChoices"] = {name: PinnedRef.model_validate(ref).model_dump() for name, ref in values["materialChoices"].items()}
@@ -171,7 +171,7 @@ class CompositionService:
         if set(caps) - set(mode["capabilities"]):
             missing.append("Selected materials exceed the application/mode authority ceiling")
         limits = budget_limits(self.store.settings, application.get("contractVersion", 1))
-        budget = {key: min(value, limits[key]) for key, value in mode["budget"].items()}
+        budget = {key: optional_min(mode["budget"].get(key), value) for key, value in limits.items()}
         budget["depth"] = 0
         policy = self.store.settings.temporary_policy
         connection_pins, connection_missing = self._connections(owner, mode, values["connectionRefs"])
@@ -387,14 +387,14 @@ class SourceSnapshotRef(BaseModel):
 
 class ProposalRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    goal: str = Field(min_length=2, max_length=2000)
+    goal: str = Field(min_length=1)
     mode: str | None = Field(default=None, max_length=100)
     application: str | None = Field(default=None, max_length=100)
     applicationRef: PinnedRef | None = None
     sourceSnapshotRef: SourceSnapshotRef | None = None
     inputValues: dict[str, Any] | None = None
-    materialChoices: dict[str, PinnedRef] = Field(default_factory=dict, max_length=12)
-    connectionRefs: dict[str, str] = Field(default_factory=dict, max_length=12)
+    materialChoices: dict[str, PinnedRef] = Field(default_factory=dict)
+    connectionRefs: dict[str, str] = Field(default_factory=dict)
     requestId: str = Field(min_length=1, max_length=200)
 
 
@@ -405,7 +405,7 @@ class ProposalDecision(BaseModel):
 
 class TemplateMatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    goal: str = Field(min_length=2, max_length=2000)
+    goal: str = Field(min_length=1)
 
 
 def composition_router(auth, service):

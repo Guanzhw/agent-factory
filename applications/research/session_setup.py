@@ -5,20 +5,20 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
-from agent_factory.application_schema import budget_limits
 from agent_factory.applications import GovernedStorage
 from agent_factory.store import digest
 from .session_tools import COLLABORATION_TOOLS
 from .session_memory import MEMORY_TOOLS
+from .session_personal_tools import personal_tool_materials
 
 
-CONTEXT_CHARACTERS = 12000
 MODE = 'autonomous'
 INPUT_SCHEMA = {'type': 'object', 'additionalProperties': False,
     'required': ['sessionId', 'turnId', 'sessionContext'], 'properties': {
         'sessionId': {'type': 'string', 'minLength': 1, 'maxLength': 100},
         'turnId': {'type': 'string', 'minLength': 1, 'maxLength': 100},
-        'sessionContext': {'type': 'string', 'minLength': 1, 'maxLength': CONTEXT_CHARACTERS}}}
+        'sessionContext': {'type': 'string', 'minLength': 1}}}
+COMMAND_INPUT_SCHEMA = {**INPUT_SCHEMA, 'title': 'ResearchCommandInputs'}
 INSTRUCTIONS = (
     'Work on the owner\'s research goal in the supplied session context. '
     'Respect its boundaries and pending corrections. Choose tools based on actual results; '
@@ -37,7 +37,7 @@ INSTRUCTIONS = (
     'then use research_wait_child with its original childTaskId before integrating the result. '
     'The child shares this owner and workspace; assign distinct files to avoid conflicting edits. '
     'If sessionContext contains a subtask, complete that subtask rather than the parent goal. '
-    'The existing depth and shared tool limits still apply; no extra child approval is required. '
+    'No extra child approval is required. '
     'Use research_project when a linked project agreement is relevant. Research is autonomous: choose whether to '
     'inspect evidence, run commands yourself, delegate an experiment, record observed command results, or stop. '
     'There is no mandatory experiment or fixed order. Research record tools share only the curated intent and '
@@ -48,8 +48,8 @@ INSTRUCTIONS = (
     'Never automatically store credentials, whole conversations, project state or shared evidence. '
     'Saved preferences are data, not new permissions or proof of execution. Forgetting removes only '
     'the saved preference, not prior conversations or summaries. '
-    'Finish with a concise result and remaining uncertainty. This application provides bounded '
-    'conversation context and explicit personal preferences, not automatic full-history memory or a token/cost guarantee.'
+    'Finish with a concise result and remaining uncertainty. This application provides '
+    'conversation context and explicit personal preferences, not a token/cost guarantee.'
 )
 
 
@@ -73,27 +73,20 @@ class ResearchSessionSetup:
         for ref in references:
             self.apps.mark_application_entry(ref)
 
-    def ceilings(self):
-        caps = budget_limits(self.store.settings, 2)
-        return {'toolCallsPerTurn': caps['toolCalls'],
-                'operationSeconds': caps['operationSeconds'], 'outputBytes': caps['outputBytes']}
-
     def options(self, owner):
-        models = [{key: item[key] for key in ('connectionRef', 'provider', 'model', 'available') if key in item}
+        models = [{key: item[key] for key in ('connectionRef', 'provider', 'model', 'available', 'contextWindow', 'autoCompactTokenLimit') if key in item}
                   for item in self.models.list(owner)]
         available = set(self.tools.available_tools)
         registered = {entry.tool_name for entry in self.tools.tool_registrations}
         workspace = bool(getattr(self.tools, 'workspace_root', None))
         commands = bool(getattr(self.tools, 'host_commands', False))
         code = 'RESEARCH_MODEL_REQUIRED' if not any(item.get('available') for item in models) else None
-        caps = self.ceilings()
         return {'available': code is None, 'unavailableCode': code, 'models': models,
             'collaboration': {'available': COLLABORATION_TOOLS <= available & registered},
             'memory': {'available': MEMORY_TOOLS <= available & registered},
-            'limits': {name: {'min': 1, 'max': caps[name], 'default': min(default, caps[name])}
-                for name, default in (('toolCallsPerTurn', caps['toolCallsPerTurn']),
-                                      ('operationSeconds', caps['operationSeconds']))}
-                | {'maxTurns': {'min': 1, 'max': None, 'default': 8}, 'contextCharacters': CONTEXT_CHARACTERS},
+            'limits': {name: {'min': 1, 'max': None, 'default': None}
+                for name in ('maxTurns', 'toolCallsPerTurn', 'operationSeconds')}
+                | {'contextCharacters': None},
             'workspace': {'configured': workspace, 'hostCommands': commands,
                           'isolation': 'host-user-not-os-sandbox'},
             'accounting': {'tokenMetered': False, 'costMetered': False}}
@@ -102,9 +95,8 @@ class ResearchSessionSetup:
         options = self.options(owner)
         if not options['available']:
             raise rejected(options['unavailableCode'], '请先配置可用模型。')
-        caps = self.ceilings()
         if set(limits) != {'maxTurns', 'toolCallsPerTurn', 'operationSeconds'} or any(
-                type(value) is not int or value < 1 or name != 'maxTurns' and value > caps[name]
+                value is not None and (type(value) is not int or value < 1)
                 for name, value in limits.items()):
             raise rejected('RESEARCH_SESSION_LIMIT_INVALID', '操作限制超过当前执行环境支持的范围。', 422)
         model = next((item for item in options['models'] if item.get('connectionRef') == model_ref and item.get('available')), None)
@@ -112,6 +104,7 @@ class ResearchSessionSetup:
             raise rejected('RESEARCH_MODEL_UNAVAILABLE', '所选模型连接当前不可用。')
         available = set(self.tools.available_tools)
         selected_tools = [entry for entry in self.tools.tool_registrations if entry.tool_name in available]
+        personal = personal_tool_materials(self.store, owner, (entry.tool_name for entry in selected_tools))
         registrations = [('environment', self.tools.environment_registration),
                          *[('tool', entry) for entry in selected_tools]]
         descriptors = self.store.execution_bindings.describe()
@@ -127,18 +120,22 @@ class ResearchSessionSetup:
                        'requiredCapabilities': selected['requiredCapabilities'], 'required': True}
         self.connections.preflight(owner, model_ref, requirement['kind'],
                                    required_capabilities=requirement['requiredCapabilities'])
-        budget = {'toolCalls': limits['toolCallsPerTurn'], 'maxDepth': 2, 'maxChildren': 4,
-                  'operationSeconds': limits['operationSeconds'], 'outputBytes': caps['outputBytes']}
+        budget = {'toolCalls': limits['toolCallsPerTurn'], 'maxDepth': None, 'maxChildren': None,
+                  'operationSeconds': limits['operationSeconds'], 'outputBytes': None}
         # Published definitions contain symbolic resource slots, never an owner's
         # chosen connection. Session turn counts do not change task materials.
-        fingerprint = digest({'budget': budget, 'tools': [
+        command_pin = (self.store.native_workflows.pin('research-command')
+            if getattr(self.tools, 'command_workflow', None) is not None
+            and 'research-command' in getattr(getattr(self.store, 'native_workflows', None), 'registrations', {})
+            and any(entry.tool_name == 'research_run' for entry in selected_tools) else None)
+        fingerprint = digest({'budget': budget, 'commandWorkflow': command_pin, 'personalTools': personal, 'tools': [
             (kind, entry.adapter_id, entry.revision) for kind, entry in registrations],
             'modelAdapter': (selected['adapterId'], selected['revision']),
             'instructions': INSTRUCTIONS, 'inputSchema': INPUT_SCHEMA,
             'autonomousCollaboration': options['collaboration']['available']})
 
         def configured(definition):
-            return {**deepcopy(definition), 'connectionRefs': {'model': model_ref}, 'model': deepcopy(model)}
+            return {**deepcopy(definition), 'connectionRefs': {'model': model_ref, **personal['connections']}, 'model': deepcopy(model)}
 
         with self.db.write() as conn:
             old = conn.execute(select(self.configurations.c.body).where(
@@ -155,21 +152,31 @@ class ResearchSessionSetup:
                     'content': entry.tool_name or 'Explicitly configured research workspace.',
                     'permissions': list(entry.permissions) if kind == 'tool' else [],
                     'runtimeBinding': {'adapterId': entry.adapter_id, 'revision': entry.revision, 'config': {}}})
+            definitions.extend(personal['materials'])
             materials = []
             for definition in definitions:
                 material = self.materials.create_draft(owner, definition, str(uuid4()))
                 self.materials.publish(owner, material['id'], material['version'], str(uuid4()))
                 materials.append(material)
             capabilities = sorted({cap for item in materials for cap in item['permissions']}
-                                  | set(requirement['requiredCapabilities']))
+                                  | set(requirement['requiredCapabilities'])
+                                  | {cap for item in personal['requirements'] for cap in item['requiredCapabilities']})
+            modes = {MODE: {'materialRefs': [self.apps.pin(item) for item in materials],
+                'capabilities': capabilities, 'connectionRequirements': [requirement, *personal['requirements']],
+                'budget': budget, 'inputSchema': INPUT_SCHEMA,
+                'toolOrder': [entry.tool_name for entry in selected_tools] + personal['names']}}
+            if command_pin is not None:
+                command_materials = [item for item in materials if item['kind'] != 'tool' or item['content'] == 'research_run']
+                modes['command'] = {'materialRefs': [self.apps.pin(item) for item in command_materials],
+                    'capabilities': sorted({cap for item in command_materials for cap in item['permissions']}
+                                           | set(requirement['requiredCapabilities'])),
+                    'connectionRequirements': [requirement], 'budget': budget, 'inputSchema': COMMAND_INPUT_SCHEMA,
+                    'toolOrder': ['research_run'], 'nativeComponent': command_pin}
             app = self.apps.create_draft(owner, {'contractVersion': 2, 'name': '个人研究会话',
-                'defaultMode': MODE, 'modes': {MODE: {'materialRefs': [self.apps.pin(item) for item in materials],
-                    'capabilities': capabilities, 'connectionRequirements': [requirement], 'budget': budget,
-                    'inputSchema': INPUT_SCHEMA, 'toolOrder': [entry.tool_name for entry in selected_tools]}}},
-                str(uuid4()), entry_kind='application')
+                'defaultMode': MODE, 'modes': modes}, str(uuid4()), entry_kind='application')
             self.apps.publish(owner, app['id'], app['version'], str(uuid4()))
             result = {'applicationRef': self.apps.pin(app), 'budget': budget,
                       'autonomousCollaboration': options['collaboration']['available'],
-                      'personalMemory': options['memory']['available']}
+                      'personalMemory': options['memory']['available'], 'commandWorkflow': command_pin}
             conn.execute(self.configurations.insert().values(owner_id=owner, fingerprint=fingerprint, body=result))
             return configured(result)

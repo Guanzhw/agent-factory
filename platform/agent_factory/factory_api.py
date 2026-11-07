@@ -19,12 +19,12 @@ class Body(BaseModel):
 
 
 class PlanRequest(Body):
-    topic: str = Field(min_length=2, max_length=2000)
+    topic: str = Field(min_length=1)
     mode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     application: str | None = Field(default=None, min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     applicationRef: dict | None = None
-    materialChoices: dict = Field(default_factory=dict, max_length=30)
-    connectionRefs: dict = Field(default_factory=dict, max_length=30)
+    materialChoices: dict = Field(default_factory=dict)
+    connectionRefs: dict = Field(default_factory=dict)
     inputValues: dict | None = None
     requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
 
@@ -36,7 +36,7 @@ class InstanceRequest(Body):
 
 
 class ChildRequest(Body):
-    goal: str = Field(min_length=2, max_length=2000)
+    goal: str = Field(min_length=1)
     mode: str = Field(default="literature", min_length=1, max_length=100, pattern=r"^[A-Za-z0-9_.:-]+$")
     requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
 
@@ -45,11 +45,11 @@ class MaterialRequest(Body):
     requestId: str | None = Field(default=None, min_length=1, max_length=200)
     id: str | None = Field(default=None, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
     kind: Literal["skill", "tool", "prompt", "knowledge", "model", "environment"]
-    name: str = Field(min_length=1, max_length=120)
-    description: str = Field(max_length=2000)
-    content: str = Field(max_length=16000)
-    dependencies: list[dict] = Field(default_factory=list, max_length=30)
-    permissions: list[str] = Field(default_factory=list, max_length=30)
+    name: str = Field(min_length=1)
+    description: str
+    content: str
+    dependencies: list[dict] = Field(default_factory=list)
+    permissions: list[str] = Field(default_factory=list)
 
 
 class PublicationRequest(Body):
@@ -63,7 +63,7 @@ class Cancel(Body):
 class Answer(Cancel):
     questionId: str
     version: int
-    answer: str = Field(min_length=1, max_length=2000)
+    answer: str = Field(min_length=1)
 
 
 class Approval(Cancel):
@@ -218,8 +218,8 @@ class FactoryAPI:
             "description": "Governed immutable application over native Agno", "instructions": "\n".join(plan["instructions"]),
             "skills": [], "tools": plan["tools"], "knowledge": [], "materialRefs": plan["materialRefs"],
             "modelPolicy": {"providerId": selected_model.get("provider", "factory-registered"), "modelId": selected_model.get("modelId", "pending-selection"),
-                "adapterId": model_binding.get("adapterId"), "revision": model_binding.get("revision"), "maxSteps": plan["budget"]["toolCalls"]},
-            "runtimePolicy": {"timeoutSeconds": 60}, "published": False, "createdAt": plan["createdAt"]}
+                "adapterId": model_binding.get("adapterId"), "revision": model_binding.get("revision"), "maxSteps": None},
+            "runtimePolicy": {"timeoutSeconds": getattr(self.settings, "native_timeout_seconds", None)}, "published": False, "createdAt": plan["createdAt"]}
         delegation_scope = await asyncio.to_thread(self.delegation.delegation_scope, task["owner_id"], task["id"]) if self.delegation else None
         actions = ["inspect"]
         if delegation_scope and delegation_scope["allowed"]:

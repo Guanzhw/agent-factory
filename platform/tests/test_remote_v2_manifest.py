@@ -68,7 +68,6 @@ class RemoteV2ManifestTests(V2ManifestFixture):
                  lambda p: p['inputValues'].update(format='other'),
                  lambda p: p.update(mode='other'),
                  lambda p: p['inputSchema']['properties']['format'].update(enum=['other']),
-                 lambda p: p['budget'].update(operationSeconds=600),
                  lambda p: p['budget'].update(experimentSeconds=1),
                  lambda p: p['budget'].pop('operationSeconds'),
                  lambda p: p['executionBindings']['model'].update(revision='other')]
@@ -77,6 +76,12 @@ class RemoteV2ManifestTests(V2ManifestFixture):
             edit(plan)
             with self.subTest(edit=edit), self.assertRaises(HTTPException):
                 self.read(self.envelope(rehash(plan)))
+
+    def test_numeric_budget_metadata_does_not_impose_a_receiver_ceiling(self):
+        plan = self.make_plan()
+        plan['budget']['operationSeconds'] = 600
+        plan = rehash(plan)
+        self.assertEqual(self.read(self.envelope(plan)), plan)
 
     def test_version_extra_fields_default_optout_and_root_only(self):
         original = self.make_plan()
@@ -154,7 +159,7 @@ class RemoteV2ConfigurationTests(unittest.TestCase):
         for contracts in ((True,), (2, 1), (1, 1), (), (3,)):
             with self.subTest(contracts=contracts), self.assertRaises(ValueError): replace(target, supported_application_contracts=contracts)
 
-    def test_authority_uses_original_version_and_explicit_receiver_ceiling(self):
+    def test_authority_preserves_version_and_revocation_without_numeric_ceiling(self):
         budget = {'toolCalls': 8, 'maxDepth': 2, 'maxChildren': 4, 'operationSeconds': 3, 'outputBytes': 65536}
         authority = HandoffAuthority(frozenset({'checksum:read'}), frozenset({'checksum'}), budget, contract_version=2)
         callback = Mock(return_value=authority)
@@ -168,6 +173,6 @@ class RemoteV2ConfigurationTests(unittest.TestCase):
         with self.assertRaises(HTTPException): service._authority(origin, 'a', 'task', 'sha', plan)
         callback.return_value = authority
         plan['budget']['operationSeconds'] = 4
-        with self.assertRaises(HTTPException): service._authority(origin, 'a', 'task', 'sha', plan)
+        self.assertEqual(service._authority(origin, 'a', 'task', 'sha', plan), authority)
         callback.side_effect = PermissionError('revoked')
         with self.assertRaises(HTTPException): service._authority(origin, 'a', 'task', 'sha', plan)

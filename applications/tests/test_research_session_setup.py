@@ -38,7 +38,7 @@ class OptionalSessionToolsTests(unittest.TestCase):
         self.models.register(bindings)
         self.store.material_governance = MaterialGovernance(self.store, auth)
         self.store.applications = ApplicationService(self.store, auth)
-        self.tools = ResearchSessionTools()
+        self.tools = ResearchSessionTools(host_commands=False)
         for entry in [self.tools.environment_registration, *self.tools.tool_registrations]:
             bindings.register(entry.kind, entry.adapter_id, entry.revision, entry.factory,
                 tool_name=entry.tool_name, permissions=entry.permissions, validator=entry.validator)

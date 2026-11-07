@@ -24,7 +24,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
 
-from .application_schema import ApplicationDefinitionV2, budget_limits
+from .application_schema import ApplicationDefinitionV2
 from .control_commands import ControlCommand
 from .store import effect_unresolved, canonical, digest, now, runtime_custody_held
 from .native_bridge import INTERNAL_NATIVE
@@ -180,7 +180,7 @@ def _contract_version(plan: Mapping[str, Any]) -> int:
 
 def _check_budget(budget: Mapping[str, Any], *, contract_version: int = 1) -> None:
     keys = V2_BUDGET_KEYS if contract_version == 2 else BUDGET_KEYS
-    if set(budget) != keys or any(type(value) is not int or value < 1 for value in budget.values()):
+    if set(budget) != keys or any(value is not None and (type(value) is not int or value < 1) for value in budget.values()):
         raise HTTPException(422, "Remote budget must contain the exact positive integer ceilings")
 
 
@@ -265,7 +265,7 @@ def _manifest(manifest: Mapping[str, Any], store: Any, owner: str, *, receiver: 
     if not isinstance(budget, dict) or set(budget) != budget_keys | {"depth"} or type(budget.get("depth")) is not int or budget.get("depth") != 0:
         raise HTTPException(422, "Only a root delegation tree may select an execution server")
     _check_budget({key: budget[key] for key in budget_keys}, contract_version=version)
-    if not isinstance(plan.get("instructions"), list) or any(type(item) is not str or len(item) > 16000 for item in plan["instructions"]):
+    if not isinstance(plan.get("instructions"), list) or any(type(item) is not str for item in plan["instructions"]):
         raise HTTPException(422, "Bounded immutable instructions are required")
     if version == 1:
         config = plan.get("config")
@@ -430,13 +430,6 @@ class PreparedHandoffService:
             _check_budget(current.budget, contract_version=version)
             if not set(plan["tools"]) <= origin.tools & current.tools or not set(plan["capabilities"]) <= origin.capabilities & current.capabilities:
                 raise PermissionError("Current origin/receiver capability intersection denies the manifest")
-            receiver = budget_limits(self.store.settings, version)
-            ceilings = origin.v2_budget if version == 2 else origin.budget
-            if ceilings is None:
-                raise PermissionError("Receiver has no explicit v2 budget")
-            for name in receiver:
-                if plan["budget"][name] > min(ceilings[name], current.budget[name], receiver[name]):
-                    raise PermissionError("Current origin/receiver budget intersection denies the manifest")
             if tool is not None and tool not in current.tools & origin.tools:
                 raise PermissionError("Current origin denies this protected tool")
             return current
@@ -1197,11 +1190,11 @@ class TrustedHandoffClient:
                             declared = int(advertised)
                         except ValueError as error:
                             raise HTTPException(502, "Remote response length is invalid") from error
-                        if declared < 0 or declared > limit:
+                        if declared < 0 or limit is not None and declared > limit:
                             raise HTTPException(502, "Remote response exceeds the operator ceiling")
                     raw = bytearray()
                     async for chunk in streamed.aiter_raw():
-                        if len(raw) + len(chunk) > limit:
+                        if limit is not None and len(raw) + len(chunk) > limit:
                             raise HTTPException(502, "Remote response exceeds the operator ceiling")
                         raw.extend(chunk)
                     result = httpx.Response(streamed.status_code, headers=streamed.headers, content=bytes(raw))
@@ -1233,7 +1226,7 @@ class TrustedHandoffClient:
             message = (code + ": " if code else "") + "Trusted receiver rejected the operation"
             raise HTTPException(result.status_code if result.status_code >= 400 else 502, message)
         if binary:
-            if len(result.content) > self.store.settings.experiment_output_bytes:
+            if self.store.settings.experiment_output_bytes is not None and len(result.content) > self.store.settings.experiment_output_bytes:
                 raise HTTPException(502, "Remote artifact exceeds the operator output ceiling")
             return {"content": result.content, "sha256": result.headers.get("X-Content-SHA256")}
         try:

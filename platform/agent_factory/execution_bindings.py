@@ -11,7 +11,6 @@ import copy
 from dataclasses import dataclass, field
 from functools import wraps
 import inspect
-import json
 import math
 import re
 import threading
@@ -24,6 +23,7 @@ from agno.tools.function import Function
 from fastapi import HTTPException
 
 from .store import digest
+from .input_schema import bounded_json
 
 KINDS = frozenset({"model", "tool", "knowledge", "environment"})
 _IDENTIFIER = re.compile(r"^[A-Za-z0-9_.:-]{1,120}$")
@@ -34,8 +34,8 @@ _SECRET = re.compile(r"^(?:api[_-]?key|password|secret|access[_-]?token|refresh[
 @dataclass(frozen=True)
 class EnvironmentLimits:
     runtime_id: str = "local-python-bounded-v1"
-    timeout_seconds: float = 8
-    output_bytes: int = 65536
+    timeout_seconds: float | None = None
+    output_bytes: int | None = None
     memory_bytes: int = 256 * 1024 * 1024
     process_limit: int = 4
     cpu_percent: int = 10
@@ -43,12 +43,12 @@ class EnvironmentLimits:
     def __post_init__(self):
         if not _IDENTIFIER.fullmatch(self.runtime_id):
             raise ValueError("Invalid trusted environment runtime ID")
-        if type(self.timeout_seconds) not in {int, float} or not math.isfinite(self.timeout_seconds) or not .1 <= self.timeout_seconds <= 600:
-            raise ValueError("Environment timeout must be between 0.1 and 600 seconds")
-        for value, lower, upper in ((self.output_bytes, 1024, 1024 * 1024),
-                (self.memory_bytes, 64 * 1024 * 1024, 1024 * 1024 * 1024), (self.process_limit, 1, 64), (self.cpu_percent, 1, 100)):
-            if type(value) is not int or not lower <= value <= upper:
-                raise ValueError("Environment limit is outside the bounded native profile")
+        if self.timeout_seconds is not None and (type(self.timeout_seconds) not in {int, float}
+                or not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0):
+            raise ValueError("Environment timeout must be positive or absent")
+        for value in (self.output_bytes, self.memory_bytes, self.process_limit, self.cpu_percent):
+            if value is not None and (type(value) is not int or value <= 0):
+                raise ValueError("Environment values must be positive or absent")
 
 
 @dataclass(frozen=True)
@@ -132,8 +132,6 @@ class ExecutionBindings:
         if not isinstance(value, dict):
             raise HTTPException(409, "BINDING_CONFIG_INVALID: configuration must be an inert JSON object")
         def visit(item, depth=0):
-            if depth > 8:
-                raise ValueError("Configuration nesting exceeds its bound")
             if isinstance(item, dict):
                 for key, child in item.items():
                     if not isinstance(key, str) or _SECRET.fullmatch(key):
@@ -145,9 +143,8 @@ class ExecutionBindings:
             elif type(item) not in {str, int, float, bool, type(None)} or isinstance(item, float) and not math.isfinite(item):
                 raise ValueError("Configuration is not bounded JSON data")
         try:
+            bounded_json(value)
             visit(value)
-            if len(json.dumps(value, allow_nan=False).encode()) > 16000:
-                raise ValueError("Configuration exceeds 16000 bytes")
         except (ValueError, TypeError) as error:
             raise HTTPException(409, "BINDING_CONFIG_INVALID: " + str(error)) from error
         return copy.deepcopy(value)
@@ -205,7 +202,7 @@ class ExecutionBindings:
                   connections: Mapping[str, Any] | None = None) -> list[dict[str, Any]]:
         """Report only actual unavailable bindings; never instantiate factories."""
         missing = []
-        if not isinstance(materials, list) or len(materials) > 30:
+        if not isinstance(materials, list):
             raise HTTPException(409, "BINDING_MATERIAL_LIMIT: invalid selected material closure")
         for material in materials:
             kind = material.get("kind")
@@ -236,7 +233,7 @@ class ExecutionBindings:
 
     def build(self, materials: list[dict[str, Any]], owner: str, connections: Mapping[str, Any] | None = None) -> dict[str, Any]:
         values: dict[str, list[dict[str, Any]]] = {kind: [] for kind in KINDS}
-        if not isinstance(materials, list) or len(materials) > 30:
+        if not isinstance(materials, list):
             raise HTTPException(409, "BINDING_MATERIAL_LIMIT: invalid selected material closure")
         for material in materials:
             actual = digest({key: value for key, value in material.items() if key not in {"sha256", "published", "createdAt"}})
@@ -435,7 +432,7 @@ class ExecutionBindings:
         assert isinstance(bindings, list)
         for binding in bindings:
             value = self._create("knowledge", binding)
-            if not isinstance(value, KnowledgeContext) or not isinstance(value.content, str) or len(value.content.encode()) > 16000:
+            if not isinstance(value, KnowledgeContext) or not isinstance(value.content, str):
                 raise InputCheckError("Knowledge adapter returned invalid or oversized scoped context")
             provenance = self._configuration(dict(value.provenance))
             values.append(KnowledgeContext(value.content, {**provenance, "materialRef": binding.spec["materialRef"],

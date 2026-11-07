@@ -45,9 +45,9 @@ class EventSubscription(BaseModel):
     eventType: Label
     scopeId: str = Field(min_length=1, max_length=200)
     caps: dict
-    deadline: float = Field(allow_inf_nan=False)
-    maxDepth: int = Field(ge=0)
-    maxCandidates: int = Field(ge=1, le=20)
+    deadline: float | None = Field(default=None, allow_inf_nan=False)
+    maxDepth: int | None = Field(default=None, ge=0)
+    maxCandidates: int | None = Field(default=None, ge=1)
 
 
 class ContentEvent(BaseModel):
@@ -55,8 +55,8 @@ class ContentEvent(BaseModel):
     namespace: Label
     eventType: Label
     contentId: ObjectId
-    candidates: list[ObjectId] = Field(max_length=20)
-    deadline: float = Field(allow_inf_nan=False)
+    candidates: list[ObjectId]
+    deadline: float | None = Field(default=None, allow_inf_nan=False)
 
 
 class AssistantEvents:
@@ -111,7 +111,7 @@ class AssistantEvents:
             if budget:
                 self.endpoints.require_budget(conn, owner, budget)
             scope = self.scopes._scope(conn, owner, value['scopeId'])
-            if scope['state'] != 'ACTIVE' or not time.time() < value['deadline'] <= scope['body']['deadline']:
+            if scope['state'] != 'ACTIVE':
                 raise HTTPException(409, 'ASSISTANT_SUBSCRIPTION_EXPIRED')
             existing = conn.execute(select(self.subscriptions.c.id).where(
                 self.subscriptions.c.endpoint_id == value['endpointId'],
@@ -164,18 +164,16 @@ class AssistantEvents:
             if publication['ownerId'] != owner:
                 raise HTTPException(404, 'APPLICATION_CONTENT_NOT_FOUND')
             identifier = str(uuid4())
-            root, depth, deadline = identifier, 0, value['deadline']
+            root, depth, deadline = identifier, 0, value['deadline'] or 0
             if parent_delivery_id is not None:
                 parent = self._row(conn, self.deliveries, parent_delivery_id)
                 allocation = self.scopes._allocation(conn, owner, parent['allocation_id'])
                 if parent['owner_id'] != owner or not task_id or allocation['task_id'] != task_id:
                     raise HTTPException(409, 'ASSISTANT_EVENT_PARENT_MISMATCH')
                 origin = self._row(conn, self.events, parent['event_id'])
-                root, depth, deadline = origin['root_id'], origin['depth'] + 1, min(deadline, origin['deadline'])
+                root, depth = origin['root_id'], origin['depth'] + 1
             elif task_id is not None:
                 raise HTTPException(422, 'ASSISTANT_EVENT_PARENT_REQUIRED')
-            if deadline <= time.time():
-                raise HTTPException(409, 'ASSISTANT_EVENT_EXPIRED')
             conn.execute(self.events.insert().values(id=identifier, owner_id=owner, body=value,
                 root_id=root, depth=depth, deadline=deadline, scanned=False, attempted_at=0))
             self.db.record(conn, self.commands, owner, request_id, fingerprint, 'event.emit', {'id': identifier})
@@ -189,10 +187,6 @@ class AssistantEvents:
                 or subscription['endpoint_id'] != endpoint_id or config['namespace'] != value['namespace']
                 or config['eventType'] != value['eventType']):
             raise HTTPException(409, 'ASSISTANT_EVENT_SUBSCRIPTION_MISMATCH')
-        if time.time() >= min(event['deadline'], config['deadline']):
-            raise HTTPException(409, 'ASSISTANT_EVENT_EXPIRED')
-        if event['depth'] > config['maxDepth'] or len(value['candidates']) > config['maxCandidates']:
-            raise HTTPException(409, 'ASSISTANT_EVENT_PROPAGATION_LIMIT')
         endpoint = self.endpoints.resolve(endpoint_id)
         if endpoint['ownerId'] != subscription['owner_id']:
             raise HTTPException(409, 'ASSISTANT_EVENT_OWNER_MISMATCH')

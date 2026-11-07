@@ -22,15 +22,15 @@ Plans retain their selected material and connection revisions. Later catalog cha
 
 `ResearchSessions` submits work through the existing native Agent. The Agent selects tool order and whether an experiment or delegation is useful. Research context, experiment records, and interpretation tools are available without requiring a fixed sequence.
 
-Local research tools read, search, create, and edit files in their workspace. Host commands require explicit deployment configuration. The tools return exit codes, output, and file hashes. A command's nonzero exit is an observation the Agent can use, not an automatic failure of the entire conversation.
+Local research tools read, search, create, and edit files in their workspace. The default deployment supplies a research workspace and command tools; an explicit deployment override can select another workspace or disable host commands. The tools return exit codes, output, and file hashes. A command's nonzero exit is an observation the Agent can use, not an automatic failure of the entire conversation.
 
 [Personal research sessions](PERSONAL_RESEARCH_SESSIONS.md) describes the user journey. The [autonomy decision](plans/agent-autonomy-20261106.md) records why the fixed controller and second product entry were removed.
 
-## Delegation and budgets
+## Delegation and execution capacity
 
-Each child has its own native task and a persisted parent/root relationship. Root and ancestor budgets bound the subtree. The task's explicit `maxDepth`, `maxChildren`, and tool budget apply; the former hidden depth-two and four-descendant caps no longer define the runtime.
+Each child has its own native task and a persisted parent/root relationship. Project depth, cumulative descendant, and tool-count ceilings no longer stop the subtree. Historical plan budget fields remain readable; new autonomous work does not inherit their former default ceilings. Agno workers schedule actual execution capacity.
 
-Persistent tool accounting is authoritative. The former duplicate native per-run tool-call limit was removed. Native workflow support remains available for applications that choose it. It is not a mandatory research framework. [Delegation](DELEGATION.md) describes the shared interfaces.
+Original call accounting remains available for recovery; it no longer enforces a lifetime tool quota. The native Agent does not have a duplicate per-run tool-call limit. Native workflow support remains available for applications that choose it. It is not a mandatory research framework. [Delegation](DELEGATION.md) describes the shared interfaces.
 
 ## Credentials and shared resources
 
@@ -57,3 +57,5 @@ Agno's schedule poller supplies the clock and queue integration. Factory validat
 A native Windows CPU research acceptance used a real model, produced executable code and reproducible result files, and confirmed original-task stop. With the transport shutdown deadline configured, the application completed lifespan cleanup and exited after the observed TCP/TLS reset. This does not certify every research task or normal socket cleanup. Registered artifact downloads, persistent user login on the target installation, remote GPU allocation, and sustained team capacity require their own acceptance.
 
 Earlier Linux, ORX, fixed-program, and synthetic-user results remain evidence for their recorded revisions. They are not current deployment certification.
+
+The [2026-11-07 review](reviews/chat-autonomy-20261107.md) records the Codex comparison, native Agno reuse, and validation boundaries for chat, streaming, context and tool changes.

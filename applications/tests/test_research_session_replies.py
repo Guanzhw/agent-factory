@@ -130,7 +130,7 @@ class ResearchSessionReplyContracts(unittest.TestCase):
         self.assertNotIn('assistantReply', self.rows()[1][0]['body'])
         self.adoptions.assert_not_called()
 
-    def test_missing_or_unavailable_reply_and_capacity_leave_no_turn(self):
+    def test_unavailable_reply_blocks_but_long_context_does_not(self):
         with self.assertRaises(HTTPException):
             self.service._reserve('alice', self.identifier, self.request().model_copy(
                 update={'assistantQuestionId': str(uuid4())}))
@@ -141,10 +141,8 @@ class ResearchSessionReplyContracts(unittest.TestCase):
         with self.service.db.write() as conn:
             row = self.service._row(conn, 'alice', self.identifier)
             self.service._save_session(conn, row, {**row['body'], 'boundaries': 'b' * 11300})
-        with self.assertRaises(HTTPException) as error:
-            self.service._reserve('alice', self.identifier, self.request())
-        self.assertEqual(error.exception.detail['code'], 'RESEARCH_CONTEXT_LIMIT')
-        self.assertEqual(self.rows()[1], [])
+        self.service._reserve('alice', self.identifier, self.request())
+        self.assertIn('b' * 11300, self.rows()[1][0]['body']['context'])
 
     def test_revocation_hides_session_copy_and_blocks_model_tool_and_next_turn(self):
         _, task = self.activate()
@@ -167,6 +165,16 @@ class ResearchSessionReplyContracts(unittest.TestCase):
     def test_summary_preserves_quote_and_rechecks_authority_before_and_after(self):
         _, task = self.activate()
         self.finish(task, 'Confirmed synthetic history. ' * 600)
+        original = self.service.setup.models.list
+        catalog = patch.object(self.service.setup.models, 'list', side_effect=lambda owner: [
+            {**item, 'contextWindow': 1000} for item in original(owner)])
+        catalog.start()
+        self.addCleanup(catalog.stop)
+        with self.service.db.write() as conn:
+            row = self.service._row(conn, 'alice', self.identifier)
+            body = deepcopy(row['body'])
+            body['configuration']['model']['contextWindow'] = 1000
+            self.service._save_session(conn, row, body)
         self.activate(SessionTurn(requestId='after-long-history', text='Continue with preserved constraints'))
         self.revoked = True
         factory = Mock()
@@ -190,6 +198,16 @@ class ResearchSessionReplyContracts(unittest.TestCase):
     def test_successful_summary_treats_old_reply_as_background_and_still_rechecks_authority(self):
         _, task = self.activate()
         self.finish(task, 'Confirmed synthetic history. ' * 600)
+        original = self.service.setup.models.list
+        catalog = patch.object(self.service.setup.models, 'list', side_effect=lambda owner: [
+            {**item, 'contextWindow': 1000} for item in original(owner)])
+        catalog.start()
+        self.addCleanup(catalog.stop)
+        with self.service.db.write() as conn:
+            row = self.service._row(conn, 'alice', self.identifier)
+            body = deepcopy(row['body'])
+            body['configuration']['model']['contextWindow'] = 1000
+            self.service._save_session(conn, row, body)
         self.activate(SessionTurn(requestId='continue-with-summary', text='Continue'))
         model = SimpleNamespace(response=Mock(return_value=ModelResponse(
             role='assistant', content='{"summary":"Synthetic notes","topics":[]}')))

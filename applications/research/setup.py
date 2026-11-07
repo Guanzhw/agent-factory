@@ -18,7 +18,7 @@ class PrepareQASetup(BaseModel):
     requestId: RequestId
     name: str = Field(min_length=1, max_length=120)
     modelConnectionRef: Reference
-    budget: Budget
+    budget: Budget = Field(default_factory=Budget)
 
 
 class PublishSetup(BaseModel):
@@ -48,7 +48,7 @@ class ResearchSetup:
         self.auth.require_member(owner)
         fields = ('reference', 'provider', 'model', 'available', 'connectionRef')
         return {'workflowPin': None,
-            'qaMinimumToolCalls': len(self.qa_workflow.tool_registrations) if self.qa_workflow is not None else None,
+            'qaAvailable': self.qa_workflow is not None,
             'models': [{k: item[k] for k in fields if k in item} for item in self.models.list(owner)],
             'connections': [{k: item[k] for k in ('ref', 'registrationRef', 'kind', 'capabilities', 'available')}
                 for item in self.connections.list(owner)],

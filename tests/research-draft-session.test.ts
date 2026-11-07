@@ -40,7 +40,7 @@ afterEach(async () => { await act(async () => root.unmount()); host.remove(); vi
 it('preserves an existing draft under StrictMode through the real model page and back', async () => {
   await mount(); expect(window.sessionStorage.getItem(draftKey('alice'))).toContain('私人研究草稿');
   await act(async () => button('配置我的模型').click()); expect(window.location.search).toContain('tab=models');
-  await act(async () => button('返回原研究').click());
+  await act(async () => button('返回对话').click());
   expect(new URL(window.location.href).searchParams.get('tab')).toBe('research');
   expect(window.location.search).toContain('researchView=sessions');
   expect((host.querySelector('textarea') as HTMLTextAreaElement).value).toBe('私人研究草稿');

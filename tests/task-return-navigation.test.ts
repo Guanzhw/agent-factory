@@ -50,6 +50,7 @@ beforeEach(() => {
   vi.spyOn(researchSessionsApi, 'list').mockResolvedValue({ items: [], nextCursor: null });
   vi.spyOn(researchSessionsApi, 'questions').mockResolvedValue({ items: [], nextCursor: null });
   vi.spyOn(researchSessionsApi, 'get').mockResolvedValue(session);
+  vi.spyOn(researchSessionsApi, 'watch').mockImplementation(async (_owner, _id, signal) => new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true })));
   vi.spyOn(researchSessionsApi, 'create').mockRejectedValue(new Error('Navigation must not create sessions'));
   vi.spyOn(researchSessionsApi, 'turn').mockRejectedValue(new Error('Navigation must not start turns'));
   vi.spyOn(researchSessionsApi, 'stop').mockRejectedValue(new Error('Navigation must not stop tasks'));
@@ -116,5 +117,15 @@ it('does not reuse the previous member session body when a return is denied for 
   await mount(); await click('返回原研究');
   expect(host.textContent).toContain('原会话无权访问'); expect(host.textContent).not.toContain(session.title);
   expect(researchSessionsApi.get).toHaveBeenLastCalledWith('bob', 'session-a', expect.any(AbortSignal));
+  expect(researchSessionsApi.turn).not.toHaveBeenCalled();
+});
+
+it('returns from settings to the original conversation without starting another request', async () => {
+  await mount('/?tab=research&researchView=sessions&researchSession=session-a');
+  await click('设置');
+  expect(host.querySelector('h1')?.textContent).toBe('设置');
+  await click('返回 对话');
+  expect(window.location.search).toContain('researchSession=session-a');
+  expect(host.textContent).toContain(session.title);
   expect(researchSessionsApi.turn).not.toHaveBeenCalled();
 });

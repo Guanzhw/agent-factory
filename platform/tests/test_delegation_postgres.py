@@ -151,13 +151,13 @@ class DelegationPostgresTests(unittest.TestCase):
         root = self.parent()
         first = self.child(root)["childTask"]
         grandchild = self.child(first)["childTask"]
-        self.denied(429, self.service.create, "alice", grandchild["id"], "sort", "literature", str(uuid4()))
+        self.child(grandchild)
         second = self.child(root)["childTask"]
         self.child(second)
-        self.denied(429, self.service.create, "alice", first["id"], "sort", "literature", str(uuid4()))
+        self.child(first)
         group = self.call(self.service.inspect_group, "alice", root["id"])
-        self.assertEqual(len(group["children"]), 4)
-        self.assertEqual(sorted(entry["link"]["depth"] for entry in group["children"]), [1, 1, 2, 2])
+        self.assertEqual(len(group["children"]), 6)
+        self.assertEqual(sorted(entry["link"]["depth"] for entry in group["children"]), [1, 1, 2, 2, 2, 3])
 
     def test_declared_deep_and_wide_tree_preserves_shared_budget_and_cancellation(self):
         # This fixture exercises hierarchy limits, independently of task admission.
@@ -178,14 +178,55 @@ class DelegationPostgresTests(unittest.TestCase):
         self.child(root)
         self.child(root)
         self.assertEqual(len(self.service._ancestry(third)[1]), 3)
-        self.denied(429, self.service.create, 'alice', root['id'], 'sort', 'literature', str(uuid4()))
+        self.child(root)
         self.store.request_cancel(root['id'])
         with self.assertRaises(PermissionError):
             self.service.authorize_child(SimpleNamespace(run_id=third['run_id'], session_id=third['id'], user_id='alice'))
         self.call(self.service.cascade_cancel, 'alice', root['id'])
         group = self.wait_group(root['id'])
-        self.assertEqual(len(group['children']), 5)
+        self.assertEqual(len(group['children']), 6)
         self.assertTrue(group['allStopped'])
+        observed = self.call(self.store.lifecycle_observer.observe_root, root['id'])
+        self.assertTrue(observed['allStopped'], observed)
+        self.assertTrue(self.store.task(root['id'])['terminal'])
+
+    def test_public_http_accepts_long_goals_answers_and_material_closures(self):
+        long_text = '实际内容' * 5000
+        for goal in ('问', long_text):
+            response = self.client.post('/api/factory/plans', json={
+                'topic': goal, 'application': 'fixture-text', 'requestId': str(uuid4())})
+            self.assertEqual(response.status_code, 201, response.text)
+            self.assertEqual(response.json()['normalizedGoal'], goal)
+        root = self.parent()
+        response = self.client.post(f'/api/factory/jobs/{root["id"]}/children', json={
+            'goal': long_text, 'requestId': str(uuid4())})
+        self.assertEqual(response.status_code, 202, response.text)
+        detail = self.client.get(f'/api/factory/jobs/{root["id"]}').json()
+        question = detail['job']['questionDetail']
+        response = self.client.post(f'/api/factory/jobs/{root["id"]}/answer', json={
+            'questionId': question['id'], 'version': question['version'], 'answer': long_text})
+        self.assertEqual(response.status_code, 200, response.text)
+        dependencies = []
+        for index in range(31):
+            response = self.client.post('/api/factory/materials', json={
+                'kind': 'knowledge', 'name': f'HTTP dependency {index}', 'description': '',
+                'content': 'Synthetic member material', 'requestId': str(uuid4())})
+            self.assertEqual(response.status_code, 201, response.text)
+            item = response.json()
+            published = self.client.post(f'/api/factory/materials/{item["id"]}/{item["version"]}/publish',
+                json={'requestId': str(uuid4())})
+            self.assertEqual(published.status_code, 202, published.text)
+            dependencies.append({key: item[key] for key in ('id', 'version', 'sha256')})
+        response = self.client.post('/api/factory/materials', json={
+            'kind': 'knowledge', 'name': 'Large HTTP material' * 20, 'description': long_text,
+            'content': long_text, 'dependencies': dependencies, 'permissions': ['checksum:read'] * 31,
+            'requestId': str(uuid4())})
+        self.assertEqual(response.status_code, 201, response.text)
+        self.assertEqual(response.json()['content'], long_text)
+        self.assertEqual(len(response.json()['dependencies']), 31)
+        self.wait_native(root['id'], {'completed'})
+        answers = [event for event in self.store.events(root['id']) if event['type'] == 'scope_answered']
+        self.assertEqual(answers[-1]['data']['scope'], long_text)
 
     def test_depth_constraint_upgrade_preserves_existing_links(self):
         root = self.parent()
@@ -236,17 +277,17 @@ class DelegationPostgresTests(unittest.TestCase):
         self.assertTrue(any(event["type"] == "protected_denied" for event in self.store.events(child["id"])))
 
     def test_04_existing_store_user_and_global_quota(self):
-        self.assertEqual(Settings(db_url=self.settings.db_url).max_user_tasks, 2)
+        self.assertEqual(Settings(db_url=self.settings.db_url).max_user_tasks, 0)
         root = self.parent()
         self.child(root)
         old_user, old_total = self.settings.max_user_tasks, self.settings.max_total_tasks
         try:
             self.settings.max_user_tasks = 2
-            self.denied(429, self.service.create, "alice", root["id"], "sort", "literature", str(uuid4()))
+            self.child(root)
             self.settings.max_user_tasks = 8
             self.settings.max_total_tasks = 2
-            self.denied(429, self.service.create, "alice", root["id"], "sort", "literature", str(uuid4()))
-            self.assertEqual(len(self.call(self.service.children, "alice", root["id"])), 1)
+            self.child(root)
+            self.assertEqual(len(self.call(self.service.children, "alice", root["id"])), 3)
         finally:
             self.settings.max_user_tasks, self.settings.max_total_tasks = old_user, old_total
 
@@ -377,14 +418,13 @@ class DelegationPostgresTests(unittest.TestCase):
             recovered.initialize()
             self.assertFalse(recovered.consume_tool_budget(root_ctx, "fixture-root-call", "ask_scope")["charged"])
             scope = recovered.delegation_scope("alice", root["id"])
-            self.assertFalse(scope["allowed"])
+            self.assertTrue(scope["allowed"])
             self.assertEqual(scope["sharedBudget"]["toolCallsUsed"], 2)
-            self.denied(429, self.service.create, "alice", root["id"], "sort", "literature", str(uuid4()))
-            with self.assertRaises(PermissionError):
-                recovered.consume_tool_budget(child_ctx, "fixture-third-call", "checksum")
+            self.child(root)
+            self.assertTrue(recovered.consume_tool_budget(child_ctx, "fixture-third-call", "checksum")["charged"])
             with self.assertRaises(PermissionError):
                 recovered.consume_tool_budget(root_ctx, "fixture-root-call", "checksum")
-            self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE root_id=:root", root=root["id"])[0]["n"], 2)
+            self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE root_id=:root", root=root["id"])[0]["n"], 3)
         finally:
             self.settings.max_tool_calls = old
 
@@ -400,11 +440,18 @@ class DelegationPostgresTests(unittest.TestCase):
             result = self.client.post(f'/api/factory/jobs/{root["id"]}/answer', json={"questionId": question["id"], "version": question["version"], "answer": "Synthetic sorting scope"})
             self.assertEqual(result.status_code, 200, result.text)
             self.wait_native(root["id"], {"completed", "failed"})
-            detail = self.client.get("/api/factory/jobs/" + root["id"]).json()
-            self.assertEqual(detail["job"]["status"], "failed", detail)
-            self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE root_id=:root", root=root["id"])[0]["n"], 2)
-            self.assertTrue(any(event["type"] == "protected_denied" for event in self.store.events(root["id"])))
-            self.assertFalse(self.store.artifacts(root["id"]), "Shared limit must stop the unbudgeted literature tool")
+            # A completed native ticket precedes the observer's atomic group
+            # finalization. Assert that the actual public state converges too.
+            deadline = time.monotonic() + 15
+            while True:
+                detail = self.client.get("/api/factory/jobs/" + root["id"]).json()
+                if detail["job"]["status"] != "finalizing" or time.monotonic() >= deadline:
+                    break
+                time.sleep(.05)
+            self.assertEqual(detail["job"]["status"], "completed", detail)
+            self.assertEqual(self.store.sql("SELECT COUNT(*) AS n FROM af_delegation_tool_calls WHERE root_id=:root", root=root["id"])[0]["n"], 3)
+            self.assertFalse(any(event["type"] == "protected_denied" for event in self.store.events(root["id"])))
+            self.assertTrue(self.store.artifacts(root["id"]), "Historical numeric budgets must not stop valid work")
         finally:
             self.settings.max_tool_calls = old
 

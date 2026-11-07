@@ -15,13 +15,13 @@ from .store import digest, now
 class SendAssistantMessage(BaseModel):
     model_config = ConfigDict(extra='forbid')
     requestId: ApplicationRequestId
-    text: str = Field(min_length=2, max_length=2000)
+    text: str = Field(min_length=1)
 
 
 class AssistantReply(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    text: str = Field(min_length=2, max_length=2000)
-    contentIds: list[ObjectId] = Field(default_factory=list, max_length=20)
+    text: str = Field(min_length=1)
+    contentIds: list[ObjectId] = Field(default_factory=list)
 
 
 class AssistantMessages:

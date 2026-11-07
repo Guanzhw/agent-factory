@@ -182,7 +182,7 @@ class ExecutionBindingRuntimeTests(unittest.IsolatedAsyncioTestCase):
             self.registry.register("model", name, "1", lambda context, label=name: ChoiceModel(label, records, barrier))
         self.registry.register("knowledge", "fixture-inline-knowledge-v1", "1", lambda context: KnowledgeContext(
             next(item["content"] for item in context.plan["materials"] if item["kind"] == "knowledge"), {"evidenceKind": "synthetic"}))
-        first = self.plan("plan-alpha", "choice-alpha", owner="fixture-alpha", knowledge="Knowledge belongs only to alpha")
+        first = self.plan("plan-alpha", "choice-alpha", owner="fixture-alpha", knowledge="Knowledge belongs only to alpha" + "x" * 70000)
         second = self.plan("plan-beta", "choice-beta", owner="fixture-beta", knowledge="Knowledge belongs only to beta")
         agent, _ = build_runtime(self.settings, self.store, self.db)
         stable = agent.model
