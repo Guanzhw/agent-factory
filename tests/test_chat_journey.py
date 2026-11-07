@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from uuid import uuid4
 
@@ -61,10 +61,45 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             if not results:
                 tool = 'ssh_servers'
             reply = '已找到配置的 SSH 服务器；本轮只查询配置，连接状态尚未探测。'
+        elif user_text == 'SSH 断线回执验收':
+            if not results:
+                tool = 'ssh_servers'
+            elif len(results) == 1:
+                tool, arguments = 'ssh_run', {'reference': ast.literal_eval(results[0][1])[0]['reference'],
+                                             'argv': ['pwd']}
+            reply = 'SSH 结果未确认，需要核对原命令。'
         elif '"goal": "child-only"' in system:
             if not results:
                 tool, arguments = 'research_edit_file', {'path': 'child.txt', 'old': '', 'new': '子助手已完成'}
             reply = '子助手已完成'
+        elif 'unknown-followup' in json.dumps(request['messages']):
+            reply = '后续分析完成，原操作仍待核对。'
+        elif 'unknown-journey-case' in system:
+            steps = [('uncertain_cli', {}),
+                     ('research_edit_file', {'path': 'independent.txt', 'old': '', 'new': '独立任务完成'}),
+                     ('research_read_file', {'path': 'independent.txt'})]
+            if len(results) < len(steps):
+                tool, arguments = steps[len(results)]
+            reply = '独立工作已完成，原操作仍待核对。'
+        elif 'skills-stop-case' in system:
+            if not results:
+                tool, arguments = 'get_skill_script', {'skill_name': 'journey-skill',
+                    'script_path': 'nested/runner.py', 'execute': True, 'args': ['stop']}
+        elif 'skills-journey-case' in system:
+            steps = [('get_skill_instructions', {'skill_name': 'journey-skill'}),
+                     ('get_skill_reference', {'skill_name': 'journey-skill', 'reference_path': 'nested/guide.md'}),
+                     ('get_skill_script', {'skill_name': 'journey-skill', 'script_path': 'nested/runner.py'}),
+                     ('get_skill_script', {'skill_name': 'journey-skill', 'script_path': 'nested/runner.py',
+                         'execute': True, 'args': ['fail', 'argument with spaces', '中文']}),
+                     ('get_skill_script', {'skill_name': 'journey-skill', 'script_path': 'nested/runner.py',
+                         'execute': True, 'args': ['success', 'argument with spaces', '中文'], 'cwd': 'skill-work'})]
+            if len(results) < len(steps):
+                tool, arguments = steps[len(results)]
+            elif len(results) == len(steps):
+                tool, arguments = 'get_skill_script', {'skill_name': 'journey-skill',
+                    'script_path': 'nested/runner.py', 'execute': True, 'args': ['resource'],
+                    'cwd': json.loads(results[0][1])['source_path']}
+            reply = '技能脚本完成，失败诊断已处理。'
         elif 'stop-case' in system:
             if not results:
                 tool, arguments = 'research_run', {'argv': [sys.executable, '-c',
@@ -133,7 +168,28 @@ class ChatJourney(unittest.TestCase):
         settings = Settings(db_url=admin_url.set(database=cls.database).render_as_string(hide_password=False),
                             jwt_key=secrets.token_urlsafe(40), workspace=root, local_login_origin=cls.origin)
         (root / 'research').mkdir()
-        cls.app = create_app(settings, session_tools=ResearchSessionTools(workspace_root=root / 'research'))
+        skill = root / 'external-skills' / 'journey-skill'
+        (skill / 'references' / 'nested').mkdir(parents=True)
+        (skill / 'scripts' / 'nested').mkdir(parents=True)
+        (skill / 'SKILL.md').write_text('---\nname: journey-skill\ndescription: Exercise external skill resources.\n'
+            'custom-client-field: accepted\n---\nRead references/nested/guide.md and run scripts/nested/runner.py.\n')
+        (skill / 'references' / 'nested' / 'guide.md').write_text('Nested reference marker: 42.\n')
+        (skill / 'asset.txt').write_text('External skill asset: 73.\n')
+        (skill / 'scripts' / 'nested' / 'runner.py').write_text(
+            '#!/usr/bin/env -S python3 -O\nimport json, os, sys, time\nfrom pathlib import Path\n'
+            'mode = sys.argv[1]\n'
+            'if mode == "resource":\n'
+            '    print(json.dumps({"asset": Path("asset.txt").read_text(), "cwd": str(Path.cwd())}))\n    sys.exit(0)\n'
+            'if mode == "stop":\n'
+            '    Path("skills-started.txt").write_text(str(os.getpid()))\n    time.sleep(600)\n'
+            'if mode == "fail":\n'
+            '    Path("skill-work").mkdir()\n    print("skill diagnostic", file=sys.stderr)\n'
+            '    print(json.dumps({"args": sys.argv[2:], "cwd": str(Path.cwd())}))\n    sys.exit(7)\n'
+            'time.sleep(31)\n'
+            'result = json.dumps({"args": sys.argv[2:], "cwd": str(Path.cwd()), "finished": True, "optimize": sys.flags.optimize})\n'
+            'Path("skill-result.json").write_text(result)\nprint(result)\n')
+        with patch.dict(os.environ, FACTORY_SKILL_PATHS=str(skill.parent)):
+            cls.app = create_app(settings, session_tools=ResearchSessionTools(workspace_root=root / 'research'))
         cls.state = factory_state(cls.app)
         cls.server = uvicorn.Server(uvicorn.Config(cls.app, ssl_certfile=str(root / 'cert.pem'),
             ssl_keyfile=str(root / 'key.pem'), log_level='warning', access_log=False,
@@ -311,6 +367,17 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(len(self.session()['turns']), 2)
         self.assertEqual(len(self.model.requests), before_refresh)
 
+        disconnected = {'exitCode': 255, 'stdout': '', 'stderr': 'connection lost', 'stopped': False}
+        with patch.object(self.state['store'].personal_ssh, 'run', new=AsyncMock(return_value=disconnected)):
+            self.post('/research/sessions/' + self.session()['id'] + '/turns', {'text': 'SSH 断线回执验收'})
+            snapshot = self.wait_for(lambda s: len(s['turns']) == 3 and s['turns'][-1]['status'] == 'completed')
+        receipt = next(e['data'] for e in snapshot['turns'][-1]['events']
+                       if e['type'] == 'tool_finished' and e['data'].get('toolName') == 'ssh_run')
+        self.assertEqual(receipt['outcome'], 'unknown')
+        self.assertEqual(receipt['output'], disconnected)
+        self.assertEqual(receipt['code'], 'SSH_TOOL_OUTCOME_UNKNOWN')
+        expect(self.page.get_by_text('原工具操作结果未知，需核对原任务，不要重发同一操作。', exact=True)).to_be_visible()
+
     def test_activity_wait_disconnect_and_reconciliation_display(self):
         # UI-only snapshots isolate transport loss and missing/late events.
         self.send('ssh 可用了吗?')
@@ -439,14 +506,85 @@ class ChatJourney(unittest.TestCase):
                 root.rename(root.with_name('directory-moved'))
             self.assertEqual(blocked.exception.winerror, 32)
 
+    def test_external_skill_resources_and_long_script(self):
+        first_request = len(self.model.requests)
+        started = time.monotonic()
+        self.send('skills-journey-case')
+        snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] in {'completed', 'failed', 'unknown', 'cancelled'})
+        self.assertEqual(snapshot['turns'][-1]['status'], 'completed', snapshot)
+        self.assertGreaterEqual(time.monotonic() - started, 31)
+        requests = self.model.requests[first_request:]
+        advertised = {tool['function']['name'] for tool in requests[0]['tools']}
+        self.assertTrue({'get_skill_instructions', 'get_skill_reference', 'get_skill_script'} <= advertised)
+        final = requests[-1]['messages']
+        results = [message['content'] for message in final if message['role'] == 'tool']
+        self.assertEqual(len(results), 6)
+        self.assertIn('references/nested/guide.md', results[0])
+        self.assertIn('Nested reference marker: 42.', results[1])
+        self.assertIn('time.sleep(31)', results[2])
+        failed, succeeded = (ast.literal_eval(value) for value in results[3:5])
+        self.assertEqual(failed['exitCode'], 7)
+        self.assertEqual(failed['stderr'], 'skill diagnostic' + os.linesep)
+        workspace = self.state['store'].research_sessions.workspace(self.owner, snapshot['id'])
+        self.assertEqual(json.loads(failed['stdout']), {'args': ['argument with spaces', '中文'], 'cwd': str(workspace)})
+        self.assertEqual(succeeded['exitCode'], 0)
+        expected = {'args': ['argument with spaces', '中文'], 'cwd': str(workspace / 'skill-work'), 'finished': True, 'optimize': 1}
+        self.assertEqual(json.loads(succeeded['stdout']), expected)
+        resource = ast.literal_eval(results[5])
+        self.assertEqual(resource['exitCode'], 0)
+        self.assertEqual(json.loads(resource['stdout']), {'asset': 'External skill asset: 73.\n',
+            'cwd': json.loads(results[0])['source_path']})
+        self.page.reload()
+        with self.page.expect_download() as download:
+            self.page.get_by_role('link', name='skill-work/skill-result.json', exact=True).click()
+        self.assertEqual(json.loads(Path(download.value.path()).read_bytes()), expected)
+
+    def test_unknown_tool_result_does_not_block_independent_work(self):
+        from agent_factory.personal_tool_contract import ToolInvocationError
+        self.post('/personal-tools/resources', {'transport': 'cli', 'toolName': 'uncertain_cli',
+            'description': 'An operation whose response is lost', 'executable': sys.executable,
+            'arguments': ['-c', 'print("not dispatched in this fixture")'],
+            'inputSchema': {'type': 'object', 'properties': {}}})
+        with patch('agent_factory.personal_cli.MemberCliAdapter.invoke',
+                   side_effect=ToolInvocationError('SIMULATED_LOST_RESPONSE', outcome='unknown', stopped=False)) as adapter:
+            self.send('unknown-journey-case')
+            snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] in {'completed', 'failed', 'unknown', 'cancelled'})
+            self.assertEqual(snapshot['turns'][-1]['status'], 'completed', snapshot)
+            self.assertIn('start', snapshot['allowedActions'])
+            original_task = snapshot['turns'][-1]['taskId']
+            unknown = [effect for effect in self.state['store'].effects(original_task) if effect['status'] == 'UNKNOWN']
+            self.assertEqual(len(unknown), 1)
+            self.assertIsNone(unknown[0]['result'])
+            workspace = self.state['store'].research_sessions.workspace(self.owner, snapshot['id'])
+            self.assertEqual((workspace / 'independent.txt').read_text(encoding='utf-8'), '独立任务完成')
+            results = [m['content'] for m in self.model.requests[-1]['messages'] if m['role'] == 'tool']
+            self.assertIn('SIMULATED_LOST_RESPONSE', results[0])
+            self.assertIn('独立任务完成', results[-1])
+            expect(self.page.get_by_label('下一轮指令', exact=True)).to_be_enabled()
+            self.page.get_by_label('下一轮指令', exact=True).fill('unknown-followup')
+            with self.page.expect_response(lambda response: response.request.method == 'POST'
+                                           and response.url.endswith('/turns')) as submitted:
+                self.page.get_by_role('button', name='发送', exact=True).click()
+            self.assertTrue(submitted.value.ok, submitted.value.text())
+            snapshot = self.wait_for(lambda s: len(s['turns']) == 2 and s['turns'][-1]['status'] == 'completed')
+            self.assertIn('后续分析完成', snapshot['turns'][-1]['result'])
+            self.assertEqual(adapter.call_count, 1)
+            self.assertEqual([e for e in self.state['store'].effects(original_task) if e['status'] == 'UNKNOWN'], unknown)
+
+    def test_stop_skill_script(self):
+        self.stop_running('skills-stop-case', 'skills-started.txt')
+
     def test_stop_running_command(self):
-        self.send('stop-case')
+        self.stop_running('stop-case', 'started.txt')
+
+    def stop_running(self, goal, marker):
+        self.send(goal)
         snapshot = self.wait_for(lambda s: any(e['type'] == 'research_tool_started'
             for e in s['turns'][-1]['events']))
         files = self.origin + '/api/factory/research/sessions/' + snapshot['id'] + '/files'
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
-            response = self.context.request.get(files + '/download?path=started.txt')
+            response = self.context.request.get(files + '/download', params={'path': marker})
             if response.ok:
                 break
             self.page.wait_for_timeout(100)

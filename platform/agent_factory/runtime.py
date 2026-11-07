@@ -46,7 +46,8 @@ def build_runtime(store, native_db):
         personal = getattr(store, 'personal_tools', None)
         if personal is not None:
             functions.extend(personal.functions(run_context.user_id, run_context,
-                reserved_names={function.name for function in functions}))
+                reserved_names={function.name for function in functions} |
+                    ({function.name for function in executor.skills.get_tools()} if executor.skills else set())))
         return functions
 
     def ssh_started(run_context, fc):
@@ -55,13 +56,15 @@ def build_runtime(store, native_db):
 
     def ssh_finished(run_context, fc):
         event = {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}}
-        if fc.result is None:
+        if fc.result is not None:
+            event['output'] = fc.result
+        if fc.result is None or fc.function.name == 'ssh_run' and fc.result['stopped'] is False:
             # Native post-hooks also run after cancellation, when remote stop is unconfirmed.
             event.update(outcome='unknown', code='SSH_TOOL_OUTCOME_UNKNOWN')
             if fc.error:
                 event['message'] = fc.error
         else:
-            event.update(outcome='completed', output=fc.result)
+            event['outcome'] = 'completed'
         store.event(run_context.session_id, 'tool_finished', 'SSH 工具执行记录', event)
 
     executor = Agent(id='factory-executor', name='Factory', model=model, db=native_db,

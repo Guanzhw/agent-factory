@@ -1,6 +1,6 @@
 # Development checks
 
-The old test suite was deleted at the user's request on 2026-11-07. The user subsequently requested minimal feature-based regression coverage using Ponytail. The new suite has four browser cases and three focused review regressions; it does not restore the old tests or their implementation constraints.
+The old test suite was deleted at the user's request on 2026-11-07. The user subsequently requested minimal feature-based regression coverage using Ponytail. The new suite covers a small set of browser journeys and focused review regressions; it does not restore the old tests or their implementation constraints.
 
 ## Run
 
@@ -26,17 +26,28 @@ Two focused cases exercise SSH revocation through the real database/API and nati
 - A configured CLI's exit 7 preserves stdout/stderr and the Agent continues with another call.
 - The Agent receives the configured SSH server reference from discovery without user input.
 - The exact question `ssh 可用了吗?` and its follow-up remain native user messages. SSH discovery emits paired events with arguments and results. Tool history survives more than 1,000 text fragments.
+- A native SSH result with exit 255 and `stopped=False` retains its output and remains unknown in saved events and the UI.
 - A separate UI snapshot case covers missing events, transport EOF and reconnection, terminal unknown results, later reconciliation, one row per call ID, Markdown tables, and narrow screens. These snapshots are synthetic and do not prove provider or SSH connectivity.
 - Native file creation and replacement produce a larger-than-52-KB UTF-8 document; the browser downloads identical native-platform bytes with a Chinese filename. Downloads reject parent traversal, sibling-prefix paths and escaping links (a native junction on Windows). Held Windows ancestor directories reject rename.
 - A child Agent creates a file, returns its result and the parent resumes. Refresh retains one original turn; files remain downloadable on desktop/mobile.
 - Stop terminates an actually running local command; refreshing does not repeat it.
+- External Skills load native instructions, nested references and script source. A script preserves shebang flags, arguments and cwd, returns exit-7 diagnostics, then another invocation runs longer than 30 seconds and produces a downloadable result. Stop terminates an actual skill-script PID.
+- Focused cases cover ordinary research records and standalone analysis without command receipts, unknown-call non-replay and independent continuation, and native session completion without pretending unknown effects succeeded.
 
-The model is a deterministic protocol fixture, not an intelligence or real-provider check. These tests do not establish Windows compatibility, remote SSH execution, all model protocols, MCP interoperability, long-duration execution or scientific research quality. Real-model and platform-specific acceptance remain separate. `npm run check` itself still runs only frontend lint, types and build; CI also runs all seven regression cases.
+The model is a deterministic protocol fixture, not an intelligence or real-provider check. These tests do not establish remote SSH execution, all model protocols, MCP interoperability, long-duration execution or scientific research quality. Real-model and platform-specific acceptance remain separate. `npm run check` itself still runs only frontend lint, types and build; CI also runs the minimal regression suite.
 
 ## Local Windows acceptance on 2026-11-08
 
-All seven cases pass in 63.343 seconds against disposable PostgreSQL 17 and the local scripted model. Windows directory handles now permit write sharing so native Workspace can replace child files, while delete sharing remains disabled. The regression confirms creation, replacement, parent and child contents, Chinese-name download bytes, junction escape rejection, and ancestor rename denial.
+Before integration, seven local frontend cases pass in 63.343 seconds against disposable PostgreSQL 17 and the local scripted model. Windows directory handles permit write sharing so native Workspace can replace child files, while delete sharing remains disabled. The regression confirms creation, replacement, parent and child contents, Chinese-name download bytes, junction escape rejection, and ancestor rename denial. Combined Skills/frontend validation is recorded separately below.
 
-The fixture uses the production 35-second transport deadline, allows the sequential application cleanup budget, and checks successful lifespan completion after the server thread exits. Windows TLS/RST 10054 and unclosed-transport warnings remain; the transport deadline expires with zero active request tasks and the queue worker then stops. This proves bounded shutdown, not normal closure of every socket. In-place reparse mutation was not established by the extra handle matrix.
+The fixture uses the production 35-second transport deadline, allows the sequential application cleanup budget, and checks successful lifespan completion after the server thread exits. Windows TLS/RST 10054 and unclosed-transport warnings remain; the transport deadline expires with zero active request tasks and the queue worker then stops. This proves bounded shutdown, not normal closure of every socket.
+
+An isolated native Windows matrix confirms that both the original and current guard permit in-place junction creation on an empty directory through `FILE_WRITE_ATTRIBUTES`. The current guard also permits native creation/editing and blocks ancestor rename with error 32. Sharing flags do not provide an OS sandbox against another process running as the service account.
 
 The separate live browser check uses the existing OpenCode Go subscription and configured SSH host. One real question completes with discovery and two read-only SSH calls, both exit 0. Refresh preserves one turn and three tool calls. A second real session creates, edits and reads a 40-byte Chinese-named file. Its Edge download acceptance is incomplete: download waiting times out, then Computer Use stops because it cannot reliably establish the browser URL. The scripted Chromium journey independently verifies download bytes. Private screenshots and receipts stay outside the repository. See [integration notes](reviews/dsh-web-integration-20261108.md).
+
+## Combined Windows validation on 2026-11-08
+
+The integration of local commit `b552779` and PR #178 head `bf8ad58` passes all 20 minimal cases in 102.661 seconds. It retains both branches' coverage and adds native-loop SSH disconnect presentation. Platform line endings and explicit UTF-8 reads fix the reproduced Windows fixture failures. Frontend checks, Ruff and Pyright pass. A fresh independent source review finds no remaining blocker.
+
+Real Edge file delivery remains blocked by native-window URL recognition after the exact target session is confirmed through the browser tab. No browser-control bypass is attempted. Combined real-provider and SSH acceptance remains pending. See [combined integration evidence and recovery conditions](reviews/dsh-skills-integration-20261108.md).

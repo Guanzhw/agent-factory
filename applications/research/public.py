@@ -39,6 +39,8 @@ def install(state, *, session_tools=None):
         state['research_conversations'] = conversations
         state['http_app'].include_router(conversations_router(state['auth'], conversations))
         session_tools.bind(sessions, state['application_content'])
+        from .skills import ResearchSkills
+        state['executor'].skills = ResearchSkills(session_tools)
         state['research_sessions'] = sessions
         state['store'].research_sessions = sessions
         state['http_app'].include_router(session_router(state['auth'], sessions))

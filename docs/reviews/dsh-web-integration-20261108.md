@@ -52,7 +52,7 @@ Resolved Windows failures: the directory guard denied write sharing required by 
 
 The real subscription model also creates, edits and reads a Chinese-named 40-byte file in one turn, using three native file-tool calls. Its final UI shows the expected two lines. Live Edge download acceptance remains incomplete: `downloadMedia` and download-event waiting time out, then Computer Use stops because it cannot reliably establish the browser URL. No further browser actions are taken. This does not invalidate the separate scripted Chromium download result.
 
-Remaining verification limits: Windows TLS/RST 10054 and unclosed-transport warnings remain. The transport deadline expires with zero request tasks, then the queue worker and application lifespan stop successfully. An extra in-place reparse mutation comparison is inconclusive: sandbox attempts fail in the unguarded baseline too, and an elevated attempt is interrupted with execution state uncertain. Rename exclusion and initial reparse rejection are tested; this tool path is not an OS sandbox. Existing selectorless global CSS and bundle-size warnings remain in the successful frontend build.
+Remaining verification limits: Windows TLS/RST 10054 and unclosed-transport warnings remain. The transport deadline expires with zero request tasks, then the queue worker and application lifespan stop successfully. The subsequent isolated native reparse matrix confirms that both the original and revised guard permit empty-directory junction conversion via `FILE_WRITE_ATTRIBUTES`. Rename exclusion and initial reparse rejection are tested; sharing flags do not provide an OS sandbox. Existing selectorless global CSS and bundle-size warnings remain in the successful frontend build.
 
 Unavailable: the requested `iab` surface returns unavailable, so the existing local Edge surface is used. No Library `prepare_materialize` or download helper is exposed in this session. The supplied Library image was not materialized or inspected; actual local DSH and Factory screenshots provide the selected visual reference.
 
@@ -62,4 +62,6 @@ Private evidence lives in `D:/WorkSpace/agent-factory-local/design-evidence/`, i
 
 The existing HTTPS app is running at `https://127.0.0.1:3100/`. The existing local startup script is `D:/WorkSpace/agent-factory-local/start-service.ps1`. The backend was restarted after loading the request and event changes, retaining the existing PostgreSQL data.
 
-Local branch: `codex/dsh-chat-observability-windows-20261108`. The local commit and [Draft PR materials](dsh-web-draft-pr-20261108.md) preserve this work for integration. No push, remote pull request, merge, publication, or deployment is performed.
+Local branch: `codex/dsh-chat-observability-windows-20261108`. The local commit and [Draft PR materials](dsh-web-draft-pr-20261108.md) preserve this work for integration. No push, remote pull request, remote merge, publication, or remote deployment is performed.
+
+The subsequent [local integration with #178](dsh-skills-integration-20261108.md) uses a separate branch and preserves both commits. Its full 20-case Windows suite passes; combined real-provider and Edge download acceptance remains pending browser-control recovery.
