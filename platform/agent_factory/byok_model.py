@@ -66,16 +66,18 @@ class OwnerChatModel(Model):
     def __repr__(self):
         return 'OwnerChatModel(credentials=<redacted>)'
 
-    def _body(self, messages, *, tools=None, tool_choice=None, response_format=None, **kwargs):
+    def _body(self, messages, *, tools=None, tool_choice=None, response_format=None,
+              compress_tool_results=False, **kwargs):
         if response_format is not None:
             raise rejected('PERSONAL_MODEL_UNSUPPORTED_FORMAT')
         encoded, continuation = [], []
         for index, message in enumerate(messages):
+            content = message.get_content(use_compressed_content=compress_tool_results)
             if (message.role not in {'system', 'user', 'assistant', 'tool'}
-                    or message.content is not None and type(message.content) is not str
+                    or content is not None and type(content) is not str
                     or any(getattr(message, field, None) for field in ('images', 'videos', 'audio', 'files'))):
                 raise rejected('PERSONAL_MODEL_TEXT_ONLY')
-            item = {'role': message.role, 'content': message.content}
+            item = {'role': message.role, 'content': content}
             if message.role == 'tool': item['tool_call_id'] = message.tool_call_id
             if message.tool_calls: item['tool_calls'] = [function_call(call) for call in message.tool_calls]
             if message.role == 'assistant':

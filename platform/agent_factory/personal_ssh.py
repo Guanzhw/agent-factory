@@ -130,7 +130,9 @@ class PersonalSSHServers:
     def server(self, owner, reference, *, required_capability=None):
         self.auth.require_member(owner)
         with self.connections._read() as conn:
-            _, body = self._configuration(conn, owner, reference)
+            row, body = self._configuration(conn, owner, reference)
+            if row['state'] == 'REVOKED':
+                raise HTTPException(409, 'SSH_SERVER_REVOKED')
             return self.profile(body['ownerId'], reference, body['revision'], body['configuration'])
 
     def inspect(self, owner, reference):
@@ -185,22 +187,24 @@ class PersonalSSHServers:
         with TemporaryDirectory(prefix='factory-ssh-') as folder:
             root = Path(folder)
             key = root / 'identity'
-            key.write_bytes(base64.b64decode(secret.password, validate=True))
-            key.chmod(0o600)
-            if sys.platform == 'win32':
-                import win32api
-                import win32con
-                import win32security
-                token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
-                try:
-                    user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
-                    acl = win32security.ACL()
-                    acl.AddAccessAllowedAce(win32security.ACL_REVISION, win32con.GENERIC_READ, user)
-                    win32security.SetNamedSecurityInfo(str(key), win32security.SE_FILE_OBJECT,
-                        win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
-                        None, None, acl, None)
-                finally:
-                    token.Close()
+            # OpenSSH needs a plaintext identity file. Create it private and set
+            # the Windows ACL before writing any key bytes; the directory is temporary.
+            with os.fdopen(os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as stream:
+                if sys.platform == 'win32':
+                    import win32api
+                    import win32con
+                    import win32security
+                    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+                    try:
+                        user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+                        acl = win32security.ACL()
+                        acl.AddAccessAllowedAce(win32security.ACL_REVISION, win32con.GENERIC_READ, user)
+                        win32security.SetNamedSecurityInfo(str(key), win32security.SE_FILE_OBJECT,
+                            win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+                            None, None, acl, None)
+                    finally:
+                        token.Close()
+                stream.write(base64.b64decode(secret.password, validate=True))
             args = ['-tt', '-i', str(key), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes']
             if server.host_key:
                 known = root / 'known_hosts'

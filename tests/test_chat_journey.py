@@ -1,6 +1,8 @@
 """Two browser journeys through PostgreSQL/Agno; only the model endpoint is scripted."""
 import ast
+import asyncio
 import datetime
+from concurrent.futures import ThreadPoolExecutor
 import ipaddress
 import json
 import os
@@ -13,6 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from uuid import uuid4
 
@@ -25,6 +28,11 @@ from sqlalchemy import create_engine, make_url, text
 import uvicorn
 
 from agent_factory.config import Settings
+from agent_factory.byok_model import OwnerChatModel
+from agent_factory._personal_cli_process import CLIProcessError, CLIProcessResult
+from agno.compression.manager import CompressionManager
+from agno.models.message import Message
+from fastapi import HTTPException
 from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
 from research.session_tools import ResearchSessionTools
@@ -46,7 +54,9 @@ class ModelEndpoint(BaseHTTPRequestHandler):
                    for m in request['messages'] if m['role'] == 'tool']
         system = '\n'.join(m['content'] for m in request['messages'] if m['role'] == 'system')
         tool, arguments, reply = None, {}, '任务完成，结果可下载。'
-        if '"goal": "child-only"' in system:
+        if request['model'] == 'compression':
+            reply = '压缩摘要：数值42'
+        elif '"goal": "child-only"' in system:
             if not results:
                 tool, arguments = 'research_edit_file', {'path': 'child.txt', 'old': '', 'new': '子助手已完成'}
             reply = '子助手已完成'
@@ -198,13 +208,7 @@ class ChatJourney(unittest.TestCase):
             'description': 'Diagnostic CLI', 'executable': sys.executable,
             'arguments': ['-c', 'import json,sys; v=json.load(sys.stdin); print("diagnostic" if v["mode"]=="fail" else json.dumps({"ok":True})); print("problem",file=sys.stderr); sys.exit(7 if v["mode"]=="fail" else 0)'],
             'inputSchema': {'type': 'object', 'properties': {'mode': {'type': 'string'}}, 'required': ['mode']}})
-        key = ed25519.Ed25519PrivateKey.generate().private_bytes(serialization.Encoding.PEM,
-            serialization.PrivateFormat.OpenSSH, serialization.NoEncryption()).decode()
-        credential = self.post('/personal-credentials', {'providerId': 'owner-ssh-server-v1',
-            'destination': 'ssh://agent@127.0.0.1:2222', 'username': 'agent', 'password': key})
-        server = self.post('/personal-ssh', {'name': '研究服务器', 'address': '127.0.0.1', 'port': 2222,
-            'username': 'agent', 'allowedRoot': '/tmp', 'credentialRef': credential['credentialRef'],
-            'credentialRevision': credential['credentialRevision']})
+        server = self.configure_ssh()
         self.page.get_by_role('textbox', name=re.compile('^研究目标')).fill('保留这份草稿')
         self.page.get_by_role('button', name='配置我的模型', exact=True).click()
         self.page.get_by_role('button', name=re.compile('^返回')).click()
@@ -236,6 +240,66 @@ class ChatJourney(unittest.TestCase):
         self.page.locator('.rs-files').scroll_into_view_if_needed()
         self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
         expect(self.page.get_by_role('link', name='结果.txt', exact=True)).to_be_visible()
+
+    @staticmethod
+    def run_async(coroutine):
+        # Playwright owns this thread's event loop.
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(asyncio.run, coroutine).result()
+
+    def configure_ssh(self):
+        key = ed25519.Ed25519PrivateKey.generate().private_bytes(serialization.Encoding.PEM,
+            serialization.PrivateFormat.OpenSSH, serialization.NoEncryption()).decode()
+        credential = self.post('/personal-credentials', {'providerId': 'owner-ssh-server-v1',
+            'destination': 'ssh://agent@127.0.0.1:2222', 'username': 'agent', 'password': key})
+        return self.post('/personal-ssh', {'name': '研究服务器', 'address': '127.0.0.1', 'port': 2222,
+            'username': 'agent', 'allowedRoot': '/tmp', 'credentialRef': credential['credentialRef'],
+            'credentialRevision': credential['credentialRevision']})
+
+    def test_ssh_revocation_and_temporary_key(self):
+        server = self.configure_ssh()
+        ssh = self.state['store'].personal_ssh
+        key_paths = []
+        async def observe_key(**kwargs):
+            key = Path(kwargs['argv'][kwargs['argv'].index('-i') + 1])
+            key_paths.append(key)
+            self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(key.parent.stat().st_mode & 0o777, 0o700)
+            serialization.load_ssh_private_key(key.read_bytes(), password=None)
+            if len(key_paths) == 2:
+                raise CLIProcessError('CONNECTION_LOST', dispatched=True, stopped=True)
+            return CLIProcessResult(returncode=0, stdout=b'/tmp\n', stderr=b'', stopped=True, dispatched=True)
+        with patch('agent_factory.personal_ssh.run_cli_process', side_effect=observe_key) as process:
+            self.assertEqual(ssh.available(self.owner)[0]['reference'], server['reference'])
+            self.run_async(ssh.run(self.owner, server['reference'], ['pwd']))
+            from agent_factory.personal_tool_contract import ToolInvocationError
+            with self.assertRaises(ToolInvocationError):
+                self.run_async(ssh.run(self.owner, server['reference'], ['pwd']))
+            self.assertTrue(all(not key.parent.exists() for key in key_paths))
+            revoked = self.post('/personal-ssh/' + server['reference'] + '/revoke', {})
+            self.assertFalse(revoked['enabled'])
+            self.assertFalse(revoked['executionEnabled'])
+            self.assertEqual(ssh.functions(self.owner)[0].entrypoint(), [])
+            with self.assertRaises(HTTPException) as error:
+                self.run_async(ssh.run(self.owner, server['reference'], ['pwd']))
+            self.assertEqual(error.exception.detail, 'SSH_SERVER_REVOKED')
+            self.assertEqual(process.call_count, 2)  # Revocation prevents a new process.
+
+    def test_native_compression_reaches_model_payload(self):
+        configuration = {'provider': 'openai-compatible', 'model': 'compression',
+                         'baseURL': f'http://127.0.0.1:{self.model.server_port}/v1'}
+        message = Message(role='tool', tool_call_id='call_original', content='原始长输出42 ' * 1000)
+        manager = CompressionManager(model=OwnerChatModel(configuration, lambda: None))
+        self.run_async(manager.acompress([message]))
+        self.assertEqual(message.compressed_content, '压缩摘要：数值42')
+        for protocol in ('chat-completions', 'responses'):
+            model = OwnerChatModel({**configuration, 'protocol': protocol}, lambda: None)
+            for enabled, expected in ((True, message.compressed_content), (False, message.content)):
+                with self.subTest(protocol=protocol, compressed=enabled):
+                    body = model._body([message], compress_tool_results=enabled)
+                    sent = body['messages'][0]['content'] if protocol == 'chat-completions' else body['input'][0]['output']
+                    self.assertEqual(sent, expected)
+        self.assertTrue(message.content.startswith('原始长输出42'))  # Compression retains original history.
 
     def test_stop_running_command(self):
         self.send('stop-case')

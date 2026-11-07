@@ -80,3 +80,15 @@ Added one 264-line file with two browser journeys, without restoring the deleted
 Only the model HTTP endpoint is scripted (Chat Completions SSE); browser, API, database, queue and tools are real. This establishes deterministic integration behavior, not real-model intelligence or external-provider compatibility. Remote SSH execution, MCP, Responses, Windows and long-duration runs are not covered by these two cases.
 
 Final local run: **2 tests passed in 25.505 seconds**. Ruff, Pyright, frontend lint/types/build and lock consistency also passed, with the previously recorded Windows import and CSS/bundle warnings. Independent review findings were addressed. CI now runs the same journeys against PostgreSQL 17 and Chromium. Current source: **19,528 physical lines across 136 files**, including the new tests. PR remains Draft and unmerged.
+
+## Review fixes before merge
+
+SSH `server()` now rejects the existing REVOKED state. Revoked configurations remain visible as disabled Settings records, but disappear from Agent discovery and cannot start another SSH command. No verification, approval or lease requirement was added.
+
+Owner model serialization now calls Agno `Message.get_content(use_compressed_content=...)` with the native invocation flag. Agno CompressionManager's compressed tool content therefore reaches Chat Completions and Responses requests; disabling compression still sends the original content, and stored raw history remains intact.
+
+The SSH identity file is created atomically with mode 0600 in its temporary directory. On Windows, its user-only ACL is installed before key bytes are written through the already-open descriptor. The descriptor closes before OpenSSH runs; temporary cleanup covers success and failure. OpenSSH still requires a transient plaintext identity file: this change fixes the permissions-at-write ordering, not the fact that plaintext exists during execution. Windows behavior has been reviewed but not executed here.
+
+Added two focused regressions alongside the two existing browser journeys. Actual PostgreSQL/API revocation is checked against discovery and execution; intercepted SSH process calls inspect key permissions, parse the temporary key and verify cleanup after success/failure. The compression case uses the real native CompressionManager against the local model fixture and checks both protocol payloads. Final local run: **4/4 passed in 38.909 seconds**. Ruff and Pyright passed (existing Windows import warnings remain).
+
+The old head's CodeQL check reports both temporary-key cleartext storage and uncontrolled path expression in `session_tools.py`. Alert-detail/triage API access returned HTTP 403, while check-run annotations were readable. Alert closure is not claimed; current-head checks and any unresolved triage must be reported separately from the functional test result.
