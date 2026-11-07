@@ -203,7 +203,7 @@ class PersonalSSHServers:
                             win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
                             None, None, acl, None)
                     finally:
-                        token.Close()
+                        win32api.CloseHandle(token)
                 stream.write(base64.b64decode(secret.password, validate=True))
             args = ['-tt', '-i', str(key), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes']
             if server.host_key:

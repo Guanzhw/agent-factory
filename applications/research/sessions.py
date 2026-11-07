@@ -265,8 +265,10 @@ class ResearchSessions:
     @staticmethod
     def _start(row, turn):
         configuration = turn['body'].get('configuration', row['body']['configuration'])
+        messages = turn['body']['messages']
         return ApplicationStart(requestId=turn['application_request_id'],
-            mode=MODE, goal=row['body']['goal'], connectionRefs=configuration['connectionRefs'],
+            mode=MODE, goal=messages[0]['text'] if messages else row['body']['goal'],
+            connectionRefs=configuration['connectionRefs'],
             inputValues={'sessionId': row['id'], 'turnId': turn['id'], 'sessionContext': turn['body']['context']})
 
     def _prepare_turn_configuration(self, conn, owner, row, turns):

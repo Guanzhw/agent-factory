@@ -37,7 +37,7 @@ from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
 from research.session_tools import ResearchSessionTools, _directory, _open_file
 
-DOCUMENT = '研究结果：文件内容保持完整。\n' * 2000
+DOCUMENT = '状态：初稿\n' + '研究结果：文件内容保持完整。\n' * 2000
 
 
 class ModelEndpoint(BaseHTTPRequestHandler):
@@ -53,9 +53,14 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         results = [(names.get(m.get('tool_call_id')), m.get('content'))
                    for m in request['messages'] if m['role'] == 'tool']
         system = '\n'.join(m['content'] for m in request['messages'] if m['role'] == 'system')
-        tool, arguments, reply = None, {}, '任务完成，结果可下载。'
+        user_text = next((m['content'] for m in reversed(request['messages']) if m['role'] == 'user'), '')
+        tool, arguments, reply = None, {}, '任务完成，结果可下载。\n\n| 结果 | 状态 |\n| --- | --- |\n| 工具 | 已完成 |'
         if request['model'] == 'compression':
             reply = '压缩摘要：数值42'
+        elif user_text in {'ssh 可用了吗?', '再看一下 SSH 状态'}:
+            if not results:
+                tool = 'ssh_servers'
+            reply = '已找到配置的 SSH 服务器；本轮只查询配置，连接状态尚未探测。'
         elif '"goal": "child-only"' in system:
             if not results:
                 tool, arguments = 'research_edit_file', {'path': 'child.txt', 'old': '', 'new': '子助手已完成'}
@@ -67,6 +72,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         else:
             steps = [('demo_cli', {'mode': 'fail'}), ('demo_cli', {'mode': 'ok'}), ('ssh_servers', {}),
                      ('research_edit_file', {'path': '结果.txt', 'old': '', 'new': DOCUMENT}),
+                     ('research_edit_file', {'path': '结果.txt', 'old': '状态：初稿', 'new': '状态：已复核'}),
                      ('research_delegate', {'goal': 'child-only'})]
             if len(results) < len(steps):
                 tool, arguments = steps[len(results)]
@@ -130,14 +136,19 @@ class ChatJourney(unittest.TestCase):
         cls.app = create_app(settings, session_tools=ResearchSessionTools(workspace_root=root / 'research'))
         cls.state = factory_state(cls.app)
         cls.server = uvicorn.Server(uvicorn.Config(cls.app, ssl_certfile=str(root / 'cert.pem'),
-            ssl_keyfile=str(root / 'key.pem'), log_level='warning', access_log=False))
+            ssl_keyfile=str(root / 'key.pem'), log_level='warning', access_log=False,
+            timeout_graceful_shutdown=35))
         thread = threading.Thread(target=lambda: cls.server.run(sockets=[listener]), daemon=True)
         thread.start()
         def shutdown():
             cls.server.should_exit = True
-            thread.join(20)
+            # Match the production transport budget, then allow application cleanup.
+            thread.join(75)
             if thread.is_alive():
                 raise RuntimeError('Application did not stop')
+            if (not cls.server.lifespan.shutdown_event.is_set() or cls.server.lifespan.error_occurred
+                    or cls.server.lifespan.shutdown_failed):
+                raise RuntimeError('Application lifespan shutdown failed')
         cls.addClassCleanup(shutdown)
         deadline = time.monotonic() + 30
         while not cls.server.started:
@@ -218,11 +229,15 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(snapshot['turns'][-1]['status'], 'completed', snapshot)
         turn = snapshot['turns'][-1]
         outputs = [e['data']['output'] for e in turn['events'] if e['type'] == 'tool_finished']
-        self.assertIn({'exitCode': 7, 'stdout': 'diagnostic\n', 'stderr': 'problem\n'}, outputs)
+        self.assertIn({'exitCode': 7, 'stdout': 'diagnostic' + os.linesep, 'stderr': 'problem' + os.linesep}, outputs)
         self.assertIn({'ok': True}, outputs)
         self.assertEqual(len(turn['children']), 1)
         self.assertEqual(turn['children'][0]['status'], 'completed')
         self.assertIn('子助手已完成', turn['children'][0]['result'])
+        edits = [e for e in turn['events'] if e['type'] == 'research_tool_finished'
+                 and e['data'].get('toolName') == 'research_edit_file']
+        self.assertTrue(edits, turn['events'])
+        self.assertTrue(all(e['data']['outcome'] == 'completed' for e in edits), edits)
         # The next real HTTP model request must contain the tool's discovered server.
         self.assertTrue(any(server['reference'] in json.dumps(r['messages']) for r in self.model.requests))
         self.assertTrue(any(e['type'] == 'model_content_delta' for e in turn['events']))
@@ -232,18 +247,25 @@ class ChatJourney(unittest.TestCase):
         with self.page.expect_download() as download:
             self.page.get_by_role('link', name='结果.txt', exact=True).click()
         self.assertEqual(download.value.suggested_filename, '结果.txt')
-        self.assertEqual(Path(download.value.path()).read_bytes(), DOCUMENT.encode())
+        expected_bytes = DOCUMENT.replace('状态：初稿', '状态：已复核').replace('\n', os.linesep).encode()
+        self.assertEqual(Path(download.value.path()).read_bytes(), expected_bytes)
         workspace = self.state['store'].research_sessions.workspace(self.owner, snapshot['id'])
+        self.assertEqual((workspace / '结果.txt').read_bytes(), expected_bytes)
+        self.assertEqual((workspace / 'child.txt').read_text(encoding='utf-8'), '子助手已完成')
         sibling = Path(str(workspace) + '-neighbor')
         sibling.mkdir()
         (sibling / 'outside.txt').write_text('outside this session')
-        (workspace / 'escape').symlink_to(sibling, target_is_directory=True)
+        if sys.platform == 'win32':
+            import _winapi
+            _winapi.CreateJunction(str(sibling), str(workspace / 'escape'))
+        else:
+            (workspace / 'escape').symlink_to(sibling, target_is_directory=True)
         download_url = self.origin + '/api/factory/research/sessions/' + snapshot['id'] + '/files/download'
         for path in ('../' + sibling.name + '/outside.txt', str(sibling / 'outside.txt'), 'escape/outside.txt'):
             with self.subTest(download=path):
                 self.assertEqual(self.context.request.get(download_url, params={'path': path}).status, 404)
         normalized = self.context.request.get(download_url, params={'path': 'unused/../结果.txt'})
-        self.assertEqual(normalized.body(), DOCUMENT.encode())
+        self.assertEqual(normalized.body(), expected_bytes)
         expect(self.page.get_by_role('link', name='child.txt', exact=True)).to_be_visible()
         self.assertEqual(len(self.session()['turns']), 1)  # Refresh must not start another run.
         self.assertEqual(len(self.model.requests), requests_before_refresh)
@@ -251,6 +273,82 @@ class ChatJourney(unittest.TestCase):
         self.page.locator('.rs-files').scroll_into_view_if_needed()
         self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
         expect(self.page.get_by_role('link', name='结果.txt', exact=True)).to_be_visible()
+
+    def test_ssh_question_and_followup_keep_current_user_message(self):
+        server = self.configure_ssh()
+        self.send('ssh 可用了吗?')
+        for question in ('ssh 可用了吗?', '再看一下 SSH 状态'):
+            if question != 'ssh 可用了吗?':
+                self.post('/research/sessions/' + self.session()['id'] + '/turns', {'text': question})
+            snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] in {'completed', 'failed', 'unknown', 'cancelled'})
+            turn = snapshot['turns'][-1]
+            self.assertEqual(turn['status'], 'completed', snapshot)
+            self.assertIn('已找到配置的 SSH 服务器', turn['result'])
+            events = [e for e in turn['events'] if e['data'].get('toolName') == 'ssh_servers']
+            self.assertEqual([e['type'] for e in events], ['tool_started', 'tool_finished'])
+            self.assertEqual(events[0]['data']['callId'], events[1]['data']['callId'])
+            self.assertEqual(events[0]['data']['arguments'], {})
+            self.assertEqual(events[1]['data']['outcome'], 'completed')
+            self.assertEqual(events[1]['data']['output'][0]['reference'], server['reference'])
+            self.assertTrue(any(any(m['role'] == 'user' and m['content'] == question for m in r['messages'])
+                for r in self.model.requests))
+        store = self.state['store']
+        for _ in range(1001):
+            store.event(turn['taskId'], 'model_content_delta', 'window fixture', {'responseId': 'window', 'text': 'x'})
+        self.assertEqual(len([e for e in self.session()['turns'][-1]['events']
+                              if e['data'].get('toolName') == 'ssh_servers']), 2)
+        before_refresh = len(self.model.requests)
+        self.page.reload()
+        expect(self.page.get_by_text('已找到配置的 SSH 服务器', exact=False).first).to_be_visible()
+        process = self.page.locator('.rs-process').last
+        process.locator('summary').first.click()
+        call = process.locator('.rs-tool-call').first
+        call.locator('summary').first.click()
+        call.get_by_text('调用参数', exact=True).click()
+        expect(call.locator('pre').first).to_have_text('{}')
+        call.get_by_text('完整工具结果', exact=True).click()
+        expect(call.get_by_text(server['reference'], exact=False).first).to_be_visible()
+        self.assertEqual(len(self.session()['turns']), 2)
+        self.assertEqual(len(self.model.requests), before_refresh)
+
+    def test_activity_wait_disconnect_and_reconciliation_display(self):
+        # UI-only snapshots isolate transport loss and missing/late events.
+        self.send('ssh 可用了吗?')
+        snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
+        turn = snapshot['turns'][-1]
+        old = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=30)).isoformat()
+        def event(identifier, kind, data):
+            return {'id': identifier, 'jobId': turn['taskId'], 'type': kind, 'message': 'UI fixture',
+                    'createdAt': old, 'data': {'callId': 'display-call', 'toolName': 'ssh_run', **data}}
+        turn.update(status='running', result=None, events=[event(1, 'tool_started',
+            {'arguments': {'argv': ['pwd'], 'reference': 'synthetic-server'}})])
+        snapshot.update(state='running', allowedActions=['correct', 'stop'])
+        def stream(route):
+            route.fulfill(content_type='text/event-stream', body='event: session\ndata: ' +
+                          json.dumps(snapshot, ensure_ascii=False) + '\n\n')
+        self.page.route('**/research/sessions/*/events', stream)
+        self.page.reload()
+        expect(self.page.get_by_text(re.compile('秒未收到新执行事件'))).to_be_visible()
+        self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-waiting.png'))
+        expect(self.page.get_by_text(re.compile('实时连接已断开'))).to_be_visible()
+        expect(self.page.get_by_text('已开始 · 等待结果', exact=True)).to_be_visible()
+        snapshot.update(state='idle', allowedActions=['start', 'stop'])
+        turn.update(status='completed', result='UI fixture answer\n\n| 结果 | 状态 |\n| --- | --- |\n| SSH | 已确认 |', events=[*turn['events'],
+            event(2, 'tool_finished', {'outcome': 'unknown', 'code': 'SSH_TOOL_OUTCOME_UNKNOWN'})])
+        expect(self.page.get_by_text(re.compile('原工具操作结果未知'))).to_be_visible()
+        self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-unknown.png'))
+        turn['events'].append(event(3, 'tool_finished', {'outcome': 'completed', 'reconciled': True,
+                                                     'output': {'stdout': '/tmp', 'exitCode': 0}}))
+        expect(self.page.get_by_text(re.compile('原工具操作结果未知'))).not_to_be_visible()
+        process = self.page.locator('.rs-process')
+        process.locator('summary').first.click()
+        expect(process.locator('.rs-tool-call')).to_have_count(1)
+        expect(process.get_by_text('已完成', exact=True)).to_be_visible()
+        expect(self.page.get_by_role('cell', name='SSH', exact=True)).to_be_visible()
+        self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-reconciled.png'))
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+        self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-mobile.png'))
 
     @staticmethod
     def run_async(coroutine):
@@ -274,8 +372,22 @@ class ChatJourney(unittest.TestCase):
         async def observe_key(**kwargs):
             key = Path(kwargs['argv'][kwargs['argv'].index('-i') + 1])
             key_paths.append(key)
-            self.assertEqual(key.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(key.parent.stat().st_mode & 0o777, 0o700)
+            if sys.platform == 'win32':
+                import win32api
+                import win32con
+                import win32security
+                token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+                try:
+                    user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+                    acl = win32security.GetNamedSecurityInfo(str(key), win32security.SE_FILE_OBJECT,
+                        win32security.DACL_SECURITY_INFORMATION).GetSecurityDescriptorDacl()
+                    self.assertEqual(acl.GetAceCount(), 1)
+                    self.assertEqual(acl.GetAce(0)[2], user)
+                finally:
+                    win32api.CloseHandle(token)
+            else:
+                self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(key.parent.stat().st_mode & 0o777, 0o700)
             serialization.load_ssh_private_key(key.read_bytes(), password=None)
             if len(key_paths) == 2:
                 raise CLIProcessError('CONNECTION_LOST', dispatched=True, stopped=True)
@@ -317,6 +429,15 @@ class ChatJourney(unittest.TestCase):
             for path in ('../outside', '/etc/passwd', '.', '..'):
                 with self.subTest(path=path), self.assertRaises(ValueError):
                     _open_file(parent, path)
+        if sys.platform == 'win32':
+            root = Path(self.folder.name) / 'directory-lock'
+            root.mkdir()
+            ResearchSessionTools._edit(root, {'path': '中文.txt', 'old': '', 'new': 'before'})
+            ResearchSessionTools._edit(root, {'path': '中文.txt', 'old': 'before', 'new': 'after'})
+            self.assertEqual((root / '中文.txt').read_text(encoding='utf-8'), 'after')
+            with _directory(root), self.assertRaises(OSError) as blocked:
+                root.rename(root.with_name('directory-moved'))
+            self.assertEqual(blocked.exception.winerror, 32)
 
     def test_stop_running_command(self):
         self.send('stop-case')
@@ -331,12 +452,23 @@ class ChatJourney(unittest.TestCase):
             self.page.wait_for_timeout(100)
         self.assertTrue(response.ok, 'Command did not start')
         pid = int(response.text())
-        os.kill(pid, 0)  # Prove the command is still alive before exercising Stop.
+        if sys.platform == 'win32':
+            import win32api
+            import win32con
+            import win32event
+            handle = win32api.OpenProcess(win32con.SYNCHRONIZE, False, pid)
+            self.addCleanup(handle.Close)
+            self.assertEqual(win32event.WaitForSingleObject(handle, 0), win32event.WAIT_TIMEOUT)
+        else:
+            os.kill(pid, 0)
         self.page.get_by_role('button', name='请求停止', exact=True).click()
         snapshot = self.wait_for(lambda s: s['state'] == 'stopped')
         self.assertIn(snapshot['turns'][-1]['status'], ['cancelled', 'canceled'])
-        with self.assertRaises(ProcessLookupError):
-            os.kill(pid, 0)
+        if sys.platform == 'win32':
+            self.assertEqual(win32event.WaitForSingleObject(handle, 0), win32event.WAIT_OBJECT_0)
+        else:
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
         self.page.reload()
         self.assertEqual(len(self.session()['turns']), 1)
 

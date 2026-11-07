@@ -157,8 +157,7 @@ def _workspace_parts(workspace, value, *, directory=False):
 
 @contextmanager
 def _windows_directory(root, parts=(), *, create=False):
-    # Keep every ancestor open without write/delete sharing. Checking a path
-    # and then closing it before opening its child would permit junction swaps.
+    # Deny ancestor rename/deletion while allowing native Workspace child replacement.
     if sys.platform != 'win32':
         raise ValueError('RESEARCH_WORKSPACE_CONFIGURATION_INVALID')
     import pywintypes
@@ -177,7 +176,7 @@ def _windows_directory(root, parts=(), *, create=False):
                         pass
             try:
                 handle = cast('pywintypes.HANDLEType', win32file.CreateFile(str(current), win32con.GENERIC_READ,
-                    win32con.FILE_SHARE_READ, None, win32con.OPEN_EXISTING,
+                    win32con.FILE_SHARE_READ | win32con.FILE_SHARE_WRITE, None, win32con.OPEN_EXISTING,
                     win32file.FILE_FLAG_OPEN_REPARSE_POINT | win32con.FILE_FLAG_BACKUP_SEMANTICS, None))
                 held.callback(handle.Close)
                 attributes = win32file.GetFileInformationByHandle(int(handle))[0]
@@ -439,6 +438,7 @@ class ResearchSessionTools:
                     self._active_effects.add(full_key)
             if 'path' in values:
                 event['relativePath'] = values['path']
+            event['arguments'] = values
             store.event(identity[1], 'research_tool_started', '开始执行研究工具', event)
             try:
                 guard()

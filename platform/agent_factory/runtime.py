@@ -38,12 +38,31 @@ def build_runtime(store, native_db):
         functions = research.functions(run_context) if research is not None else []
         ssh = getattr(store, 'personal_ssh', None)
         if ssh is not None:
-            functions.extend(ssh.functions(run_context.user_id))
+            ssh_functions = ssh.functions(run_context.user_id)
+            for function in ssh_functions:
+                function.pre_hook = ssh_started
+                function.post_hook = ssh_finished
+            functions.extend(ssh_functions)
         personal = getattr(store, 'personal_tools', None)
         if personal is not None:
             functions.extend(personal.functions(run_context.user_id, run_context,
                 reserved_names={function.name for function in functions}))
         return functions
+
+    def ssh_started(run_context, fc):
+        store.event(run_context.session_id, 'tool_started', '开始执行 SSH 工具',
+            {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}})
+
+    def ssh_finished(run_context, fc):
+        event = {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}}
+        if fc.result is None:
+            # Native post-hooks also run after cancellation, when remote stop is unconfirmed.
+            event.update(outcome='unknown', code='SSH_TOOL_OUTCOME_UNKNOWN')
+            if fc.error:
+                event['message'] = fc.error
+        else:
+            event.update(outcome='completed', output=fc.result)
+        store.event(run_context.session_id, 'tool_finished', 'SSH 工具执行记录', event)
 
     executor = Agent(id='factory-executor', name='Factory', model=model, db=native_db,
         instructions=instructions, tools=selected_tools, pre_hooks=[bind_run],
