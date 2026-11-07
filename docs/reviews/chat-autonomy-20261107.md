@@ -49,6 +49,8 @@ The rows follow the original audit's autonomous-session inventory. See the linke
 
 Offline team-answer settings now describe their actual purpose. Required answer counts, tool counts, expiry and association recipient counts are removed through the backend, not merely hidden. Evidence/answer truncation is removed. An already enabled old QA configuration upgrades through existing preparation/publication on a new question; old requests retain their original receipts. Explicitly disabled service stays disabled.
 
+Direct core HTTP routes also accept long goals/answers/materials and more than 30 dependencies; removing only the chat controls would have left those real entry points blocked. Structure, reference identity and dependency-cycle checks remain.
+
 Model settings expose optional context-window and compaction-threshold metadata in tokens, preserving it through saved drafts, credential rotation and request recovery. Unknown model capacity is not guessed.
 
 ## Implementation map
@@ -69,6 +71,24 @@ Model settings expose optional context-window and compaction-threshold metadata 
 - Standalone core wheel was built and installed into an empty environment, started with disposable PostgreSQL, and shut down cleanly. This check does not make a model request.
 
 
-Final validation, independent review, CI commit, and screenshot acceptance are recorded when the implementation stabilizes. In-progress checks are not whole-product acceptance. Real HTTP/PostgreSQL/browser checks with a scripted provider and a live external-model run are separate evidence categories.
+### Browser and independent review
+
+The final mobile acceptance used real HTTPS, PostgreSQL, Agno queue workers and local processes with a scripted provider and synthetic identity. It passed model configuration, settings round-trip with draft retention, duplicate-submit prevention, reload, nonzero command output, five sequential child tasks with the parent completing, reading older content without forced scrolling, stopping an actual process, and refreshing without a new model request. The same stopped session was reloaded at desktop size. Desktop-specific earlier passes cover the same settings, failure and delegation views.
+
+Screenshots were inspected for the current turn and actual viewport; earlier images showing an older turn were rejected. The final inspected running and stopped cards are in the private acceptance bundle `chat-real-browser-mobile-attempt15`. The recorded PID no longer existed after stop. These are browser integration checks, not live external-model browser tests.
+
+Independent code and product reviewers found and verified fixes for partial text incorrectly marked as generating, commands mislabeled as assistants, missing final command exit codes after a native wait, historical waits blocking later waits, premature unknown states during child admission, and stop during the first command yield. The final product review passed the tested scope.
+
+### Regression checks
+
+Frontend lint/types, 688 tests and production build passed. Dependency audits reported no vulnerabilities. Python Ruff and Pyright passed (Linux cannot resolve the optional native Windows imports); both architecture maps passed. The standalone-core install/start/stop check passed.
+
+Broader Python and PostgreSQL runs exposed old quota expectations and a real `None` output-limit compatibility bug in research delivery. The delivery/publication modules passed 23 tests after correction. Targeted reruns retain original identity, stop, non-replay, long-content and cycle-detection assertions. The final remote checks and exact tested commit are recorded on [PR #177](https://github.com/Guanzhw/agent-factory/pull/177/checks). Daily fast CI must not be described as full-platform acceptance.
+
+The existing Windows execution workflow now also runs the changed research-file, CLI-process and command-recovery tests. Its logs distinguish native Windows cases from POSIX-only skips. This does not establish Windows TLS/PostgreSQL/live-model end-to-end deployment.
+
+### Remaining differences
+
+The command interface provides yielding handles and continued reads within the active turn; it does not implement a PTY/interactive stdin or cross-turn background-process handoff. Unknown model windows remain unknown instead of receiving an invented context size. Native Workspace text IO may normalize CRLF to LF on POSIX. Personal CLI/MCP full receipt construction is distinct from the research command's 1 MiB retained process buffer. Existing identifier syntax, pagination and actual service/provider capacities are not described as absent.
 
 Windows execution, remote GPU allocation and sustained team capacity require their own target environments. No WSP experiment or production deployment is part of this change.

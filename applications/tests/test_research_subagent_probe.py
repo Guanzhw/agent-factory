@@ -148,7 +148,7 @@ class ResearchSubagentProjectionContracts(unittest.TestCase):
 
     def test_running_with_inflight_effect_uses_verified_lifecycle_display(self):
         result, group = self.project('running', persisted='running')
-        self.assertTrue(group['unknown'])
+        self.assertFalse(group['unknown'])
         self.assertFalse(group['allStopped'])
         self.assertEqual(result['status'], 'running')
         self.assertIsNone(result['result'])
@@ -600,4 +600,11 @@ class ResearchSubagentProbe(unittest.TestCase):
                   'Stopping must be confirmed for the original task tree')
         self.assertTrue(self.store.task(root['id'])['cancel_requested'])
         self.assertNotEqual(self.ticket(root)['status'], 'completed')
-        self.assertEqual(len(self.store.sql('SELECT * FROM af_delegation_links')), 1)
+        links = self.store.sql('SELECT * FROM af_delegation_links')
+        self.assertEqual(len(links), 2)
+        child_link = next(link for link in links if link['parent_id'] == root['id'])
+        command_link = next(link for link in links if link['parent_id'] == child_link['child_id'])
+        self.assertEqual(command_link['root_id'], root['id'])
+        command = self.store.task(command_link['child_id'])
+        self.assertEqual(self.store.plan(command['plan_id'])['mode'], 'command')
+        self.assertTrue(command['cancel_requested'])

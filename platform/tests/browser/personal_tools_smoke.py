@@ -71,6 +71,14 @@ class SyntheticAPI:
             '/status': {'mode': 'production', 'activeWorkers': 0, 'queuedJobs': 0, 'maxWorkers': 1},
             '/materials': [], '/jobs': {'items': [], 'nextCursor': None}, '/execution-targets': [], '/applications': [],
             '/commands': {'items': [], 'nextCursor': None},
+            '/research/sessions': {'items': [], 'nextCursor': None},
+            '/research/assistants/me': {'assistant': None},
+            '/research/sessions/options': {'available': False, 'unavailableCode': 'RESEARCH_MODEL_REQUIRED',
+                'models': [], 'limits': {'maxTurns': {'default': None, 'min': 1, 'max': None},
+                    'toolCallsPerTurn': {'default': None, 'min': 1, 'max': None},
+                    'operationSeconds': {'default': None, 'min': 1, 'max': None}, 'contextCharacters': None},
+                'workspace': {'configured': True, 'hostCommands': True, 'isolation': 'host-user-not-os-sandbox'},
+                'accounting': {'tokenMetered': False, 'costMetered': False}},
             '/personal-agent/capabilities': {
                 'executionContract': 'personal-external-v1', 'nativeQueue': True,
                 'ownerSubmit': '/api/factory/personal-agent/commands/submit',
@@ -233,7 +241,7 @@ def scenario(browser, base, output, name, mode, viewport):
     try:
         # This fixture covers resource management, not the product's Agent home.
         page.goto(base + '/?tab=resources', wait_until='networkidle')
-        expect(page.get_by_role('heading', name='我的资源', exact=True)).to_be_visible()
+        expect(page.get_by_role('heading', name='设置', exact=True)).to_be_visible()
         page.get_by_role('button', name='管理工具', exact=True).click()
         expect(page.get_by_role('heading', name='我的工具连接', exact=True)).to_be_visible()
         panel = page.get_by_role('region', name='我的工具连接', exact=True)

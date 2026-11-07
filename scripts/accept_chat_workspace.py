@@ -288,7 +288,7 @@ def run_mode(browser, args, mode):
             capture('command-failure')
             provider.mode = 'delegate'
             post('/research/sessions/' + identifier + '/turns', {'requestId': str(uuid4()), 'text': '委托独立检查。'})
-            value = wait_for(identifier, lambda value: len(value['turns']) == 3 and value['turns'][-1]['status'] == 'completed')
+            value = wait_for(identifier, lambda value: len(value['turns']) == 3 and value['turns'][-1]['status'] == 'completed', seconds=180)
             children = value['turns'][-1].get('children', [])
             assert len(children) >= args.delegations and all(child['status'] == 'completed' for child in children), value
             expect(page.locator('.rs-turn')).to_have_count(3)

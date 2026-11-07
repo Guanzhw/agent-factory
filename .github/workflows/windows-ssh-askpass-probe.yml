@@ -6,6 +6,12 @@ on:
       - scripts/accept_windows_ssh_core.py
       - platform/agent_factory/*ssh*.py
       - platform/tests/*ssh*.py
+      - platform/agent_factory/_personal_cli_process.py
+      - platform/tests/test_personal_cli_process.py
+      - applications/research/session_tools.py
+      - applications/research/session_commands.py
+      - applications/tests/test_research_session_tools.py
+      - applications/tests/test_research_commands.py
       - pyproject.toml
       - platform/pyproject.toml
       - uv.lock
@@ -78,6 +84,13 @@ jobs:
                                                      'platform/tests', 'applications/tests'])
           result = subprocess.run(['.venv/Scripts/python.exe', '-c', code], timeout=120)
           sys.exit(result.returncode)
+
+      - name: Exercise native Windows research files and owned commands
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = 'platform;deployment;applications;platform/tests;applications/tests'
+          ./.venv/Scripts/python.exe -m unittest test_research_session_tools test_personal_cli_process test_research_commands -v
+          exit $LASTEXITCODE
 
   installed-core:
     runs-on: windows-latest
