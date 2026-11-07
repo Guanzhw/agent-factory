@@ -212,7 +212,7 @@ def create_app(settings=None, *, diagnostics=None, queue_max_attempts=2,
 
     native.router.lifespan_context = observed_lifespan
     native.state.factory = {
-        "store": store, "auth": auth, "bridge": bridge, "settings": settings,
+        "store": store, "auth": auth, "bridge": bridge, "settings": settings, "executor": executor,
         "lifecycle_observer": observer, "connections": connections,
         "credential_vault": credential_vault, "factory_api": factory_api,
         "assistant_endpoints": assistant_endpoints, "assistant_messages": assistant_messages,

@@ -42,7 +42,8 @@ def build_runtime(store, native_db):
         personal = getattr(store, 'personal_tools', None)
         if personal is not None:
             functions.extend(personal.functions(run_context.user_id, run_context,
-                reserved_names={function.name for function in functions}))
+                reserved_names={function.name for function in functions} |
+                    ({function.name for function in executor.skills.get_tools()} if executor.skills else set())))
         return functions
 
     executor = Agent(id='factory-executor', name='Factory', model=model, db=native_db,

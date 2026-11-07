@@ -192,39 +192,39 @@ class ResearchSessions:
             status, snapshot = detail['job']['status'], detail['snapshot']
             run = snapshot.get('run', snapshot)
             result = None
-            observed_terminal = bool(task['terminal'] and status in {'completed', 'failed', 'canceled'})
-            # Ticket fallbacks may contain error text. Only exact persisted run
-            # messages accompanying an actually completed task are an answer.
-            if (status == 'completed' and observed_terminal and run.get('run_id') == task['run_id']
-                    and run.get('session_id') == task['id'] and run.get('user_id') == owner
-                    and str(run.get('status', '')).lower() == 'completed'
-                    and isinstance(run.get('messages'), list)
-                    and any(item.get('role') == 'assistant' for item in run['messages'] if isinstance(item, dict))
-                    and isinstance(run.get('content'), str)):
-                result = run['content']
+            ticket = snapshot.get('queue') or {}
+            native_ended = (ticket.get('id') == task['run_id'] and ticket.get('session_id') == task['id']
+                and ticket.get('user_id') == owner and ticket.get('status') in {'completed', 'failed', 'cancelled'}
+                and run.get('run_id') == task['run_id'] and run.get('session_id') == task['id']
+                and run.get('user_id') == owner
+                and str(run.get('status', '')).lower() in {'completed', 'error', 'cancelled'})
             with self._write() as conn:
                 current = conn.execute(select(self.turns).where(self.turns.c.id == turn['id'])).mappings().one()
                 if current['body'].get('terminal'):
                     continue  # A concurrent confirmed final result wins over this older observation.
                 body = deepcopy(current['body'])
-                effects = snapshot.get('effects', [])
-                memory_keys = {operation['runId'] + ':' + EFFECT_PREFIX + operation.get('callId', key)
-                    for key, operation in body.get('memoryOperations', {}).items()}
-                reconciled_memories = {item['effect_key'] for item in effects if item['effect_key'] in memory_keys
-                    and (item.get('result') or {}).get('reconciled') is True}
-                ticket = snapshot.get('queue') or {}
-                native_ended = (ticket.get('id') == task['run_id'] and ticket.get('session_id') == task['id']
-                    and ticket.get('user_id') == owner and ticket.get('status') in {'completed', 'failed', 'cancelled'}
-                    and run.get('run_id') == task['run_id'] and run.get('session_id') == task['id']
-                    and run.get('user_id') == owner
-                    and str(run.get('status', '')).lower() in {'completed', 'error', 'cancelled'})
-                if (body.get('blockReason') in {'RESEARCH_EFFECT_UNCONFIRMED', 'RESEARCH_RESTART_REQUIRES_RECONCILIATION'}
-                        and reconciled_memories and native_ended
-                        and all(item['effect_key'] in reconciled_memories for item in effects)
-                        and not any(effect_unresolved(item, self.store) for item in effects)):
-                    # Release this metadata hold only. The lifecycle observer still
-                    # proves process custody/terminal state before a new turn.
-                    body['blockReason'] = None
+                observed_terminal = bool(task['terminal'] and status in {'completed', 'failed', 'canceled'})
+                if native_ended and not body.get('stopRequestId') and all(
+                        child['status'] in {'completed', 'failed', 'cancelled', 'canceled'} for child in children):
+                    # Ending the native turn does not resolve or replay its unknown operations.
+                    observed_terminal = True
+                    status = {'completed': 'completed', 'failed': 'failed', 'cancelled': 'canceled'}[ticket['status']]
+                # Ticket fallbacks may contain error text. Only exact persisted run
+                # messages accompanying an actually completed task are an answer.
+                if (status == 'completed' and observed_terminal and run.get('run_id') == task['run_id']
+                        and run.get('session_id') == task['id'] and run.get('user_id') == owner
+                        and str(run.get('status', '')).lower() == 'completed'
+                        and isinstance(run.get('messages'), list)
+                        and any(item.get('role') == 'assistant' for item in run['messages'] if isinstance(item, dict))
+                        and isinstance(run.get('content'), str)):
+                    result = run['content']
+                if native_ended and observed_terminal and not body.get('stopRequestId'):
+                    if body.get('blockReason') == 'RESEARCH_RESTART_REQUIRES_RECONCILIATION':
+                        status, result = 'failed', None
+                        body['failure'] = '原任务自动重试已停止，以免重复执行结果未知的操作。可以开始独立的新一轮。'
+                        body['blockReason'] = None
+                    elif body.get('blockReason') == 'RESEARCH_EFFECT_UNCONFIRMED':
+                        body['blockReason'] = None
                 compaction = body.get('compaction')
                 summary_ended = bool(observed_terminal and compaction and compaction['status'] in {'started', 'failed', 'unknown'})
                 if summary_ended:
@@ -254,13 +254,19 @@ class ResearchSessions:
 
     def _safe(self, owner, turn):
         body = turn['body']
-        if body.get('blockReason') or not body['terminal']:
+        if body.get('blockReason') not in {None, 'RESEARCH_EFFECT_UNCONFIRMED'} or not body['terminal']:
             return False
         task = self._task(owner, turn)
         if task is None:
             return bool(body.get('neverDispatched') and body['terminal'])
-        return bool(task and task['terminal'] and not runtime_custody_held(self.store, task['id'])
-                    and not any(effect_unresolved(item, self.store) for item in self.store.effects(task['id'])))
+        if body.get('stopRequestId'):
+            return bool(task['terminal'] and not runtime_custody_held(self.store, task['id'])
+                and not any(effect_unresolved(item, self.store) for item in self.store.effects(task['id'])))
+        ticket = self.runs.factory.bridge.native_db.get_job(task['run_id'])
+        return bool(ticket and ticket.get('id') == task['run_id'] and ticket.get('session_id') == task['id']
+            and ticket.get('user_id') == owner and ticket.get('status') in {'completed', 'failed', 'cancelled'}
+            and all(child['status'] in {'completed', 'failed', 'cancelled', 'canceled'}
+                    for child in body.get('children', [])))
 
     @staticmethod
     def _start(row, turn):
@@ -487,8 +493,6 @@ class ResearchSessions:
                 'SELECT 1 FROM af_delegation_links WHERE owner_id=:owner AND parent_id=:parent LIMIT 1',
                 owner=context.user_id, parent=task['id'])) and not self.subagents.permits_continuation(task, ticket)):
             blocked = 'RESEARCH_RESTART_REQUIRES_RECONCILIATION'
-        elif any(effect_unresolved(item, self.store) for item in effects):
-            blocked = 'RESEARCH_EFFECT_UNCONFIRMED'
         if blocked:
             if task['researchChild']:
                 raise StopAgentRun(blocked)
@@ -496,6 +500,9 @@ class ResearchSessions:
             self.store.event(task['id'], 'research_reconciliation_required', '原执行需要核对，已阻止新的模型调用。', {'code': blocked})
             self._save_turn(conn, turn, body)
         else:
+            if body.get('blockReason') == 'RESEARCH_EFFECT_UNCONFIRMED':
+                body['blockReason'] = None
+                self._save_turn(conn, turn, body)
             self._sources(context.user_id, row['body']['sharedSourceIds'])
             self._replies(context.user_id, row['id'], self._turns(conn, row['id']))
             if self.collaboration is not None and not task['researchChild']:
@@ -687,6 +694,8 @@ class ResearchSessions:
             latest = turns[-1] if turns else None
             safe = not latest or self._safe(owner, latest)
             block = latest['body'].get('blockReason') if latest else None
+            if block == 'RESEARCH_EFFECT_UNCONFIRMED':
+                block = None
             if latest and latest['body']['status'] == 'unknown':
                 block = block or 'RESEARCH_ORIGINAL_OUTCOME_UNCONFIRMED'
             raw_characters = len(session_context.project(row, turns, raw=True))
