@@ -7,26 +7,37 @@ on:
 permissions:
   contents: read
 jobs:
-  frontend:
+  checks:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: factory_test
+          POSTGRES_PASSWORD: factory_disposable
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U factory_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      FACTORY_TEST_DATABASE_URL: postgresql+psycopg://factory_test:factory_disposable@127.0.0.1:5432/postgres
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
         with:
           node-version: 24
           cache: npm
-      - run: npm ci --ignore-scripts
-      - run: npm run check
-  python:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.12'
       - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
         with:
           version: '0.12.1'
+      - run: npm ci --ignore-scripts
+      - run: npm run check
       - run: uv sync --frozen
-      - run: uv run ruff check platform deployment applications
+      - run: uv run ruff check platform deployment applications tests
       - run: uv run pyright
+      - run: uv run playwright install --with-deps chromium
+      - run: uv run python -m unittest discover -s tests -v

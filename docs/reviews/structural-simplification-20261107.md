@@ -70,3 +70,13 @@ SSH discovery passed, but remote execution did not: OpenSSH returned 255 because
 Independent code review found and resolved tool-name collision and silent directory-read errors. Ruff passed; Pyright reported zero errors and the existing six Windows-only import warnings. Frontend lint, types and build passed, with existing CSS syntax and bundle-size warnings. No test suite was restored or run. Windows execution remains unverified. Manual evidence and screenshots are outside the repository in `/workspace/agent-factory-cleanup/`.
 
 Current source count is **19,264 physical lines in 135 source files**, using the same extensions as the original count; the follow-up adds 90 net source lines. PR #177 remains Draft and unmerged.
+
+## Minimal regression suite, explicitly requested afterwards
+
+The user subsequently authorized minimal feature-based regression tests using Ponytail. The repository's installed Ponytail skill was read; neither the repository/environment catalogs nor the retained upstream skill package contained a separate testing skill. No unavailable plugin hooks are claimed.
+
+Added one 264-line file with two browser journeys, without restoring the deleted suite or changing production behavior. The first uses actual login, Settings model configuration, PostgreSQL/Agno execution, personal CLI failure and recovery, SSH discovery, native file editing/download, child execution/continuation, draft preservation, refresh and mobile layout. The second confirms a live command PID before Stop and its absence afterwards. Downloads compare raw bytes, and refresh must not generate new model requests. Each run creates and drops its own random database and uses explicitly isolated temporary tool storage.
+
+Only the model HTTP endpoint is scripted (Chat Completions SSE); browser, API, database, queue and tools are real. This establishes deterministic integration behavior, not real-model intelligence or external-provider compatibility. Remote SSH execution, MCP, Responses, Windows and long-duration runs are not covered by these two cases.
+
+Final local run: **2 tests passed in 25.505 seconds**. Ruff, Pyright, frontend lint/types/build and lock consistency also passed, with the previously recorded Windows import and CSS/bundle warnings. Independent review findings were addressed. CI now runs the same journeys against PostgreSQL 17 and Chromium. Current source: **19,528 physical lines across 136 files**, including the new tests. PR remains Draft and unmerged.
