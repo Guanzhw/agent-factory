@@ -293,6 +293,26 @@ class ChatJourney(unittest.TestCase):
                 self.assertEqual(self.context.request.get(download_url, params={'path': path}).status, 404)
         normalized = self.context.request.get(download_url, params={'path': 'unused/../结果.txt'})
         self.assertEqual(normalized.body(), DOCUMENT.encode())
+        blocked = workspace / '不可读实验目录'
+        blocked.mkdir()
+        (blocked / 'hidden.txt').write_text('not listable')
+        blocked.chmod(0)
+        try:
+            response = self.context.request.get(download_url.removesuffix('/download'))
+            self.assertEqual(response.status, 200)
+            self.assertIn('结果.txt', [file['path'] for file in response.json()['files']])
+            self.assertEqual([issue['path'] for issue in response.json()['errors']], [blocked.name])
+            self.page.get_by_role('button', name='刷新文件列表', exact=True).click()
+            expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(blocked.name)
+            with self.page.expect_download() as partial_download:
+                self.page.get_by_role('link', name='结果.txt', exact=True).click()
+            self.assertEqual(Path(partial_download.value.path()).read_bytes(), DOCUMENT.encode())
+            self.page.screenshot(path='/tmp/factory-partial-files.png', full_page=True)
+        finally:
+            blocked.chmod(0o700)
+        self.page.get_by_role('button', name='刷新文件列表', exact=True).click()
+        expect(self.page.locator('.rs-files [role="alert"]')).to_have_count(0)
+        expect(self.page.get_by_role('link', name=blocked.name + '/hidden.txt', exact=True)).to_be_visible()
         expect(self.page.get_by_role('link', name='child.txt', exact=True)).to_be_visible()
         self.assertEqual(len(self.session()['turns']), 1)  # Refresh must not start another run.
         self.assertEqual(len(self.model.requests), requests_before_refresh)

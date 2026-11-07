@@ -26,6 +26,7 @@ Two focused cases exercise SSH revocation through the real database/API and nati
 - A configured CLI's exit 7 preserves stdout/stderr and the Agent continues with another call.
 - The Agent receives the configured SSH server reference from discovery without user input.
 - Native file editing produces a larger-than-52-KB UTF-8 document; the browser downloads identical bytes with a Chinese filename. Downloads also reject parent traversal, sibling-prefix paths and escaping symlinks while accepting normalized paths within the session.
+- An unreadable experiment directory leaves other files visible and downloadable, with the failed path shown; restoring permissions and refreshing clears the warning and lists the recovered files.
 - A child Agent creates a file, returns its result and the parent resumes. Refresh retains one original turn; files remain downloadable on desktop/mobile.
 - Stop terminates an actually running local command; refreshing does not repeat it.
 - External Skills load native instructions, nested references and script source. A script preserves shebang flags, arguments and cwd, returns exit-7 diagnostics, then another invocation runs longer than 30 seconds and produces a downloadable result. Stop terminates an actual skill-script PID.
