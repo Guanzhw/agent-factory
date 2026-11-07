@@ -11,11 +11,11 @@ This branch starts from main `15e192b` after PR #177. It adds reusable research 
 - Research records accept observations and ordinary file/URL/result references. Analysis can be standalone or attached to an existing record without requiring a terminal record. Historical records remain readable.
 - Unknown results stay unknown, with their original identities. They no longer stop every other tool or the next model call. Repeated original calls are not dispatched again. A genuinely ended native turn can permit independent new work without rewriting its unresolved effects. Automatic retries that could repeat side effects remain stopped; once the original native run ends, the user can start an independent turn. Stop is checked against the current transaction row, including a concurrent stop request.
 
-No production deployment or WSP run was performed.
+Source remains **20,126 physical lines across 140 files**, including tests, using the established counting scope. Relative to main, production code adds 262 and removes 176 lines (net +86); minimal regressions add 425 and remove 3 lines. No production deployment or WSP run was performed.
 
 ## Verification
 
-The local full minimal suite passed **18/18 in 99.130 seconds** before the final external-cwd adjustment. The updated external Skills journey then passed in **48.150 seconds**: actual native instructions/reference/source access, a script with preserved `-O`, Chinese/space arguments, default and explicit cwd, exit 7 followed by a 31-second successful run, and a byte-correct browser download. The added step reads an ordinary asset from the skill's own directory. Final-head CI is recorded in the PR.
+The local full minimal suite passed **18/18 in 99.130 seconds** before the final external-cwd adjustment. The updated external Skills journey then passed in **48.150 seconds**: actual native instructions/reference/source access, a script with preserved `-O`, Chinese/space arguments, default and explicit cwd, exit 7 followed by a 31-second successful run, and a byte-correct browser download. The added step reads an ordinary asset from the skill's own directory. On implementation commit `bf8ad58`, CI passed all 18 cases in **71.741 seconds**; frontend/backend checks and CodeQL also passed. The PR records checks for later documentation-only commits.
 
 The suite uses real PostgreSQL, Agno queue, HTTP model adaptation, Chromium and local processes. Its model server is scripted. Unknown-response integration injects one adapter error, then checks independent file operations and a new turn while the original database effect remains UNKNOWN and the adapter call count remains one. Stop tests verify actual process PIDs before and after cancellation. Focused session snapshots cover queue retry and a concurrently recorded Stop. These are different kinds of evidence, not a claim that every service was exercised remotely.
 
@@ -37,6 +37,28 @@ The Agent compared degrees 0–9, then tried robust and regularized variants and
 
 This proves a live model/tool/research-record loop on a small synthetic problem. It is **not complete research acceptance**, a scientific-quality certification, a WSP result, or proof of remote compute capabilities. The model's interpretation and uncertainty claims require ordinary scientific review. Evidence is retained outside the repository under `/workspace/agent-factory-cleanup/native-skills-live/`.
 
+## Live model: repository search investigation
+
+The same OpenCode Go / `deepseek-v4.1-flash` configuration completed a separate investigation in **2,580.7 seconds**, with **116 parent tool executions** and a completed model-driven child audit. The task studied literal-search correctness and performance against 78 actual production Python files (816,691 bytes); independent hashes match the source, which the experiment did not modify. Replicated corpora and a concatenated large file were additional synthetic workloads, not independent datasets.
+
+The Agent wrote its own evaluator, compared traversal and byte-prefilter candidates, corrected real script failures, and delegated adversarial checking. Its child found a permission-error regression: an optimized traversal could return empty success where the baseline raises `PermissionError`. The parent resumed automatically and produced candidate D, retaining original traversal and only adding the prefilter. It wrote a report and ordinary research records. These experimental candidates were not adopted into product code.
+
+Independent replay covered 187 candidate/case comparisons; D passed all 49 of its comparisons. A separately constructed permission counterexample reproduced the earlier candidates' empty-success regression and confirmed D matches the baseline. After the model and collection processes stopped, independent warm-cache timing used equally represented, randomly shuffled implementation-order permutations, with 120 samples per query/implementation:
+
+| Query | Baseline median | D median | Baseline / D |
+| --- | ---: | ---: | ---: |
+| Absent token | 5.293 ms | 2.038 ms | 2.60× |
+| `research_search` | 5.189 ms | 2.319 ms | 2.24× |
+| `workspace` | 5.566 ms | 3.133 ms | 1.78× |
+| `def ` | 7.612 ms | 7.729 ms | 0.985× |
+| `e` | 24.074 ms | 25.020 ms | 0.962× |
+
+Sparse queries benefit; dense queries do not show a useful gain. These are local search microbenchmarks, not cold-cache measurements or application throughput claims. This run demonstrates autonomous investigation, failure recovery, child review and revision on real repository data; it does not establish general scientific validity or remote research readiness.
+
+Evidence is retained at `/workspace/agent-factory-cleanup/native-skills-repo-research/`: native parent/child history, session, report and candidate files, plus `independent-verification.json` with raw timing samples. The driver's final recursive archive failed on deliberately adversarial deep directories after the research completed. A separate collector retained ordinary files and special-file metadata. The saved screenshot shows the completed page's tool area; it is not evidence of final-report download. Only this run's disposable database was deleted after confirming native `COMPLETED`.
+
+A separate minimal real HTTP/PostgreSQL check reproduced a delivery gap: an unreadable child directory makes the entire file list return 503, although direct download of root `report.md` returns 200 and matches all 23,757 bytes. Restoring permissions and creating 1,100 nested directories still gives a successful list and download; the archiver failure therefore does not imply an API recursion failure. `file-delivery-verification.json` records this. The list currently returns an array and deliberately surfaces traversal errors; partial results with an explicit unreadable-path warning need coordinated API/frontend handling rather than silently suppressing errors. This remains an integration issue, not a completed delivery acceptance claim. No product/API change was made for it in this branch.
+
 ## Frontend integration handoff
 
 The local frontend session `01a1b720-a561-7d40-af4c-4bcb7a835dfa` has uncommitted work. No local workspace or `web/` file was overwritten. Keep both branches and merge these shared files deliberately:
@@ -47,6 +69,6 @@ The local frontend session `01a1b720-a561-7d40-af4c-4bcb7a835dfa` has uncommitte
 | `applications/research/sessions.py` | `_refresh`, `_safe`, `_model_boundary`, `read`: distinguish an ended native turn from unknown effects; preserve current Stop and active children | Current-turn `messages[0].text` as goal. The cloud branch does not change `_start`. Do not label each tool successful merely because the turn ended. |
 | `platform/agent_factory/runtime.py` | Reserve native Skills tool names when assembling personal tools | SSH native pre/post hooks carrying callId, arguments, outcome and output. These can coexist with the Skills name reservation. |
 
-Additional wiring: `main.py` exposes the existing executor in application state; research installation assigns its native Skills instance in `public.py`. No new HTTP route, required frontend field or database table was introduced. Native skill reading is retained in Agno's run history; script execution emits the existing research command events. Frontend integration and acceptance of its uncommitted changes remain separate from this branch's backend verification.
+Additional wiring: `main.py` exposes the existing executor in application state; research installation assigns its native Skills instance in `public.py`. No new HTTP route, required frontend field or database table was introduced. Native skill reading is retained in Agno's run history; script execution emits the existing research command events. The existing API may label a native child wait `waiting_approval`; `research_wait_child` is automatically resumed from the child result, not a request for human approval. Preserve the existing frontend child-aware waiting display. Frontend integration and acceptance of its uncommitted changes remain separate from this branch's backend verification.
 
 Windows execution, actual remote SSH/MCP research, distributed cancellation and the local frontend's final combined experience remain unverified by this work.
