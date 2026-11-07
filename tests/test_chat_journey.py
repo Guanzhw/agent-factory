@@ -1,4 +1,4 @@
-"""Two browser journeys through PostgreSQL/Agno; only the model endpoint is scripted."""
+"""Browser journeys and focused regressions; no external services are required."""
 import ast
 import asyncio
 import datetime
@@ -35,7 +35,7 @@ from agno.models.message import Message
 from fastapi import HTTPException
 from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
-from research.session_tools import ResearchSessionTools
+from research.session_tools import ResearchSessionTools, _directory, _open_file
 
 DOCUMENT = '研究结果：文件内容保持完整。\n' * 2000
 
@@ -300,6 +300,12 @@ class ChatJourney(unittest.TestCase):
                     sent = body['messages'][0]['content'] if protocol == 'chat-completions' else body['input'][0]['output']
                     self.assertEqual(sent, expected)
         self.assertTrue(message.content.startswith('原始长输出42'))  # Compression retains original history.
+
+    def test_workspace_open_requires_a_leaf_name(self):
+        with _directory(Path(self.folder.name)) as parent:
+            for path in ('../outside', '/etc/passwd', '.', '..'):
+                with self.subTest(path=path), self.assertRaises(ValueError):
+                    _open_file(parent, path)
 
     def test_stop_running_command(self):
         self.send('stop-case')

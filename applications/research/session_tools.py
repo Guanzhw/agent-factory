@@ -216,6 +216,9 @@ def _directory(root, parts=(), *, create=False):
 
 
 def _open_file(parent, name, *, edit=False, create=False):
+    leaf = os.path.basename(name)
+    if leaf != name or leaf in {'', '.', '..'}:
+        raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
     if sys.platform == 'win32':
         import msvcrt
         import pywintypes
@@ -248,7 +251,7 @@ def _open_file(parent, name, *, edit=False, create=False):
     flags = (os.O_RDWR if edit else os.O_RDONLY) | getattr(os, 'O_NOFOLLOW') | getattr(os, 'O_NONBLOCK')
     if create:
         flags |= os.O_CREAT | os.O_EXCL
-    return os.open(name, flags, 0o600, dir_fd=parent)
+    return os.open(leaf, flags, 0o600, dir_fd=parent)
 
 
 def _entry_stat(parent, name):

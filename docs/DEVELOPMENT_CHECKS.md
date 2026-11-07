@@ -1,6 +1,6 @@
 # Development checks
 
-The old test suite was deleted at the user's request on 2026-11-07. The user subsequently requested minimal feature-based regression coverage using Ponytail. The new suite has two browser journeys and two focused review regressions; it does not restore the old tests or their implementation constraints.
+The old test suite was deleted at the user's request on 2026-11-07. The user subsequently requested minimal feature-based regression coverage using Ponytail. The new suite has two browser journeys and three focused review regressions; it does not restore the old tests or their implementation constraints.
 
 ## Run
 
@@ -19,7 +19,7 @@ Use a disposable PostgreSQL instance with permission to create databases. Each s
 
 ## Coverage
 
-The two focused cases exercise SSH revocation through the real database/API and native Agno compression through a local model endpoint. SSH process spawning is intercepted only to inspect temporary-key permissions and cleanup; this is not a remote SSH execution test. The compression case checks Chat Completions and Responses request serialization with compression enabled and disabled.
+Two focused cases exercise SSH revocation through the real database/API and native Agno compression through a local model endpoint. SSH process spawning is intercepted only to inspect temporary-key permissions and cleanup; this is not a remote SSH execution test. The compression case checks Chat Completions and Responses request serialization with compression enabled and disabled. A third case verifies that the low-level workspace opener accepts only a leaf name, rejecting traversal and absolute paths without silently rewriting them.
 
 - Ordinary login opens chat; model configuration through Settings selects the model used by the Agent.
 - A chat draft survives a settings visit. A streamed response and native tool calls travel through the actual model HTTP adapter and Agno queue.
@@ -29,4 +29,4 @@ The two focused cases exercise SSH revocation through the real database/API and 
 - A child Agent creates a file, returns its result and the parent resumes. Refresh retains one original turn; files remain downloadable on desktop/mobile.
 - Stop terminates an actually running local command; refreshing does not repeat it.
 
-The model is a deterministic protocol fixture, not an intelligence or real-provider check. These tests do not establish Windows compatibility, remote SSH execution, all model protocols, MCP interoperability, long-duration execution or scientific research quality. Real-model and platform-specific acceptance remain separate. `npm run check` itself still runs only frontend lint, types and build; CI also runs all four regression cases.
+The model is a deterministic protocol fixture, not an intelligence or real-provider check. These tests do not establish Windows compatibility, remote SSH execution, all model protocols, MCP interoperability, long-duration execution or scientific research quality. Real-model and platform-specific acceptance remain separate. `npm run check` itself still runs only frontend lint, types and build; CI also runs all five regression cases.
