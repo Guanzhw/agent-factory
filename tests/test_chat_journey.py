@@ -233,6 +233,17 @@ class ChatJourney(unittest.TestCase):
             self.page.get_by_role('link', name='结果.txt', exact=True).click()
         self.assertEqual(download.value.suggested_filename, '结果.txt')
         self.assertEqual(Path(download.value.path()).read_bytes(), DOCUMENT.encode())
+        workspace = self.state['store'].research_sessions.workspace(self.owner, snapshot['id'])
+        sibling = Path(str(workspace) + '-neighbor')
+        sibling.mkdir()
+        (sibling / 'outside.txt').write_text('outside this session')
+        (workspace / 'escape').symlink_to(sibling, target_is_directory=True)
+        download_url = self.origin + '/api/factory/research/sessions/' + snapshot['id'] + '/files/download'
+        for path in ('../' + sibling.name + '/outside.txt', str(sibling / 'outside.txt'), 'escape/outside.txt'):
+            with self.subTest(download=path):
+                self.assertEqual(self.context.request.get(download_url, params={'path': path}).status, 404)
+        normalized = self.context.request.get(download_url, params={'path': 'unused/../结果.txt'})
+        self.assertEqual(normalized.body(), DOCUMENT.encode())
         expect(self.page.get_by_role('link', name='child.txt', exact=True)).to_be_visible()
         self.assertEqual(len(self.session()['turns']), 1)  # Refresh must not start another run.
         self.assertEqual(len(self.model.requests), requests_before_refresh)

@@ -139,11 +139,11 @@ def _workspace_parts(workspace, value, *, directory=False):
     """Resolve normal absolute/relative syntax before applying session ownership."""
     if not isinstance(value, str) or not value or '\0' in value:
         raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
-    target = (Path(value) if Path(value).is_absolute() else workspace / value).resolve()
-    try:
-        relative = target.relative_to(workspace.resolve())
-    except ValueError:
-        raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID') from None
+    root = os.path.realpath(workspace)
+    target = os.path.realpath(value if os.path.isabs(value) else os.path.join(root, value))
+    if target != root and not target.startswith(os.path.join(root, '')):
+        raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
+    relative = Path(os.path.relpath(target, root))
     if not relative.parts and not directory:
         raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
     # Pass the normalized path into the pinned native path resolver, avoiding

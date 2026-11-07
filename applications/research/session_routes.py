@@ -13,7 +13,7 @@ from starlette.background import BackgroundTask
 
 from agent_factory.application_content import ObjectId
 from .projects import Reference, RequestId
-from .session_tools import _directory, _open_file, _parts
+from .session_tools import _directory, _open_file, _workspace_parts
 
 
 # openai/codex 0ed34eb9: protocol/src/user_input.rs::MAX_USER_INPUT_TEXT_CHARS.
@@ -124,7 +124,7 @@ def session_router(auth, service):
     def download(request: Request, identifier: str, path: str):
         workspace = service.workspace(auth.user(request)['id'], identifier)
         try:
-            parts = _parts(path)
+            parts = _workspace_parts(workspace, path)
             with _directory(workspace, parts[:-1]) as parent:
                 stream = os.fdopen(_open_file(parent, parts[-1]), 'rb')
             if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):

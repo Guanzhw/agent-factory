@@ -25,7 +25,7 @@ Two focused cases exercise SSH revocation through the real database/API and nati
 - A chat draft survives a settings visit. A streamed response and native tool calls travel through the actual model HTTP adapter and Agno queue.
 - A configured CLI's exit 7 preserves stdout/stderr and the Agent continues with another call.
 - The Agent receives the configured SSH server reference from discovery without user input.
-- Native file editing produces a larger-than-52-KB UTF-8 document; the browser downloads identical bytes with a Chinese filename.
+- Native file editing produces a larger-than-52-KB UTF-8 document; the browser downloads identical bytes with a Chinese filename. Downloads also reject parent traversal, sibling-prefix paths and escaping symlinks while accepting normalized paths within the session.
 - A child Agent creates a file, returns its result and the parent resumes. Refresh retains one original turn; files remain downloadable on desktop/mobile.
 - Stop terminates an actually running local command; refreshing does not repeat it.
 
