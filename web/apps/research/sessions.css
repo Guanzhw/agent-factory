@@ -115,3 +115,6 @@
   .rs-reply { padding-left: 0; }
 }
 .rs-child-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+
+.rs-files { overflow-wrap: anywhere; margin-block: 16px; }
+.rs-files li { margin-block: 8px; }

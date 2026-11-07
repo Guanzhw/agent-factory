@@ -54,3 +54,19 @@ Python Ruff passed. Pyright reported zero errors and six source-resolution warni
 Real Windows/SSH execution, a 601-second command on this revision, artifact downloads and the command-stop scenario remain unverified. Full browser acceptance should use the final build and the final server revision. The initial PR's older test results and screenshots do not substitute for that work. PR #177 stays Draft and unmerged.
 
 Ponytail is installed through its upstream-documented repository-skill fallback. The global cloud Codex plugin directory is read-only; automatic lifecycle hooks are not installed.
+
+## Follow-up: CLI recovery, SSH discovery and file delivery
+
+This follow-up changes only three concrete gaps found after `b4a8af2`:
+
+- Both personal CLI adapters return the observed exit code, stdout and stderr for a completed nonzero command. Invalid JSON after a completed command also falls back to the real output. These results no longer become UNKNOWN and halt the conversation. Successful structured responses retain their existing shape; uncertain dispatch/cancellation is unchanged.
+- `ssh_servers` exposes the existing owner-visible server list to the Agent. Native SSH tool names are reserved before personal tools are assembled, avoiding duplicate names. No user-supplied internal reference is required for discovery.
+- Chat shows current session files with direct downloads, including command-created files and files from previous sessions. Downloads reuse the existing owner/session lookup and file opening code, stream binary bytes, and retain UTF-8 filenames. Directory read failures are reported explicitly. These are current workspace files, not immutable artifact snapshots.
+
+Actual use on Linux/PostgreSQL with the configured DeepSeek model completed session `a5629ed4-0bf2-4712-91e1-86c8dff2c01c`: the configured personal CLI returned exit 7 with both diagnostic streams, the Agent continued to its successful call, discovered the configured SSH server itself, and wrote `结果.txt`. The ordinary browser downloaded that 1,969-byte file. A previous real research session's 52,198-byte `material.txt` also downloaded with an identical SHA-256. Anonymous listing returned 401; a parent-directory download returned 404. The separately registered CLI adapter was manually invoked with actual subprocesses: exit 7 and exit 0 with non-JSON stdout both retained their output.
+
+SSH discovery passed, but remote execution did not: OpenSSH returned 255 because this environment's `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` resolves to a file owned by `nobody:nogroup`. No system ownership was changed and no remote success is claimed. The Agent recorded this failure and still completed the local result file.
+
+Independent code review found and resolved tool-name collision and silent directory-read errors. Ruff passed; Pyright reported zero errors and the existing six Windows-only import warnings. Frontend lint, types and build passed, with existing CSS syntax and bundle-size warnings. No test suite was restored or run. Windows execution remains unverified. Manual evidence and screenshots are outside the repository in `/workspace/agent-factory-cleanup/`.
+
+Current source count is **19,264 physical lines in 135 source files**, using the same extensions as the original count; the follow-up adds 90 net source lines. PR #177 remains Draft and unmerged.

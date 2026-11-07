@@ -36,13 +36,13 @@ def build_runtime(store, native_db):
             return store.research_qa.functions(run_context)
         research = getattr(store, 'research_tools', None)
         functions = research.functions(run_context) if research is not None else []
+        ssh = getattr(store, 'personal_ssh', None)
+        if ssh is not None:
+            functions.extend(ssh.functions(run_context.user_id))
         personal = getattr(store, 'personal_tools', None)
         if personal is not None:
             functions.extend(personal.functions(run_context.user_id, run_context,
                 reserved_names={function.name for function in functions}))
-        ssh = getattr(store, 'personal_ssh', None)
-        if ssh is not None:
-            functions.extend(ssh.functions(run_context.user_id))
         return functions
 
     executor = Agent(id='factory-executor', name='Factory', model=model, db=native_db,

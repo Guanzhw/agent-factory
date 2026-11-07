@@ -26,6 +26,11 @@ from .personal_remote_provider import SecretLease
 from .personal_tool_contract import ToolDescriptor, ToolInvocation, ToolInvocationError
 
 
+def command_output(result: CLIProcessResult) -> dict:
+    return {'exitCode': result.returncode, 'stdout': result.stdout.decode(errors='replace'),
+            'stderr': result.stderr.decode(errors='replace')}
+
+
 def cli_destination(value: str) -> str:
     if not isinstance(value, str) or not Path(value).is_absolute() or '\0' in value:
         raise ValueError('CLI_CONFIGURATION_INVALID')
@@ -81,9 +86,12 @@ class MemberCliAdapter:
                 stopped, dispatched = False, True
                 raise ToolInvocationError('CLI_PROCESS_STATE_UNCONFIRMED') from None
             if result.returncode:
-                raise ToolInvocationError('CLI_COMMAND_FAILED', stopped=stopped)
-            value = (json.loads(result.stdout) if self.configuration.get('outputFormat', 'json') == 'json'
-                else {'text': result.stdout.decode(errors='replace')})
+                return command_output(result)
+            try:
+                value = (json.loads(result.stdout) if self.configuration.get('outputFormat', 'json') == 'json'
+                    else {'text': result.stdout.decode(errors='replace')})
+            except ValueError:
+                return command_output(result)
             invocation.check_authorized()
             return value
         except ToolInvocationError as error:
@@ -320,10 +328,12 @@ class PersonalCliAdapter:
                 raise ToolInvocationError("CLI_IDENTITY_REJECTED", outcome="failed", stopped=True)
             guard()
             result = await run(arguments, stdin, business=True)
-            # An exit status cannot prove whether a remote mutation happened.
-            value = self._result(result, lease)
             if result.returncode != 0:
-                raise ToolInvocationError("CLI_COMMAND_FAILED", outcome="unknown", stopped=True)
+                return command_output(result)
+            try:
+                value = self._result(result, lease)
+            except ValueError:
+                return command_output(result)
             check_authorized()
             return value
         except ToolInvocationError as error:

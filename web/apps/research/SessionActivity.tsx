@@ -52,7 +52,7 @@ function ActionRecord({ event }: { event: SessionEvent }) {
       return <li><strong>{activityName(event)}</strong><span>{state}</span>
         {path && <code>{path}</code>}
         {typeof result.exitCode === 'number' && <p>命令退出码：{result.exitCode}{result.exitCode === 0 ? '（执行成功）' : '（请查看输出）'}</p>}
-        {finished && outcome === 'completed' && typeof result.afterSha256 === 'string' && path && <p>已保存文件，可在会话工作目录中查看；校验信息见执行详情。</p>}
+        {finished && outcome === 'completed' && typeof result.afterSha256 === 'string' && path && <p>已保存文件，可在下方“会话文件”中下载。</p>}
         {result.truncated === true && <p>输出较长，当前显示预览。完整输出：{[result.stdoutPath, result.stderrPath].filter(value => typeof value === 'string').map(path => <code key={String(path)}>{String(path)} </code>)}</p>}
         {typeof result.stdout === 'string'  && result.stdout && <details><summary>查看命令输出</summary><pre>{result.stdout}</pre></details>}
         {typeof result.stderr === 'string' && result.stderr && <details open={failed}><summary>查看错误输出</summary><pre>{result.stderr}</pre></details>}

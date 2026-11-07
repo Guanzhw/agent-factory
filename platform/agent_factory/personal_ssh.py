@@ -225,10 +225,14 @@ class PersonalSSHServers:
                 'stderr': result.stderr.decode(errors='replace'), 'stopped': result.stopped and result.returncode != 255}
 
     def functions(self, owner):
+        def ssh_servers():
+            """List available SSH servers with names, references and default directories. Use a returned reference with ssh_run."""
+            return self.available(owner)
+
         async def ssh_run(run_context: RunContext, reference: str, argv: list[str], cwd: str | None = None):
             """Run a command on a configured SSH server and return its actual output and exit code."""
             return await self.run(owner, reference, argv, cwd=cwd, run_id=run_context.run_id)
-        return [Function.from_callable(ssh_run)]
+        return [Function.from_callable(ssh_servers), Function.from_callable(ssh_run)]
 
     def close(self):
         pass

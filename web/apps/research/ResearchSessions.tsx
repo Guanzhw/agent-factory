@@ -6,6 +6,7 @@ import { draftKey, readStored, removeStored, requestKey, writeStored, type Pendi
 import { SessionQuestions } from './SessionQuestions.js';
 import { SessionActivity, hasUnconfirmedOperation } from './SessionActivity.js';
 import { ResearchReply } from './ResearchReply.js';
+import { SessionFiles } from './SessionFiles.js';
 import './sessions.css';
 
 type Props = { ownerId: string; selectedId?: string; questionId?: string; onSelect: (id: string) => void; onQuestion: (id: string) => void; onModels: () => void; navigation?: ReactNode; workspaceContent?: ReactNode; sessionError?: string };
@@ -243,6 +244,7 @@ function SessionDetail({ ownerId, value, busy, blocked, questionId, onQuestion, 
     <div className="rs-conversation">{value.turns.length ? value.turns.map(turn => <TurnRecord key={turn.id} turn={turn} onQuestion={onQuestion}/>) : <div className="rs-empty"><h3>会话已创建，尚无执行轮次</h3><p>写下第一轮指令后明确开始。打开或刷新不会自动执行。</p></div>}</div>
     {!!value.sharedSourceIds.length && <SharedSources key={`${value.id}:${value.blockReason ?? ''}:${value.sharedSourceIds.join(',')}`} ownerId={ownerId} ids={value.sharedSourceIds}/>}
     <details className="rs-collaboration-details" open={!!questionId}><summary>同事问答</summary><SessionQuestions key={`${ownerId}:${value.id}:${value.blockReason ?? ''}`} ownerId={ownerId} sessionId={value.id} collaborationEnabled={value.collaboration?.enabled} questionId={questionId} onQuestion={onQuestion} onUse={value.allowedActions.includes('start') && !blocked && !busy ? id => { selectedReply.change(id); onQuestion(''); composer.current?.focus(); composer.current?.scrollIntoView?.({ block: 'center' }); } : undefined}/></details>
+    <SessionFiles key={value.id} ownerId={ownerId} sessionId={value.id} revision={`${latest?.id}:${latest?.status}`}/>
     <ContextStatus value={value} blocked={blocked}/><div ref={end} className="rs-conversation-end"/>
     {(value.allowedActions.includes('start') || correction) && <form className="rw-form rs-composer" noValidate onSubmit={event => { event.preventDefault(); void send(); }}><fieldset disabled={busy || blocked}>{selectedReply.value && <div className="rs-selected-reply"><p>已选择下一轮引用：<code>{selectedReply.value}</code>。{correction ? '当前纠正不会采用这条回复。' : '提交下一轮时会重新核对回复与来源权限。'}</p><button type="button" onClick={() => selectedReply.change('')}>取消选用回复</button></div>}<label>{correction ? '补充或纠正当前研究' : '下一轮指令'}<textarea ref={composer} rows={2} placeholder="继续对话…" onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} value={draft.value} onChange={event => draft.change(event.target.value)} aria-invalid={!!error}/></label><p className="rw-muted">{correction ? '补充消息会在下一次模型请求中纳入。' : 'Enter 发送 · Shift + Enter 换行'}</p>{error && <p role="alert" className="rw-error">{error}</p>}<button className="rw-primary">{busy ? '正在提交…' : correction ? '保存纠正' : '发送'}</button></fieldset></form>}
     {!draft.saved && <p className="rw-error" role="alert">浏览器无法保存草稿；离开前请复制当前输入。</p>}

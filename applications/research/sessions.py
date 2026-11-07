@@ -672,6 +672,12 @@ class ResearchSessions:
                 self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).scalar_one_or_none()
             return bool(turn and turn.get('blockReason'))
 
+    def workspace(self, owner, identifier):
+        self.auth.require_member(owner)
+        with self.db.read() as conn:
+            row = self._row(conn, owner, identifier)
+            return self.tools._workspace({'ownerId': owner, 'id': row['id']})
+
     async def read(self, owner, identifier):
         self.auth.require_member(owner)
         await self._refresh(owner, identifier)
