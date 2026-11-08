@@ -64,12 +64,14 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             if not results:
                 tool = 'ssh_servers'
             reply = '已找到配置的 SSH 服务器；本轮只查询配置，连接状态尚未探测。'
-        elif user_text == 'SSH 断线回执验收':
+        elif user_text in {'SSH 断线回执验收', 'SSH 空命令验收', 'SSH 启动失败验收', 'SSH 派发异常验收', 'SSH 取消验收', 'SSH 准备失败验收', 'SSH 清理失败验收', 'SSH 参数缺失验收'}:
             if not results:
                 tool = 'ssh_servers'
             elif len(results) == 1:
                 tool, arguments = 'ssh_run', {'reference': ast.literal_eval(results[0][1])[0]['reference'],
-                                             'argv': ['pwd']}
+                                             'argv': [] if user_text == 'SSH 空命令验收' else ['pwd']}
+                if user_text == 'SSH 参数缺失验收':
+                    del arguments['argv']
             reply = 'SSH 结果未确认，需要核对原命令。'
         elif '"goal": "child-only"' in system:
             if not results:
@@ -452,6 +454,48 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(receipt['code'], 'SSH_TOOL_OUTCOME_UNKNOWN')
         expect(self.page.get_by_text('原工具操作结果未知，需核对原任务，不要重发同一操作。', exact=True)).to_be_visible()
 
+    def test_ssh_rejection_and_uncertain_dispatch(self):
+        from contextlib import contextmanager
+        from tempfile import TemporaryDirectory
+        self.configure_ssh()
+        @contextmanager
+        def directory(**kwargs):
+            if message == 'SSH 准备失败验收':
+                raise PermissionError('synthetic private path must not appear in receipt')
+            with TemporaryDirectory(**kwargs) as folder:
+                yield folder
+            if message == 'SSH 清理失败验收':
+                raise OSError('synthetic private path must not appear in receipt')
+        cases = [('SSH 空命令验收', None, 'failed', 'SSH_COMMAND_INVALID'),
+                 ('SSH 参数缺失验收', None, 'failed', 'SSH_COMMAND_INVALID'),
+                 ('SSH 准备失败验收', None, 'failed', 'SSH_PREPARATION_FAILED'),
+                 ('SSH 启动失败验收', CLIProcessError('SPAWN_FAILED', dispatched=False, stopped=True), 'failed', 'SSH_SPAWN_FAILED'),
+                 ('SSH 派发异常验收', CLIProcessError('CONNECTION_LOST', dispatched=True, stopped=True), 'unknown', 'SSH_CONNECTION_LOST'),
+                 ('SSH 取消验收', CLIProcessError('CANCELLED', dispatched=False, stopped=True, cancelled=True), 'unknown', 'SSH_CANCELLED'),
+                 ('SSH 清理失败验收', None, 'unknown', 'SSH_EXECUTION_OUTCOME_UNKNOWN')]
+        for index, (message, error, outcome, code) in enumerate(cases):
+            with self.subTest(message=message), patch('agent_factory.personal_ssh.TemporaryDirectory', directory), patch(
+                    'agent_factory.personal_ssh.run_cli_process', new=AsyncMock(side_effect=error,
+                        return_value=CLIProcessResult(returncode=0, stdout=b'/tmp\n', stderr=b''))) as process:
+                if index == 0:
+                    self.send(message)
+                else:
+                    self.post('/research/sessions/' + self.session()['id'] + '/turns', {'text': message})
+                snapshot = self.wait_for(lambda s: len(s['turns']) == index + 1 and s['turns'][-1]['status'] == 'completed')
+                receipt = next(event['data'] for event in snapshot['turns'][-1]['events']
+                               if event['type'] == 'tool_finished' and event['data'].get('toolName') == 'ssh_run')
+                self.assertEqual(receipt['outcome'], outcome)
+                self.assertEqual(receipt['code'], code)
+                if message in {'SSH 空命令验收', 'SSH 参数缺失验收', 'SSH 准备失败验收'}:
+                    process.assert_not_called()
+                else:
+                    process.assert_awaited_once()
+                expect(self.page.locator('.rs-turn')).to_have_count(index + 1)
+                expect(self.page.locator('.rs-turn').last.locator('.rs-process > summary')).to_contain_text('已完成')
+                call = self.page.locator('.rs-turn').last.locator('.rs-tool-call').last
+                self.page.locator('.rs-turn').last.locator('.rs-process > summary').click()
+                expect(call.get_by_text('失败' if outcome == 'failed' else '结果未确认', exact=True)).to_be_visible()
+
     def test_activity_wait_disconnect_and_reconciliation_display(self):
         # UI-only snapshots isolate transport loss and missing/late events.
         self.send('ssh 可用了吗?')
@@ -468,6 +512,7 @@ class ChatJourney(unittest.TestCase):
             route.fulfill(content_type='text/event-stream', body='event: session\ndata: ' +
                           json.dumps(snapshot, ensure_ascii=False) + '\n\n')
         self.page.route('**/research/sessions/*/events', stream)
+        self.page.route('**/research/sessions/' + snapshot['id'], lambda route: route.fulfill(json=snapshot))
         self.page.reload()
         expect(self.page.get_by_text(re.compile('秒未收到新执行事件'))).to_be_visible()
         self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-waiting.png'))

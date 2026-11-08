@@ -174,59 +174,68 @@ class PersonalSSHServers:
         return await self._run(self.server(owner, reference), argv, cwd=cwd, run_id=run_id)
 
     async def _run(self, server, argv, *, cwd=None, run_id=None):
-        if not argv or any(not isinstance(item, str) or '\0' in item for item in argv):
-            raise ValueError('SSH_COMMAND_INVALID')
-        executable = shutil.which('ssh')
-        if executable is None:
-            raise RemoteConnectionError('SSH_SYSTEM_CLIENT_UNAVAILABLE')
-        destination = endpoint(server.address, server.port, server.username, server.host_key)['origin']
-        scope = dict(owner=server.owner, reference=server.credential_ref,
-            revision=server.credential_revision, provider_id=PROVIDER_ID, destination=destination)
-        secret = self.vault.resolve(**scope)
-        command = 'cd ' + shlex.quote(cwd or server.allowed_root) + ' && exec ' + shlex.join(argv)
-        with TemporaryDirectory(prefix='factory-ssh-') as folder:
-            root = Path(folder)
-            key = root / 'identity'
-            # OpenSSH needs a plaintext identity file. Create it private and set
-            # the Windows ACL before writing any key bytes; the directory is temporary.
-            with os.fdopen(os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as stream:
-                if sys.platform == 'win32':
-                    import win32api
-                    import win32con
-                    import win32security
-                    token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
-                    try:
-                        user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
-                        acl = win32security.ACL()
-                        acl.AddAccessAllowedAce(win32security.ACL_REVISION, win32con.GENERIC_READ, user)
-                        win32security.SetNamedSecurityInfo(str(key), win32security.SE_FILE_OBJECT,
-                            win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
-                            None, None, acl, None)
-                    finally:
-                        win32api.CloseHandle(token)
-                stream.write(base64.b64decode(secret.password, validate=True))
-            args = ['-tt', '-i', str(key), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes']
-            if server.host_key:
-                known = root / 'known_hosts'
-                known.write_text('factory-remote ' + server.host_key + '\n')
-                args += ['-o', 'HostKeyAlias=factory-remote', '-o', 'UserKnownHostsFile=' + str(known),
-                    '-o', 'StrictHostKeyChecking=yes']
-            else:
-                args += ['-o', 'StrictHostKeyChecking=accept-new']
-            args += ['-p', str(server.port), '-l', server.username, server.address, command]
-            def check_cancelled():
-                if run_id and is_cancelled(run_id):
-                    raise asyncio.CancelledError()
-            try:
+        dispatch_attempted = False
+        try:
+            if not argv or any(not isinstance(item, str) or '\0' in item for item in argv):
+                raise ToolInvocationError('SSH_COMMAND_INVALID', outcome='failed', stopped=True)
+            executable = shutil.which('ssh')
+            if executable is None:
+                raise ToolInvocationError('SSH_SYSTEM_CLIENT_UNAVAILABLE', outcome='failed', stopped=True)
+            destination = endpoint(server.address, server.port, server.username, server.host_key)['origin']
+            scope = dict(owner=server.owner, reference=server.credential_ref,
+                revision=server.credential_revision, provider_id=PROVIDER_ID, destination=destination)
+            secret = self.vault.resolve(**scope)
+            command = 'cd ' + shlex.quote(cwd or server.allowed_root) + ' && exec ' + shlex.join(argv)
+            with TemporaryDirectory(prefix='factory-ssh-') as folder:
+                root = Path(folder)
+                key = root / 'identity'
+                # OpenSSH needs a plaintext identity file. Create it private and set
+                # the Windows ACL before writing any key bytes; the directory is temporary.
+                with os.fdopen(os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), 'wb') as stream:
+                    if sys.platform == 'win32':
+                        import win32api
+                        import win32con
+                        import win32security
+                        token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+                        try:
+                            user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+                            acl = win32security.ACL()
+                            acl.AddAccessAllowedAce(win32security.ACL_REVISION, win32con.GENERIC_READ, user)
+                            win32security.SetNamedSecurityInfo(str(key), win32security.SE_FILE_OBJECT,
+                                win32security.DACL_SECURITY_INFORMATION | win32security.PROTECTED_DACL_SECURITY_INFORMATION,
+                                None, None, acl, None)
+                        finally:
+                            win32api.CloseHandle(token)
+                    stream.write(base64.b64decode(secret.password, validate=True))
+                args = ['-tt', '-i', str(key), '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes']
+                if server.host_key:
+                    known = root / 'known_hosts'
+                    known.write_text('factory-remote ' + server.host_key + '\n')
+                    args += ['-o', 'HostKeyAlias=factory-remote', '-o', 'UserKnownHostsFile=' + str(known),
+                        '-o', 'StrictHostKeyChecking=yes']
+                else:
+                    args += ['-o', 'StrictHostKeyChecking=accept-new']
+                args += ['-p', str(server.port), '-l', server.username, server.address, command]
+                def check_cancelled():
+                    if run_id and is_cancelled(run_id):
+                        raise asyncio.CancelledError()
+                dispatch_attempted = True
                 result = await run_cli_process(executable=executable, argv=args, env=dict(os.environ), cwd=root,
                     stdin=b'', timeout_seconds=None, max_output_bytes=None,
                     before_spawn=check_cancelled, check_authorized=check_cancelled)
-            except CLIProcessError as error:
-                # Closing SSH requests remote foreground termination; a local
-                # process exit cannot prove an arbitrary remote descendant died.
-                raise ToolInvocationError('SSH_' + error.code, outcome='unknown', stopped=False) from error
-            return {'exitCode': result.returncode, 'stdout': result.stdout.decode(errors='replace'),
-                'stderr': result.stderr.decode(errors='replace'), 'stopped': result.stopped and result.returncode != 255}
+                return {'exitCode': result.returncode, 'stdout': result.stdout.decode(errors='replace'),
+                    'stderr': result.stderr.decode(errors='replace'), 'stopped': result.stopped and result.returncode != 255}
+
+        except CLIProcessError as error:
+            failed = not error.dispatched and error.stopped and error.outcome != 'cancelled'
+            # Local SSH cleanup cannot prove that remote descendants stopped.
+            raise ToolInvocationError('SSH_' + error.code, outcome='failed' if failed else 'unknown',
+                stopped=failed) from error
+        except ToolInvocationError:
+            raise
+        except Exception as error:
+            raise ToolInvocationError('SSH_EXECUTION_OUTCOME_UNKNOWN' if dispatch_attempted else 'SSH_PREPARATION_FAILED',
+                outcome='unknown' if dispatch_attempted else 'failed', stopped=not dispatch_attempted) from error
 
     def functions(self, owner):
         def ssh_servers():
@@ -236,7 +245,19 @@ class PersonalSSHServers:
         async def ssh_run(run_context: RunContext, reference: str, argv: list[str], cwd: str | None = None):
             """Run a command on a configured SSH server and return its actual output and exit code."""
             return await self.run(owner, reference, argv, cwd=cwd, run_id=run_context.run_id)
-        return [Function.from_callable(ssh_servers), Function.from_callable(ssh_run)]
+
+        async def ssh_outcome(function_call, arguments):
+            try:
+                return await function_call(**arguments)
+            except ValidationError:
+                return {'outcome': 'failed', 'code': 'SSH_COMMAND_INVALID', 'stopped': True}
+            except HTTPException:
+                return {'outcome': 'failed', 'code': 'SSH_SERVER_UNAVAILABLE', 'stopped': True}
+            except ToolInvocationError as error:
+                return {'outcome': error.outcome, 'code': error.code, 'stopped': error.stopped}
+        command = Function.from_callable(ssh_run)
+        command.tool_hooks = [ssh_outcome]
+        return [Function.from_callable(ssh_servers), command]
 
     def close(self):
         pass

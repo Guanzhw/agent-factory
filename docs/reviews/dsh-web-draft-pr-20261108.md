@@ -22,10 +22,12 @@ The existing subscription completes a combined task with native SSH exit 0 and a
 
 That live run also exposes missing native Skills read events. Native Function hooks now save original read arguments/results while keeping script command records unique. The focused native journey passes in 74.608 seconds, and a real provider follow-up completes in 12 seconds with two visible instruction/reference calls and full returned documents. Independent review finds no source blocker.
 
+The follow-up SSH review finds and corrects pre-dispatch failures mislabeled unknown. The seven-case native boundary journey passes in 52.293 seconds; the final full Windows suite passes 22 cases in 124.087 seconds. Native typed argument errors and confirmed rejection are failed, while cancellation, dispatched loss and later cleanup errors remain unknown. Frontend checks, Ruff and Pyright pass. Independent final review finds no remaining issue.
+
 ## Not verified
 
-The supported current Edge tab clicks the ordinary file link successfully, but no download event arrives in 15 seconds; download-manager byte delivery remains unverified. Both old and current directory guards permit empty-directory junction conversion via write-attributes access; they do not provide OS isolation. Windows TLS/RST and existing CSS/bundle warnings remain.
+Real Edge delivery is verified after manual Save: 34 bytes match the session source and SHA-256; the temporary file disappears. The earlier event timeout and browser-control limitations remain historical evidence. Both old and current directory guards permit empty-directory junction conversion via write-attributes access; they do not provide OS isolation. Windows TLS/RST and existing CSS/bundle warnings remain.
 
 ## Next step
 
-Keep the PR draft while real Edge byte delivery remains open. A supported saved download path or a manually supplied copy of the exact session file allows the remaining byte/hash check. See [combined integration evidence](dsh-skills-integration-20261108.md).
+Hand the corrected stack and exact-head CI to cloud Codex for governance and merging. Preserve #178's ancestry before retargeting #179 to main, and verify the resulting merge and checks. Local work does not perform the merge. See [combined integration evidence](dsh-skills-integration-20261108.md).

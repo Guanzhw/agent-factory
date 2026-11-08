@@ -58,7 +58,9 @@ def build_runtime(store, native_db):
         event = {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}}
         if fc.result is not None:
             event['output'] = fc.result
-        if fc.result is None or fc.function.name == 'ssh_run' and fc.result['stopped'] is False:
+        if fc.function.name == 'ssh_run' and fc.result is not None and 'outcome' in fc.result:
+            event.update(outcome=fc.result['outcome'], code=fc.result['code'])
+        elif fc.result is None or fc.function.name == 'ssh_run' and fc.result['stopped'] is False:
             # Native post-hooks also run after cancellation, when remote stop is unconfirmed.
             event.update(outcome='unknown', code='SSH_TOOL_OUTCOME_UNKNOWN')
             if fc.error:

@@ -64,4 +64,4 @@ The existing HTTPS app is running at `https://127.0.0.1:3100/`. The existing loc
 
 Local branch: `codex/dsh-chat-observability-windows-20261108`. The local commit and [Draft PR materials](dsh-web-draft-pr-20261108.md) preserve this work for integration. No push, remote pull request, remote merge, publication, or remote deployment is performed.
 
-The subsequent [local integration with #178](dsh-skills-integration-20261108.md) uses a separate branch and preserves both commits. Its full 20-case Windows suite passes; combined real-provider and Edge download acceptance remains pending browser-control recovery.
+The subsequent [local integration with #178](dsh-skills-integration-20261108.md) uses a separate branch and preserves both commits. Its later checks include real provider, SSH, Skills and Chinese-file acceptance. Final Edge delivery is verified after the user clicks Save: the 34-byte file and hash match its exact session source, and the temporary file disappears. The earlier observation failures above remain evidence of those attempts, rather than the final delivery state.
