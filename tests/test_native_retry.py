@@ -81,6 +81,8 @@ class NativeRetryJourney(unittest.TestCase):
         preparing_history, offset = history, 0
         def answer(body):
             if not body.get('tools'):
+                if body['messages'][-1].get('content') != 'Provide the summary of the conversation.':
+                    return 200, reply('appended')
                 summary = 'new-summary-retained-marker history-target-0 history-target-4 correction-retained-marker'
                 if 'Append once, then analyze' in json.dumps(body):
                     summary += ' Append once, then analyze the observation without repeating the operation.'
