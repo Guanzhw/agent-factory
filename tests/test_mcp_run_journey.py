@@ -94,8 +94,9 @@ class MCPQueueJourney(unittest.TestCase):
         model = ThreadingHTTPServer(('127.0.0.1', 0), Endpoint)
         model.requests, model.hold = [], None
         def answer(body):
-            outputs = [message for message in body['messages'] if message['role'] == 'tool']
-            user_text = next(message['content'] for message in reversed(body['messages']) if message['role'] == 'user')
+            current = max(index for index, message in enumerate(body['messages']) if message['role'] == 'user')
+            outputs = [message for message in body['messages'][current + 1:] if message['role'] == 'tool']
+            user_text = body['messages'][current]['content']
             if len(outputs) < 2:
                 return 200, [chunk({'role': 'assistant', 'tool_calls': [{'index': 0,
                     'id': 'read-' + str(len(outputs)), 'type': 'function', 'function': {'name': 'read_fixture',
