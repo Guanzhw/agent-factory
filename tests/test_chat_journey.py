@@ -304,7 +304,9 @@ class ChatJourney(unittest.TestCase):
         self.assertTrue(any(e['type'] == 'model_content_delta' for e in turn['events']))
         requests_before_refresh = len(self.model.requests)
         self.page.reload()
-        expect(self.page.get_by_text('任务完成，结果可下载。', exact=False).first).to_be_visible()
+        expect(self.page.locator('.rs-turn > .rs-reply').get_by_text('任务完成，结果可下载。', exact=False)).to_be_visible()
+        expect(self.page.locator('#rs-file-panel')).to_be_hidden()
+        self.page.get_by_role('button', name='会话文件', exact=True).click()
         with self.page.expect_download() as download:
             self.page.get_by_role('link', name='结果.txt', exact=True).click()
         self.assertEqual(download.value.suggested_filename, '结果.txt')
@@ -372,6 +374,8 @@ class ChatJourney(unittest.TestCase):
             with self.page.expect_request(next_files):
                 self.page.get_by_role('button', name=re.compile('^文件列表切换验收')).click()
             expect(self.page.get_by_role('heading', name='文件列表切换验收', exact=True)).to_be_visible()
+            expect(self.page.locator('#rs-file-panel')).to_be_hidden()
+            self.page.get_by_role('button', name='会话文件', exact=True).click()
             file_panel = self.page.locator('.rs-files')
             expect(file_panel.get_by_role('status')).to_have_text('正在读取文件…')
             expect(file_panel.get_by_role('link')).to_have_count(0)
@@ -380,6 +384,10 @@ class ChatJourney(unittest.TestCase):
             self.assertEqual(len(pending), 1)
             pending[0].fulfill(status=503, json={'detail': '文件列表读取失败验收'})
             expect(file_panel.get_by_role('alert')).to_have_text('文件列表读取失败验收')
+            self.page.get_by_role('button', name='关闭会话文件', exact=True).click()
+            expect(self.page.locator('.rs-detail-body > .rs-panel-warning')).to_contain_text('部分会话文件无法读取')
+            expect(self.page.locator('#rs-file-panel')).to_be_hidden()
+            self.page.get_by_role('button', name='查看文件问题', exact=True).click()
             expect(file_panel.get_by_role('link')).to_have_count(0)
             expect(file_panel.get_by_text(blocked.name, exact=False)).to_have_count(0)
             expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(0)
@@ -388,6 +396,7 @@ class ChatJourney(unittest.TestCase):
             expect(file_panel.get_by_role('alert')).to_have_count(0)
             expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(1)
             self.page.get_by_role('button', name=re.compile('^' + re.escape(snapshot['title']))).click()
+            self.page.get_by_role('button', name='会话文件', exact=True).click()
             expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(blocked.name)
         finally:
             if sys.platform == 'win32':
@@ -403,7 +412,15 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(len(self.model.requests), requests_before_refresh)
         self.page.set_viewport_size({'width': 390, 'height': 844})
         self.page.locator('.rs-files').scroll_into_view_if_needed()
-        self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+        self.page.screenshot(path=str(Path(self.folder.name) / 'files-mobile.png'), full_page=True)
+        overflow = self.page.evaluate('''() => ({width: innerWidth, scrollWidth: document.documentElement.scrollWidth,
+            offenders: [...document.querySelectorAll('body *')].flatMap(el => {
+                const r = el.getBoundingClientRect();
+                return r.width && r.height && (r.right > innerWidth + 1 || r.left < -1)
+                    ? [{tag: el.tagName, class: el.getAttribute('class'), left: r.left, right: r.right, width: r.width}]
+                    : [];
+            }).slice(0, 30)})''')
+        self.assertLessEqual(overflow['scrollWidth'], overflow['width'], json.dumps(overflow, ensure_ascii=False))
         expect(self.page.get_by_role('link', name='结果.txt', exact=True)).to_be_visible()
 
     def test_ssh_question_and_followup_keep_current_user_message(self):
@@ -431,7 +448,7 @@ class ChatJourney(unittest.TestCase):
                               if e['data'].get('toolName') == 'ssh_servers']), 2)
         before_refresh = len(self.model.requests)
         self.page.reload()
-        expect(self.page.get_by_text('已找到配置的 SSH 服务器', exact=False).first).to_be_visible()
+        expect(self.page.locator('.rs-turn > .rs-reply').get_by_text('已找到配置的 SSH 服务器', exact=False).last).to_be_visible()
         process = self.page.locator('.rs-process').last
         process.locator('summary').first.click()
         call = process.locator('.rs-tool-call').first
@@ -516,7 +533,7 @@ class ChatJourney(unittest.TestCase):
         self.page.reload()
         expect(self.page.get_by_text(re.compile('秒未收到新执行事件'))).to_be_visible()
         self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-waiting.png'))
-        expect(self.page.get_by_text(re.compile('实时连接已断开'))).to_be_visible()
+        expect(self.page.locator('.rs-content').get_by_text(re.compile('实时连接已断开'))).to_be_visible()
         expect(self.page.get_by_text('已开始 · 等待结果', exact=True)).to_be_visible()
         snapshot.update(state='idle', allowedActions=['start', 'stop'])
         turn.update(status='completed', result='UI fixture answer\n\n| 结果 | 状态 |\n| --- | --- |\n| SSH | 已确认 |', events=[*turn['events'],
@@ -535,6 +552,119 @@ class ChatJourney(unittest.TestCase):
         self.page.set_viewport_size({'width': 390, 'height': 844})
         self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
         self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-mobile.png'))
+
+    def test_short_chat_header_and_native_detail_panels(self):
+        self.configure_ssh()
+        self.send('ssh 可用了吗?')
+        snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
+        files_url = '**/research/sessions/' + snapshot['id'] + '/files'
+        with self.page.expect_response(files_url) as files:
+            self.page.reload()
+        self.assertTrue(files.value.ok)
+        expect(self.page.locator('.rs-turn > .rs-reply').get_by_text('已找到配置的 SSH 服务器', exact=False).last).to_be_visible()
+        pane = self.page.locator('.rs-content')
+        header = self.page.locator('.rs-detail > .rs-detail-heading')
+        self.assertAlmostEqual(header.bounding_box()['height'], 76, delta=1)
+        self.assertEqual(header.evaluate('el => el.nextElementSibling.className'), 'rs-content')
+        self.assertLessEqual(header.bounding_box()['y'] + header.bounding_box()['height'], pane.bounding_box()['y'] + 1)
+        expect(self.page.get_by_role('button', name='停止会话', exact=True)).not_to_be_visible()
+        expect(self.page.get_by_role('button', name='请求停止', exact=True)).to_have_count(0)
+        summary = self.page.locator('.rs-process > summary')
+        summary.click()
+        expect(self.page.locator('.rs-execution > summary')).to_be_visible()
+        self.assertLessEqual(pane.evaluate('el => el.scrollHeight - el.clientHeight'), 1)
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_have_count(0)
+        self.page.locator('.rs-execution > summary').click()
+        expect(self.page.locator('.rs-events > summary')).to_be_visible()
+        self.assertLessEqual(pane.evaluate('el => el.scrollHeight - el.clientHeight'), 1)
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_have_count(0)
+        summary.click()
+        for name, panel_id in [('会话文件', 'rs-file-panel'), ('同事问答', 'rs-question-panel'),
+                               ('会话信息', 'rs-info-panel')]:
+            panel = self.page.locator('#' + panel_id)
+            expect(panel).to_be_hidden()
+            self.page.get_by_role('button', name=name, exact=True).click()
+            self.assertTrue(panel.evaluate('el => el.matches(":popover-open")'))
+            if name == '会话文件':
+                expect(panel.get_by_role('button', name='刷新文件列表', exact=True)).to_be_visible()
+                expect(panel.get_by_text('还没有生成文件。', exact=True)).to_be_visible()
+            elif name == '同事问答':
+                expect(panel.get_by_role('button', name='刷新已发问题', exact=True)).to_be_visible()
+            else:
+                expect(panel.get_by_text(snapshot['goal'], exact=True)).to_be_visible()
+                expect(panel.get_by_text(re.compile('当前上下文 .* 字符'))).to_be_visible()
+                expect(panel.get_by_text('可继续', exact=True)).to_be_visible()
+                expect(panel.get_by_role('button', name='停止会话', exact=True)).to_be_visible()
+            self.page.get_by_role('button', name='关闭' + name, exact=True).click()
+            expect(panel).to_be_hidden()
+        composer = self.page.get_by_role('textbox', name='下一轮指令', exact=True)
+        composer.fill('模型设置往返保留草稿')
+        self.page.locator('.rs-composer-model').click()
+        expect(self.page.get_by_role('heading', name='我的模型/API', exact=True)).to_be_visible()
+        self.page.get_by_role('button', name=re.compile('^返回')).click()
+        expect(composer).to_have_value('模型设置往返保留草稿')
+        composer.fill('')
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.assertAlmostEqual(header.bounding_box()['y'], 0, delta=1)
+        self.assertAlmostEqual(header.bounding_box()['height'], 76, delta=1)
+        self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollHeight'), 844)
+        navigation = self.page.locator('.rs-navigation')
+        navigation.locator(':scope > summary').click()
+        expect(navigation).to_have_attribute('open', '')
+        navigation.locator(':scope > summary').click()
+        expect(navigation).not_to_have_attribute('open', '')
+        for name in ('会话文件', '同事问答', '会话信息'):
+            self.page.get_by_role('button', name=name, exact=True).click()
+            expect(self.page.get_by_role('complementary', name=name, exact=True)).to_be_visible()
+            self.page.get_by_role('button', name='关闭' + name, exact=True).click()
+        self.page.get_by_role('button', name='更多会话操作', exact=True).click()
+        expect(self.page.locator('#rs-compose-menu')).to_be_visible()
+        self.page.keyboard.press('Escape')
+        expect(self.page.locator('#rs-compose-menu')).to_be_hidden()
+
+        snapshot['turns'][-1]['continuation'] = {'questionIds': ['synthetic-question']}
+        self.page.route('**/research/sessions/' + snapshot['id'], lambda route: route.fulfill(json=snapshot))
+        self.page.route('**/research/sessions/*/events', lambda route: route.fulfill(content_type='text/event-stream',
+            body='event: session\ndata: ' + json.dumps(snapshot, ensure_ascii=False) + '\n\n'))
+        self.page.route('**/assistant-questions/synthetic-question',
+                        lambda route: route.fulfill(status=404, json={'detail': '原问题不存在验收'}))
+        self.page.reload()
+        original_question = self.page.get_by_role('button', name='自动继续的原问题 synthetic-question', exact=True)
+        for close in ('button', 'Escape'):
+            original_question.click()
+            expect(self.page.locator('#rs-question-panel')).to_be_visible()
+            if close == 'button':
+                self.page.get_by_role('button', name='关闭同事问答', exact=True).click()
+            else:
+                self.page.keyboard.press(close)
+            expect(self.page.locator('#rs-question-panel')).to_be_hidden()
+        original_question.click()
+        expect(self.page.locator('#rs-question-panel')).to_be_visible()
+        self.page.get_by_role('button', name='返回本会话问答', exact=True).click()
+        self.page.get_by_role('button', name='关闭同事问答', exact=True).click()
+
+        # A lost acknowledgement blocks new turns, but must not block an allowed Stop.
+        self.page.unroute('**/research/sessions/' + snapshot['id'])
+        self.page.unroute('**/research/sessions/*/events')
+        self.page.evaluate('''value => sessionStorage.setItem(
+            `factory:research-sessions:${encodeURIComponent(value.owner)}:requests`,
+            JSON.stringify([{requestId: value.request, action: 'turn', sessionId: value.session}]))''',
+            {'owner': self.owner, 'request': str(uuid4()), 'session': snapshot['id']})
+        self.page.reload()
+        expect(self.page.locator('.rs-recovery')).to_be_visible()
+        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_be_disabled()
+        self.page.get_by_role('button', name='会话信息', exact=True).click()
+        stop = self.page.get_by_role('button', name='停止会话', exact=True)
+        expect(stop).to_be_enabled()
+        requests_before_stop = len(self.model.requests)
+        with self.page.expect_response(lambda response: response.request.method == 'POST'
+                                       and response.url.endswith('/stop')) as stopped:
+            stop.click()
+        self.assertTrue(stopped.value.ok, stopped.value.text())
+        self.assertEqual(stopped.value.json()['state'], 'stopped')
+        self.assertEqual(self.session()['state'], 'stopped')
+        self.assertEqual(len(self.model.requests), requests_before_stop)
 
     def test_chat_copy_composer_and_scroll_following(self):
         self.context.grant_permissions(['clipboard-read', 'clipboard-write'])
@@ -587,6 +717,7 @@ class ChatJourney(unittest.TestCase):
         self.page.reload()
         expect(self.page.get_by_role('textbox', name='补充或纠正当前研究', exact=True)).to_be_visible()
         self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
+        expect(self.page.locator('.rs-process')).to_have_attribute('open', '')
         self.page.locator('.rs-execution > summary').click()
         expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
         reading_position = pane.evaluate('el => el.scrollTop')
@@ -597,8 +728,12 @@ class ChatJourney(unittest.TestCase):
         self.page.get_by_role('button', name='回到底部', exact=True).click()
         self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
         expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_have_count(0)
+        header_before = self.page.locator('.rs-detail-heading').bounding_box()
         pane.evaluate('el => { el.scrollTop = 0; }')
         expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
+        header_after = self.page.locator('.rs-detail-heading').bounding_box()
+        self.assertEqual(header_after, header_before)
+        self.assertGreater(pane.evaluate('el => el.scrollHeight - el.clientHeight'), 180)
         turn['events'][0]['id'] += 1
         turn['events'][0]['data']['text'] += '\n\n历史阅读期间的新内容'
         expect(self.page.get_by_text('历史阅读期间的新内容', exact=True)).to_be_attached()
@@ -804,6 +939,7 @@ class ChatJourney(unittest.TestCase):
             row.locator(':scope > summary').click()
             expect(row.get_by_text('失败', exact=True)).to_be_visible()
             expect(row.get_by_text(call.error, exact=True)).to_be_visible()
+        self.page.get_by_role('button', name='会话文件', exact=True).click()
         with self.page.expect_download() as download:
             self.page.get_by_role('link', name='skill-work/skill-result.json', exact=True).click()
         self.assertEqual(json.loads(Path(download.value.path()).read_bytes()), expected)

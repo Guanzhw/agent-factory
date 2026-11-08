@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react';
 import { factoryRequest } from '../../api.js';
 
-export function SessionFiles({ ownerId, sessionId, revision }: { ownerId: string; sessionId: string; revision: string }) {
+export function SessionFiles({ ownerId, sessionId, revision, onAttention }: { ownerId: string; sessionId: string; revision: string; onAttention?: (value: boolean) => void }) {
   const [files, setFiles] = useState<{ path: string; size: number }[]>([]);
   const [error, setError] = useState('');
   const [errors, setErrors] = useState<{ path: string; message: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const base = `/research/sessions/${encodeURIComponent(sessionId)}/files`;
+  useEffect(() => { onAttention?.(!!error || errors.length > 0); }, [error, errors, onAttention]);
   useEffect(() => {
     const abort = new AbortController();
     setError('');
@@ -25,8 +26,8 @@ export function SessionFiles({ ownerId, sessionId, revision }: { ownerId: string
     });
     return () => abort.abort();
   }, [base, ownerId, revision, refresh]);
-  return <section className="rs-files" aria-label="会话文件"><details open={loading || files.length > 0 || errors.length > 0 || !!error}>
-    <summary>会话文件（{files.length}）</summary>
+  return <section className="rs-files" aria-label="会话文件">
+    <p>会话文件（{files.length}）</p>
     <p>下载工作目录中的当前文件。<button type="button" onClick={() => setRefresh(value => value + 1)}>刷新文件列表</button></p>
     {loading && <p role="status">正在读取文件…</p>}
     {error && <p role="alert">{error}</p>}
@@ -35,5 +36,5 @@ export function SessionFiles({ ownerId, sessionId, revision }: { ownerId: string
     </div>}
     {!loading && !error && errors.length === 0 && files.length === 0 && <p>还没有生成文件。</p>}
     <ul>{files.map(file => <li key={file.path}><a href={`/api/factory${base}/download?path=${encodeURIComponent(file.path)}`} download>{file.path}</a> <small>（{file.size.toLocaleString()} 字节）</small></li>)}</ul>
-  </details></section>;
+  </section>;
 }

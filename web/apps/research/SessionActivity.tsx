@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { IconChevronRight, IconCircleCheck, IconAlertCircle, IconClock } from '@tabler/icons-react';
 import { ResearchReply } from './ResearchReply.js';
 import type { SessionEvent, SessionTurn } from './researchSessionsClient.js';
@@ -68,7 +69,7 @@ function ActionRecord({ event, start, active }: { event: SessionEvent; start?: S
         {event.data.code === 'RESEARCH_COMMAND_UNAVAILABLE' && <p>执行端未找到该命令，未启动进程。</p>}
         {typeof event.data.message === 'string' && <p>{event.data.message}</p>}
         {typeof result.exitCode === 'number' && <p>命令退出码：{result.exitCode}{result.exitCode === 0 ? '（执行成功）' : '（请查看输出）'}</p>}
-        {finished && outcome === 'completed' && typeof result.afterSha256 === 'string' && path && <p>已保存文件，可在下方“会话文件”中下载。</p>}
+        {finished && outcome === 'completed' && typeof result.afterSha256 === 'string' && path && <p>已保存文件，可在右上角“会话文件”中下载。</p>}
         {result.truncated === true && <p>输出较长，当前显示预览。完整输出：{[result.stdoutPath, result.stderrPath].filter(value => typeof value === 'string').map(path => <code key={String(path)}>{String(path)} </code>)}</p>}
         {typeof result.text === 'string' && <details open><summary>文件内容</summary><pre>{result.text}</pre></details>}
         {typeof result.stdout === 'string' && result.stdout && <details open><summary>查看命令输出</summary><pre>{result.stdout}</pre></details>}
@@ -77,7 +78,7 @@ function ActionRecord({ event, start, active }: { event: SessionEvent; start?: S
         {finished ? <details><summary>完整工具结果</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details> : <p role="status">尚未收到结束事件，无法确认结果。</p>}
       </details></li>;
 }
-export function SessionActivity({ turn }: { turn: SessionTurn }) {
+export function SessionActivity({ turn, records }: { turn: SessionTurn; records?: ReactNode }) {
   const [now, setNow] = useState(Date.now);
   const active = ['reserved', 'queued', 'running', 'waiting_approval', 'finalizing', 'canceling'].includes(turn.status);
   useEffect(() => {
@@ -90,9 +91,9 @@ export function SessionActivity({ turn }: { turn: SessionTurn }) {
   const calls = new Map<string, SessionEvent>();
   for (const event of actions) calls.set(typeof event.data.callId === 'string' ? event.data.callId : `event-${event.id}`, event);
   const recent = [...calls.values()];
+  const failures = recent.filter(event => event.data.outcome === 'failed' || typeof output(event).exitCode === 'number' && output(event).exitCode !== 0).length;
   const children = turn.children ?? [];
   const latest = events.at(-1);
-  const failures = recent.filter(event => event.data.outcome === 'failed' || typeof output(event).exitCode === 'number' && output(event).exitCode !== 0).length;
   const seconds = Math.max(0, Math.floor((now - new Date(latest?.createdAt ?? turn.createdAt).getTime()) / 1000));
   const elapsed = turn.completedAt ? Math.max(0, Math.round((Date.parse(turn.completedAt) - Date.parse(turn.createdAt)) / 1000)) : null;
   const duration = elapsed === null ? '' : elapsed < 60 ? `${elapsed}秒` : `${Math.floor(elapsed / 60)}分${elapsed % 60}秒`;
@@ -103,10 +104,11 @@ export function SessionActivity({ turn }: { turn: SessionTurn }) {
   const liveText = turn.result === null ? [...responses.values()].at(-1) : undefined;
   return <section className="rs-activity" aria-label={`第 ${turn.sequence} 轮行动与结果`}>
     <details className="rs-process" open={active}>
-    <summary><span className="rs-activity-current" role="status">{turn.status === 'completed' ? `已完成${duration ? `，用时 ${duration}` : ''}` : activitySummary(turn)}</span><IconChevronRight className="rs-disclosure" size={14}/><small>{recent.length ? `${recent.length} 项工具调用` : '执行过程'}{failures > 0 && ` · ${failures} 项失败`}</small></summary>
+    <summary><span className="rs-activity-current" role="status">{turn.status === 'completed' ? `已完成${duration ? `，用时 ${duration}` : ''}` : activitySummary(turn)}{failures > 0 && ` · ${failures} 项失败`}</span><IconChevronRight className="rs-disclosure" size={14}/></summary>
     <p className="rs-event-clock">{latest ? `最近事件：${new Date(latest.createdAt).toLocaleTimeString('zh-CN')}` : '尚无执行事件'}{active && ` · ${seconds} 秒前`}</p>
     {active && seconds >= 15 && <p className="rs-waiting">已有 {seconds} 秒未收到新执行事件。<span role="status">当前活动与结果尚未确认。</span></p>}
     {recent.length > 0 && <ol>{recent.map(event => <ActionRecord key={event.id} event={event} active={active} start={actions.find(item => ['research_tool_started', 'tool_started'].includes(item.type) && typeof event.data.callId === 'string' && item.data.callId === event.data.callId)}/>)}</ol>}
+    {records}
     </details>
     {liveText && <div className="rs-streaming-reply"><ResearchReply text={liveText}/><small>本次收到的部分回复</small></div>}
     {!!children.length && <div className="rs-active-children"><strong>子助手</strong>{children.map(child => <div key={child.childTaskId}><p role="status">{({ running: '执行中', queued: '排队中', completed: '已完成', failed: '未完成', cancelled: '已停止' } as Record<string, string>)[child.status] ?? '等待结果'}</p><p className="rs-child-preview">{child.goal}</p><details><summary>查看委托内容</summary><p>{child.goal}</p></details></div>)}</div>}

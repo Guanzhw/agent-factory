@@ -1,64 +1,56 @@
-# DSH-style local chat visual QA
+# DSH chat-detail design QA
 
-final result: passed for the documented UI states; real Edge file delivery verified after manual Save
+final result: passed
 
-This result covers the chat UI and event presentation. The full Windows regression suite passes at its recorded revision. Initial live Edge observation limits are preserved below; subsequent manual Save and exact file verification complete real delivery, as recorded in [joint integration notes](docs/reviews/dsh-skills-integration-20261108.md).
+This result covers the second local chat-detail correction on 2026-11-08, based on `37af529552d4e739ef465b274173cb7a4bb80335` and the current local diff. All 23 Windows regressions pass in 125.435 seconds, including the final idle Stop condition and its new pending-request regression. Frontend lint, TypeScript, build, Ruff, Pyright and whitespace checks pass. Independent source review has no remaining confirmed blocker. This report records local visual and Windows acceptance. Publication and exact-head CI are tracked in the PR; merge and deployment remain separate.
 
-## Comparison target and evidence
+## Workflow and reference
 
-The selected target is the actual local DeepSeek Harness Web 0.2.2-rc.1 at `http://127.0.0.1:3080/`. Its frontend packages and MIT notices match the pinned upstream release recorded in `THIRD_PARTY_NOTICES.md`.
+Product Design preflight, audit, source-based implementation and design QA were applied to the existing app. Preflight found no saved user-context entries. The in-app browser reaches DSH authentication; the existing authenticated Edge profile supplies the reference without changing authentication.
 
-The implementation is the existing Agent Factory application at `https://127.0.0.1:3100/`.
+The reference is installed DSH Web `0.2.2-rc.1` at `http://127.0.0.1:3080/`. Its readable installed `lib/client.js` modules preserve original component/CSS region names. The original TSX/CSS files are absent from those package roots. MIT notices remain in `THIRD_PARTY_NOTICES.md`.
 
-Evidence directory: `D:/WorkSpace/agent-factory-local/design-evidence/`. These private screenshots and receipts are outside the source repository.
+The implementation is the retained Factory preview at `https://127.0.0.1:3100/`. Its frontend is rebuilt without restarting the backend or interrupting the existing running session. The isolated suite starts the current source with Agno 3.1.0, disposable PostgreSQL and a scripted HTTP model.
+
+The earlier Library red-box image is unavailable through the exposed materialization tools. Its annotations were relayed by the coordinating chat; this run does not claim to have inspected its pixels. The live DSH page and installed source establish the corrections below.
+
+## Comparison and corrections
+
+Desktop frames use a 1280 × 900 CSS viewport and device scale 1; tablet frames use 768 × 1024 and phone frames 390 × 844. Source and Factory screenshots were viewed together at equal scale. The reference has two completed synthetic-marker turns and Factory has one short completed real turn, so text length and turn count differ. Vertical message positions are compared after accounting for line count.
+
+| Surface | Reproduced mismatch | Final check |
+| --- | --- | --- |
+| Header | Snapshot line, body metadata and idle Stop occupied about 133px. | Independent 76px header; ordinary status/configuration moves into session information. Active Stop remains in the composer; session information retains idle Stop for cancelling future collaboration. |
+| User message | Bubble radius, message spacing and time/copy row differed. | 20px bubble, 14px/22px text, 6px row gap, 28px desktop copy row and 8px metadata gap. Correction/pending meaning remains visible. |
+| Process | Empty right-hand “execution process” text and a 36.8px row. | One real activity label, adjacent disclosure and actual failure count; desktop row measures 33px. Original events/tools remain inside the process. Unknown/child failures remain outside the fold. |
+| Management sections | Raw records, questions and an empty file section remained under every reply. | Raw records move inside the process. Native right-side popovers expose files, questions and information. File/question problems remain visible outside closed panels. Empty files show their state directly after opening. |
+| Composer | Hint and static model text occupied the control row; card geometry drifted. | 856px maximum card width, 98px desktop height, 28px radius and 36px editor. Desktop card top is 772px, matching DSH. Real model-settings entry, existing commands, send and active Stop work. |
+| Short scrolling | Clicking a summary displayed Jump despite zero overflow. | Short live page has scroll/client height 824/824 and no jump after expansion. Jump uses actual distance from bottom. |
+| Long scrolling | Details and live content must preserve reading position. | Existing copy, growth, retained-fragment streaming, reading-position and resume-following assertions pass. Header geometry stays fixed. One conversation scroller retains live tool visibility. |
+| Responsive layout | Tablet kept a 280px sidebar; mobile added a separate navigation row. A long title later exposed 396px content at a 390px viewport. | Installed source supplies 1024px auto-collapse and 768px drawer boundaries. Tablet uses a 56px folded rail; phone header stays at y=0, height 76px. The owning grid uses `minmax(0, 1fr)`; the long-title/file journey has no document overflow. Mobile primary/icon targets retain 44px access. |
+
+The fonts, dark surfaces, muted text, borders, card shape and existing Tabler icons were checked against the reference. Factory retains its branding and real navigation/capabilities. No imagery is needed for the changed chat detail. Native popovers support Escape and real buttons; question links reopen after either X or Escape. Model-setting navigation preserves a draft. Text/code copying, wrapping and file downloads remain covered.
+
+## Evidence
+
+Private screenshots and logs are outside Git under `D:/WorkSpace/agent-factory-local/design-evidence/chat-details-round2-20261108/`.
 
 | Evidence | State |
 | --- | --- |
-| `dsh-empty-1280.png`, `factory-empty-final-1280.png` | Empty composer, dark theme, sidebar open, desktop. |
-| `empty-comparison.png` | Both full frames in the same comparison image, DSH left and Factory right. |
-| `composer-comparison.png` | Both composer crops in one image, preserving equal pixel scale. |
-| `dsh-tools-expanded-1280.png`, `factory-tools-final-1280.png`, `tools-comparison.png` | Completed turn with process/tool details, source and implementation. Conversation content differs. |
-| `factory-mobile-empty.png`, `factory-mobile-chat.png`, `dsh-mobile-chat.png` | Narrow layout and existing conversation. |
-| `live-ssh-waiting.png`, `live-ssh-tools.png`, `live-ssh-final.png`, `live-ssh-mobile.png` | Actual subscription-provider run and SSH receipts. |
-| `ui-fixture-waiting.png`, `ui-fixture-unknown.png`, `ui-fixture-reconciled.png`, `ui-fixture-mobile.png` | Explicit synthetic UI state cases. |
-| `factory-settings-final.png`, `factory-model-settings-final.png` | Dark Settings and model resource cards, checked after the contrast correction. |
+| `02-factory-hi-before-desktop.png`, `05-factory-hi-before-narrow.png` | Before this correction. |
+| `14-dsh-short-accepted-desktop.png`, `13-factory-hi-accepted-desktop.png` | Final equal-scale desktop comparison. |
+| `10-dsh-short-tablet.png`, `12-factory-hi-final-tablet.png` | Tablet reference and corrected folded layout. |
+| `04-dsh-short-narrow.png`, `15-factory-hi-accepted-narrow.png` | Phone reference and final short conversation. |
+| `ui-fixture-waiting.png`, `ui-fixture-unknown.png`, `ui-fixture-reconciled.png` | Explicit scripted UI snapshots: active wait, transport loss, unknown result and reconciliation. |
+| `chat-detail-mobile.png`, `ui-fixture-mobile.png` | Long/active and reconciled narrow states. |
+| `partial-files.png`, `files-mobile.png` | Native failed tool count, partial file error, recovered files and long-title narrow geometry. |
+| `full-regression-attempt1.log`, `focused-files-attempt3.log` | Retained failures: two old selectors and the reproduced 396px grid overflow. |
+| `publish-validation/full-final.log`, `publish-validation/frontend-final.log` | Final 23-case result, including pending-request Stop, and frontend checks. |
 
-Desktop CSS viewport: 1280 × 900. Source and implementation bitmaps: 1280 × 900. Device density is normalized to one bitmap pixel per CSS pixel; final measured implementation DPR is approximately 1. Source uses CDP deviceScaleFactor 1. Narrow viewport: 390 × 844. No full browser chrome is included.
+## Boundaries
 
-The requested Library image could not be materialized because this session exposes no Library materialization tool. The existing local DSH application is also an explicitly selected reference and supplies the actual visual target. The requested `iab` surface returns unavailable; the existing local Edge surface supplies browser evidence.
+The session backend binds a model connection at creation. The model button opens the existing model settings; this round adds no pretend in-session connection switch, usage meter, ratings or branch action. DSH permission/plan/team controls have no matching Factory operation and are not fabricated. Files and colleague questions retain Factory semantics.
 
-## Comparison history
+No new provider or remote SSH call is needed for these frontend changes. Previous real subscription/SSH/file acceptance remains historical evidence in [joint integration notes](docs/reviews/dsh-skills-integration-20261108.md), including the user's manual Save and byte-exact Edge download confirmation. Current running/error snapshots use synthetic data, and do not establish a new real-provider recovery result. The final pending-request regression disables new composition while a request remains unconfirmed, then clicks the allowed idle Stop and verifies the persisted stopped state without another model call. Restoring the old disable condition makes this test fail at the enabled assertion; the final busy-only condition passes in the complete suite. The red log is retained at `publish-validation/idle-stop-red.log`.
 
-1. The original Factory frame has a white shell, a taller form near the top, five separate navigation rows, and expanded raw events. These are major layout and content-density differences from DSH.
-2. The first dark build still has a white search input, a floating account row, and an oversized composer. These P2 issues are fixed with scoped input styles, a full-height sidebar, and reduced composer spacing. Secondary navigation moves under More.
-3. The final full-frame and composer comparison align the 280-pixel sidebar, dark surfaces, centered title, workspace context row, rounded composer, right-aligned model selector, and send action. The composer begins at the same vertical region. Final narrow captures retain controls and show no horizontal document overflow.
-4. Completed process headers collapse by default. Expanding a tool reveals parameters, actual output, exit code, errors, and the complete receipt. A real historical command failure is visibly labeled. The actual SSH run adds three tool rows, returns a final answer, and survives refresh without a new turn or additional tool calls.
-5. Settings resource cards initially retain light surfaces. Scoped dark card colors restore readable foregrounds; actual Settings and model-card screenshots confirm the correction.
-
-The initial broad-layout result did not cover the remaining chat-detail gaps. A later actual-source comparison identified message metadata, copying, readable tool output, code controls, composition and scroll recovery. Those corrections and current evidence are recorded in [the chat-detail comparison](docs/reviews/chat-detail-fidelity-20261108.md). This assessment applies to those inspected states.
-
-## Required fidelity surfaces
-
-- Fonts and typography: matches the DSH system stack, including Segoe UI and Microsoft YaHei. The welcome heading is 24 pixels on desktop; ordinary controls and chat copy use 13 to 14 pixels. Factory keeps its existing name and icon. The DSH brand font and whale are intentionally not substituted for Factory branding.
-- Spacing and layout rhythm: 280-pixel sidebar, bounded centered content, 20-pixel composer radius, compact process rows, and sticky composer. The final narrow send control measures 44 × 44 CSS pixels. Navigation collapses, and mobile selection returns to the conversation.
-- Colors and tokens: application `#141414`, sidebar `#1c1c1c`, composer `#292929`, muted labels `#a2a4a6`, restrained borders, and distinct failure/wait colors. The reference gradients and decorative effects are not invented.
-- Image quality and assets: the chat target has no illustration or photo requirement. Existing Tabler library icons and the existing Factory brand icon remain sharp at both sizes. No custom raster or SVG stand-ins are introduced.
-- Copy and content: the real current question reaches the native model. Internal events remain behind raw history. Missing arguments and missing outcomes are explicit. Silence never claims hidden thinking, continued activity, or success. Old SSH training and 15-minute wording is removed from the resource card.
-
-## Interaction and accessibility checks
-
-Checked sidebar collapse and reopen, session selection, Settings return, new-message disabled state, native details controls, parameter/result folding, actual error detail, Markdown table rendering, final answer, and narrow layout. Visible focus rings and semantic buttons, labels, and disclosure elements remain. The silence clock is separate from the static live status announcement.
-
-The last actual browser reload reports no captured console errors. Actual Edge screenshots, not the production build alone, support the visual result.
-
-All seven cases pass on disposable PostgreSQL and the scripted model. They cover the current user message and follow-up, SSH events and retained history, synthetic missing/late/reconciled events and connection EOF, local process Stop, compression, native file creation/replacement, exact download bytes, path boundaries, and successful application shutdown. Those synthetic cases remain distinct from provider acceptance.
-
-Actual provider acceptance uses the user's existing OpenCode Go subscription and DeepSeek V4.1 Flash. The question `ssh 可用了吗?` completes in 93.11 seconds, with discovery and two read-only SSH commands. Both return exit 0. Refresh retains one turn and three calls. This real run provides waiting, tool receipt, final reply, and recovery evidence; it does not establish real provider disconnect recovery or remote descendant cancellation.
-
-## Follow-up polish and limits
-
-P3: Factory retains product-specific navigation, labels, branding, and table borders. DSH plugin controls, permission modes, token meters, hidden reasoning, and team chrome are not added without corresponding Factory data or capabilities.
-
-The current follow-up adds message and code copying, code wrapping, compact process timing, readable native file/command output, a growing model-labeled composer, active Stop and return-to-bottom. It keeps a single bounded conversation scroller at narrow widths. The normal-encoding 21-case Windows suite passes in 113.536 seconds at that revision. Actual Edge checks confirm clipboard content, two-line narrow composition, a 44-pixel Send target and no document overflow. A fresh subscription-provider task confirms SSH exit 0 and a 34-byte Chinese file create/edit/read cycle; its follow-up verifies two visible native Skills reads. The download event initially times out. Subsequent diagnosis finds the complete temporary bytes; manual Save produces the final file with identical bytes and hash, completing real Edge delivery.
-
-An earlier real model session also creates, edits and reads a 40-byte Chinese file. Its initial download wait and native-window URL rejection remain historical limitations; they do not override the later verified 34-byte delivery. The scripted Chromium download passes independently. Windows TLS/RST warnings and the existing global CSS and bundle-size warnings remain.
+Existing global CSS syntax warnings, bundle-size warnings and Windows TLS/RST/unclosed-transport warnings remain. The suite retains its bounded shutdown check and reports the 35-second graceful timeout with zero active request tasks before the worker stops. Source extensions, including SVG, total 24,097 physical lines across 142 tracked files. Temporary viewport overrides are restored after capture; the isolated test database is stopped after validation.

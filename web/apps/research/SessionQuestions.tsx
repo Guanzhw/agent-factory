@@ -30,8 +30,8 @@ function QuestionStatus({ question }: { question: ResearchQuestion }) {
   </div>;
 }
 
-export function SessionQuestions({ ownerId, sessionId, collaborationEnabled = false, questionId, onQuestion, onUse }: {
-  ownerId: string; sessionId: string; collaborationEnabled?: boolean; questionId: string; onQuestion: (id: string) => void; onUse?: (id: string) => void;
+export function SessionQuestions({ ownerId, sessionId, collaborationEnabled = false, questionId, onQuestion, onUse, onAttention }: {
+  ownerId: string; sessionId: string; collaborationEnabled?: boolean; questionId: string; onQuestion: (id: string) => void; onUse?: (id: string) => void; onAttention?: (value: boolean) => void;
 }) {
   const draftStorage = `${draftKey(ownerId, sessionId)}:question`;
   const pendingStorage = `${requestKey(ownerId)}:question:${sessionId}`;
@@ -46,6 +46,7 @@ export function SessionQuestions({ ownerId, sessionId, collaborationEnabled = fa
   const [readError, setReadError] = useState(''); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false); const lock = useRef(false); const active = useRef(false);
   const field = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => { onAttention?.(!!readError || !!error || !!pending); }, [readError, error, pending, onAttention]);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
     const controller = new AbortController(); setPage(null); setReadError('');
