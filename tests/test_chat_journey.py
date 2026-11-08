@@ -302,6 +302,48 @@ class ChatJourney(unittest.TestCase):
         identifier = self.session()['id']
         self.addCleanup(lambda: self.post('/research/sessions/' + identifier + '/stop', {}))
 
+    def test_own_source_remains_readable_and_context_survives_private_visibility(self):
+        from agent_factory.application_content import ContentPublication, ContentSource
+        content, sources = self.state['application_content'], self.state['research_peer_sources']
+        source = content.publish(self.owner, ContentPublication(
+            source=ContentSource(application='notes', record='own-note', revision='1'),
+            content={'observation': 'source-secret-marker'}, visibility='team'), str(uuid4()))
+        self.send('共享资料验收:' + source['id'])
+        first = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(first['turns'][-1]['status'], 'completed')
+        content.set_visibility(self.owner, source['id'], 'personal', str(uuid4()))
+        self.assertEqual(content.read(self.owner, source['id'])['visibility'], 'personal')
+        self.assertTrue(sources.available(self.owner, [source['id']]))
+        current = self.session()
+        self.assertIn('start', current['allowedActions'])
+        self.assertIsNone(current['context']['notice'])
+        before = len(self.model.requests)
+        self.post('/research/sessions/' + first['id'] + '/turns', {'text': '共享资料验收:' + source['id']})
+        second = self.wait_for(lambda value: len(value['turns']) == 2 and value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(second['turns'][-1]['status'], 'completed')
+        self.assertIn('derived-source-marker', json.dumps(self.model.requests[before], ensure_ascii=False))
+        for turn in second['turns']:
+            reads = [event['data'] for event in turn['events'] if event['type'] == 'research_tool_finished'
+                     and event['data'].get('toolName') == 'research_read_shared_evidence']
+            self.assertEqual(len(reads), 1)
+            self.assertEqual(reads[0]['outcome'], 'completed')
+            self.assertEqual(reads[0]['output']['content']['observation'], 'source-secret-marker')
+        self.page.reload()
+        self.page.locator('.rs-sources > summary').click()
+        self.page.locator('.rs-sources').get_by_role('button', name=source['id'], exact=True).click()
+        expect(self.page.locator('.rs-sources')).to_contain_text('source-secret-marker')
+        other = 'other-' + uuid4().hex
+        self.state['browser_auth'].local_passwords.create(other, secrets.token_urlsafe(20))
+        derived = content.publish(self.owner, ContentPublication(
+            source=ContentSource(application='research', record='derived-note', revision='1'),
+            content={'observation': 'derived private content'}, visibility='team',
+            sourceContentIds=[source['id']]), str(uuid4()))
+        for identifier in (source['id'], derived['id']):
+            with self.assertRaises(HTTPException) as forbidden:
+                content.read(other, identifier)
+            self.assertEqual(forbidden.exception.status_code, 404)
+            self.assertFalse(sources.available(other, [identifier]))
+
     def test_revoked_source_keeps_history_but_new_turn_has_clean_model_context(self):
         from agent_factory.application_content import ContentPublication, ContentSource
         from research import session_context

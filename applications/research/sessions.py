@@ -104,14 +104,10 @@ class ResearchSessions:
     def _sources(self, owner, identifiers):
         for identifier in identifiers:
             try:
-                source = self.content.read(owner, identifier)
-                if source.get('visibility') != 'team' or source.get('source', {}).get('application') != 'research':
-                    raise ValueError()
+                self.content.read(owner, identifier)
             except HTTPException as error:
                 if error.status_code not in {403, 404}:
                     raise
-                raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '本轮使用的共享来源已不可读，本轮已停止；可以发送新消息继续。') from None
-            except ValueError:
                 raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '本轮使用的共享来源已不可读，本轮已停止；可以发送新消息继续。') from None
 
     def _reply(self, owner, identifier, snapshot):

@@ -100,7 +100,10 @@ class ModelSelection(unittest.TestCase):
         summary = SimpleNamespace(_on_text=Mock(), _on_reasoning=Mock())
         models = SimpleNamespace(model_for=Mock(side_effect=[native, summary]))
         dispatcher = DelegatingModel(SimpleNamespace(personal_models=models))
-        dispatcher._provider_hooks = lambda model, context, current, auxiliary, plan: auxiliary()
+        def hooks(model, context, current, auxiliary, plan, *, auxiliary_request=False):
+            if not auxiliary_request:
+                auxiliary()
+        dispatcher._provider_hooks = hooks
         context = SimpleNamespace(user_id='owner')
         response = SimpleNamespace()
         native.id, native.provider = 'gpt-6-luna', 'openai-compatible'
