@@ -62,7 +62,7 @@ class PersonalTools:
         from .member_tool_operations import MemberToolOperations
         self.operations = MemberToolOperations(self)
 
-    def functions(self, owner, context, reserved_names=()):
+    def functions(self, owner, context, reserved_names=(), *, mcp_connections=None):
         from .personal_tool_execution import personal_tool_function
         names = set(reserved_names)
         result = []
@@ -80,7 +80,7 @@ class PersonalTools:
                 while name in names or name in original_names:
                     name += '_'
             result.append(personal_tool_function(handle.adapter, self.connections.store, handle, context,
-                exposed_name=name))
+                exposed_name=name, mcp_connections=mcp_connections))
             names.add(name)
         return result
 

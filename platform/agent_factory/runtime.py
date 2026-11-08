@@ -7,6 +7,7 @@ from agno.registry import Registry
 from agno.run import RunContext
 
 from .model_dispatch import DelegatingModel
+from .personal_mcp import MCPRunConnections
 
 
 def build_runtime(store, native_db):
@@ -30,7 +31,7 @@ def build_runtime(store, native_db):
         return [*text, json.dumps({'goal': plan['normalizedGoal'],
             **plan.get('inputValues', {})}, ensure_ascii=False)]
 
-    def selected_tools(run_context: RunContext):
+    def selected_tools(run_context: RunContext, agent):
         plan = store.resolve_run(run_context)
         if plan.get("mode") == "qa":
             return store.research_qa.functions(run_context)
@@ -45,7 +46,10 @@ def build_runtime(store, native_db):
             functions.extend(ssh_functions)
         personal = getattr(store, 'personal_tools', None)
         if personal is not None:
-            functions.extend(personal.functions(run_context.user_id, run_context,
+            connections = MCPRunConnections()
+            # Agno 3.1's async run finally closes this list; callable tools are not auto-registered.
+            agent._mcp_tools_initialized_on_run.append(connections)
+            functions.extend(personal.functions(run_context.user_id, run_context, mcp_connections=connections,
                 reserved_names={function.name for function in functions} |
                     ({function.name for function in executor.skills.get_tools()} if executor.skills else set())))
         return functions
