@@ -45,6 +45,18 @@ class FactoryLifecycleObserver:
         self.last_error_type: str | None = None
         self._cursor = ""
 
+    async def recover_admission(self, task: dict) -> dict:
+        if not task.get('run_id') and task['admission'] != 'rejected':
+            receipt = await self.store.delegation.bridge.find_original_run(task['id'], task['owner_id'])
+            if receipt:
+                candidate = {**task, 'run_id': receipt['run_id']}
+                try:
+                    await asyncio.to_thread(self._binding, candidate)
+                except ValueError as error:
+                    raise HTTPException(409, "Original native admission does not match the task") from error
+                self.store.accept(task['id'], receipt['run_id'])
+        return self.store.task(task['id'], task['owner_id'])
+
     def _binding(self, task: dict, *, include_content: bool = False) -> dict | None:
         """Strict native read; caller must keep missing/mismatched work held."""
         plan = self.store.plan(task["plan_id"], task["owner_id"])
@@ -73,12 +85,13 @@ class FactoryLifecycleObserver:
             if session.user_id != task["owner_id"] or getattr(session, kind + "_id", None) != component_id:
                 raise ValueError("Native session differs from its Factory owner/executor")
             runs = [run for run in session.runs or [] if run.run_id == task["run_id"] and getattr(run, kind + "_id", None) == component_id]
-            if len(runs) != 1:
+            if len(runs) != 1 and not (not runs and ticket["status"] == "cancelled"):
                 raise ValueError("Exact persisted native Factory run is not observable")
-            native_status = str(getattr(runs[0].status, "value", runs[0].status)).lower()
-            requirements = runs[0].to_dict().get("requirements") or []
-            if include_content:
-                content = runs[0].to_dict().get("content")
+            if runs:
+                native_status = str(getattr(runs[0].status, "value", runs[0].status)).lower()
+                requirements = runs[0].to_dict().get("requirements") or []
+                if include_content:
+                    content = runs[0].to_dict().get("content")
             if state is None:
                 state = (session.session_data or {}).get("session_state")
         if not isinstance(state, dict) or state.get("factory_envelope") != envelope:
@@ -312,6 +325,12 @@ class FactoryLifecycleObserver:
         if service is None:
             raise ValueError("Trusted lifecycle cleanup requires persisted delegation bindings")
         errors = []
+        for task in self._group(root)[0]:
+            try:
+                await self.recover_admission(task)
+            except Exception as error:
+                errors.append({'taskId': task['id'], 'errorType': type(error).__name__})
+        root = self.store.task(identifier)
         await self._observe_application_waits(root)
         requested, phase_errors = await asyncio.to_thread(self._request_cleanup, root)
         errors.extend(phase_errors)
