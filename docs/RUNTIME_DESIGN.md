@@ -10,7 +10,7 @@ Subassistants use independent native queue tasks with parent links. Waiting cont
 
 A small per-run dispatcher resolves the selected model for the current owner. Chat Completions and Responses use Agno formatting and parsing with the official OpenAI SDK. Thin adapters preserve Responses reasoning and phase, match legacy tool-call IDs, and retain nullable tool schemas that Agno 3.1.0 otherwise rewrites. Agno handles compression and summary generation against known model metadata; unknown context windows remain unspecified.
 
-Conversation history uses the application projection because each native task has a separate session identity. The projection retains failed and canceled turns, which native history defaults can omit. MCP connections currently live for one invocation so initialization and cleanup remain in the same async task. Their initial tool discovery also supplies the SDK with output schemas and parameter-header mappings.
+Conversation history uses the application projection because each native task has a separate session identity. The projection retains failed and canceled turns, which native history defaults can omit.
 
 The browser receives actual conversation state and model/tool progress. The current SSE endpoint checks for changed snapshots on the server; it is not a cross-replica event bus. Settings and chat share one interface and preserve drafts across navigation.
 
