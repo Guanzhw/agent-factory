@@ -207,7 +207,7 @@ function SharedSources({ ownerId, ids }: { ownerId: string; ids: string[] }) {
     catch (reason) { if (!controller.signal.aborted) setError(describe(reason)); }
     finally { if (!controller.signal.aborted) setBusy(false); }
   }
-  return <details className="rs-sources"><summary>已引用的共享来源 · {ids.length}</summary><p>仅包含同事明确发布的研究证据。每次查看都重新核对当前权限。</p>{ids.map(id => <button key={id} disabled={busy} onClick={() => void read(id)}>{id}</button>)}{!ids.length && <p className="rw-muted">尚未引用共享证据。</p>}{busy && <p role="status">正在核对来源…</p>}{error && <p className="rw-error" role="alert">{error} 原来源正文已隐藏。</p>}{source && <article><h3>原共享证据 · {source.verificationStatus}</h3><p>作者 {source.ownerId} · 来源 {source.id}</p><pre>{JSON.stringify(source.source, null, 2)}</pre><pre>{JSON.stringify(source.content, null, 2)}</pre></article>}</details>;
+  return <details className="rs-sources"><summary>已引用的资料 · {ids.length}</summary><p>包括自己发布的私有资料及获准访问的共享资料。每次查看都重新核对当前权限。</p>{ids.map(id => <button key={id} disabled={busy} onClick={() => void read(id)}>{id}</button>)}{!ids.length && <p className="rw-muted">尚未引用资料。</p>}{busy && <p role="status">正在核对来源…</p>}{error && <p className="rw-error" role="alert">{error} 原来源正文已隐藏。</p>}{source && <article><h3>原资料 · {source.verificationStatus}</h3><p>作者 {source.ownerId} · 来源 {source.id}</p><pre>{JSON.stringify(source.source, null, 2)}</pre><pre>{JSON.stringify(source.content, null, 2)}</pre></article>}</details>;
 }
 
 function ContextStatus({ value, blocked }: { value: ResearchSession; blocked: boolean }) {
@@ -326,7 +326,6 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
     return Array.isArray(stored) ? stored.filter((item): item is PendingSessionRequest => !!item && typeof item.requestId === 'string' && Object.hasOwn(actions, item.action) && (item.sessionId === null || typeof item.sessionId === 'string')) : [];
   });
   const requestRef = useRef(requests); const lock = useRef(false); const active = useRef(true); const readVersion = useRef(0); const selected = useRef(selectedId); selected.current = selectedId;
-  const listRead = useRef(0);
   const detailRead = useRef<{ revision: number; value: ResearchSession | null }>({ revision: 0, value: null });
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   useEffect(() => {
@@ -335,9 +334,8 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
     void Promise.all([api.options(ownerId, controller.signal), api.list(ownerId, after, controller.signal)])
       .then(([nextOptions, nextPage]) => {
         if (controller.signal.aborted) return;
-        listRead.current++;
         // A list reply cannot erase a detail observation made after this list
-        // request began. These counters order reads, not backend task versions.
+        // request began. This revision orders reads, not backend task versions.
         const newer = detailRead.current.revision > detailRevision ? detailRead.current.value : null;
         setOptions(nextOptions);
         setPage(newer ? { ...nextPage, items: nextPage.items.map(item => item.id === newer.id ? { ...item, state: newer.state, updatedAt: newer.updatedAt } : item) } : nextPage);
@@ -348,24 +346,6 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
   useEffect(() => {
     setDetail(previous => previous?.id === selectedId ? previous : null); setDetailError(''); setLastReceived(null); if (!selectedId) return;
     const controller = new AbortController();
-    let reading = false;
-    const read = async () => {
-      if (reading) return; reading = true; const version = readVersion.current; const listRevision = listRead.current;
-      try {
-        const value = await api.get(ownerId, selectedId, controller.signal);
-        if (!controller.signal.aborted && version === readVersion.current) {
-          setDetail(value); setDetailError('');
-          // If a list succeeded while this GET was in flight, keep that list.
-          // The next detail poll can synchronize it without replaying anything.
-          if (listRevision === listRead.current) {
-            detailRead.current = { revision: detailRead.current.revision + 1, value };
-            setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === value.id ? { ...item, state: value.state, updatedAt: value.updatedAt } : item) } : previous);
-          }
-        }
-      }
-      catch (reason) { if (!controller.signal.aborted && version === readVersion.current) { setDetail(null); setDetailError(describe(reason)); } }
-      finally { reading = false; }
-    };
     let reconnect: ReturnType<typeof setTimeout> | undefined;
     async function watch() {
       const version = readVersion.current;
@@ -377,13 +357,16 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
           setPage(previous => previous ? { ...previous, items: previous.items.map(item => item.id === value.id ? { ...item, state: value.state, updatedAt: value.updatedAt } : item) } : previous);
         });
       } catch (reason) {
-        if (!controller.signal.aborted) {
-          setStreamError(describe(reason)); reconnect = setTimeout(() => void watch(), 1500);
+        if (!controller.signal.aborted && version === readVersion.current) {
+          if (reason instanceof ApiError && [403, 404].includes(reason.status)) {
+            setDetail(null); setDetailError(describe(reason)); return;
+          }
+          setStreamError(reason instanceof TypeError ? '实时连接暂时中断，正在重连。' : describe(reason)); reconnect = setTimeout(() => void watch(), 1500);
         }
       }
     }
     setStreamError('');
-    void read().then(() => { if (!controller.signal.aborted) void watch(); });
+    void watch();
     return () => { controller.abort(); clearTimeout(reconnect); };
 
   }, [ownerId, selectedId, refresh]);

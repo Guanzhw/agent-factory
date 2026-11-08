@@ -112,7 +112,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         elif 'unknown-followup' in json.dumps(request['messages']):
             reply = '后续分析完成，原操作仍待核对。'
         elif 'unknown-journey-case' in system:
-            steps = [('uncertain_cli', {}),
+            steps = [('uncertain_cli', {'arguments': {}}),
                      ('research_edit_file', {'path': 'independent.txt', 'old': '', 'new': '独立任务完成'}),
                      ('research_read_file', {'path': 'independent.txt'})]
             if len(results) < len(steps):
@@ -142,7 +142,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
                 tool, arguments = 'research_run', {'argv': [sys.executable, '-c',
                     "import os,time; from pathlib import Path; Path('started.txt').write_text(str(os.getpid())); time.sleep(600)"]}
         else:
-            steps = [('demo_cli', {'mode': 'fail'}), ('demo_cli', {'mode': 'ok'}), ('ssh_servers', {}),
+            steps = [('demo_cli', {'arguments': {'mode': 'fail'}}), ('demo_cli', {'arguments': {'mode': 'ok'}}), ('ssh_servers', {}),
                      ('research_edit_file', {'path': '结果.txt', 'old': '', 'new': DOCUMENT}),
                      ('research_edit_file', {'path': '结果.txt', 'old': '状态：初稿', 'new': '状态：已复核'}),
                      ('research_delegate', {'goal': 'child-only'})]
@@ -319,6 +319,48 @@ class ChatJourney(unittest.TestCase):
         identifier = self.session()['id']
         self.addCleanup(lambda: self.post('/research/sessions/' + identifier + '/stop', {}))
 
+    def test_own_source_remains_readable_and_context_survives_private_visibility(self):
+        from agent_factory.application_content import ContentPublication, ContentSource
+        content, sources = self.state['application_content'], self.state['research_peer_sources']
+        source = content.publish(self.owner, ContentPublication(
+            source=ContentSource(application='notes', record='own-note', revision='1'),
+            content={'observation': 'source-secret-marker'}, visibility='team'), str(uuid4()))
+        self.send('共享资料验收:' + source['id'])
+        first = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(first['turns'][-1]['status'], 'completed')
+        content.set_visibility(self.owner, source['id'], 'personal', str(uuid4()))
+        self.assertEqual(content.read(self.owner, source['id'])['visibility'], 'personal')
+        self.assertTrue(sources.available(self.owner, [source['id']]))
+        current = self.session()
+        self.assertIn('start', current['allowedActions'])
+        self.assertIsNone(current['context']['notice'])
+        before = len(self.model.requests)
+        self.post('/research/sessions/' + first['id'] + '/turns', {'text': '共享资料验收:' + source['id']})
+        second = self.wait_for(lambda value: len(value['turns']) == 2 and value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(second['turns'][-1]['status'], 'completed')
+        self.assertIn('derived-source-marker', json.dumps(self.model.requests[before], ensure_ascii=False))
+        for turn in second['turns']:
+            reads = [event['data'] for event in turn['events'] if event['type'] == 'research_tool_finished'
+                     and event['data'].get('toolName') == 'research_read_shared_evidence']
+            self.assertEqual(len(reads), 1)
+            self.assertEqual(reads[0]['outcome'], 'completed')
+            self.assertEqual(reads[0]['output']['content']['observation'], 'source-secret-marker')
+        self.page.reload()
+        self.page.locator('.rs-sources > summary').click()
+        self.page.locator('.rs-sources').get_by_role('button', name=source['id'], exact=True).click()
+        expect(self.page.locator('.rs-sources')).to_contain_text('source-secret-marker')
+        other = 'other-' + uuid4().hex
+        self.state['browser_auth'].local_passwords.create(other, secrets.token_urlsafe(20))
+        derived = content.publish(self.owner, ContentPublication(
+            source=ContentSource(application='research', record='derived-note', revision='1'),
+            content={'observation': 'derived private content'}, visibility='team',
+            sourceContentIds=[source['id']]), str(uuid4()))
+        for identifier in (source['id'], derived['id']):
+            with self.assertRaises(HTTPException) as forbidden:
+                content.read(other, identifier)
+            self.assertEqual(forbidden.exception.status_code, 404)
+            self.assertFalse(sources.available(other, [identifier]))
+
     def test_revoked_source_keeps_history_but_new_turn_has_clean_model_context(self):
         from agent_factory.application_content import ContentPublication, ContentSource
         from research import session_context
@@ -470,6 +512,109 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(stopped['turns'][-1]['status'], 'canceled')
         self.assertIn(stopped['context']['compaction']['status'], {'failed', 'unknown'})
         self.assertEqual(len(self.model.requests) - before_stop, 1)
+
+    def test_prequeue_failure_can_continue_without_duplicate_submission(self):
+        sessions = self.state['research_sessions']
+        factory = sessions.runs.factory
+        with patch.object(factory.bridge, 'submit', wraps=factory.bridge.submit) as submit:
+            with patch.object(sessions.runs, '_prepare', side_effect=RuntimeError('preparation unavailable')):
+                with self.page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/turns')) as sent:
+                    self.send('切换模型后继续')
+            failed = self.session()
+            self.assertEqual(failed['turns'][-1]['status'], 'failed')
+            self.assertIsNotNone(failed['turns'][-1]['completedAt'])
+            self.assertEqual(submit.call_count, 0)
+            path = '/research/sessions/' + failed['id'] + '/turns'
+            duplicate = self.post(path, sent.value.request.post_data_json)
+            self.assertEqual(len(duplicate['turns']), 1)
+            self.assertEqual(submit.call_count, 0)
+            with patch.object(factory, '_instantiate_preflight', side_effect=HTTPException(409, 'model unavailable')):
+                failed = self.post(path, {'text': '切换模型后继续'})
+            self.assertEqual(failed['turns'][-1]['status'], 'failed')
+            self.assertEqual(submit.call_count, 0)
+            self.post(path, {'text': '切换模型后继续'})
+            completed = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
+            self.assertEqual(completed['turns'][-1]['status'], 'completed')
+            self.assertEqual(submit.call_count, 1)
+
+    def test_initial_stream_refresh_disconnect_and_missing_session(self):
+        requests = []
+        self.page.on('request', lambda request: requests.append((request.method, request.url)))
+        self.send('切换模型后继续')
+        snapshot = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        identifier, address = snapshot['id'], self.page.url
+        endpoint = self.origin + '/api/factory/research/sessions/' + identifier
+        expect(self.page.locator('.rs-turn')).to_contain_text('切换模型后完成。')
+        self.page.reload()
+        expect(self.page.locator('.rs-turn')).to_contain_text('切换模型后完成。')
+        self.assertNotIn(('GET', endpoint), requests)
+        self.page.get_by_role('button', name='刷新会话', exact=True).click()
+        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_be_visible()
+        failed = []
+        def disconnect(route):
+            if len(failed) < 2:
+                failed.append(True)
+                if len(failed) == 1:
+                    route.fulfill(status=503, json={'detail': 'temporary fixture outage'})
+                else:
+                    route.abort()
+            else:
+                route.continue_()
+        self.page.route(endpoint + '/events', disconnect)
+        self.page.reload()
+        expect(self.page.locator('.rs-connection')).to_contain_text('正在重连')
+        expect(self.page.locator('.rs-turn')).to_contain_text('切换模型后完成。')
+        self.page.unroute(endpoint + '/events', disconnect)
+        self.page.goto(address.replace(identifier, str(uuid4())))
+        expect(self.page.locator('main').get_by_role('alert')).to_have_text('会话不存在或已不可访问。')
+        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_have_count(0)
+        self.page.goto(address)
+        expect(self.page.locator('.rs-turn')).to_contain_text('切换模型后完成。')
+        self.page.route(endpoint + '/events', lambda route: route.fulfill(status=401, json={'detail': 'expired'}))
+        self.page.reload()
+        expect(self.page.get_by_label('用户名', exact=True)).to_be_visible()
+        expect(self.page.locator('.rs-turn')).to_have_count(0)
+
+    def test_delayed_initial_stream_cannot_replace_a_new_turn_or_session(self):
+        self.send('切换模型后继续')
+        snapshot = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        endpoint = self.origin + '/api/factory/research/sessions/' + snapshot['id'] + '/events'
+        held = []
+        def delay(route):
+            if not held:
+                held.append(route)
+            else:
+                route.continue_()
+        def await_request():
+            deadline = time.monotonic() + 5
+            while not held and time.monotonic() < deadline:
+                self.page.wait_for_timeout(20)
+            self.assertEqual(len(held), 1)
+        def release():
+            await_request()
+            held[0].fulfill(content_type='text/event-stream', body='event: session\ndata: ' +
+                json.dumps(snapshot, ensure_ascii=False) + '\n\n')
+        self.page.route(endpoint, delay)
+        self.page.reload()
+        expect(self.page.get_by_text('正在读取会话详情…', exact=True)).to_be_visible()
+        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_have_count(0)
+        release()
+        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_be_visible()
+        held.clear()
+        self.page.get_by_role('button', name='刷新会话', exact=True).click()
+        await_request()
+        self.page.get_by_role('textbox', name='下一轮指令', exact=True).fill('切换模型后继续')
+        self.page.get_by_role('button', name='发送', exact=True).click()
+        self.wait_for(lambda value: len(value['turns']) == 2 and value['turns'][-1]['status'] == 'completed')
+        release()
+        expect(self.page.locator('.rs-turn')).to_have_count(2)
+        held.clear()
+        self.page.get_by_role('button', name='刷新会话', exact=True).click()
+        await_request()
+        self.page.get_by_role('button', name='新建会话', exact=True).click()
+        release()
+        expect(self.page.get_by_role('heading', name='今天想一起完成什么？')).to_be_visible()
+        expect(self.page.locator('.rs-turn')).to_have_count(0)
 
     def test_chat_tools_files_and_child(self):
         self.post('/personal-tools/resources', {'transport': 'cli', 'toolName': 'demo_cli',

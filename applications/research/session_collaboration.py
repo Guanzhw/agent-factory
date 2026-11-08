@@ -7,6 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import Column, JSON, MetaData, String, Table, UniqueConstraint, select
 
 from agent_factory.store import digest, now
+from agent_factory.application_runs import StartNotSubmitted
 from agent_factory.personal_tool_contract import ToolInvocationError
 from agent_factory.runtime_hooks import effect_unresolved, runtime_custody_held
 from .conversations import SessionQuestion
@@ -430,25 +431,34 @@ class ResearchCollaboration:
                 updated = self._event_intent(conn, owner, origin_task, event_id, message_id)
                 return updated['body']['state'] in TERMINAL
             target = conn.execute(select(service.turns).where(service.turns.c.id == start.inputValues['turnId'])).mappings().one()
+            first_dispatch = not target['body'].get('dispatchStarted')
             service._save_turn(conn, target, {**target['body'], 'dispatchStarted': True})
         if start is not None:
             try:
                 await service.runs.start(owner, start, private_event_id=event_id)
             except HTTPException as error:
-                # The original admission may exist. Only its request is reconciled on the next event pass.
+                # A failed later attempt cannot prove that an earlier dispatch never happened.
                 detail = error.detail
                 code = str(cast(dict, detail).get('code') if isinstance(detail, dict) else detail).split(':', 1)[0]
                 if not code.isupper() or not code.replace('_', '').isalnum():
                     code = 'RESEARCH_COLLABORATION_ADMISSION_UNCONFIRMED'
                 with service._write() as conn:
+                    target = conn.execute(select(service.turns).where(
+                        service.turns.c.id == start.inputValues['turnId'])).mappings().one()
+                    not_submitted = first_dispatch and service._not_submitted(owner, target, error)
+                    if not_submitted:
+                        code = 'RESEARCH_COLLABORATION_START_FAILED'
                     for pending in self._rows(conn, owner, identifier):
                         if (pending['body'].get('continuedTurnId') == start.inputValues['turnId']
                                 and pending['body']['state'] not in TERMINAL):
-                            self._save(conn, pending, code=code)
-                    target = conn.execute(select(service.turns).where(
-                        service.turns.c.id == start.inputValues['turnId'])).mappings().one()
+                            self._save(conn, pending, code=code, **({'state': 'blocked'} if not_submitted else {}))
                     if not target['body']['terminal']:
-                        service._save_turn(conn, target, {**target['body'], 'status': 'unknown',
-                            'failure': '尚未确认自动继续的原提交结果；保留原请求核对，不另建轮次。'})
-                return False
+                        if not_submitted and isinstance(error, StartNotSubmitted):
+                            service._save_turn(conn, target, {**target['body'], 'status': 'failed',
+                                'terminal': True, 'completedAt': now(), 'neverDispatched': True,
+                                'failure': error.message})
+                        else:
+                            service._save_turn(conn, target, {**target['body'], 'status': 'unknown',
+                                'failure': '尚未确认自动继续的原提交结果；保留原请求核对，不另建轮次。'})
+                return not_submitted
         return False

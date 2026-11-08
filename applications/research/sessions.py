@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, select
 
 from agent_factory.application_interface import ApplicationStart
-from agent_factory.application_runs import factory_request_id
+from agent_factory.application_runs import StartNotSubmitted, factory_request_id
 from agent_factory.applications import GovernedStorage
 from agent_factory.control_commands import ControlCommand
 from agent_factory.runtime_hooks import effect_unresolved, runtime_custody_held
@@ -104,14 +104,10 @@ class ResearchSessions:
     def _sources(self, owner, identifiers):
         for identifier in identifiers:
             try:
-                source = self.content.read(owner, identifier)
-                if source.get('visibility') != 'team' or source.get('source', {}).get('application') != 'research':
-                    raise ValueError()
+                self.content.read(owner, identifier)
             except HTTPException as error:
                 if error.status_code not in {403, 404}:
                     raise
-                raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '本轮使用的共享来源已不可读，本轮已停止；可以发送新消息继续。') from None
-            except ValueError:
                 raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '本轮使用的共享来源已不可读，本轮已停止；可以发送新消息继续。') from None
 
     def _reply(self, owner, identifier, snapshot):
@@ -193,6 +189,14 @@ class ResearchSessions:
                 return None
             raise
         return self.store.task(receipt['taskId'], owner) if receipt.get('taskId') else None
+
+    def _not_submitted(self, owner, turn, error):
+        if not isinstance(error, StartNotSubmitted):
+            return False
+        try:
+            return self._task(owner, turn) is None
+        except Exception:
+            return False  # An unreadable original request is not proof of absence.
 
     async def _refresh(self, owner, identifier):
         with self.db.read() as conn:
@@ -287,6 +291,8 @@ class ResearchSessions:
         task = self._task(owner, turn)
         if task is None:
             return bool(body.get('neverDispatched') and body['terminal'])
+        if task['admission'] == 'rejected' and not task.get('run_id') and task['body'].get('neverSubmitted'):
+            return bool(task['terminal'])
         if body.get('stopRequestId'):
             return bool(task['terminal'] and not runtime_custody_held(self.store, task['id'])
                 and not any(effect_unresolved(item, self.store) for item in self.store.effects(task['id'])))
@@ -376,12 +382,18 @@ class ResearchSessions:
             if start is not None:
                 try:
                     await self.runs.start(owner, start)
-                except Exception:
+                except Exception as error:
+                    never_submitted = self._not_submitted(owner, turn, error)
                     with self._write() as conn:
                         current = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
                         if not current['body'].get('terminal'):
-                            self._save_turn(conn, current, {**current['body'], 'status': 'unknown',
-                                'failure': '尚未确认原提交结果；请读取原请求，勿重复启动。'})
+                            if never_submitted and isinstance(error, StartNotSubmitted):
+                                self._save_turn(conn, current, {**current['body'], 'status': 'failed',
+                                    'terminal': True, 'completedAt': now(), 'neverDispatched': True,
+                                    'failure': error.message})
+                            else:
+                                self._save_turn(conn, current, {**current['body'], 'status': 'unknown',
+                                    'failure': '尚未确认原提交结果；请读取原请求，勿重复启动。'})
                 with self.db.read() as conn:
                     original = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
                 if original['body'].get('stopRequestId'):
@@ -683,6 +695,8 @@ class ResearchSessions:
             turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
                 self.turns.c.application_request_id == root['request_id'].removeprefix('application-start:'))).mappings().first()
         if turn is not None and root['request_id'] == factory_request_id(turn['application_request_id']):
+            if turn['body'].get('stopRequestId') and not root['cancel_requested']:
+                await asyncio.to_thread(self.store.request_cancel, root['id'])
             await asyncio.to_thread(self.memory.observe, task['owner_id'], turn, task, EFFECT_PREFIX)
         await self.subagents.observe_waits(observer, task)
         if self.research is not None:

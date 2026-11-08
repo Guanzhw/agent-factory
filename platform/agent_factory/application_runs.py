@@ -11,6 +11,17 @@ def factory_request_id(request_id):
     return 'application-start:' + request_id
 
 
+class StartNotSubmitted(HTTPException):
+    """This start attempt failed before contacting the native execution queue."""
+    message = '任务在提交执行队列前失败；本轮未启动，请检查模型或工具设置后继续。'
+
+    def __init__(self, error):
+        if isinstance(error, HTTPException):
+            super().__init__(error.status_code, error.detail, error.headers)
+        else:
+            super().__init__(503, self.message)
+
+
 class ApplicationRuns:
     def __init__(self, factory):
         self.factory = factory
@@ -38,7 +49,10 @@ class ApplicationRuns:
         from .factory_api import InstanceRequest
         if self.factory.store._connection.get() is not None:
             raise RuntimeError('Native admission requires a committed metadata boundary')
-        plan, key = await asyncio.to_thread(self._prepare, owner, body)
+        try:
+            plan, key = await asyncio.to_thread(self._prepare, owner, body)
+        except Exception as error:
+            raise StartNotSubmitted(error) from error
         options = {}
         if delivery_id is not None:
             options['delivery_id'] = delivery_id
