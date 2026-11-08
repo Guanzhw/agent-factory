@@ -1,5 +1,13 @@
 # Development checks
 
+## Native queued streaming validation on 2026-11-08
+
+Ten PostgreSQL/native-queue/HTTPS/Chromium cases pass in 193.702 seconds on the combined native-history and streaming tree. They verify `payload.stream=true`, persisted `RunContent`, updates to an existing event row without a full session read, lost-ack recovery and duplicate-request identity, refresh, actual process Stop, file delivery, subassistant continuation, Responses, multi-turn failure/recovery, and summary/correction history. A model HTTP 400 leaves Agno's queue ticket completed but its persisted run failed; the browser shows the failure and accepts a new turn. Worker retry cases inject an iterator delivery exception after a real streamed model error, then exercise the native queue's retry and Stop paths; they do not claim that Agno retries a normally ended `RunError` stream.
+
+Twenty-five focused model, streaming and unknown-result cases pass in 14.152 seconds. A separate failed-tail regression verifies no repeated projection without database changes and continued updates after a database notification. Independent review found and removed a self-generated retry loop in that fallback. The current-worktree frontend build/check, full Python Ruff and Pyright checks pass; Pyright retains six Windows-import warnings on Linux. An initial real queue test exposed uppercase ASGI authorization headers that the isolated helper test missed; the adapter and request-header regression now cover it.
+
+These use scripted local HTTP models and disposable PostgreSQL, not paid providers, real SSH or cross-replica native streaming. Earlier snapshot-polling measurements below describe their original revision; the current SSE path uses native tails and committed database notifications.
+
 ## Session read measurements on 2026-11-08
 
 A disposable PostgreSQL/native-queue fixture measured SQL within each `ResearchSessions.read`, including its internal native HTTP and thread work. A completed one-turn session falls from 11 to 7 statements; a queued second turn falls from 51 to 43. The change reuses observations within one read and directly resolves the owner/request task; it adds no cross-request cache and leaves SSE polling cadence unchanged. Sample elapsed times were 15.8–359.6 ms versus 9.7–15.2 ms for completed reads and 88.7–148.3 ms versus 79.5–122.9 ms for queued reads. These small concurrent samples establish removed database work, not a throughput benchmark.
