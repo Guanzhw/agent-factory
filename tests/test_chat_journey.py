@@ -681,6 +681,28 @@ class ChatJourney(unittest.TestCase):
         self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
         self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-mobile.png'))
 
+        # Stopping plain text keeps a visible status without inventing process steps.
+        snapshot.update(state='running', allowedActions=['correct', 'stop'])
+        turn.update(status='running', result=None, failure=None, children=[], toolResults=[],
+            events=[event(4, 'model_content_delta', {'responseId': 'plain-response', 'text': '保留部分回复。'})])
+        activity = self.page.locator('.rs-activity')
+        expect(activity.get_by_text('正在生成回答…', exact=True)).to_be_visible()
+        expect(activity.locator('.rs-process')).to_have_count(0)
+        snapshot.update(state='stopped', allowedActions=['start'])
+        for status in ('cancelled', 'canceled'):
+            turn['status'] = status
+            expect(activity.get_by_role('status')).to_have_text('本轮已停止')
+            expect(activity.get_by_text('保留部分回复。', exact=True)).to_be_visible()
+            self.page.reload()
+            expect(activity.get_by_role('status')).to_have_text('本轮已停止')
+            expect(activity.get_by_text('保留部分回复。', exact=True)).to_be_visible()
+            expect(activity.locator('.rs-process')).to_have_count(0)
+        turn['events'] = []
+        self.page.reload()
+        expect(activity.get_by_role('status')).to_have_text('本轮已停止')
+        expect(activity.locator('.rs-streaming-reply')).to_have_count(0)
+        expect(activity.locator('.rs-process')).to_have_count(0)
+
     def test_short_chat_header_and_native_detail_panels(self):
         self.configure_ssh()
         self.send('ssh 可用了吗?')

@@ -132,6 +132,7 @@ export function SessionActivity({ turn, records }: { turn: SessionTurn; records?
     <details className="rs-process-steps" open><summary>{descriptions.join('、')} · {process.length} 个步骤<IconChevronRight className="rs-disclosure" size={14}/></summary>
     <ol>{process.map(step => step.kind === 'tool' ? <ActionRecord key={step.id} event={step.event} start={step.start} active={active}/> : <li key={step.id} className={step.kind === 'thinking' ? 'rs-thinking-step' : 'rs-step-message'}>{step.kind === 'thinking' ? <details className="rs-thinking" open={active && step === last}><summary>思考<time>{new Date(step.createdAt).toLocaleTimeString('zh-CN')}</time><IconChevronRight className="rs-disclosure" size={14}/></summary><ResearchReply text={step.text}/></details> : <><small>阶段性消息 · {new Date(step.createdAt).toLocaleTimeString('zh-CN')}</small><ResearchReply text={step.text}/></>}</li>)}</ol>
     </details></details> : active && <p className="rs-generating" role="status">{liveText ? '正在生成回答…' : activitySummary(turn)}</p>}
+    {!process.length && ['cancelled', 'canceled'].includes(turn.status) && <p role="status">{activitySummary(turn)}</p>}
     {active && seconds >= 15 && <p className="rs-waiting" role="status">已有 {seconds} 秒未收到更新，正在等待执行端。</p>}
     {liveText && <div className="rs-streaming-reply"><ResearchReply text={liveText}/><small>本次收到的部分回复</small></div>}
     {records}
