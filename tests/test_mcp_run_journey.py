@@ -27,11 +27,20 @@ class MCPQueueJourney(unittest.TestCase):
     def test_queue_reuses_connections_reconfiguration_and_stop(self):
         requests, called = [], []
         waiting, stopped = threading.Event(), threading.Event()
-        schema = {'type': 'object', 'properties': {'wait': {'type': 'boolean'}}}
+        entered = {label: threading.Event() for label in ('owner-A', 'owner-B')}
+        release = threading.Event()
+        self.addCleanup(release.set)
+        labelled_sessions = {}
+        schema = {'type': 'object', 'properties': {'wait': {'type': 'boolean'}, 'label': {'type': 'string'}}}
         async def listing(ctx, params):
             return types.ListToolsResult(tools=[types.Tool(name='read_fixture', input_schema=schema)])
         async def execute(ctx, params):
             called.append(params.arguments)
+            if params.arguments.get('label') in entered and params.arguments.get('wait'):
+                entered[params.arguments['label']].set()
+                while not release.is_set():
+                    await asyncio.sleep(.01)
+                return types.CallToolResult(content=[types.TextContent(type='text', text='released')])
             if params.arguments.get('wait'):
                 waiting.set()
                 try:
@@ -51,7 +60,11 @@ class MCPQueueJourney(unittest.TestCase):
                 if message['type'] == 'http.request':
                     body.extend(message.get('body', b''))
                     if not message.get('more_body') and body:
-                        requests.append((json.loads(body).get('method'), dict(scope['headers'])))
+                        data = json.loads(body)
+                        requests.append((data.get('method'), dict(scope['headers'])))
+                        label = data.get('params', {}).get('arguments', {}).get('label')
+                        if data.get('method') == 'tools/call' and label:
+                            labelled_sessions.setdefault(label, []).append(dict(scope['headers'])[b'mcp-session-id'])
                 return message
             await mcp_app(scope, read, send)
         listener = socket.socket()
@@ -86,7 +99,8 @@ class MCPQueueJourney(unittest.TestCase):
             if len(outputs) < 2:
                 return 200, [chunk({'role': 'assistant', 'tool_calls': [{'index': 0,
                     'id': 'read-' + str(len(outputs)), 'type': 'function', 'function': {'name': 'read_fixture',
-                    'arguments': json.dumps({'arguments': {'wait': user_text == 'MCP Stop'}})}}]}), chunk({}, 'tool_calls')]
+                    'arguments': json.dumps({'arguments': {'wait': user_text == 'MCP Stop' or
+                        user_text in entered and not outputs, 'label': user_text}})}}]}), chunk({}, 'tool_calls')]
             return 200, reply('MCP 两次读取完成。')
         model.answer = answer
         threading.Thread(target=model.serve_forever, daemon=True).start()
@@ -121,3 +135,51 @@ class MCPQueueJourney(unittest.TestCase):
         self.page.reload()
         expect(self.page.locator('.rs-turn')).to_have_count(2)
         self.assertEqual(final['turns'][0]['status'], 'completed')
+
+        # Two real owners use the same registered executor concurrently.
+        other = MCPQueueJourney()
+        self.addCleanup(other.doCleanups)
+        other.setUp()
+        other.post('/personal-tools/resources', resource)
+        configurations = []
+        for client in (self, other):
+            selected = client.post('/personal-models', {'provider': 'openai-compatible', 'model': 'parallel-mcp',
+                'baseURL': f'http://127.0.0.1:{model.server_port}/v1'})
+            configurations.append(client.post('/research/sessions', {'title': 'Parallel MCP', 'goal': 'Independent work',
+                'modelConnectionRef': selected['connectionRef']}))
+        paths = ['/research/sessions/' + value['id'] for value in configurations]
+        def snapshot(client, path):
+            response = client.context.request.get(client.origin + '/api/factory' + path)
+            self.assertTrue(response.ok)
+            return response.json()
+        def terminal(client, path):
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline:
+                value = snapshot(client, path)
+                if value['turns'][-1]['completedAt'] is not None:
+                    return value
+                time.sleep(.05)
+            self.fail('Concurrent MCP turn did not finish')
+        try:
+            self.post(paths[0] + '/turns', {'text': 'owner-A'})
+            other.post(paths[1] + '/turns', {'text': 'owner-B'})
+            self.assertTrue(entered['owner-A'].wait(10))
+            self.assertTrue(entered['owner-B'].wait(10))
+            a, b = labelled_sessions['owner-A'][0], labelled_sessions['owner-B'][0]
+            self.assertNotEqual(a, b)
+            self.post(paths[0] + '/stop', {})
+            self.assertEqual(terminal(self, paths[0])['turns'][-1]['status'], 'canceled')
+            closed = {headers.get(b'mcp-session-id') for method, headers in requests if method == 'DELETE'}
+            self.assertIn(a, closed)
+            self.assertNotIn(b, closed)
+            self.assertIsNone(snapshot(other, paths[1])['turns'][-1]['completedAt'])
+            release.set()
+            self.assertEqual(terminal(other, paths[1])['turns'][-1]['status'], 'completed')
+            self.assertEqual(labelled_sessions['owner-A'], [a])
+            self.assertEqual(labelled_sessions['owner-B'], [b, b])
+            self.assertTrue(any(method == 'DELETE' and headers.get(b'mcp-session-id') == b
+                                for method, headers in requests))
+        finally:
+            release.set()
+            self.post(paths[0] + '/stop', {})
+            other.post(paths[1] + '/stop', {})
