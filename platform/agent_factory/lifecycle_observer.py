@@ -132,9 +132,9 @@ class FactoryLifecycleObserver:
             return "admission-rejected"
         if self.store.has_failures(task["id"]):
             return "protected-failure"
-        if ticket and (ticket["status"] == "failed" or ticket.get("persistedRunStatus") == "error"):
+        if ticket and ticket["status"] == "failed":
             return "native-failure"
-        if ticket and (ticket["status"] == "cancelled" or ticket.get("persistedRunStatus") == "cancelled"):
+        if ticket and ticket["status"] == "cancelled":
             return "native-ended"
         if ticket and ticket["status"] == "completed":
             # Native completion does not renew an execution grant. Its pending
