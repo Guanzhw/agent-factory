@@ -306,9 +306,10 @@ class Store:
         self.sql("UPDATE af_tasks SET admission='unknown' WHERE id=:id AND run_id IS NULL", id=task_id)
         self.event(task_id, "admission_unknown", "Native acknowledgement missing; reconcile before retry", {})
 
-    def admission_failed(self, task_id, message):
-        self.sql("UPDATE af_tasks SET admission='rejected',terminal=(run_id IS NULL AND :complete) WHERE id=:id",
-                 id=task_id, complete=True)
+    def admission_failed(self, task_id, message, *, never_submitted=False):
+        self.sql("UPDATE af_tasks SET admission='rejected',terminal=(run_id IS NULL AND :complete), "
+                 "body=body || CAST(:evidence AS JSONB) WHERE id=:id",
+                 id=task_id, complete=True, evidence=canonical({'neverSubmitted': True} if never_submitted else {}))
         self.event(task_id, "admission_rejected", message, {})
 
     def bind_run(self, ctx):

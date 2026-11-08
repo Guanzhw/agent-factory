@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from .control_commands import ControlCommands
 from .application_runs import StartNotSubmitted
+from .native_bridge import NativeAdmissionRejected
 from .delegation import application_group_status
 from fastapi.routing import APIRoute as FactoryPublicRoute
 from .store import effect_unresolved, canonical
@@ -102,12 +103,9 @@ class FactoryAPI:
                 receipt = await self.bridge.submit({**plan, "task_id": task["id"]}, owner, body.requestId)
                 self.store.accept(task["id"], receipt["run_id"])
                 self.store.event(task["id"], "native_accepted", "Native durable queue accepted the task", {"runId": receipt["run_id"]})
-            except HTTPException as error:
-                if error.status_code >= 500:
-                    self.store.admission_unknown(task["id"])
-                else:
-                    self.store.admission_failed(task["id"], "Native admission rejected")
-                    raise error
+            except NativeAdmissionRejected:
+                self.store.admission_failed(task["id"], "Native queue is full; submission was not accepted", never_submitted=True)
+                raise
             except Exception:
                 self.store.admission_unknown(task["id"])
         return (await self.detail(self.store.task(task["id"], owner))) ["job"]
@@ -121,9 +119,17 @@ class FactoryAPI:
         return self.store.task(identifier, owner), None
 
     async def detail(self, task, remote_child=None):
+        task = await self.store.lifecycle_observer.recover_admission(task)
         snapshot = {}
         if task.get("run_id"):
-            snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
+            try:
+                snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
+            except HTTPException as error:
+                ticket = self.store.lifecycle_observer._binding(task)
+                if error.status_code != 404 or not ticket or ticket['status'] != 'cancelled':
+                    raise
+                # Native acceptance preparation can cancel its ticket before saving a run.
+                snapshot = {'queue': ticket}
         task = self.store.task(task["id"], task["owner_id"])
         effects = self.store.effects(task["id"])
         events = self.store.events(task["id"])

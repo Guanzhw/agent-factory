@@ -271,6 +271,8 @@ class ResearchSessions:
         task = self._task(owner, turn)
         if task is None:
             return bool(body.get('neverDispatched') and body['terminal'])
+        if task['admission'] == 'rejected' and not task.get('run_id') and task['body'].get('neverSubmitted'):
+            return bool(task['terminal'])
         if body.get('stopRequestId'):
             return bool(task['terminal'] and not runtime_custody_held(self.store, task['id'])
                 and not any(effect_unresolved(item, self.store) for item in self.store.effects(task['id'])))
@@ -669,6 +671,8 @@ class ResearchSessions:
             turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
                 self.turns.c.application_request_id == root['request_id'].removeprefix('application-start:'))).mappings().first()
         if turn is not None and root['request_id'] == factory_request_id(turn['application_request_id']):
+            if turn['body'].get('stopRequestId') and not root['cancel_requested']:
+                await asyncio.to_thread(self.store.request_cancel, root['id'])
             await asyncio.to_thread(self.memory.observe, task['owner_id'], turn, task, EFFECT_PREFIX)
         await self.subagents.observe_waits(observer, task)
         if self.research is not None:

@@ -17,7 +17,8 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
         self.session = object.__new__(ResearchSessions)
         self.turn = {'id': 'turn', 'body': {'terminal': False, 'status': 'running',
             'blockReason': 'RESEARCH_EFFECT_UNCONFIRMED', 'children': []}}
-        self.task = {'id': 'task', 'run_id': 'run', 'terminal': False, 'researchChild': False}
+        self.task = {'id': 'task', 'run_id': 'run', 'terminal': False, 'researchChild': False,
+                     'admission': 'accepted', 'body': {}}
         self.ticket = {'id': 'run', 'session_id': 'task', 'user_id': 'owner', 'status': 'completed', 'attempt': 1}
         self.effect = {'effect_key': 'run:command', 'status': 'UNKNOWN', 'result': None}
         self.session.store = SimpleNamespace(task=Mock(return_value=self.task),
