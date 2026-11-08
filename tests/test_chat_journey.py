@@ -381,6 +381,39 @@ class ChatJourney(unittest.TestCase):
         self.assertIn('切换模型后完成', finished['turns'][-1]['result'])
         self.assertNotIn('source-secret-marker', json.dumps(self.model.requests[before:], ensure_ascii=False))
 
+    def test_native_tool_compression_checks_source_before_provider_request(self):
+        from agent_factory.application_content import ContentPublication, ContentSource
+        content = self.state['application_content']
+        publisher = 'publisher-' + uuid4().hex
+        self.state['browser_auth'].local_passwords.create(publisher, secrets.token_urlsafe(20))
+        source = content.publish(publisher, ContentPublication(
+            source=ContentSource(application='research', record='compressed-source', revision='1'),
+            content={'observation': 'source-secret-marker'}, visibility='team'), str(uuid4()))
+        model = self.post('/personal-models', {'provider': 'openai-compatible', 'model': 'source-compression',
+            'baseURL': f'http://127.0.0.1:{self.model.server_port}/v1', 'autoCompactTokenLimit': 1})
+        self.post('/personal-models/' + model['reference'] + '/default', {})
+        self.page.reload()
+        self.page.get_by_role('button', name='选择模型', exact=True).click()
+        self.page.get_by_role('option', name='source-compression', exact=True).click()
+        native_compress, attempts = CompressionManager.acompress, []
+        async def revoke_before_compression(manager, messages, **kwargs):
+            if any(message.role == 'tool' and 'source-secret-marker' in str(message.content) for message in messages):
+                attempts.append(True)
+                await asyncio.to_thread(content.set_visibility, publisher, source['id'], 'personal', str(uuid4()))
+            return await native_compress(manager, messages, **kwargs)
+        before = len(self.model.requests)
+        with patch.object(CompressionManager, 'acompress', new=revoke_before_compression):
+            self.send('共享资料验收:' + source['id'])
+            self.assertEqual(self.session()['model']['connectionRef'], model['connectionRef'])
+            self.assertEqual(self.session()['model']['autoCompactTokenLimit'], 1)
+            failed = self.wait_for(lambda value: value['turns'][-1]['status'] == 'failed'
+                                   and value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(attempts, [True])
+        self.assertEqual(len(self.model.requests) - before, 1)
+        self.assertNotIn('source-secret-marker', json.dumps(self.model.requests[before:], ensure_ascii=False))
+        self.assertIn('start', failed['allowedActions'])
+        self.assertIn('共享来源已不可读', failed['turns'][-1]['failure'])
+
     def test_chat_tools_files_and_child(self):
         self.post('/personal-tools/resources', {'transport': 'cli', 'toolName': 'demo_cli',
             'description': 'Diagnostic CLI', 'executable': sys.executable,

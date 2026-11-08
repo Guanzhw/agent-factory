@@ -4,6 +4,8 @@
 
 The baseline reproduces a completed chat losing its Start action after a source is made private. Two PostgreSQL/native-queue/Chromium journeys pass after the fix (35.117 seconds): preserved chat history, a fresh provider HTTP payload without the revoked source, derived reply, old correction or saved summary, an independent file write, duplicate submission/refresh, and revocation during a run followed by a new successful turn. The old correction and summary are synthetic persisted fixtures; summary generation itself is not exercised by these two journeys.
 
+Independent review found an auxiliary-model gap: native tool compression could send a withdrawn source before the primary model hook ran. A further native CompressionManager journey now explicitly selects its low-threshold model and revokes the source at compression entry. Removing only the auxiliary hook reproduces extra provider requests; the hooked path makes only the original pre-revocation request. All three source journeys pass together in 48.178 seconds. Auxiliary requests share the source/Stop check without recursively preparing another summary.
+
 Two focused cases cover automatic collaboration reservation using the same clean context, unavailable adopted replies, later summary/checkpoint projection, and temporary source-service errors. Four existing session recovery/Stop cases also pass. Frontend checks, Ruff and Pyright pass; Linux still reports six unavailable Windows-import warnings. The model is a local scripted HTTP fixture. No paid model, remote SSH, external MCP or complete peer-assistant exchange was used for this change.
 
 ## Thinking and diagnostic validation on 2026-11-09

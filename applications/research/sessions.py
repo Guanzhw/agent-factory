@@ -590,12 +590,10 @@ class ResearchSessions:
             return
 
         def current_model():
-            with self._write() as conn:
-                _, current_turn, current_task, _, blocked = self._model_boundary(conn, context)
+            with self.db.read() as conn:
+                _, current_turn, current_task = self._execution(conn, context)
                 if current_task['terminal'] or current_turn['body'].get('compaction') != claim:
                     raise StopAgentRun('RESEARCH_SUMMARY_OUTCOME_UNCONFIRMED')
-            if blocked:
-                raise StopAgentRun(blocked)
             return auxiliary_model()
 
         try:
@@ -626,14 +624,17 @@ class ResearchSessions:
             self._summary_outcome(context.user_id, turn['id'], claim, 'unknown', 'RESEARCH_SUMMARY_UNKNOWN')
             raise
 
+    def authorize_model(self, context):
+        with self._write() as conn:
+            _, _, _, _, blocked = self._model_boundary(conn, context)
+        if blocked:
+            raise StopAgentRun(blocked)
+
     def before_model(self, context, messages, auxiliary_model):
         with self.db.read() as conn:
             _, _, task = self._execution(conn, context)
         if task['researchChild']:
-            with self._write() as conn:
-                _, _, _, _, blocked = self._model_boundary(conn, context)
-            if blocked:
-                raise StopAgentRun(blocked)
+            self.authorize_model(context)
             return
         self._compact(context, auxiliary_model)
         with self._write() as conn:
