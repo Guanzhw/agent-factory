@@ -890,6 +890,7 @@ class ChatJourney(unittest.TestCase):
         self.page.keyboard.press('Escape')
         self.model.reasoning_pause = threading.Event()
         self.addCleanup(self.model.reasoning_pause.set)
+        first_request = len(self.model.requests)
         self.send('思考与内容顺序验收')
         expect(self.page.locator('.rs-thinking').get_by_text('再核对最终输出。', exact=True)).to_be_visible()
         expect(self.page.locator('.rs-streaming-reply').get_by_text('顺序验收', exact=True)).to_be_visible()
@@ -908,7 +909,7 @@ class ChatJourney(unittest.TestCase):
         calls = [event for event in ordered if 'callId' in event['data']]
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0]['data']['callId'], calls[1]['data']['callId'])
-        native_requests = [request for request in self.model.requests if any(message['role'] == 'user'
+        native_requests = [request for request in self.model.requests[first_request:] if any(message['role'] == 'user'
             and message['content'] == '思考与内容顺序验收' for message in request['messages'])]
         self.assertTrue(native_requests)
         self.assertTrue(all(request['model'] == 'deepseek-v4.1-flash'
