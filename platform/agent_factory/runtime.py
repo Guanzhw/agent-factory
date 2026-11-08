@@ -12,11 +12,18 @@ from .model_dispatch import DelegatingModel
 def build_runtime(store, native_db):
     model = DelegatingModel(store)
 
-    def bind_run(run_context: RunContext):
+    def bind_run(run_context: RunContext, session, agent):
         try:
-            store.bind_run(run_context)
+            # Queue deserialization reapplies Agno's omitted-None defaults.
+            agent.num_history_runs = None
+            agent.max_tool_calls_from_history = None
+            plan = store.bind_run(run_context)
             if store.cancellation_requested(run_context.run_id):
                 raise RunCancelledException('User stopped this task')
+            inputs = plan.get('inputValues') or {}
+            sessions = getattr(store, 'research_sessions', None)
+            if sessions is not None and plan.get('mode') == 'autonomous' and inputs.get('sessionId') and inputs.get('turnId'):
+                sessions.prepare_history(run_context, session)
         except (InputCheckError, RunCancelledException):
             raise
         except Exception as error:
@@ -27,8 +34,15 @@ def build_runtime(store, native_db):
         text = plan.get('instructions', [])
         if isinstance(text, str):
             text = [text]
-        return [*text, json.dumps({'goal': plan['normalizedGoal'],
-            **plan.get('inputValues', {})}, ensure_ascii=False)]
+        inputs = dict(plan.get('inputValues') or {})
+        if plan.get('mode') == 'autonomous' and inputs.get('turnId') and not plan.get('delegation'):
+            legacy = inputs.pop('sessionContext', None)
+            if legacy:
+                previous = json.loads(legacy)
+                for key in ('goal', 'boundaries'):
+                    if key in previous:
+                        inputs.setdefault(key, previous[key])
+        return [*text, json.dumps({'goal': plan['normalizedGoal'], **inputs}, ensure_ascii=False)]
 
     def selected_tools(run_context: RunContext):
         plan = store.resolve_run(run_context)
@@ -51,7 +65,7 @@ def build_runtime(store, native_db):
         return functions
 
     def ssh_started(run_context, fc):
-        store.event(run_context.session_id, 'tool_started', '开始执行 SSH 工具',
+        store.event(run_context.run_id, 'tool_started', '开始执行 SSH 工具',
             {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}})
 
     def ssh_finished(run_context, fc):
@@ -67,9 +81,9 @@ def build_runtime(store, native_db):
                 event['message'] = fc.error
         else:
             event['outcome'] = 'completed'
-        store.event(run_context.session_id, 'tool_finished', 'SSH 工具执行记录', event)
+        store.event(run_context.run_id, 'tool_finished', 'SSH 工具执行记录', event)
 
     executor = Agent(id='factory-executor', name='Factory', model=model, db=native_db,
         instructions=instructions, tools=selected_tools, pre_hooks=[bind_run],
-        add_history_to_context=False, telemetry=False)
+        add_history_to_context=True, add_session_summary_to_context=True, telemetry=False)
     return executor, Registry(models=[model], dbs=[native_db])

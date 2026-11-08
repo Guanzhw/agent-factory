@@ -108,7 +108,7 @@ class ResearchSessionResearch:
             existing = conn.execute(select(self.experiments).where(self.experiments.c.id == identifier)).mappings().first()
             if existing is None:
                 conn.execute(self.experiments.insert().values(id=identifier, owner_id=context.user_id,
-                    session_id=session['id'], task_id=context.session_id, body=body))
+                    session_id=session['id'], task_id=self.store.task_for_context(context)["id"], body=body))
             elif existing['body']['request'] != values or existing['body']['toolName'] != name:
                 raise rejected('RESEARCH_EXPERIMENT_REQUEST_CONFLICT')
         return self._row(context.user_id, session['id'], identifier), existing is not None

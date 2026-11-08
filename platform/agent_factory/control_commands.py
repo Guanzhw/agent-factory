@@ -69,7 +69,7 @@ class ControlCommands:
             group = await self.api.delegation.inspect_group(task["owner_id"], task["id"])
             return {"alreadyStopped": group["allStopped"]}
         from .factory_api import native_requirements, requirement_version
-        context = SimpleNamespace(session_id=task["id"], run_id=task.get("run_id"), user_id=task["owner_id"],
+        context = SimpleNamespace(session_id=self.store.native_session_id(task), run_id=task.get("run_id"), user_id=task["owner_id"],
             session_state={"factory_envelope": {"plan_ref": task["plan_id"], "task_id": task["id"],
                 "user_id": task["owner_id"], "request_id": task["request_id"]}})
         try:
@@ -218,7 +218,7 @@ class ControlCommands:
                 ticket = self.store.native_db.get_job(task["run_id"], strict=True)
                 continuation = (ticket or {}).get("payload", {}).get("continue", {})
                 proof = continuation.get("kwargs", {}).get("metadata", {}).get("factoryControlCommand")
-                scoped = bool(ticket and ticket.get("id") == binding["runId"] and ticket.get("session_id") == task["id"]
+                scoped = bool(ticket and ticket.get("id") == binding["runId"] and ticket.get("session_id") == self.store.native_session_id(task)
                               and ticket.get("user_id") == owner and ticket.get("component_id") == EXECUTOR_ID)
                 exact = (proof == {"commandId": command_id, "fingerprint": row["fingerprint"]}
                          and digest(continuation.get("updated_tools")) == row["body"]["toolsSha256"])

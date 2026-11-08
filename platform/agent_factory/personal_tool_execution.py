@@ -56,6 +56,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
     fingerprint = digest(asdict(descriptor))
     service = store.personal_tools
     expected = (context.user_id, context.session_id, context.run_id)
+    task_id = store.task_for_context(context)['id']
     connection = {'ref': handle.configuration['registrationRef'], 'revision': handle.configuration['revision']}
     name = exposed_name or descriptor.tool_name
     async def invoke(*, run_context, fc, arguments):
@@ -75,7 +76,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
                         or handle.adapter is not adapter or handle.service is not service
                         or handle.requesting_actor != expected[0] or digest(asdict(adapter.descriptor)) != fingerprint):
                     raise PermissionError()
-                task = store.task(expected[1], expected[0])
+                task = store.task_for_context(run_context)
                 if task['run_id'] != expected[2]:
                     raise PermissionError('Tool run differs from its task')
                 if store.cancellation_requested(expected[2]):
@@ -108,7 +109,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
             return _unknown(read_only=descriptor.read_only, **identity, **facts)
 
         if not descriptor.read_only:
-            request = {'ownerId': expected[0], 'taskId': expected[1],
+            request = {'ownerId': expected[0], 'taskId': task_id,
                 'adapterId': descriptor.adapter_id, 'descriptor': fingerprint, 'connection': connection,
                 'callId': call_id, 'arguments': values}
             try:
@@ -139,7 +140,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
             connection_revision=connection['revision'], call_id=call_id, arguments=values,
             run_context=run_context, check_authorized=check_authorized, resolve_credential=resolve_credential)
         event = {'toolName': descriptor.tool_name, 'callId': call_id, 'arguments': values}
-        await asyncio.to_thread(store.event, expected[1], 'tool_started', '开始执行工具', event)
+        await asyncio.to_thread(store.event, task_id, 'tool_started', '开始执行工具', event)
         try:
             # Adapters own finally cleanup and positive stop evidence. A
             # naked cancellation exception is not proof of remote stop.
@@ -159,7 +160,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
                 if error.output is not None:
                     receipt['output'] = error.output
             else:
-                await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具结果待核对',
+                await asyncio.to_thread(store.event, task_id, 'tool_finished', '工具结果待核对',
                     {**event, 'outcome': 'unknown'})
                 return unknown(stopped=error.stopped, code=error.code)
         except RunCancelledException:
@@ -167,7 +168,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
         except asyncio.CancelledError:
             raise asyncio.CancelledError() from None
         except Exception:
-            await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具结果待核对',
+            await asyncio.to_thread(store.event, task_id, 'tool_finished', '工具结果待核对',
                 {**event, 'outcome': 'unknown'})
             return unknown()
         if not descriptor.read_only and receipt.get('outcome') == 'failed' and receipt.get('stopped') is False:
@@ -180,7 +181,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
                       AND fingerprint=:fingerprint AND status='UNKNOWN' AND result IS NULL
                     RETURNING effect_key
                     """, effect_key=expected[2] + ':' + effect_key, run_id=expected[2],
-                    task_id=expected[1], fingerprint=digest(request), result=canonical(receipt))
+                    task_id=task_id, fingerprint=digest(request), result=canonical(receipt))
                 if len(rows) != 1:
                     raise ValueError('Effect receipt was not recorded')
             except Exception:
@@ -195,7 +196,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
         # Preserve a known completion even if authority was revoked during
         # execution, but do not disclose its result without current access.
         await asyncio.to_thread(check_authorized)
-        await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具执行记录', {**event, **receipt})
+        await asyncio.to_thread(store.event, task_id, 'tool_finished', '工具执行记录', {**event, **receipt})
         return _receipt(receipt, read_only=descriptor.read_only, **identity)
 
     # Agno consumes top-level framework names; nesting preserves arbitrary MCP keys.

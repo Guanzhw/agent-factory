@@ -52,8 +52,9 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         self.server.requests.append(request)
         names = {call['id']: call['function']['name'] for message in request['messages']
                  for call in message.get('tool_calls', [])}
+        current = max((i for i, message in enumerate(request['messages']) if message['role'] == 'user'), default=0)
         results = [(names.get(m.get('tool_call_id')), m.get('content'))
-                   for m in request['messages'] if m['role'] == 'tool']
+                   for m in request['messages'][current:] if m['role'] == 'tool']
         system = '\n'.join(m['content'] for m in request['messages'] if m['role'] == 'system')
         user_text = next((m['content'] for m in reversed(request['messages']) if m['role'] == 'user'), '')
         if request['model'] == 'summary-failure' and user_text == 'Provide the summary of the conversation.':

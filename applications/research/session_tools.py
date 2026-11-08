@@ -366,6 +366,7 @@ class ResearchSessionTools:
 
     def _function(self, store, expected, name):
         identity = (expected.user_id, expected.session_id, expected.run_id)
+        task_id = store.task_for_context(expected)['id']
 
         async def invoke(*, run_context, fc, **arguments):
             if (self.sessions is None or not isinstance(fc, FunctionCall) or not isinstance(fc.call_id, str)
@@ -400,7 +401,7 @@ class ResearchSessionTools:
                 guard()
                 receipt = {'outcome': 'failed', 'stopped': True, 'code': 'PERSONAL_TOOL_INPUT_INVALID',
                     'message': 'No operation was started. Check the required fields and types in this tool schema.'}
-                store.event(identity[1], 'research_tool_finished', '研究工具参数无效', {**event, **receipt})
+                store.event(task_id, 'research_tool_finished', '研究工具参数无效', {**event, **receipt})
                 return self._receipt(receipt)
             memory_operation = None
             if name in MEMORY_WRITES:
@@ -408,11 +409,11 @@ class ResearchSessionTools:
                     memory_operation = self.sessions.memory.prepare(run_context, call_id, name, values)
                 except ToolInvocationError as error:
                     receipt = {'outcome': 'failed', 'stopped': True, 'code': error.code}
-                    store.event(identity[1], 'research_tool_finished', '记忆操作未执行', {**event, **receipt})
+                    store.event(task_id, 'research_tool_finished', '记忆操作未执行', {**event, **receipt})
                     return self._receipt(receipt)
             mutating = name in MEMORY_WRITES | RESEARCH_WRITES | {'research_edit_file', 'research_run', 'research_ask_assistant'}
             if mutating:
-                request = {'ownerId': identity[0], 'taskId': identity[1], 'sessionId': execution['id'],
+                request = {'ownerId': identity[0], 'taskId': task_id, 'sessionId': execution['id'],
                     'turnId': execution['turnId'], 'toolName': name, 'callId': call_id, 'arguments': values}
                 try:
                     reservation = store.effect_reserve(identity[2], key, request)
@@ -438,7 +439,7 @@ class ResearchSessionTools:
             if 'path' in values:
                 event['relativePath'] = values['path']
             event['arguments'] = values
-            store.event(identity[1], 'research_tool_started', '开始执行研究工具', event)
+            store.event(task_id, 'research_tool_started', '开始执行研究工具', event)
             try:
                 guard()
                 if name == 'research_find_memories':
@@ -483,30 +484,30 @@ class ResearchSessionTools:
                     if isinstance(error.output, str):
                         receipt['message'] = error.output
                 else:
-                    store.event(identity[1], 'research_tool_finished', '原操作结果未确认，请先核对',
+                    store.event(task_id, 'research_tool_finished', '原操作结果未确认，请先核对',
                         {**event, 'outcome': 'unknown', 'stopped': error.stopped, 'code': error.code})
                     return unknown(error.code, stopped=error.stopped)
             except (ValueError, OSError, UnicodeError, PermissionError, HTTPException):
                 # A mutation may have committed before an IO failure. Keep its
                 # effect unresolved; a new model call must not replay it.
                 if mutating:
-                    store.event(identity[1], 'research_tool_finished', '原操作结果未确认，请先核对',
+                    store.event(task_id, 'research_tool_finished', '原操作结果未确认，请先核对',
                         {**event, 'outcome': 'unknown', 'code': 'RESEARCH_TOOL_OUTCOME_UNKNOWN'
                             if name == 'research_ask_assistant' else 'RESEARCH_MEMORY_OUTCOME_UNKNOWN'
                             if name in MEMORY_WRITES else 'RESEARCH_FILE_OR_COMMAND_REJECTED'})
                     return unknown()
-                store.event(identity[1], 'research_tool_finished', '研究工具未完成',
+                store.event(task_id, 'research_tool_finished', '研究工具未完成',
                     {**event, 'outcome': 'failed', 'code': 'RESEARCH_TOOL_INPUT_OR_ACCESS_REJECTED'})
                 raise ValueError('RESEARCH_TOOL_INPUT_OR_ACCESS_REJECTED') from None
             if mutating:
                 try:
                     store.effect_complete(identity[2], key, receipt)
                 except Exception:
-                    store.event(identity[1], 'research_tool_finished', '原操作回执未确认，请先核对',
+                    store.event(task_id, 'research_tool_finished', '原操作回执未确认，请先核对',
                         {**event, 'outcome': 'unknown', 'code': 'RESEARCH_TOOL_RECEIPT_UNCONFIRMED'})
                     return unknown('RESEARCH_TOOL_RECEIPT_UNCONFIRMED')
             result = receipt.get('output', {})
-            store.event(identity[1], 'research_tool_finished', '研究工具返回结果',
+            store.event(task_id, 'research_tool_finished', '研究工具返回结果',
                 {**event, **receipt, **{field: result[field] for field in
                     ('exitCode', 'path', 'beforeSha256', 'afterSha256') if field in result}})
             if receipt['outcome'] == 'cancelled':
