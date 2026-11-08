@@ -23,6 +23,11 @@ class ReadOnlyQueueJourney(unittest.TestCase):
     send = journey.ChatJourney.send
 
     def exercise_retry(self, read_only, *, stop=False):
+        # Keep the held attempt's retry from being claimed by a second worker slot.
+        worker = self.state['lifecycle_observer'].worker_getter()
+        single_slot = patch.object(worker.config, 'max_concurrency', 1)
+        single_slot.start()
+        self.addCleanup(single_slot.stop)
         self.post('/personal-tools/resources', {'transport': 'cli', 'toolName': 'read_python_version',
             'description': 'Read the Python interpreter version', 'executable': sys.executable,
             'arguments': ['-c', 'import json,sys; print(json.dumps({"version":sys.version_info.major}))'],
