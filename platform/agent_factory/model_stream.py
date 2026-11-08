@@ -69,7 +69,7 @@ async def read_model_stream(response, protocol, on_text=None, on_reasoning=None)
                 # delta; the SDK generic string merger would concatenate it.
                 for choice in value.get('choices', []):
                     delta = choice.get('delta', {})
-                    if 'role' in delta:
+                    if delta.get('role') is not None:
                         if delta['role'] != 'assistant':
                             raise ValueError('PERSONAL_MODEL_STREAM_ROLE')
                         if role_seen:

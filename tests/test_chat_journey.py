@@ -329,6 +329,11 @@ class ChatJourney(unittest.TestCase):
         requests_before_refresh = len(self.model.requests)
         self.page.reload()
         expect(self.page.locator('.rs-turn > .rs-reply').get_by_text('任务完成，结果可下载。', exact=False)).to_be_visible()
+        expect(self.page.locator('.rs-child-preview')).to_have_count(1)
+        expect(self.page.locator('.rs-active-children')).to_have_count(0)
+        self.page.locator('.rs-child-result > summary').click()
+        expect(self.page.locator('.rs-child-result').get_by_text('子助手已完成', exact=False)).to_be_visible()
+        self.page.locator('.rs-child-result > summary').click()
         expect(self.page.locator('#rs-file-panel')).to_be_hidden()
         self.page.get_by_role('button', name='会话文件', exact=True).click()
         with self.page.expect_download() as download:
@@ -507,6 +512,7 @@ class ChatJourney(unittest.TestCase):
         expect(steps).to_have_attribute('open', '')
         call = steps.locator('.rs-tool-call')
         expect(call).to_have_count(1)
+        expect(self.page.locator('.rs-tool-results')).to_have_count(0)
         steps.locator(':scope > summary').click()
         expect(call.locator(':scope > summary')).to_be_hidden()
         steps.locator(':scope > summary').click()
@@ -641,7 +647,9 @@ class ChatJourney(unittest.TestCase):
         def event(identifier, kind, data):
             return {'id': identifier, 'jobId': turn['taskId'], 'type': kind, 'message': 'UI fixture',
                     'createdAt': old, 'data': {'callId': 'display-call', 'toolName': 'ssh_run', **data}}
-        turn.update(status='running', result=None, events=[event(1, 'tool_started',
+        turn.update(status='running', result=None,
+            toolResults=[{'effectKey': turn['runId'] + ':personal-tool:display-call', 'status': 'UNKNOWN', 'result': None}],
+            events=[event(1, 'tool_started',
             {'arguments': {'argv': ['pwd'], 'reference': 'synthetic-server'}})])
         snapshot.update(state='running', allowedActions=['correct', 'stop'])
         def stream(route):
@@ -660,14 +668,53 @@ class ChatJourney(unittest.TestCase):
         self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-waiting.png'))
         expect(self.page.locator('.rs-content').get_by_text(re.compile('实时连接已断开'))).to_be_visible()
         expect(self.page.get_by_text('已开始 · 等待结果', exact=True)).to_be_visible()
+        expect(self.page.locator('.rs-tool-call')).to_have_count(1)
+        expect(self.page.locator('.rs-tool-results')).to_have_count(0)
+        unknown_warning = self.page.locator('.rs-activity').get_by_text(re.compile('原工具操作结果未知'))
+        expect(unknown_warning).to_have_count(0)
+        turn['toolResults'].append({'effectKey': turn['runId'] + ':personal-tool:other-call',
+            'status': 'UNKNOWN', 'result': None})
+        expect(self.page.locator('.rs-tool-results details')).to_have_count(1)
+        expect(self.page.locator('.rs-tool-results')).to_contain_text('other-call')
+        expect(unknown_warning).to_be_visible()
+        turn['toolResults'].pop()
+        expect(self.page.locator('.rs-tool-results')).to_have_count(0)
+        expect(unknown_warning).to_have_count(0)
+        turn['events'].append(event(2, 'tool_finished', {'outcome': 'unknown'}))
+        expect(self.page.get_by_text('结果未确认', exact=True)).to_be_visible()
+        expect(unknown_warning).to_be_visible()
+        turn['events'].pop()
+        expect(self.page.get_by_text('已开始 · 等待结果', exact=True)).to_be_visible()
+        expect(unknown_warning).to_have_count(0)
         self.page.locator('.rs-tool-call > summary').click()
         expect(self.page.locator('.rs-tool-call')).to_have_attribute('open', '')
         snapshot.update(state='idle', allowedActions=['start', 'stop'])
+        turn['status'] = 'completed'
+        expect(self.page.locator('.rs-tool-results .rs-tool-warning')).to_be_visible()
+        expect(unknown_warning).to_be_visible()
         turn.update(status='completed', result='UI fixture answer\n\n| 结果 | 状态 |\n| --- | --- |\n| SSH | 已确认 |', events=[*turn['events'],
             event(2, 'tool_finished', {'outcome': 'unknown', 'code': 'SSH_TOOL_OUTCOME_UNKNOWN'})])
         expect(self.page.get_by_text(re.compile('原工具操作结果未知'))).to_be_visible()
         self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-unknown.png'))
-        turn['events'].append(event(3, 'tool_finished', {'outcome': 'completed', 'reconciled': True,
+        # Reconciliation can update the effect receipt without appending a finish event.
+        recovered = {'outcome': 'completed', 'output': {'stdout': '恢复后的原操作结果', 'exitCode': 0}}
+        turn['toolResults'] = [{'effectKey': 'legacy:display-call', 'status': 'DONE', 'result': recovered}]
+        receipt = self.page.locator('.rs-tool-results')
+        expect(receipt.get_by_text('回执已确认', exact=False)).to_be_visible()
+        receipt.locator('details > summary').first.click()
+        expect(receipt.get_by_text('恢复后的原操作结果', exact=False)).to_be_visible()
+        turn['events'].append(event(3, 'tool_finished', recovered))
+        expect(receipt).to_have_count(0)
+        turn['toolResults'][0]['status'] = 'UNKNOWN'
+        expect(receipt.locator('.rs-tool-warning')).to_be_visible()
+        turn['toolResults'][0]['status'] = 'DONE'
+        turn['toolResults'][0]['result'] = {'outcome': 'completed',
+            'output': {'stdout': '修订后的成功结果', 'exitCode': 0}}
+        expect(receipt.get_by_text('回执已确认', exact=False)).to_be_visible()
+        receipt.locator('details > summary').first.click()
+        expect(receipt.get_by_text('修订后的成功结果', exact=False)).to_be_visible()
+        turn['toolResults'] = []
+        turn['events'].append(event(4, 'tool_finished', {'outcome': 'completed', 'reconciled': True,
                                                      'output': {'stdout': '/tmp', 'exitCode': 0}}))
         expect(self.page.get_by_text(re.compile('原工具操作结果未知'))).not_to_be_visible()
         process = self.page.locator('.rs-process')
@@ -684,24 +731,47 @@ class ChatJourney(unittest.TestCase):
         # Stopping plain text keeps a visible status without inventing process steps.
         snapshot.update(state='running', allowedActions=['correct', 'stop'])
         turn.update(status='running', result=None, failure=None, children=[], toolResults=[],
-            events=[event(4, 'model_content_delta', {'responseId': 'plain-response', 'text': '保留部分回复。'})])
+            events=[event(4, 'native_accepted', {}),
+                    event(5, 'model_content_delta', {'responseId': 'plain-first', 'text': '前段回复。'}),
+                    event(6, 'model_content_delta', {'responseId': 'plain-response', 'text': '保留部分回复。'})])
         activity = self.page.locator('.rs-activity')
         expect(activity.get_by_text('正在生成回答…', exact=True)).to_be_visible()
+        expect(activity.get_by_text('前段回复。保留部分回复。', exact=True)).to_be_visible()
+        expect(self.page.locator('.rs-turn .rs-execution')).to_have_count(0)
         expect(activity.locator('.rs-process')).to_have_count(0)
         snapshot.update(state='stopped', allowedActions=['start'])
         for status in ('cancelled', 'canceled'):
             turn['status'] = status
             expect(activity.get_by_text('本轮已停止', exact=True)).to_be_visible()
-            expect(activity.get_by_text('保留部分回复。', exact=True)).to_be_visible()
+            expect(activity.get_by_text('前段回复。保留部分回复。', exact=True)).to_be_visible()
             self.page.reload()
             expect(activity.get_by_text('本轮已停止', exact=True)).to_be_visible()
-            expect(activity.get_by_text('保留部分回复。', exact=True)).to_be_visible()
+            expect(activity.get_by_text('前段回复。保留部分回复。', exact=True)).to_be_visible()
             expect(activity.locator('.rs-process')).to_have_count(0)
         turn['events'] = []
         self.page.reload()
         expect(activity.get_by_text('本轮已停止', exact=True)).to_be_visible()
         expect(activity.locator('.rs-streaming-reply')).to_have_count(0)
         expect(activity.locator('.rs-process')).to_have_count(0)
+        for status in ('failed', 'unknown'):
+            turn['status'] = status
+            self.page.reload()
+            expect(activity.get_by_role('alert')).to_contain_text('本轮结果未知' if status == 'unknown' else '本轮未完成')
+            expect(activity.locator('.rs-process')).to_have_count(0)
+        turn['failure'] = '提供方连接中断'
+        self.page.reload()
+        expect(activity.get_by_role('alert')).to_contain_text('本轮结果未知')
+        expect(self.page.locator('.rs-turn > .rw-error')).to_contain_text('提供方连接中断')
+        turn['toolResults'] = [{'effectKey': 'legacy:call', 'status': 'UNKNOWN', 'result': None}]
+        self.page.reload()
+        expect(self.page.locator('.rs-tool-results .rs-tool-warning')).to_be_visible()
+        expect(activity.get_by_text(re.compile('原工具操作结果未知'))).to_be_visible()
+        turn['children'] = [{'childTaskId': 'display-child', 'runId': None, 'goal': '核对独立子任务',
+            'status': 'unknown', 'result': None}]
+        self.page.reload()
+        expect(self.page.locator('.rs-child-preview')).to_have_count(1)
+        expect(self.page.locator('.rs-active-children')).to_have_count(0)
+        expect(activity.get_by_text('子助手有未完成或未确认的结果，请查看子助手记录。', exact=True)).to_be_visible()
 
     def test_short_chat_header_and_native_detail_panels(self):
         self.configure_ssh()
@@ -725,11 +795,7 @@ class ChatJourney(unittest.TestCase):
         self.assertLessEqual(pane.evaluate('el => el.scrollHeight - el.clientHeight'), 1)
         expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_have_count(0)
         summary.click()
-        expect(self.page.locator('.rs-execution > summary')).to_be_visible()
-        expect(self.page.locator('.rs-process .rs-execution')).to_have_count(0)
-        self.page.locator('.rs-execution > summary').click()
-        expect(self.page.locator('.rs-events > summary')).to_be_visible()
-        self.page.locator('.rs-execution > summary').click()
+        expect(self.page.locator('.rs-turn .rs-execution')).to_have_count(0)
         for name, panel_id in [('会话文件', 'rs-file-panel'), ('同事问答', 'rs-question-panel'),
                                ('会话信息', 'rs-info-panel')]:
             panel = self.page.locator('#' + panel_id)
@@ -745,6 +811,11 @@ class ChatJourney(unittest.TestCase):
                 expect(panel.get_by_text(snapshot['goal'], exact=True)).to_be_visible()
                 expect(panel.get_by_text(re.compile('当前上下文 .* 字符'))).to_be_visible()
                 expect(panel.get_by_text('可继续', exact=True)).to_be_visible()
+                expect(panel.get_by_role('heading', name='诊断记录', exact=True)).to_be_visible()
+                panel.locator('.rs-execution > summary').click()
+                expect(panel.locator('.rs-events > summary')).to_be_visible()
+                panel.locator('.rs-events > summary').click()
+                expect(panel.get_by_text('以下是执行端保存的诊断记录。', exact=True)).to_be_visible()
                 expect(panel.get_by_role('button', name='停止会话', exact=True)).to_be_visible()
             self.page.get_by_role('button', name='关闭' + name, exact=True).click()
             expect(panel).to_be_hidden()
@@ -824,6 +895,18 @@ class ChatJourney(unittest.TestCase):
         snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
         self.assertEqual(snapshot['turns'][-1]['result'], PRESENTATION)
         expect(self.page.locator('.rs-process')).to_have_count(0)
+        expect(self.page.locator('.rs-turn .rs-execution')).to_have_count(0)
+        self.page.get_by_role('button', name='会话信息', exact=True).click()
+        info = self.page.locator('#rs-info-panel')
+        expect(info.get_by_role('heading', name='诊断记录', exact=True)).to_be_visible()
+        info.locator('.rs-execution > summary').click()
+        info.locator('.rs-events > summary').click()
+        expect(info.get_by_text('以下是执行端保存的诊断记录。', exact=True)).to_be_visible()
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.assertLessEqual(info.evaluate('el => el.scrollWidth'), info.evaluate('el => el.clientWidth'))
+        self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+        self.page.set_viewport_size({'width': 1280, 'height': 900})
+        self.page.get_by_role('button', name='关闭会话信息', exact=True).click()
         expect(self.page.locator('.rs-code-block')).to_have_count(2)
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollHeight'), 900)
         pane = self.page.locator('.rs-content')
@@ -871,7 +954,7 @@ class ChatJourney(unittest.TestCase):
         expect(self.page.get_by_role('textbox', name='补充或纠正当前研究', exact=True)).to_be_visible()
         self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
         expect(self.page.locator('.rs-process')).to_have_count(0)
-        self.page.locator('.rs-execution > summary').click()
+        self.page.locator('.rs-code-block').first.get_by_role('checkbox', name='自动换行').uncheck()
         pane.evaluate('el => { el.scrollTop = Math.max(0, el.scrollTop - 240); }')
         expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
         reading_position = pane.evaluate('el => el.scrollTop')
@@ -1107,7 +1190,7 @@ class ChatJourney(unittest.TestCase):
         with patch('agent_factory.personal_cli.MemberCliAdapter.invoke',
                    side_effect=ToolInvocationError('SIMULATED_LOST_RESPONSE', outcome='unknown', stopped=False)) as adapter:
             self.send('unknown-journey-case')
-            snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] in {'completed', 'failed', 'unknown', 'cancelled'})
+            snapshot = self.wait_for(lambda s: s['turns'][-1]['completedAt'] is not None)
             self.assertEqual(snapshot['turns'][-1]['status'], 'completed', snapshot)
             self.assertIn('start', snapshot['allowedActions'])
             original_task = snapshot['turns'][-1]['taskId']

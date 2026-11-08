@@ -63,7 +63,8 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
     async def test_chat_segments_flush_during_provider_wait_and_preserve_native_reasoning(self):
         gate = asyncio.Event()
         values = [chat_chunk({'role': 'assistant', 'reasoning_content': '思考一'}),
-            chat_chunk({'content': '正文一'}), chat_chunk({'reasoning_content': '思考二'}),
+            chat_chunk({'role': None, 'content': '正文一'}),
+            chat_chunk({'role': 'assistant', 'reasoning_content': '思考二'}),
             chat_chunk({'content': '正文二'}), chat_chunk({}, 'stop')]
         events = []
         async def content(value):
@@ -73,6 +74,7 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
             gate.set()
         response = httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=Frames(values, gate))
         raw = await asyncio.wait_for(read_model_stream(response, 'chat-completions', content, reasoning), 2)
+        self.assertEqual(raw['choices'][0]['message']['role'], 'assistant')
         self.assertEqual(events, [('reasoning', '思考一'), ('content', '正文一'),
                                   ('reasoning', '思考二'), ('content', '正文二')])
         model = OwnerChatModel({'provider': 'openai', 'baseURL': 'https://api.openai.com/v1',
@@ -80,6 +82,12 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
         parsed = model._parse_provider_response(raw)
         self.assertEqual(parsed.content, '正文一正文二')
         self.assertEqual(parsed.reasoning_content, '思考一思考二')
+
+    async def test_stream_rejects_an_explicit_non_assistant_role(self):
+        response = httpx.Response(200, headers={'content-type': 'text/event-stream'},
+            stream=Frames([chat_chunk({'role': 'user', 'content': 'invalid'})]))
+        with self.assertRaisesRegex(ValueError, 'PERSONAL_MODEL_STREAM_ROLE'):
+            await read_model_stream(response, 'chat-completions')
 
     async def test_responses_segments_and_plain_content_have_no_invented_reasoning(self):
         output = [{'id': 'reason-1', 'type': 'reasoning', 'summary': [{'type': 'summary_text', 'text': '考虑'}]},

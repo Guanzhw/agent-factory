@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import type { ReactNode } from 'react';
 import { IconChevronRight, IconCircleCheck, IconAlertCircle, IconClock } from '@tabler/icons-react';
 import { ResearchReply } from './ResearchReply.js';
 import type { SessionEvent, SessionTurn } from './researchSessionsClient.js';
@@ -22,10 +21,13 @@ const output = (event: SessionEvent): Record<string, unknown> => {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 };
 export function activitySummary(turn: SessionTurn): string {
+  if (turn.status === 'canceling') return '本轮正在停止';
   if (turn.status === 'finalizing') return '正在核对最终结果';
   if (turn.status === 'completed') return '本轮已完成';
   if (['cancelled', 'canceled'].includes(turn.status)) return '本轮已停止';
-  if (turn.failure || ['failed', 'unknown', 'blocked'].includes(turn.status)) return '本轮需要核对，请查看下方结果或原任务';
+  if (turn.status === 'unknown') return '本轮结果未知，需核对原任务';
+  if (turn.status === 'failed') return '本轮未完成，请核对原任务';
+  if (turn.failure || turn.status === 'blocked') return '本轮需要核对，请查看下方结果或原任务';
   if (turn.status === 'waiting_approval') return turn.children?.some(child => !['completed', 'failed', 'cancelled'].includes(child.status))
     ? '等待子助手返回结果' : '有待处理事项，请查看原任务';
   const last = [...turn.events].sort((a, b) => a.id - b.id).at(-1);
@@ -40,8 +42,16 @@ export function activitySummary(turn: SessionTurn): string {
   if (['native_accepted', 'admission_reserved'].includes(last.type)) return '任务已提交，等待开始执行';
   return '等待新的执行记录';
 }
+export function isInFlightOperation(turn: SessionTurn, item: SessionTurn['toolResults'][number]): boolean {
+  if (item.status.toUpperCase() !== 'UNKNOWN' || item.result !== null
+      || !['reserved', 'queued', 'running', 'waiting_approval', 'finalizing', 'canceling'].includes(turn.status)) return false;
+  const events = turn.events.filter(event => typeof event.data.callId === 'string'
+    && item.effectKey === `${turn.runId}:${event.type.startsWith('research_') ? 'research-session-tool' : 'personal-tool'}:${event.data.callId}`);
+  return ['research_tool_started', 'tool_started'].includes(events.at(-1)?.type ?? '')
+    && !events.some(event => ['research_tool_finished', 'tool_finished'].includes(event.type));
+}
 export function hasUnconfirmedOperation(turn: SessionTurn): boolean {
-  const unconfirmed = turn.toolResults.some(item => item.status.toUpperCase() === 'UNKNOWN');
+  const unconfirmed = turn.toolResults.some(item => item.status.toUpperCase() === 'UNKNOWN' && !isInFlightOperation(turn, item));
   const unfinished = !['reserved', 'queued', 'running', 'waiting_approval', 'finalizing', 'canceling'].includes(turn.status)
     && turn.events.some(event => ['research_tool_started', 'tool_started'].includes(event.type) &&
       !turn.events.some(later => later.id > event.id && typeof event.data.callId === 'string' && later.data.callId === event.data.callId && ['research_tool_finished', 'tool_finished'].includes(later.type)));
@@ -85,7 +95,7 @@ function orderedSteps(events: SessionEvent[]) {
   const steps: (TextStep | ToolStep)[] = [];
   const calls = new Map<string, ToolStep>();
   for (const event of events) {
-    if (['model_content_delta', 'model_reasoning_delta'].includes(event.type) && typeof event.data.text === 'string' && typeof event.data.responseId === 'string') {
+    if (['model_content_delta', 'model_reasoning_delta'].includes(event.type) && typeof event.data.text === 'string' && typeof event.data.responseId === 'string' && event.data.text.length > 0) {
       const kind = event.type === 'model_reasoning_delta' ? 'thinking' : 'message';
       const previous = steps.at(-1);
       if (previous?.kind === kind && previous.responseId === event.data.responseId) previous.text += event.data.text;
@@ -102,7 +112,7 @@ function orderedSteps(events: SessionEvent[]) {
   }
   return steps;
 }
-export function SessionActivity({ turn, records }: { turn: SessionTurn; records?: ReactNode }) {
+export function SessionActivity({ turn }: { turn: SessionTurn }) {
   const [now, setNow] = useState(Date.now);
   const active = ['reserved', 'queued', 'running', 'waiting_approval', 'finalizing', 'canceling'].includes(turn.status);
   useEffect(() => {
@@ -115,8 +125,9 @@ export function SessionActivity({ turn, records }: { turn: SessionTurn; records?
   const last = steps.at(-1);
   // DSH groups one response's reasoning separately from its accumulated answer.
   const responseId = last && last.kind !== 'tool' ? last.responseId : undefined;
-  const reply = steps.filter((step): step is TextStep => step.kind === 'message' && step.responseId === responseId);
-  const process = steps.filter(step => step.kind !== 'message' || step.responseId !== responseId);
+  const hasProcess = steps.some(step => step.kind === 'tool' || step.kind === 'thinking' && step.text.trim());
+  const reply = steps.filter((step): step is TextStep => step.kind === 'message' && (!hasProcess || step.responseId === responseId));
+  const process = hasProcess ? steps.filter(step => step.kind !== 'message' || step.responseId !== responseId) : [];
   const failures = steps.filter(step => step.kind === 'tool' && (step.event.data.outcome === 'failed' || step.event.data.outcome === 'completed' && typeof output(step.event).exitCode === 'number' && output(step.event).exitCode !== 0)).length;
   const children = turn.children ?? [];
   const latest = events.at(-1);
@@ -133,11 +144,10 @@ export function SessionActivity({ turn, records }: { turn: SessionTurn; records?
     <ol>{process.map(step => step.kind === 'tool' ? <ActionRecord key={step.id} event={step.event} start={step.start} active={active}/> : <li key={step.id} className={step.kind === 'thinking' ? 'rs-thinking-step' : 'rs-step-message'}>{step.kind === 'thinking' ? <details className="rs-thinking" open={active && step === last}><summary>思考<time>{new Date(step.createdAt).toLocaleTimeString('zh-CN')}</time><IconChevronRight className="rs-disclosure" size={14}/></summary><ResearchReply text={step.text}/></details> : <><small>阶段性消息 · {new Date(step.createdAt).toLocaleTimeString('zh-CN')}</small><ResearchReply text={step.text}/></>}</li>)}</ol>
     </details></details> : active && <p className="rs-generating" role="status">{liveText ? '正在生成回答…' : activitySummary(turn)}</p>}
     {!process.length && ['cancelled', 'canceled'].includes(turn.status) && <p role="status">{activitySummary(turn)}</p>}
+    {!process.length && (turn.status === 'unknown' || !turn.failure && ['failed', 'blocked'].includes(turn.status)) && <p role="alert">{activitySummary(turn)}</p>}
     {active && seconds >= 15 && <p className="rs-waiting" role="status">已有 {seconds} 秒未收到更新，正在等待执行端。</p>}
     {liveText && <div className="rs-streaming-reply"><ResearchReply text={liveText}/><small>本次收到的部分回复</small></div>}
-    {records}
-    {!!children.length && <div className="rs-active-children"><strong>子助手</strong>{children.map(child => <div key={child.childTaskId}><p role="status">{({ running: '执行中', queued: '排队中', completed: '已完成', failed: '未完成', cancelled: '已停止' } as Record<string, string>)[child.status] ?? '等待结果'}</p><p className="rs-child-preview">{child.goal}</p><details><summary>查看委托内容</summary><p>{child.goal}</p></details></div>)}</div>}
-    {children.some(child => ['failed', 'unknown', 'blocked'].includes(child.status)) && <p role="alert">子助手有未完成或未确认的结果，请展开执行详情核对。</p>}
+    {children.some(child => ['failed', 'unknown', 'blocked'].includes(child.status)) && <p role="alert">子助手有未完成或未确认的结果，请查看子助手记录。</p>}
     {hasUnconfirmedOperation(turn) && <p role="alert">原工具操作结果未知，需核对原任务，不要重发同一操作。</p>}
     {turn.status === 'completed' && turn.result === null && <p className="rs-warning" role="alert">执行端已标记完成，但没有保存最终回答。</p>}
   </section>;

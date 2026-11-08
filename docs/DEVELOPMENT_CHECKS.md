@@ -1,5 +1,9 @@
 # Development checks
 
+## Thinking and diagnostic validation on 2026-11-09
+
+The scoped DeepSeek thinking request, nullable stream role and separate diagnostic entry pass all 41 minimal cases on Windows in 171.505 seconds. Frontend checks, Ruff, full-worktree Pyright and whitespace checks pass. Real-provider observations include thinking/content, tool exit 0/7, native Stop and refresh; synthetic cases separately cover unknown/recovered receipts and reading position. Historical role failures and existing platform warnings remain distinguished from the passing final checks. See [the acceptance record](reviews/deepseek-thinking-diagnostics-20261109.md).
+
 ## DSH interaction validation on 2026-11-08
 
 The ordered chat correction passes all 39 minimal cases on Windows with isolated PostgreSQL 17 in 153.583 seconds. Frontend lint/types/build, Python Ruff, full-worktree Pyright and whitespace checks pass. The build retains baseline empty-selector and bundle-size warnings. The existing Python environment is reused without running `uv sync` against the live service.
