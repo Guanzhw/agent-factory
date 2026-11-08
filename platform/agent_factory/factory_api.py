@@ -4,6 +4,7 @@ import hashlib
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from .control_commands import ControlCommands
+from .application_runs import StartNotSubmitted
 from .delegation import application_group_status
 from fastapi.routing import APIRoute as FactoryPublicRoute
 from .store import effect_unresolved, canonical
@@ -86,7 +87,10 @@ class FactoryAPI:
             raise RuntimeError('Native admission requires a committed metadata boundary')
         # Trusted owner resources can require a synchronous remote health
         # check. Preserve fresh checks without blocking other ASGI requests.
-        plan = await asyncio.to_thread(self._instantiate_preflight, owner, body)
+        try:
+            plan = await asyncio.to_thread(self._instantiate_preflight, owner, body)
+        except Exception as error:
+            raise StartNotSubmitted(error) from error
         options = {}
         if delivery_id is not None:
             options['delivery_id'] = delivery_id

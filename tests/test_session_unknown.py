@@ -4,6 +4,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 
+from fastapi import HTTPException
+from agent_factory.application_runs import StartNotSubmitted
+
 from sqlalchemy import Column, JSON, MetaData, String, Table
 
 from research.sessions import ResearchSessions
@@ -42,6 +45,14 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
             bridge=SimpleNamespace(native_db=SimpleNamespace(get_job=Mock(return_value=self.ticket))),
             detail=AsyncMock(return_value={'job': {'status': 'finalizing'}, 'events': [],
                 'snapshot': {'queue': self.ticket, 'run': run, 'effects': [self.effect]}})))
+
+    def test_submission_classification_preserves_public_http_error(self):
+        original = HTTPException(403, {'code': 'RESOURCE_UNAVAILABLE', 'message': 'Unavailable'},
+                                 {'X-Request-Id': 'original'})
+        classified = StartNotSubmitted(original)
+        self.assertEqual((classified.status_code, classified.detail, classified.headers),
+                         (original.status_code, original.detail, original.headers))
+        self.assertNotIn('private diagnostic', StartNotSubmitted(RuntimeError('private diagnostic')).detail)
 
     async def test_native_end_allows_independent_turn_but_retains_unknown_and_stop(self):
         await self.session._refresh('owner', 'session')
