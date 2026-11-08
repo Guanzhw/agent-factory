@@ -207,7 +207,7 @@ function SharedSources({ ownerId, ids }: { ownerId: string; ids: string[] }) {
     catch (reason) { if (!controller.signal.aborted) setError(describe(reason)); }
     finally { if (!controller.signal.aborted) setBusy(false); }
   }
-  return <details className="rs-sources"><summary>已引用的共享来源 · {ids.length}</summary><p>仅包含同事明确发布的研究证据。每次查看都重新核对当前权限。</p>{ids.map(id => <button key={id} disabled={busy} onClick={() => void read(id)}>{id}</button>)}{!ids.length && <p className="rw-muted">尚未引用共享证据。</p>}{busy && <p role="status">正在核对来源…</p>}{error && <p className="rw-error" role="alert">{error} 原来源正文已隐藏。</p>}{source && <article><h3>原共享证据 · {source.verificationStatus}</h3><p>作者 {source.ownerId} · 来源 {source.id}</p><pre>{JSON.stringify(source.source, null, 2)}</pre><pre>{JSON.stringify(source.content, null, 2)}</pre></article>}</details>;
+  return <details className="rs-sources"><summary>已引用的资料 · {ids.length}</summary><p>包括自己发布的私有资料及获准访问的共享资料。每次查看都重新核对当前权限。</p>{ids.map(id => <button key={id} disabled={busy} onClick={() => void read(id)}>{id}</button>)}{!ids.length && <p className="rw-muted">尚未引用资料。</p>}{busy && <p role="status">正在核对来源…</p>}{error && <p className="rw-error" role="alert">{error} 原来源正文已隐藏。</p>}{source && <article><h3>原资料 · {source.verificationStatus}</h3><p>作者 {source.ownerId} · 来源 {source.id}</p><pre>{JSON.stringify(source.source, null, 2)}</pre><pre>{JSON.stringify(source.content, null, 2)}</pre></article>}</details>;
 }
 
 function ContextStatus({ value, blocked }: { value: ResearchSession; blocked: boolean }) {
@@ -275,6 +275,7 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
     {value.state === 'blocked' && <p className="rw-error" role="alert">本会话不能开始新一轮：{reasons[value.blockReason ?? ''] ?? '原操作需要核对。'} 历史和原任务记录仍可查看，不会自动重放。<code>{value.blockReason}</code></p>}
     <div className="rs-conversation">{value.turns.length ? value.turns.map(turn => <TurnRecord key={turn.id} turn={turn} onQuestion={openQuestion}/>) : <div className="rs-empty"><h3>会话已创建，尚无执行轮次</h3><p>写下第一轮指令后明确开始。打开或刷新不会自动执行。</p></div>}</div>
     {!!value.sharedSourceIds.length && <SharedSources key={`${value.id}:${value.blockReason ?? ''}:${value.sharedSourceIds.join(',')}`} ownerId={ownerId} ids={value.sharedSourceIds}/>}
+    {value.context.notice && <p className="rs-warning" role="status">{value.context.notice}</p>}
     <ContextStatus value={value} blocked={blocked}/>
     {(value.allowedActions.includes('start') || correction || value.state === 'running' || value.state === 'stopping') && <form className="rw-form rs-composer" noValidate onSubmit={event => { event.preventDefault(); void send(); }}>
       {away && <button type="button" className="rs-jump-latest" aria-label="回到底部" onClick={() => { following.current = true; setAway(false); end.current?.scrollIntoView({ block: 'end' }); }}><IconArrowDown size={18}/></button>}

@@ -33,9 +33,7 @@ class ResearchPeerSources:
 
     def require(self, actor, source_ids):
         for identifier in source_ids:
-            source = self.content.read(actor, identifier)
-            if source['visibility'] != 'team':
-                raise HTTPException(404, 'RESEARCH_SOURCE_UNAVAILABLE')
+            self.content.read(actor, identifier)
 
     def available(self, actor, source_ids):
         try:

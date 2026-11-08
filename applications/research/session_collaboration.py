@@ -351,13 +351,11 @@ class ResearchCollaboration:
                 'AND request_id=:request AND plan_id=:plan', owner=intent['owner_id'], request=request_id, plan=plan['id'])
             if len(original) != 1 or original[0]['fingerprint'] != turn['body']['startFingerprint']:
                 raise rejected('RESEARCH_COLLABORATION_BINDING_MISMATCH', '原协作继续准入内容不一致。')
-            service._sources(intent['owner_id'], row['body']['sharedSourceIds'])
-            service._replies(intent['owner_id'], row['id'], turns)
+            service._context_sources(intent['owner_id'], row, turns)
 
     def _reserve(self, conn, row, turns, ready, event_id):
         service = self.sessions
-        service._sources(row['owner_id'], row['body']['sharedSourceIds'])
-        service._replies(row['owner_id'], row['id'], turns)
+        row = service._continuation_context(row, turns)
         row = service._prepare_turn_configuration(conn, row['owner_id'], row, turns)
         identifier, stamp = str(uuid4()), now()
         origin = next(intent for intent, _ in ready if intent['body']['eventId'] == event_id)

@@ -34,6 +34,7 @@ export interface SessionSummary {
   capabilities?: { memory: boolean };
   model: { connectionRef: string; provider: string; model: string; reasoningEffort?: string; reasoningEfforts?: string[] };
   context: {
+    notice?: string | null;
     characters: number; maximumCharacters: number | null; rawCharacters?: number;
     compaction?: { status: 'needed' | 'preparing' | 'ready' | 'failed' | 'unknown'; throughSequence: number; code?: string };
   };
