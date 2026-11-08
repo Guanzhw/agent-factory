@@ -383,14 +383,14 @@ class ChatJourney(unittest.TestCase):
             body = {**turn['body'], 'messages': [*turn['body']['messages'],
                 service._message('correction', 'source-correction-marker')]}
             service._save_turn(conn, turn, body)
-            turns = [{**turn, 'body': body}]
-            _, identity = session_context.summary_source(row, turns)
             service._save_session(conn, row, {**row['body'], 'contextCheckpoint': {
-                **identity, 'summary': {'summary': 'source-summary-marker', 'topics': []}}})
+                'throughSequence': turn['sequence'], 'projectionVersion': 2, 'prefixDigest': 'legacy-digest',
+                'summary': {'summary': 'source-summary-marker', 'topics': []}}})
         content.set_visibility(publisher, source['id'], 'personal', str(uuid4()))
         snapshot = self.session()
         self.assertIn('start', snapshot['allowedActions'])
         self.assertNotEqual(snapshot['state'], 'blocked')
+        self.assertIn('旧共享来源', snapshot['context']['notice'] or '')
         self.page.reload()
         expect(self.page.get_by_text(re.compile('旧共享来源或助手回答已不可用'))).to_be_visible()
         requests_before = len(self.model.requests)
@@ -411,8 +411,9 @@ class ChatJourney(unittest.TestCase):
         with service.db.read() as conn:
             row = service._row(conn, self.owner, snapshot['id'])
             turns = service._turns(conn, row['id'])
-            summary, _ = session_context.summary_source(row, turns)
-        self.assertNotIn('source-', json.dumps(summary))
+            self.assertIsNone(row['body'].get('contextCheckpoint'))
+            self.assertEqual([item['id'] for item in session_context.active_turns(row, turns)],
+                             [continued['turns'][-1]['id']])
         with self.assertRaises(HTTPException):
             content.read(self.owner, source['id'])
 
@@ -1485,7 +1486,7 @@ class ChatJourney(unittest.TestCase):
         from agno.tools.function import FunctionCall
         function = next(tool for tool in self.state['executor'].skills.get_tools() if tool.name == 'get_skill_script')
         function.process_entrypoint()
-        function._run_context = RunContext(user_id=self.owner, session_id=snapshot['turns'][-1]['taskId'],
+        function._run_context = RunContext(user_id=self.owner, session_id=snapshot['id'],
                                           run_id=snapshot['turns'][-1]['runId'])
         boundary_calls = []
         for arguments, outcome in (({'skill_name': 'journey-skill', 'script_path': 'nested/runner.py',

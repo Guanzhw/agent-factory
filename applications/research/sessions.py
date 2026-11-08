@@ -114,7 +114,7 @@ class ResearchSessions:
             if task['researchChild']:
                 return
             turns = session_context.active_turns(row, self._turns(conn, row['id']))
-            saved = row['body'].get('contextCheckpoint')
+            saved = session_context.checkpoint(row)
             through = saved['throughSequence'] if saved else 0
         native_runs = {run.run_id: run for run in session.runs or []}
         history = []
@@ -600,21 +600,22 @@ class ResearchSessions:
             return
         with self._write() as conn:
             row, turn, task, ticket, blocked = self._model_boundary(conn, context)
-            if blocked:
-                raise StopAgentRun(blocked)
-            active = session_context.active_turns(row, self._turns(conn, row['id']))
-            correction = next((item['id'] for previous in reversed(active) for item in reversed(previous['body']['messages'])
-                               if item['kind'] == 'correction'), None)
-            prior = [item for item in active
-                     if item['sequence'] < turn['sequence'] and item['body'].get('terminal')]
-            limit = session_context.compact_token_limit(turn['body'].get('configuration', row['body']['configuration'])['model'])
-            if (not prior or limit is None or turn['body'].get('compaction', {}).get('status') not in {None, 'pending'}
-                    or count_tokens(messages, model_id=row['body']['configuration']['model'].get('model', '')) < limit):
-                return
-            claim = {'status': 'started', 'runId': context.run_id, 'attempt': ticket['attempt'],
-                     'throughSequence': prior[-1]['sequence'], 'startedAt': now()}
-            self._save_turn(conn, turn, {**turn['body'], 'compaction': claim})
-            saved = row['body'].get('contextCheckpoint')
+            if not blocked:
+                active = session_context.active_turns(row, self._turns(conn, row['id']))
+                correction = next((item['id'] for previous in reversed(active) for item in reversed(previous['body']['messages'])
+                                   if item['kind'] == 'correction'), None)
+                prior = [item for item in active
+                         if item['sequence'] < turn['sequence'] and item['body'].get('terminal')]
+                limit = session_context.compact_token_limit(turn['body'].get('configuration', row['body']['configuration'])['model'])
+                if (not prior or limit is None or turn['body'].get('compaction', {}).get('status') not in {None, 'pending'}
+                        or count_tokens(messages, model_id=row['body']['configuration']['model'].get('model', '')) < limit):
+                    return
+                claim = {'status': 'started', 'runId': context.run_id, 'attempt': ticket['attempt'],
+                         'throughSequence': prior[-1]['sequence'], 'startedAt': now()}
+                self._save_turn(conn, turn, {**turn['body'], 'compaction': claim})
+                saved = session_context.checkpoint(row)
+        if blocked:
+            raise StopAgentRun(blocked)
         if saved:
             history.insert(0, Message(role='user', content='Previous conversation summary: ' + saved['summary']['summary']))
         source = AgentSession(session_id=context.session_id, user_id=context.user_id,
@@ -623,13 +624,14 @@ class ResearchSessions:
             summary = session_context.summarize(source, auxiliary_model)
             with self._write() as conn:
                 row, turn, task, ticket, blocked = self._model_boundary(conn, context)
-                if blocked:
-                    raise StopAgentRun(blocked)
-                if task['terminal'] or ticket['attempt'] != claim['attempt']:
-                    raise StopAgentRun('RESEARCH_SUMMARY_RUN_INACTIVE')
-                self._save_session(conn, row, {**row['body'], 'contextCheckpoint': {
-                    'throughSequence': claim['throughSequence'], 'summary': summary}})
-                self._save_turn(conn, turn, {**turn['body'], 'compaction': {**claim, 'status': 'ready'}})
+                if not blocked:
+                    if task['terminal'] or ticket['attempt'] != claim['attempt']:
+                        raise StopAgentRun('RESEARCH_SUMMARY_RUN_INACTIVE')
+                    self._save_session(conn, row, {**row['body'], 'contextCheckpoint': {
+                        'throughSequence': claim['throughSequence'], 'projectionVersion': 3, 'summary': summary}})
+                    self._save_turn(conn, turn, {**turn['body'], 'compaction': {**claim, 'status': 'ready'}})
+            if blocked:
+                raise StopAgentRun(blocked)
             messages[:] = [item for item in messages if not item.from_history or item.id == correction]
             messages.insert(1, Message(id='research-summary:' + context.run_id, role='user', from_history=True,
                 content='Previous conversation summary: ' + summary['summary']))
@@ -654,33 +656,34 @@ class ResearchSessions:
         self._compact(context, messages, auxiliary_model)
         with self._write() as conn:
             row, turn, task, ticket, blocked = self._model_boundary(conn, context)
-            if blocked:
-                raise StopAgentRun(blocked)
-            turns = session_context.active_turns(row, self._turns(conn, row['id']))
-            known = {item.id for item in messages}
-            # Keep the latest earlier correction before the newer user instruction.
-            correction = next((item for previous in reversed(turns[:-1])
-                               for item in reversed(previous['body']['messages']) if item['kind'] == 'correction'), None)
-            if correction and correction['id'] not in known:
-                index = next((index for index, item in enumerate(messages)
-                              if item.role != 'system' and not item.from_history), len(messages))
-                messages.insert(index, Message(id=correction['id'], role='user', content=correction['text'], from_history=True))
-                known.add(correction['id'])
-            for item in session_context.additions(turn):
-                if item.id not in known:
-                    messages.append(item)
-                    known.add(item.id)
-            for previous in turns:
-                body = deepcopy(previous['body'])
-                for item in body['messages']:
-                    if item['kind'] == 'instruction' or item['id'] in known:
-                        item['state'], item['includedAt'] = 'included', item['includedAt'] or now()
-                if previous['id'] == turn['id']:
-                    body['lastAttempt'] = ticket['attempt']
-                if body != previous['body']:
-                    self._save_turn(conn, previous, body)
-            if self.collaboration is not None:
-                self.collaboration.included(conn, row, turn)
+            if not blocked:
+                turns = session_context.active_turns(row, self._turns(conn, row['id']))
+                known = {item.id for item in messages}
+                # Keep the latest earlier correction before the newer user instruction.
+                correction = next((item for previous in reversed(turns[:-1])
+                                   for item in reversed(previous['body']['messages']) if item['kind'] == 'correction'), None)
+                if correction and correction['id'] not in known:
+                    index = next((index for index, item in enumerate(messages)
+                                  if item.role != 'system' and not item.from_history), len(messages))
+                    messages.insert(index, Message(id=correction['id'], role='user', content=correction['text'], from_history=True))
+                    known.add(correction['id'])
+                for item in session_context.additions(turn):
+                    if item.id not in known:
+                        messages.append(item)
+                        known.add(item.id)
+                for previous in turns:
+                    body = deepcopy(previous['body'])
+                    for item in body['messages']:
+                        if item['kind'] == 'instruction' or item['id'] in known:
+                            item['state'], item['includedAt'] = 'included', item['includedAt'] or now()
+                    if previous['id'] == turn['id']:
+                        body['lastAttempt'] = ticket['attempt']
+                    if body != previous['body']:
+                        self._save_turn(conn, previous, body)
+                if self.collaboration is not None:
+                    self.collaboration.included(conn, row, turn)
+        if blocked:
+            raise StopAgentRun(blocked)
 
     async def external_result(self, commands, task, requirement, requirements, decision):
         return await self.subagents.external_result(commands, task, requirement, requirements, decision)
@@ -753,7 +756,7 @@ class ResearchSessions:
             context_row = self._continuation_context(row, turns) if safe else row
             context_turns = session_context.active_turns(context_row, turns)
             compaction = context_turns[-1]['body'].get('compaction') if context_turns else None
-            saved = context_row['body'].get('contextCheckpoint')
+            saved = session_context.checkpoint(context_row)
             through = saved['throughSequence'] if saved else 0
             characters = sum(len(item['text']) for turn in context_turns if turn['sequence'] > through
                              for item in turn['body']['messages'])
