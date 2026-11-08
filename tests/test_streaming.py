@@ -37,7 +37,7 @@ def chat_chunk(delta, finish=None):
 
 class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
     async def test_streaming_admission_returns_before_execution_and_preserves_rejection(self):
-        from fastapi import FastAPI
+        from fastapi import FastAPI, Request
         from fastapi.responses import JSONResponse, StreamingResponse
         from agent_factory.native_stream import submit_stream
         app = FastAPI()
@@ -47,7 +47,8 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
             completed.set()
         workers = []
         @app.post('/runs')
-        async def submit():
+        async def submit(request: Request):
+            self.assertEqual(request.headers.get('authorization'), 'Bearer fixture')
             workers.append(asyncio.create_task(execute()))
             async def progress():
                 await completed.wait()
@@ -57,7 +58,7 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
         async def rejected():
             return JSONResponse({'message': 'Job queue is full', 'code': 'REQUEST_REJECTED'}, status_code=429)
         try:
-            response = await asyncio.wait_for(submit_stream(app, 'POST', '/runs', headers={}, data={}), timeout=2)
+            response = await asyncio.wait_for(submit_stream(app, 'POST', '/runs', headers={'Authorization': 'Bearer fixture'}, data={}), timeout=2)
             self.assertEqual(response.status_code, 200)
             self.assertFalse(completed.is_set())
             release.set()

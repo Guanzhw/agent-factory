@@ -12,3 +12,12 @@ def finalized_status(status, terminal):
         if status in {"canceled", "cancelled"}:
             return "canceling"
     return status
+
+
+def native_status(queue_status, run_status):
+    """A finished stream can contain RunError; an active queue retry still wins."""
+    queued = str(queue_status or '').lower().removeprefix('runstatus.')
+    persisted = str(run_status or '').lower().removeprefix('runstatus.')
+    if queued == 'completed' and persisted in {'error', 'cancelled', 'canceled'}:
+        return persisted
+    return queued or persisted or 'queued'

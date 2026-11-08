@@ -575,6 +575,27 @@ class ChatJourney(unittest.TestCase):
             self.assertEqual(completed['turns'][-1]['status'], 'completed')
             self.assertEqual(submit.call_count, 1)
 
+    def test_streamed_admission_lost_ack_recovers_original_run_without_replay(self):
+        from agent_factory.native_stream import submit_stream
+        async def lose_ack(*args, **kwargs):
+            response = await submit_stream(*args, **kwargs)
+            if response.status_code == 200:
+                raise ConnectionError('fixture: acknowledgement lost after durable admission')
+            return response
+        with patch('agent_factory.native_bridge.submit_stream', side_effect=lose_ack):
+            self.send('切换模型后继续')
+        first = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        turn = first['turns'][-1]
+        self.assertIs(self.state['store'].native_db.get_job(turn['runId'])['payload']['stream'], True)
+        before = len(self.model.requests)
+        self.post('/research/sessions/' + first['id'] + '/turns',
+            {'requestId': turn['requestId'], 'text': '切换模型后继续'})
+        self.page.reload()
+        expect(self.page.locator('.rs-turn')).to_contain_text('切换模型后完成。')
+        recovered = self.session()
+        self.assertEqual([item['runId'] for item in recovered['turns']], [turn['runId']])
+        self.assertEqual(len(self.model.requests), before)
+
     def test_incremental_progress_updates_existing_row_without_full_projection(self):
         self.model.reasoning_pause = threading.Event()
         self.addCleanup(self.model.reasoning_pause.set)
@@ -582,6 +603,8 @@ class ChatJourney(unittest.TestCase):
         expect(self.page.locator('.rs-thinking').get_by_text('再核对最终输出。', exact=True)).to_be_visible()
         snapshot = self.session()
         turn = snapshot['turns'][-1]
+        native = self.state['store'].native_db
+        self.assertIs(native.get_job(turn['runId'])['payload']['stream'], True)
         event = turn['events'][-1]
         self.assertEqual(event['type'], 'model_reasoning_delta')
         service = self.state['research_sessions']
@@ -593,6 +616,8 @@ class ChatJourney(unittest.TestCase):
             self.assertEqual(reads.call_count, 0)
         self.model.reasoning_pause.set()
         self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        persisted = native.get_run(turn['runId'])
+        self.assertTrue(any(event.event == 'RunContent' for event in persisted.events))
         expect(self.page.locator('.rs-turn')).to_contain_text('顺序验收最终回答。')
         self.page.reload()
         expect(self.page.locator('.rs-thinking').last).to_contain_text('增量更新证据。')

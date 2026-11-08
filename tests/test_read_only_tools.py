@@ -1,4 +1,4 @@
-"""Configured read-only CLI calls survive native queue retries after model failure."""
+"""Configured read-only CLI calls survive native worker retries after a streamed error."""
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from http.server import ThreadingHTTPServer
@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch
 
 from playwright.sync_api import expect
+from agno.agent import Agent
 
 import test_chat_journey as journey
 from test_native_model import Endpoint, chunk, reply
@@ -53,6 +54,28 @@ class ReadOnlyQueueJourney(unittest.TestCase):
         self.page.reload()
         self.page.get_by_role('button', name='选择模型', exact=True).click()
         self.page.get_by_role('option', name='retry-regression', exact=True).click()
+        # Streaming RunError normally finishes its iterator. Inject a worker-side
+        # delivery failure afterwards to exercise the SDK's actual retry path.
+        arun, interrupted = Agent.arun, False
+        def fail_delivery(agent, *args, **kwargs):
+            nonlocal interrupted
+            result = arun(agent, *args, **kwargs)
+            if not kwargs.get('stream'):
+                return result
+            async def events():
+                nonlocal interrupted
+                try:
+                    async for event in result:
+                        yield event
+                        if getattr(event, 'event', None) == 'RunError' and not interrupted:
+                            interrupted = True
+                            raise RuntimeError('fixture: temporary worker event delivery failure')
+                finally:
+                    await result.aclose()
+            return events()
+        delivery = patch.object(Agent, 'arun', fail_delivery)
+        delivery.start()
+        self.addCleanup(delivery.stop)
         # Hold the SDK after persisting its queued retry while the old run still says error.
         db = self.state['store'].native_db
         retry = db.retry_or_fail_job

@@ -39,7 +39,7 @@ async def submit_stream(app, method, path, *, headers, data):
                 'http_version': '1.1', 'method': method, 'scheme': 'http',
                 'path': request.url.path, 'raw_path': request.url.raw_path,
                 'query_string': request.url.query, 'root_path': '',
-                'headers': request.headers.raw, 'server': ('native.agent-factory', 80),
+                'headers': [(key.lower(), value) for key, value in request.headers.raw], 'server': ('native.agent-factory', 80),
                 'client': ('127.0.0.1', 0)}, receive, send)
             if not response.done():
                 response.set_exception(RuntimeError('Native streaming admission returned no response'))

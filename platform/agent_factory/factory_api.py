@@ -10,7 +10,7 @@ from .delegation import application_group_status
 from fastapi.routing import APIRoute as FactoryPublicRoute
 from .store import effect_unresolved, canonical
 from .runtime_hooks import execution_classification
-from .task_status import finalized_status
+from .task_status import finalized_status, native_status
 
 
 class Body(BaseModel):
@@ -40,7 +40,7 @@ def status_of(task, snapshot, effects, events, store=None):
         return "unknown"
     queue = snapshot.get("queue") or snapshot.get("job") or {}
     run = snapshot.get("run", snapshot)
-    raw = str(queue.get("status") or run.get("status") or "queued").lower()
+    raw = native_status(queue.get("status"), run.get("status"))
     if any(effect_unresolved(effect, store) for effect in effects) and raw not in {"running", "runstatus.running"}:
         return "unknown"
     if task["cancel_requested"] and raw not in {"cancelled", "canceled", "failed", "completed", "error"}:

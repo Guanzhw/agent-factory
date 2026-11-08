@@ -63,6 +63,9 @@ class NativeHistory(journey.ChatJourney):
         self.provider.answer = lambda _: (400, {'error': {'message': 'actual-history-provider-failure', 'type': 'invalid_request_error'}})
         failed = self.turn('failed-user-instruction', 7)
         self.assertEqual(failed['turns'][-1]['status'], 'failed')
+        db = service.runs.factory.bridge.native_db
+        self.assertEqual(db.get_job(failed['turns'][-1]['runId'])['status'], 'completed')
+        self.assertEqual(db.get_run(failed['turns'][-1]['runId']).status, RunStatus.error)
         self.provider.answer = lambda _: (200, reply('recovered'))
         recovered = self.turn('recover-with-new-instruction', 8)
         self.assertEqual(recovered['turns'][-1]['status'], 'completed')
