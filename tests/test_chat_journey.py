@@ -583,6 +583,7 @@ class ChatJourney(unittest.TestCase):
         snapshot.update(state='running', allowedActions=['correct', 'stop'])
         self.page.route('**/research/sessions/*/events', lambda route: route.fulfill(content_type='text/event-stream',
             body='event: session\ndata: ' + json.dumps(snapshot, ensure_ascii=False) + '\n\n'))
+        self.page.route('**/research/sessions/' + snapshot['id'], lambda route: route.fulfill(json=snapshot))
         self.page.reload()
         expect(self.page.get_by_role('textbox', name='补充或纠正当前研究', exact=True)).to_be_visible()
         self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
@@ -595,6 +596,7 @@ class ChatJourney(unittest.TestCase):
         self.assertLess(abs(pane.evaluate('el => el.scrollTop') - reading_position), 2)
         self.page.get_by_role('button', name='回到底部', exact=True).click()
         self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_have_count(0)
         pane.evaluate('el => { el.scrollTop = 0; }')
         expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
         turn['events'][0]['id'] += 1
@@ -602,6 +604,7 @@ class ChatJourney(unittest.TestCase):
         expect(self.page.get_by_text('历史阅读期间的新内容', exact=True)).to_be_attached()
         self.assertLess(pane.evaluate('el => el.scrollTop'), 5)
         self.page.get_by_role('button', name='回到底部', exact=True).click()
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_have_count(0)
         turn['events'][0]['id'] += 1  # Event count stays fixed, as in the retained fragment window.
         turn['events'][0]['data']['text'] += '\n\n恢复跟随后新内容'
         expect(self.page.get_by_text('恢复跟随后新内容', exact=True)).to_be_attached()
