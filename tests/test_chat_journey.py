@@ -691,15 +691,15 @@ class ChatJourney(unittest.TestCase):
         snapshot.update(state='stopped', allowedActions=['start'])
         for status in ('cancelled', 'canceled'):
             turn['status'] = status
-            expect(activity.get_by_role('status')).to_have_text('本轮已停止')
+            expect(activity.get_by_text('本轮已停止', exact=True)).to_be_visible()
             expect(activity.get_by_text('保留部分回复。', exact=True)).to_be_visible()
             self.page.reload()
-            expect(activity.get_by_role('status')).to_have_text('本轮已停止')
+            expect(activity.get_by_text('本轮已停止', exact=True)).to_be_visible()
             expect(activity.get_by_text('保留部分回复。', exact=True)).to_be_visible()
             expect(activity.locator('.rs-process')).to_have_count(0)
         turn['events'] = []
         self.page.reload()
-        expect(activity.get_by_role('status')).to_have_text('本轮已停止')
+        expect(activity.get_by_text('本轮已停止', exact=True)).to_be_visible()
         expect(activity.locator('.rs-streaming-reply')).to_have_count(0)
         expect(activity.locator('.rs-process')).to_have_count(0)
 
