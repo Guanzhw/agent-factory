@@ -8,6 +8,7 @@ from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 from agno.session.summary import SessionSummary, SessionSummaryManager
 
+from agent_factory.native_messages import pair_tool_results
 from agent_factory.store import canonical
 
 
@@ -39,7 +40,7 @@ def history_run(turn, native):
         status=RunStatus.completed if body['status'] == 'completed' else RunStatus.error)
     run.messages = [item.model_copy(deep=True) for item in run.messages or []
                     if not item.from_history and item.role != 'system'
-                    and not (item.id or '').startswith('research-context:')]
+                    and not (item.id or '').startswith(('research-context:', 'research-summary:'))]
     if not run.messages:
         run.messages = [Message(id=item['id'], role='user', content=item['text'])
                         for item in body['messages'] if item['kind'] != 'correction']
@@ -47,16 +48,7 @@ def history_run(turn, native):
             run.messages.append(Message(role='assistant', content=str(body['result'])))
     identifiers = {item.id for item in run.messages}
     run.messages.extend(item for item in additions(turn) if item.id not in identifiers)
-    # An interrupted tool call has no result to replay; tell the model that fact.
-    results = {item.tool_call_id for item in run.messages if item.role == 'tool'}
-    paired = []
-    for message in run.messages:
-        paired.append(message)
-        for call in message.tool_calls or []:
-            if call.get('id') and call['id'] not in results:
-                paired.append(Message(role='tool', tool_call_id=call['id'], tool_call_error=True,
-                    content='No result was recorded before this turn ended. The operation outcome is unknown; do not assume success.'))
-    run.messages = paired
+    run.messages = pair_tool_results(run.messages)
     if body['status'] != 'completed':
         run.messages.append(Message(id='research-status:' + turn['id'], role='user',
             content='Previous turn ended with status ' + body['status'] + '. ' + str(body.get('failure') or '')))

@@ -2,11 +2,14 @@
 import json
 
 from agno.agent import Agent
+from agno.agent._messages import get_continue_run_messages
 from agno.exceptions import InputCheckError, RunCancelledException
 from agno.registry import Registry
 from agno.run import RunContext
+from agno.session.agent import AgentSession
 
 from .model_dispatch import DelegatingModel
+from .native_messages import pair_tool_results
 from .personal_mcp import MCPRunConnections
 
 
@@ -87,7 +90,36 @@ def build_runtime(store, native_db):
             event['outcome'] = 'completed'
         store.event(run_context.run_id, 'tool_finished', 'SSH 工具执行记录', event)
 
-    executor = Agent(id='factory-executor', name='Factory', model=model, db=native_db,
+    # Agno replays arun on a reclaimed queue ticket; its native continue API preserves tool observations.
+    class RetryAgent(Agent):
+        def arun(self, input, **kwargs):
+            run_id = kwargs.get('run_id')
+            ticket = native_db.get_job(run_id) if native_db is not None and run_id else None
+            if run_id and ticket and ticket['status'] == 'running' and ticket['attempt'] > 1 and not ticket['payload'].get('continue'):
+                previous = self.get_run_output(run_id, session_id=kwargs.get('session_id'), user_id=kwargs.get('user_id'))
+                effects = store.effects(store.task(run_id)['id'])
+                if previous and previous.messages and previous.session_id and previous.user_id:
+                    current = [message for message in previous.messages if not message.from_history]
+                    calls = {call['id'] for message in current for call in message.tool_calls or []}
+                    recorded = {run_id + ':' + prefix + call for call in calls
+                                for prefix in ('personal-tool:', 'research-session-tool:')}
+                    if calls and all(item['effect_key'] in recorded for item in effects):
+                        session = self.get_session(session_id=previous.session_id, user_id=previous.user_id)
+                        if not isinstance(session, AgentSession):
+                            raise InputCheckError('Native retry session is unavailable')
+                        context = RunContext(run_id=run_id, session_id=previous.session_id,
+                            user_id=previous.user_id, session_state=previous.session_state or {})
+                        bind_run(context, session, self)
+                        previous.messages = pair_tool_results(get_continue_run_messages(self, previous.messages,
+                            session=session, run_response=previous).messages)
+                        # The prepared view already supplies valid history; never re-read the unfiltered session.
+                        self.add_history_to_context = False
+                        # This in-memory RunOutput belongs only to this claim; the marker is not persisted.
+                        setattr(previous, '_factory_retry_attempt', ticket['attempt'])
+                        return self.acontinue_run(run_response=previous, **kwargs)
+            return super().arun(input, **kwargs)
+
+    executor = RetryAgent(id='factory-executor', name='Factory', model=model, db=native_db,
         instructions=instructions, tools=selected_tools, pre_hooks=[bind_run],
         store_events=True, events_to_skip=[],
         add_history_to_context=True, add_session_summary_to_context=True, telemetry=False)
