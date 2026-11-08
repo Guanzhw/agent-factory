@@ -6,6 +6,8 @@ Ten PostgreSQL/native-queue/HTTPS/Chromium cases pass in 193.702 seconds on the 
 
 Twenty-five focused model, streaming and unknown-result cases pass in 14.152 seconds. A separate failed-tail regression verifies no repeated projection without database changes and continued updates after a database notification. Independent review found and removed a self-generated retry loop in that fallback. The current-worktree frontend build/check, full Python Ruff and Pyright checks pass; Pyright retains six Windows-import warnings on Linux. An initial real queue test exposed uppercase ASGI authorization headers that the isolated helper test missed; the adapter and request-header regression now cover it.
 
+A further real local MCP/native streaming queue/browser journey passes in 53.692 seconds: connections are reused within a run, reconfiguration takes effect, Stop closes the selected run, and another owner continues independently. MCP cancellation logs a `BrokenResourceError`; connection-closure and continued-execution assertions still pass.
+
 These use scripted local HTTP models and disposable PostgreSQL, not paid providers, real SSH or cross-replica native streaming. Earlier snapshot-polling measurements below describe their original revision; the current SSE path uses native tails and committed database notifications.
 
 ## Session read measurements on 2026-11-08
