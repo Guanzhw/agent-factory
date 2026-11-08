@@ -74,6 +74,10 @@ class AdmissionRecovery(unittest.TestCase):
             observed = read(path)['turns'][-1]
             self.assertTrue(any(event['data'].get('callId') == 'read-fixture' for event in observed['events']))
             self.assertEqual(observed['toolResults'][0]['status'], 'UNKNOWN')
+            with patch.object(service.runs.factory, 'delegation', None):
+                ungrouped = read(path)['turns'][-1]
+            self.assertEqual(ungrouped['toolResults'], observed['toolResults'])
+            self.assertEqual(ungrouped['status'], observed['status'])
             store.effect_complete(task['run_id'], 'read-fixture', {'output': 'latest observation'})
             updated = read(path)['turns'][-1]
             self.assertEqual(updated['toolResults'][0]['status'], 'DONE')
