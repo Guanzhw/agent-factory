@@ -56,8 +56,25 @@ class ModelEndpoint(BaseHTTPRequestHandler):
                    for m in request['messages'] if m['role'] == 'tool']
         system = '\n'.join(m['content'] for m in request['messages'] if m['role'] == 'system')
         user_text = next((m['content'] for m in reversed(request['messages']) if m['role'] == 'user'), '')
+        if request['model'] == 'summary-failure' and user_text == 'Provide the summary of the conversation.':
+            entered, release = getattr(self.server, 'summary_pause', (None, None))
+            if entered is not None:
+                entered.set()
+                release.wait()
+            self.send_response(503)
+            self.end_headers()
+            self.wfile.write(b'synthetic summary provider failure')
+            return
         tool, arguments, reply = None, {}, '任务完成，结果可下载。\n\n| 结果 | 状态 |\n| --- | --- |\n| 工具 | 已完成 |'
-        if request['model'] == 'compression':
+        if user_text == '摘要故障前的背景':
+            reply = 'summary-history-answer-marker'
+        elif '摘要失败后继续' in user_text:
+            if not results:
+                tool, arguments = 'research_edit_file', {'path': 'summary-fallback.txt', 'old': '', 'new': 'Summary fallback works'}
+            reply = '摘要失败后仍已完成文件写入。'
+        elif request['model'] == 'summary-failure':
+            reply = 'Tool output retained.'
+        elif request['model'] == 'compression':
             reply = '压缩摘要：数值42'
         elif user_text == '思考与内容顺序验收':
             if not results:
@@ -413,6 +430,46 @@ class ChatJourney(unittest.TestCase):
         self.assertNotIn('source-secret-marker', json.dumps(self.model.requests[before:], ensure_ascii=False))
         self.assertIn('start', failed['allowedActions'])
         self.assertIn('共享来源已不可读', failed['turns'][-1]['failure'])
+
+    def test_summary_provider_failure_keeps_history_and_work_continues_but_stop_still_stops(self):
+        self.post('/personal-models', {'provider': 'openai-compatible', 'model': 'summary-failure',
+            'baseURL': f'http://127.0.0.1:{self.model.server_port}/v1', 'autoCompactTokenLimit': 1})
+        self.page.reload()
+        self.page.get_by_role('button', name='选择模型', exact=True).click()
+        self.page.get_by_role('option', name='summary-failure', exact=True).click()
+        self.send('摘要故障前的背景')
+        first = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        self.assertEqual(first['model']['autoCompactTokenLimit'], 1)
+        path = '/research/sessions/' + first['id']
+        before = len(self.model.requests)
+        self.post(path + '/turns', {'text': '摘要失败后继续'})
+        finished = self.wait_for(lambda value: len(value['turns']) == 2 and value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(finished['turns'][-1]['status'], 'completed')
+        self.assertEqual(finished['context']['compaction']['status'], 'failed')
+        requests = self.model.requests[before:]
+        summary_calls = [r for r in requests if r['messages'][-1]['content'] == 'Provide the summary of the conversation.']
+        self.assertEqual(len(summary_calls), 1)
+        primary_calls = [r for r in requests if r.get('tools')]
+        self.assertGreaterEqual(len(primary_calls), 2)
+        for request in primary_calls:
+            self.assertIn('summary-history-answer-marker', json.dumps(request, ensure_ascii=False))
+        workspace = self.state['research_sessions'].workspace(self.owner, first['id'])
+        self.assertEqual((workspace / 'summary-fallback.txt').read_text(), 'Summary fallback works')
+        entered, release = threading.Event(), threading.Event()
+        self.model.summary_pause = (entered, release)
+        self.addCleanup(release.set)
+        self.addCleanup(lambda: delattr(self.model, 'summary_pause'))
+        before_stop = len(self.model.requests)
+        try:
+            self.post(path + '/turns', {'text': 'Stop while the summary is pending'})
+            self.assertTrue(entered.wait(30), 'Native summary HTTP request was not reached')
+            self.post(path + '/stop', {})
+        finally:
+            release.set()
+        stopped = self.wait_for(lambda value: len(value['turns']) == 3 and value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(stopped['turns'][-1]['status'], 'canceled')
+        self.assertIn(stopped['context']['compaction']['status'], {'failed', 'unknown'})
+        self.assertEqual(len(self.model.requests) - before_stop, 1)
 
     def test_chat_tools_files_and_child(self):
         self.post('/personal-tools/resources', {'transport': 'cli', 'toolName': 'demo_cli',
