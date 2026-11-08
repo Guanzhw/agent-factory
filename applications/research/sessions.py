@@ -107,15 +107,21 @@ class ResearchSessions:
                 source = self.content.read(owner, identifier)
                 if source.get('visibility') != 'team' or source.get('source', {}).get('application') != 'research':
                     raise ValueError()
-            except (HTTPException, ValueError):
-                raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '既有上下文的共享来源已不可读，请核对原会话；未继续执行。') from None
+            except HTTPException as error:
+                if error.status_code not in {403, 404}:
+                    raise
+                raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '本轮使用的共享来源已不可读，本轮已停止；可以发送新消息继续。') from None
+            except ValueError:
+                raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '本轮使用的共享来源已不可读，本轮已停止；可以发送新消息继续。') from None
 
     def _reply(self, owner, identifier, snapshot):
         try:
             self.conversations.validate_reply(owner, identifier, snapshot)
-        except HTTPException:
+        except HTTPException as error:
+            if error.status_code >= 500:
+                raise
             raise rejected('RESEARCH_ASSISTANT_REPLY_UNAVAILABLE',
-                '已采用的助手回答当前不可用，请核对原问题与共享权限；未继续执行。') from None
+                '本轮使用的助手回答已不可用，本轮已停止；可以发送新消息继续。') from None
 
     def _replies(self, owner, identifier, turns):
         for turn in turns:
@@ -123,6 +129,25 @@ class ResearchSessions:
                 self._reply(owner, identifier, turn['body']['assistantReply'])
             for snapshot in turn['body'].get('assistantReplies', []):
                 self._reply(owner, identifier, snapshot)
+
+    def _context_sources(self, owner, row, turns):
+        self._sources(owner, row['body']['sharedSourceIds'])
+        self._replies(owner, row['id'], session_context.active_turns(row, turns))
+
+    def _continuation_context(self, row, turns):
+        try:
+            self._context_sources(row['owner_id'], row, turns)
+        except HTTPException as error:
+            if not isinstance(error.detail, dict) or error.detail.get('code') not in {
+                    'RESEARCH_SOURCE_UNAVAILABLE', 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'}:
+                raise
+            # Derived replies and summaries have no finer source attribution.
+            body = {**row['body'], 'sharedSourceIds': [],
+                    'contextAfterSequence': turns[-1]['sequence'] if turns else 0,
+                    'contextNotice': '旧共享来源或助手回答已不可用。后续对话从新的上下文继续，原聊天记录仍保留。'}
+            body.pop('contextCheckpoint', None)
+            return {**row, 'body': body}
+        return row
 
     def _reply_projection(self, owner, identifier, snapshot):
         try:
@@ -227,6 +252,8 @@ class ResearchSessions:
                         body['blockReason'] = None
                     elif body.get('blockReason') == 'RESEARCH_EFFECT_UNCONFIRMED':
                         body['blockReason'] = None
+                if observed_terminal and body.get('contextFailure') and not body.get('stopRequestId'):
+                    status, result = 'failed', None
                 compaction = body.get('compaction')
                 summary_ended = bool(observed_terminal and compaction and compaction['status'] in {'started', 'failed', 'unknown'})
                 if summary_ended:
@@ -246,7 +273,7 @@ class ResearchSessions:
                     body['result'] = result
                     if status == 'completed':
                         body['failure'] = None
-                    elif status == 'failed':
+                    elif status == 'failed' and not body.get('contextFailure'):
                         error = (snapshot.get('queue') or {}).get('error') or snapshot.get('error')
                         if isinstance(error, str) and error.startswith('PERSONAL_MODEL_HTTP_'):
                             status_code = error.removeprefix('PERSONAL_MODEL_HTTP_')
@@ -309,8 +336,7 @@ class ResearchSessions:
             row, turns = self._row(conn, owner, identifier), self._turns(conn, identifier)
             if turns and not self._safe(owner, turns[-1]):
                 raise rejected('RESEARCH_TURN_ACTIVE_OR_UNCONFIRMED', '原轮次尚未安全结束，请先核对其状态。')
-            self._sources(owner, row['body']['sharedSourceIds'])
-            self._replies(owner, identifier, turns)
+            row = self._continuation_context(row, turns)
             row = self._prepare_turn_configuration(conn, owner, row, turns, request)
             configuration = row['body']['configuration']
             turn_id, stamp = str(uuid4()), now()
@@ -464,13 +490,7 @@ class ResearchSessions:
         self.auth.require_member(context.user_id)
         with self.db.read() as conn:
             row, turn, _ = self._execution(conn, context)
-            self._sources(context.user_id, row['body']['sharedSourceIds'])
-            self._replies(context.user_id, row['id'], self._turns(conn, row['id']))
-            if row['body'].get('projectId') and tool_name in {
-                    'research_run', 'research_edit_file', 'research_delegate', 'research_experiment'}:
-                project = self.projects.read(context.user_id, row['body']['projectId'])
-                if project['state'] == 'ended' or project.get('sourceUnavailable'):
-                    raise StopAgentRun('RESEARCH_PROJECT_UNAVAILABLE')
+            self._context_sources(context.user_id, row, self._turns(conn, row['id']))
             self.store.authorize_tool(context, tool_name)
             return {'id': row['id'], 'ownerId': row['owner_id'], 'turnId': turn['id'],
                     'workspaceRef': row['id']}
@@ -515,9 +535,18 @@ class ResearchSessions:
             if body.get('blockReason') == 'RESEARCH_EFFECT_UNCONFIRMED':
                 body['blockReason'] = None
                 self._save_turn(conn, turn, body)
-            self._sources(context.user_id, row['body']['sharedSourceIds'])
-            self._replies(context.user_id, row['id'], self._turns(conn, row['id']))
-            if self.collaboration is not None and not task['researchChild']:
+            try:
+                self._context_sources(context.user_id, row, self._turns(conn, row['id']))
+            except HTTPException as error:
+                if isinstance(error.detail, dict) and error.detail.get('code') in {
+                        'RESEARCH_SOURCE_UNAVAILABLE', 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'}:
+                    detail = cast(dict, error.detail)
+                    self._save_turn(conn, turn, {**turn['body'], 'contextFailure': detail['code'],
+                        'failure': detail['message']})
+                    blocked = detail['message']
+                else:
+                    raise
+            if not blocked and self.collaboration is not None and not task['researchChild']:
                 turn = self.collaboration.receive(conn, row, turn)
         return row, turn, task, ticket, blocked
 
@@ -561,12 +590,12 @@ class ResearchSessions:
             return
 
         def current_model():
-            with self.db.read() as conn:
-                current_row, current_turn, current_task = self._execution(conn, context)
-                self._sources(context.user_id, current_row['body']['sharedSourceIds'])
-                self._replies(context.user_id, current_row['id'], self._turns(conn, current_row['id']))
+            with self._write() as conn:
+                _, current_turn, current_task, _, blocked = self._model_boundary(conn, context)
                 if current_task['terminal'] or current_turn['body'].get('compaction') != claim:
                     raise StopAgentRun('RESEARCH_SUMMARY_OUTCOME_UNCONFIRMED')
+            if blocked:
+                raise StopAgentRun(blocked)
             return auxiliary_model()
 
         try:
@@ -601,8 +630,10 @@ class ResearchSessions:
         with self.db.read() as conn:
             _, _, task = self._execution(conn, context)
         if task['researchChild']:
-            with self.db.read() as conn:
-                self._model_boundary(conn, context)
+            with self._write() as conn:
+                _, _, _, _, blocked = self._model_boundary(conn, context)
+            if blocked:
+                raise StopAgentRun(blocked)
             return
         self._compact(context, auxiliary_model)
         with self._write() as conn:
@@ -711,14 +742,16 @@ class ResearchSessions:
             if latest and latest['body']['status'] == 'unknown':
                 block = block or 'RESEARCH_ORIGINAL_OUTCOME_UNCONFIRMED'
             raw_characters = len(session_context.project(row, turns, raw=True))
-            compaction = latest['body'].get('compaction') if latest else None
-            saved = body.get('contextCheckpoint')
+            context_row = self._continuation_context(row, turns) if safe else row
+            context_turns = session_context.active_turns(context_row, turns)
+            compaction = context_turns[-1]['body'].get('compaction') if context_turns else None
+            saved = context_row['body'].get('contextCheckpoint')
             compact_view: dict[str, Any] | None = None
             try:
                 if compaction and compaction['status'] in {'pending', 'started', 'failed', 'unknown'}:
-                    characters = len(self._capacity(row, turns))
+                    characters = len(self._capacity(context_row, context_turns))
                 else:
-                    preview, needed = session_context.prepare(row, turns)
+                    preview, needed = session_context.prepare(context_row, context_turns)
                     characters = len(preview)
                     if needed:
                         compact_view = {'status': 'needed'}
@@ -734,14 +767,6 @@ class ResearchSessions:
                 compact_view = {'status': 'ready'}
             if compact_view:
                 compact_view['throughSequence'] = saved['throughSequence'] if saved else 0
-            try:
-                self._sources(owner, body['sharedSourceIds'])
-            except HTTPException:
-                block = block or 'RESEARCH_SOURCE_UNAVAILABLE'
-            try:
-                self._replies(owner, identifier, turns)
-            except HTTPException:
-                block = block or 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'
             state = ('blocked' if block else 'stopped' if body['stopped'] and safe else
                      'stopping' if body['stopped'] else 'idle' if safe else 'running')
             actions = []
@@ -758,7 +783,7 @@ class ResearchSessions:
                 'capabilities': {'memory': body['configuration'].get('personalMemory') is True},
                 'collaboration': {'enabled': body['configuration'].get('autonomousCollaboration') is True},
                 'blockReason': block, 'context': {'characters': characters, 'maximumCharacters': None,
-                    'rawCharacters': raw_characters, **({'compaction': compact_view} if compact_view else {})},
+                    'rawCharacters': raw_characters, 'notice': context_row['body'].get('contextNotice'), **({'compaction': compact_view} if compact_view else {})},
                 'turns': [{'id': item['id'], 'sequence': item['sequence'],
                     **({'assistantReply': self._reply_projection(owner, identifier, item['body']['assistantReply'])}
                        if 'assistantReply' in item['body'] else {}),

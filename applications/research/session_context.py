@@ -22,6 +22,11 @@ def prefix(turns, through):
             for turn in turns if turn['sequence'] <= through]
 
 
+def active_turns(row, turns):
+    after = row['body'].get('contextAfterSequence', 0)
+    return [turn for turn in turns if turn['sequence'] > after] if after else turns
+
+
 def checkpoint(row, turns):
     saved = row['body'].get('contextCheckpoint')
     if saved and digest(prefix(turns, saved['throughSequence'])) != saved['prefixDigest']:
@@ -30,6 +35,8 @@ def checkpoint(row, turns):
 
 
 def project(row, turns, instruction=None, *, raw=False, protected=False):
+    if not raw:
+        turns = active_turns(row, turns)
     saved = None if raw or protected else checkpoint(row, turns)
     through = saved['throughSequence'] if saved else 0
     latest = turns[-1]['id'] if turns else None
@@ -58,7 +65,7 @@ def project(row, turns, instruction=None, *, raw=False, protected=False):
             entry['result'] = body.get('result')
         entries.append(entry)
     if instruction is not None:
-        entries.append({'sequence': len(turns) + 1, 'instruction': instruction})
+        entries.append({'sequence': turns[-1]['sequence'] + 1 if turns else 1, 'instruction': instruction})
     result = {key: row['body'][key] for key in ('goal', 'boundaries')}
     if row['body'].get('projectId'):
         result.update(projectId=row['body']['projectId'], projectGoalVersion=row['body']['projectGoalVersion'])
@@ -73,6 +80,7 @@ def project(row, turns, instruction=None, *, raw=False, protected=False):
 
 
 def summary_source(row, turns, *, version=2):
+    turns = active_turns(row, turns)
     saved = checkpoint(row, turns)
     through = (saved['throughSequence'] if saved and (version == 1 or saved.get('projectionVersion', 1) >= 2) else 0)
     ended = [turn for turn in turns if turn['sequence'] > through and turn['body'].get('terminal')]
@@ -110,6 +118,7 @@ def compact_token_limit(model):
 def pending_compaction(row, turns, messages):
     from agno.utils.tokens import count_tokens
 
+    turns = active_turns(row, turns)
     model = row['body'].get('configuration', {}).get('model', {})
     limit = compact_token_limit(model)
     saved = checkpoint(row, turns)

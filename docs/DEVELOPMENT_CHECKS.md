@@ -1,5 +1,11 @@
 # Development checks
 
+## Shared-source continuation validation on 2026-11-08
+
+The baseline reproduces a completed chat losing its Start action after a source is made private. Two PostgreSQL/native-queue/Chromium journeys pass after the fix (35.117 seconds): preserved chat history, a fresh provider HTTP payload without the revoked source, derived reply, old correction or saved summary, an independent file write, duplicate submission/refresh, and revocation during a run followed by a new successful turn. The old correction and summary are synthetic persisted fixtures; summary generation itself is not exercised by these two journeys.
+
+Two focused cases cover automatic collaboration reservation using the same clean context, unavailable adopted replies, later summary/checkpoint projection, and temporary source-service errors. Four existing session recovery/Stop cases also pass. Frontend checks, Ruff and Pyright pass; Linux still reports six unavailable Windows-import warnings. The model is a local scripted HTTP fixture. No paid model, remote SSH, external MCP or complete peer-assistant exchange was used for this change.
+
 ## Thinking and diagnostic validation on 2026-11-09
 
 The scoped DeepSeek thinking request, nullable stream role and separate diagnostic entry pass all 41 minimal cases on Windows in 171.505 seconds. Frontend checks, Ruff, full-worktree Pyright and whitespace checks pass. Real-provider observations include thinking/content, tool exit 0/7, native Stop and refresh; synthetic cases separately cover unknown/recovered receipts and reading position. Historical role failures and existing platform warnings remain distinguished from the passing final checks. See [the acceptance record](reviews/deepseek-thinking-diagnostics-20261109.md).

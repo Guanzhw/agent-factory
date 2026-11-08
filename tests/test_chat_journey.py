@@ -63,7 +63,15 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             if not results:
                 tool, arguments = 'research_edit_file', {'path': 'ordered.txt', 'old': '', 'new': '顺序工具结果'}
             reply = '顺序验收最终回答。'
-        elif user_text == '切换模型后继续':
+        elif user_text.startswith('共享资料验收:'):
+            if not results:
+                tool, arguments = 'research_read_shared_evidence', {'content_id': user_text.split(':', 1)[1]}
+            reply = 'derived-source-marker: Shared evidence says source-secret-marker.'
+        elif '独立文件继续' in user_text:
+            if not results:
+                tool, arguments = 'research_edit_file', {'path': 'independent-source.txt', 'old': '', 'new': 'independent-source-result'}
+            reply = '独立文件已写入。'
+        elif '切换模型后继续' in user_text:
             reply = '切换模型后完成。'
         elif user_text == '聊天呈现验收':
             reply = PRESENTATION
@@ -293,6 +301,85 @@ class ChatJourney(unittest.TestCase):
         self.page.wait_for_url('**/*researchSession=*')
         identifier = self.session()['id']
         self.addCleanup(lambda: self.post('/research/sessions/' + identifier + '/stop', {}))
+
+    def test_revoked_source_keeps_history_but_new_turn_has_clean_model_context(self):
+        from agent_factory.application_content import ContentPublication, ContentSource
+        from research import session_context
+        content = self.state['application_content']
+        publisher = 'publisher-' + uuid4().hex
+        self.state['browser_auth'].local_passwords.create(publisher, secrets.token_urlsafe(20))
+        source = content.publish(publisher, ContentPublication(
+            source=ContentSource(application='research', record='source-fixture', revision='1'),
+            content={'observation': 'source-secret-marker'}, visibility='team'), str(uuid4()))
+        self.send('共享资料验收:' + source['id'])
+        completed = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        self.assertIn('derived-source-marker', completed['turns'][0]['result'])
+        service = self.state['research_sessions']
+        # Persist representative old correction/summary records; the provider path is real.
+        with service._write() as conn:
+            row = service._row(conn, self.owner, completed['id'])
+            turns = service._turns(conn, row['id'])
+            turn = turns[0]
+            body = {**turn['body'], 'messages': [*turn['body']['messages'],
+                service._message('correction', 'source-correction-marker')]}
+            service._save_turn(conn, turn, body)
+            turns = [{**turn, 'body': body}]
+            _, identity = session_context.summary_source(row, turns)
+            service._save_session(conn, row, {**row['body'], 'contextCheckpoint': {
+                **identity, 'summary': {'summary': 'source-summary-marker', 'topics': []}}})
+        content.set_visibility(publisher, source['id'], 'personal', str(uuid4()))
+        snapshot = self.session()
+        self.assertIn('start', snapshot['allowedActions'])
+        self.assertNotEqual(snapshot['state'], 'blocked')
+        self.page.reload()
+        expect(self.page.get_by_text(re.compile('旧共享来源或助手回答已不可用'))).to_be_visible()
+        requests_before = len(self.model.requests)
+        path = '/research/sessions/' + snapshot['id'] + '/turns'
+        request = {'requestId': str(uuid4()), 'text': '独立文件继续'}
+        self.post(path, request)
+        continued = self.wait_for(lambda value: len(value['turns']) == 2 and value['turns'][-1]['status'] == 'completed')
+        sent = json.dumps(self.model.requests[requests_before:], ensure_ascii=False)
+        for marker in ('source-secret-marker', 'derived-source-marker', 'source-correction-marker', 'source-summary-marker'):
+            self.assertNotIn(marker, sent)
+        self.assertIn('独立文件继续', sent)
+        self.assertEqual((service.workspace(self.owner, snapshot['id']) / 'independent-source.txt').read_text(),
+                         'independent-source-result')
+        self.assertIn('derived-source-marker', continued['turns'][0]['result'])
+        self.post(path, request)
+        self.page.reload()
+        self.assertEqual(len(self.session()['turns']), 2)
+        with service.db.read() as conn:
+            row = service._row(conn, self.owner, snapshot['id'])
+            turns = service._turns(conn, row['id'])
+            summary, _ = session_context.summary_source(row, turns)
+        self.assertNotIn('source-', json.dumps(summary))
+        with self.assertRaises(HTTPException):
+            content.read(self.owner, source['id'])
+
+    def test_source_revoked_during_run_fails_only_that_run_then_allows_new_turn(self):
+        from agent_factory.application_content import ContentPublication, ContentSource
+        service, content = self.state['research_sessions'], self.state['application_content']
+        publisher = 'publisher-' + uuid4().hex
+        self.state['browser_auth'].local_passwords.create(publisher, secrets.token_urlsafe(20))
+        source = content.publish(publisher, ContentPublication(
+            source=ContentSource(application='research', record='active-source', revision='1'),
+            content={'observation': 'source-secret-marker'}, visibility='team'), str(uuid4()))
+        record_source = service.record_source
+        def revoke_after_read(context, identifier):
+            record_source(context, identifier)
+            content.set_visibility(publisher, identifier, 'personal', str(uuid4()))
+        before = len(self.model.requests)
+        with patch.object(service, 'record_source', side_effect=revoke_after_read):
+            self.send('共享资料验收:' + source['id'])
+            failed = self.wait_for(lambda value: value['turns'][-1]['status'] == 'failed'
+                                   and value['turns'][-1]['completedAt'] is not None)
+        self.assertIn('start', failed['allowedActions'])
+        self.assertIn('共享来源已不可读', failed['turns'][-1]['failure'])
+        self.assertEqual(len(self.model.requests) - before, 1)
+        self.post('/research/sessions/' + failed['id'] + '/turns', {'text': '切换模型后继续'})
+        finished = self.wait_for(lambda value: len(value['turns']) == 2 and value['turns'][-1]['status'] == 'completed')
+        self.assertIn('切换模型后完成', finished['turns'][-1]['result'])
+        self.assertNotIn('source-secret-marker', json.dumps(self.model.requests[before:], ensure_ascii=False))
 
     def test_chat_tools_files_and_child(self):
         self.post('/personal-tools/resources', {'transport': 'cli', 'toolName': 'demo_cli',
