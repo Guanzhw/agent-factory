@@ -183,12 +183,11 @@ class ResearchSessions:
 
     def _task(self, owner, turn):
         try:
-            receipt = self.runs.request(owner, turn['application_request_id'])
+            return self.store.task_for_request(factory_request_id(turn['application_request_id']), owner)
         except HTTPException as error:
             if error.status_code == 404:
                 return None
             raise
-        return self.store.task(receipt['taskId'], owner) if receipt.get('taskId') else None
 
     def _not_submitted(self, owner, turn, error):
         if not isinstance(error, StartNotSubmitted):
@@ -199,6 +198,7 @@ class ResearchSessions:
             return False  # An unreadable original request is not proof of absence.
 
     async def _refresh(self, owner, identifier):
+        observations = {}
         with self.db.read() as conn:
             self._row(conn, owner, identifier)
             turns = self._turns(conn, identifier)
@@ -219,6 +219,9 @@ class ResearchSessions:
             if self.research is not None:
                 await self.research.observe(task)
             status, snapshot = detail['job']['status'], detail['snapshot']
+            observations[turn['id']] = {'events': detail['events'], 'toolResults': [
+                {'effectKey': item['effect_key'], 'status': item['status'], 'result': item['result']}
+                for item in snapshot.get('effects', [])]}
             run = snapshot.get('run', snapshot)
             result = None
             ticket = snapshot.get('queue') or {}
@@ -270,9 +273,7 @@ class ResearchSessions:
                 body.update(taskId=task['id'], runId=task.get('run_id'), status=status,
                             terminal=observed_terminal, children=children)
                 if observed_terminal:
-                    body.update(events=detail['events'], toolResults=[
-                        {'effectKey': item['effect_key'], 'status': item['status'], 'result': item['result']}
-                        for item in snapshot.get('effects', [])])
+                    body.update(observations[turn['id']])
                     body['completedAt'] = body.get('completedAt') or now()
                     body['result'] = result
                     if status == 'completed':
@@ -286,6 +287,8 @@ class ResearchSessions:
                             body['failure'] = str(error or body.get('failure') or '本轮执行失败，请查看工具记录。')
                 if current['body'] != body:
                     self._save_turn(conn, current, body)
+
+        return observations
 
     def _safe(self, owner, turn):
         body = turn['body']
@@ -526,14 +529,13 @@ class ResearchSessions:
     def _model_boundary(self, conn, context):
         row, turn, task = self._execution(conn, context)
         body = deepcopy(turn['body'])
-        effects = self.store.effects(task['id'])
         ticket = self.runs.factory.bridge.native_db.get_job(context.run_id)
         blocked = None
         if not ticket or ticket.get('session_id') != task['id'] or ticket.get('user_id') != context.user_id:
             blocked = 'RESEARCH_QUEUE_IDENTITY_UNCONFIRMED'
         elif type(ticket.get('attempt')) is not int or ticket['attempt'] < 1:
             blocked = 'RESEARCH_QUEUE_ATTEMPT_UNCONFIRMED'
-        elif (ticket['attempt'] > 1 and (effects or self.store.sql(
+        elif (ticket['attempt'] > 1 and (self.store.effects(task['id']) or self.store.sql(
                 'SELECT 1 FROM af_delegation_links WHERE owner_id=:owner AND parent_id=:parent LIMIT 1',
                 owner=context.user_id, parent=task['id'])) and not self.subagents.permits_continuation(task, ticket)):
             blocked = 'RESEARCH_RESTART_REQUIRES_RECONCILIATION'
@@ -745,7 +747,7 @@ class ResearchSessions:
 
     async def read(self, owner, identifier):
         self.auth.require_member(owner)
-        await self._refresh(owner, identifier)
+        observations = await self._refresh(owner, identifier)
         with self.db.read() as conn:
             row, turns = self._row(conn, owner, identifier), self._turns(conn, identifier)
             body = row['body']
@@ -808,9 +810,10 @@ class ResearchSessions:
                     **{key: deepcopy(item['body'].get(key))
                     for key in ('requestId', 'taskId', 'runId', 'status', 'createdAt', 'completedAt', 'result',
                                 'messages', 'events', 'toolResults', 'children', 'failure')},
-                    **({'events': self.store.events(item['body']['taskId']),
+                    **((observations[item['id']] if item['id'] in observations else
+                        {'events': self.store.events(item['body']['taskId']),
                         'toolResults': [{'effectKey': effect['effect_key'], 'status': effect['status'], 'result': effect['result']}
-                            for effect in self.store.effects(item['body']['taskId'])]}
+                            for effect in self.store.effects(item['body']['taskId'])]})
                        if item['body'].get('taskId') and not item['body'].get('terminal') else {})} for item in turns]}
 
     async def listing(self, owner, after=''):

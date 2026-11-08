@@ -1,5 +1,11 @@
 # Development checks
 
+## Session read measurements on 2026-11-08
+
+A disposable PostgreSQL/native-queue fixture measured SQL within each `ResearchSessions.read`, including its internal native HTTP and thread work. A completed one-turn session falls from 11 to 7 statements; a queued second turn falls from 51 to 43. The change reuses observations within one read and directly resolves the owner/request task; it adds no cross-request cache and leaves SSE polling cadence unchanged. Sample elapsed times were 15.8–359.6 ms versus 9.7–15.2 ms for completed reads and 88.7–148.3 ms versus 79.5–122.9 ms for queued reads. These small concurrent samples establish removed database work, not a throughput benchmark.
+
+The native admission journey also checks that a later read sees newly added events and an UNKNOWN effect becoming DONE, before exercising Stop and failure recovery. Ordinary first-attempt model requests no longer load effect results needed only by the existing retry check.
+
 ## Shared-source continuation validation on 2026-11-08
 
 The baseline reproduces a completed chat losing its Start action after a source is made private. Two PostgreSQL/native-queue/Chromium journeys pass after the fix (35.117 seconds): preserved chat history, a fresh provider HTTP payload without the revoked source, derived reply, old correction or saved summary, an independent file write, duplicate submission/refresh, and revocation during a run followed by a new successful turn. The old correction and summary are synthetic persisted fixtures; summary generation itself is not exercised by these two journeys.
