@@ -4,6 +4,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 
+from fastapi import HTTPException
+from agent_factory.application_runs import StartNotSubmitted
+
 from sqlalchemy import Column, JSON, MetaData, String, Table
 
 from research.sessions import ResearchSessions
@@ -14,7 +17,8 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
         self.session = object.__new__(ResearchSessions)
         self.turn = {'id': 'turn', 'body': {'terminal': False, 'status': 'running',
             'blockReason': 'RESEARCH_EFFECT_UNCONFIRMED', 'children': []}}
-        self.task = {'id': 'task', 'run_id': 'run', 'terminal': False, 'researchChild': False}
+        self.task = {'id': 'task', 'run_id': 'run', 'terminal': False, 'researchChild': False,
+                     'admission': 'accepted', 'body': {}}
         self.ticket = {'id': 'run', 'session_id': 'task', 'user_id': 'owner', 'status': 'completed', 'attempt': 1}
         self.effect = {'effect_key': 'run:command', 'status': 'UNKNOWN', 'result': None}
         self.session.store = SimpleNamespace(task=Mock(return_value=self.task),
@@ -42,6 +46,24 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
             bridge=SimpleNamespace(native_db=SimpleNamespace(get_job=Mock(return_value=self.ticket))),
             detail=AsyncMock(return_value={'job': {'status': 'finalizing'}, 'events': [],
                 'snapshot': {'queue': self.ticket, 'run': run, 'effects': [self.effect]}})))
+
+    def test_submission_classification_preserves_public_http_error(self):
+        original = HTTPException(403, {'code': 'RESOURCE_UNAVAILABLE', 'message': 'Unavailable'},
+                                 {'X-Request-Id': 'original'})
+        classified = StartNotSubmitted(original)
+        self.assertEqual((classified.status_code, classified.detail, classified.headers),
+                         (original.status_code, original.detail, original.headers))
+        self.assertNotIn('private diagnostic', StartNotSubmitted(RuntimeError('private diagnostic')).detail)
+
+    def test_absence_alone_never_proves_a_start_was_not_submitted(self):
+        self.session._task.return_value = None
+        self.assertFalse(self.session._not_submitted('owner', self.turn, RuntimeError()))
+        rejected = StartNotSubmitted(RuntimeError())
+        self.assertTrue(self.session._not_submitted('owner', self.turn, rejected))
+        self.session._task.return_value = self.task
+        self.assertFalse(self.session._not_submitted('owner', self.turn, rejected))
+        self.session._task.side_effect = HTTPException(503, 'Unavailable')
+        self.assertFalse(self.session._not_submitted('owner', self.turn, rejected))
 
     async def test_native_end_allows_independent_turn_but_retains_unknown_and_stop(self):
         await self.session._refresh('owner', 'session')
