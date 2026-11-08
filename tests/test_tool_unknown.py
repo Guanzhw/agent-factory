@@ -95,13 +95,13 @@ class UnknownToolOutcome(unittest.IsolatedAsyncioTestCase):
         handle = SimpleNamespace(configuration={'registrationRef': 'ref', 'revision': '1'},
             adapter=adapter, service=service, requesting_actor='owner', check_authorized=lambda: None)
         function = personal_tool_function(cast(PersonalToolAdapter, adapter), store, handle, context)
-        first = await call(function, context, 'write', operation='write')
+        first = await call(function, context, 'write', arguments={'operation': 'write'})
         self.assertEqual(first['outcome'], 'unknown')
         self.assertEqual(first['effectKey'], 'run:personal-tool:write')
-        repeated = await call(function, context, 'write', operation='write')
+        repeated = await call(function, context, 'write', arguments={'operation': 'write'})
         self.assertEqual(repeated['outcome'], 'unknown')
         self.assertEqual(adapter.invoke.await_count, 1)
-        self.assertEqual(await call(function, context, 'inspect', operation='inspect'), {'observed': True})
+        self.assertEqual(await call(function, context, 'inspect', arguments={'operation': 'inspect'}), {'observed': True})
         store.cancelled = True
         with self.assertRaises(RunCancelledException):
-            await call(function, context, 'stopped', operation='inspect')
+            await call(function, context, 'stopped', arguments={'operation': 'inspect'})
