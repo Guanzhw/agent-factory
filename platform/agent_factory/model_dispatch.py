@@ -45,6 +45,7 @@ class DelegatingModel(Model):
             model = self.store.personal_models.model_for(context.user_id, reference, context, reasoning_effort=effort)
             model._on_text = None
             model._on_reasoning = None
+            self._provider_hooks(model, context, current, auxiliary, plan, auxiliary_request=True)
             return model
         model = self.store.personal_models.model_for(context.user_id, reference, context, reasoning_effort=effort)
         self._provider_hooks(model, context, current, auxiliary, plan)
@@ -58,16 +59,20 @@ class DelegatingModel(Model):
         response.model, response.model_provider = model.id, model.provider
         return model
 
-    def _provider_hooks(self, model, context, current, auxiliary, plan):
+    def _provider_hooks(self, model, context, current, auxiliary, plan, *, auxiliary_request=False):
         sessions = getattr(self.store, 'research_sessions', None)
         inputs = plan.get('inputValues') or {}
-        callback = (sessions.before_model if sessions is not None and plan.get('mode') != 'qa'
-            and inputs.get('sessionId') and inputs.get('turnId') else None)
+        callback = None
+        if sessions is not None and plan.get('mode') != 'qa' and inputs.get('sessionId') and inputs.get('turnId'):
+            callback = sessions.authorize_model if auxiliary_request else sessions.before_model
         def before(args, kwargs):
             current()
             if callback is not None:
-                messages = kwargs.get('messages', args[0] if args else None)
-                callback(context, messages, auxiliary)
+                if auxiliary_request:
+                    callback(context)
+                else:
+                    messages = kwargs.get('messages', args[0] if args else None)
+                    callback(context, messages, auxiliary)
         invoke, ainvoke = model.invoke, model.ainvoke
         invoke_stream, ainvoke_stream = model.invoke_stream, model.ainvoke_stream
         def sync(*args, **kwargs):
