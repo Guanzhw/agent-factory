@@ -169,6 +169,14 @@ class ResearchSessions:
             raise
         return self.store.task(receipt['taskId'], owner) if receipt.get('taskId') else None
 
+    def _not_submitted(self, owner, turn, error):
+        if not isinstance(error, StartNotSubmitted):
+            return False
+        try:
+            return self._task(owner, turn) is None
+        except Exception:
+            return False  # An unreadable original request is not proof of absence.
+
     async def _refresh(self, owner, identifier):
         with self.db.read() as conn:
             self._row(conn, owner, identifier)
@@ -354,12 +362,7 @@ class ResearchSessions:
                 try:
                     await self.runs.start(owner, start)
                 except Exception as error:
-                    never_submitted = False
-                    if isinstance(error, StartNotSubmitted):
-                        try:
-                            never_submitted = self._task(owner, turn) is None
-                        except Exception:
-                            pass  # An unreadable original request is not proof of absence.
+                    never_submitted = self._not_submitted(owner, turn, error)
                     with self._write() as conn:
                         current = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
                         if not current['body'].get('terminal'):

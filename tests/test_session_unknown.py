@@ -54,6 +54,16 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
                          (original.status_code, original.detail, original.headers))
         self.assertNotIn('private diagnostic', StartNotSubmitted(RuntimeError('private diagnostic')).detail)
 
+    def test_absence_alone_never_proves_a_start_was_not_submitted(self):
+        self.session._task.return_value = None
+        self.assertFalse(self.session._not_submitted('owner', self.turn, RuntimeError()))
+        rejected = StartNotSubmitted(RuntimeError())
+        self.assertTrue(self.session._not_submitted('owner', self.turn, rejected))
+        self.session._task.return_value = self.task
+        self.assertFalse(self.session._not_submitted('owner', self.turn, rejected))
+        self.session._task.side_effect = HTTPException(503, 'Unavailable')
+        self.assertFalse(self.session._not_submitted('owner', self.turn, rejected))
+
     async def test_native_end_allows_independent_turn_but_retains_unknown_and_stop(self):
         await self.session._refresh('owner', 'session')
         self.assertEqual(self.turn['body']['status'], 'completed')
