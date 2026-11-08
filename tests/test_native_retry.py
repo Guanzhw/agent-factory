@@ -223,6 +223,12 @@ class NativeRetryJourney(unittest.TestCase):
             self.assertTrue(self.state['executor'].add_history_to_context)
             self.page.reload()
             self.assertEqual(self.session()['turns'][-1]['status'], final['turns'][-1]['status'])
+        if ssh_missing and not ssh_not_started:
+            ssh_missing = False
+            self.post('/research/sessions/' + current['id'] + '/turns', {'text': 'Independent analysis after unknown SSH.'})
+            self.wait_for(lambda value: len(value['turns']) == len(final['turns']) + 1
+                and value['turns'][-1]['status'] == 'completed')
+            self.assertEqual(marker.read_text(), 'once\n')
         if history or revoked:
             self.post('/research/sessions/' + current['id'] + '/turns', {'text': 'followup-confirm-marker'})
             self.wait_for(lambda value: len(value['turns']) == len(final['turns']) + 1
