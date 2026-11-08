@@ -8,7 +8,7 @@ from copy import deepcopy
 from typing import Any, cast
 from uuid import uuid4
 
-from agno.exceptions import RunCancelledException, StopAgentRun
+from agno.exceptions import ModelProviderError, RunCancelledException, StopAgentRun
 from agno.models.message import Message
 from fastapi import HTTPException
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, select
@@ -97,7 +97,7 @@ class ResearchSessions:
 
     def _capacity(self, row, turns):
         pending = turns[-1]['body'].get('compaction') if turns else None
-        if pending and pending['status'] in {'pending', 'started', 'unknown', 'failed'}:
+        if pending and pending['status'] in {'pending', 'started'}:
             return session_context.project(row, turns, protected=True)
         return self._context(row, turns)
 
@@ -262,12 +262,9 @@ class ResearchSessions:
                 if observed_terminal and body.get('contextFailure') and not body.get('stopRequestId'):
                     status, result = 'failed', None
                 compaction = body.get('compaction')
-                summary_ended = bool(observed_terminal and compaction and compaction['status'] in {'started', 'failed', 'unknown'})
-                if summary_ended:
-                    status = 'canceled' if status == 'canceled' else 'failed'
-                    if body['compaction']['status'] == 'started':
-                        body['compaction'].update(status='unknown', code='RESEARCH_SUMMARY_UNKNOWN')
-                elif status == 'completed' and result is None:
+                if observed_terminal and compaction and compaction['status'] == 'started':
+                    body['compaction'].update(status='unknown', code='RESEARCH_SUMMARY_UNKNOWN')
+                if status == 'completed' and result is None:
                     # Terminal metadata cannot upgrade an unconfirmed native answer.
                     observed_terminal, status = False, 'finalizing'
                 body.update(taskId=task['id'], runId=task.get('run_id'), status=status,
@@ -593,11 +590,9 @@ class ResearchSessions:
                              'attempt': ticket['attempt'], 'startedAt': now()}
                     body['compaction'] = claim
                     self._save_turn(conn, turn, body)
-                elif compaction and compaction['status'] in {'started', 'failed', 'unknown'}:
-                    if compaction['status'] == 'started':
-                        body['compaction'] = {**compaction, 'status': 'unknown', 'code': 'RESEARCH_SUMMARY_UNKNOWN'}
-                        self._save_turn(conn, turn, body)
-                    blocked = body['compaction'].get('code', 'RESEARCH_SUMMARY_UNKNOWN')
+                elif compaction and compaction['status'] == 'started':
+                    body['compaction'] = {**compaction, 'status': 'unknown', 'code': 'RESEARCH_SUMMARY_UNKNOWN'}
+                    self._save_turn(conn, turn, body)
         if blocked:
             raise StopAgentRun(blocked)
         if claim is None:
@@ -633,7 +628,8 @@ class ResearchSessions:
         except ValueError as error:
             code = str(error) if str(error) in {'RESEARCH_SUMMARY_INVALID', 'RESEARCH_SUMMARY_TOO_LARGE', 'RESEARCH_CONTEXT_LIMIT'} else 'RESEARCH_SUMMARY_INVALID'
             self._summary_outcome(context.user_id, turn['id'], claim, 'failed', code)
-            raise StopAgentRun(code) from None
+        except ModelProviderError:
+            self._summary_outcome(context.user_id, turn['id'], claim, 'failed', 'RESEARCH_SUMMARY_MODEL_FAILED')
         except BaseException:
             self._summary_outcome(context.user_id, turn['id'], claim, 'unknown', 'RESEARCH_SUMMARY_UNKNOWN')
             raise

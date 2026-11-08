@@ -6,6 +6,10 @@ A disposable PostgreSQL/native-queue fixture measured SQL within each `ResearchS
 
 The native admission journey also checks that a later read sees newly added events and an UNKNOWN effect becoming DONE, before exercising Stop and failure recovery. Ordinary first-attempt model requests no longer load effect results needed only by the existing retry check.
 
+## Summary failure continuation validation on 2026-11-08
+
+A native-queue/HTTP/Chromium journey reproduces the old behavior: HTTP 503 from the summary provider fails the research turn. After the fix, one failed summary attempt retains all unsummarized valid history in the actual primary-model HTTP payloads, an actual file write completes, and a later Stop during a pending summary prevents the primary request. This journey passes in 19.595 seconds with a local scripted provider. A received error may leave the auxiliary summary marked failed; an interrupted result remains unknown. Neither state is treated as a successful summary. The existing valid checkpoint, if any, remains usable. No paid provider was contacted. The three source-revocation journeys also pass on this revision (30.296 seconds), along with the two source-context and four existing session recovery cases. Frontend checks, Ruff and Pyright pass, with the existing six Windows-import warnings on Linux.
+
 ## Shared-source continuation validation on 2026-11-08
 
 The baseline reproduces a completed chat losing its Start action after a source is made private. Two PostgreSQL/native-queue/Chromium journeys pass after the fix (35.117 seconds): preserved chat history, a fresh provider HTTP payload without the revoked source, derived reply, old correction or saved summary, an independent file write, duplicate submission/refresh, and revocation during a run followed by a new successful turn. The old correction and summary are synthetic persisted fixtures; summary generation itself is not exercised by these two journeys.
