@@ -1,4 +1,4 @@
-"""Pure text/function-tool codecs; execution, credentials and accounting stay outside.
+"""Responses continuation compatibility not supplied by Agno 3.1.0.
 
 Continuations are private replay data for an assistant turn, not public request
 extensions. Callers keep them in their existing scoped history.
@@ -10,7 +10,6 @@ import re
 from decimal import Decimal
 from typing import Any, NoReturn, cast
 
-MAX_BYTES = 1_048_576
 _PATHS = {'chat-completions': '/chat/completions', 'responses': '/responses'}
 _REQUEST_FIELDS = {'model', 'messages', 'max_tokens', 'stream', 'tools', 'parallel_tool_calls', 'tool_choice'}
 
@@ -113,7 +112,7 @@ def _message(value):
     return result
 
 
-def _tools(value, responses):
+def _tools(value):
     if type(value) is not list:
         _fail('TOOL')
     tools, names = [], set()
@@ -141,28 +140,28 @@ def _tools(value, responses):
             if type(source['strict']) is not bool:
                 _fail('TOOL')
             function['strict'] = source['strict']
-        elif responses:
+        else:
             # Preserve the non-strict default of the canonical CC request.
             function['strict'] = False
-        tools.append({'type': 'function', **function} if responses else {'type': 'function', 'function': function})
+        tools.append({'type': 'function', **function})
     return tools
 
 
-def _choice(value, responses):
+def _choice(value):
     if type(value) is str and value in {'auto', 'none', 'required'}:
         return value
     if (type(value) is dict and set(value) == {'type', 'function'} and value['type'] == 'function'
             and type(value['function']) is dict and set(value['function']) == {'name'}):
         name = _name(value['function']['name'])
-        return {'type': 'function', 'name': name} if responses else {'type': 'function', 'function': {'name': name}}
+        return {'type': 'function', 'name': name}
     _fail('TOOL_CHOICE')
 
 
-def _usage(value, responses):
+def _usage(value):
     if type(value) is not dict:
         return None
-    incoming = value.get('input_tokens' if responses else 'prompt_tokens')
-    outgoing = value.get('output_tokens' if responses else 'completion_tokens')
+    incoming = value.get('input_tokens')
+    outgoing = value.get('output_tokens')
     total = value.get('total_tokens')
     if (not all(type(n) is int and 0 <= n < 2**63 for n in (incoming, outgoing, total))
             or total != cast(int, incoming) + cast(int, outgoing)):
@@ -280,7 +279,7 @@ def assistant_message_matches(expected, actual) -> bool:
     return True
 
 
-def _continuations(protocol, value):
+def _continuations(value):
     if value is None:
         return {}
     _bounded(value)
@@ -288,22 +287,16 @@ def _continuations(protocol, value):
         _fail('CONTINUATION')
     records, identifiers = {}, set()
     for record in value:
-        field = 'output' if protocol == 'responses' else 'reasoning_content'
         if (type(record) is not dict or set(record) not in (
-                {'message', field}, {'message', field, 'message_index'})):
+                {'message', 'output'}, {'message', 'output', 'message_index'})):
             _fail('CONTINUATION')
         message = _message(record['message'])
         calls = message.get('tool_calls', [])
         if message['role'] != 'assistant' or not calls and 'message_index' not in record:
             _fail('CONTINUATION')
-        if protocol == 'responses':
-            decoded, replay = _response_items(record['output'])
-            if message != decoded:
-                _fail('CONTINUATION')
-        else:
-            if type(record['reasoning_content']) is not str:
-                _fail('CONTINUATION')
-            replay = {**message, 'reasoning_content': record['reasoning_content']}
+        decoded, replay = _response_items(record['output'])
+        if message != decoded:
+            _fail('CONTINUATION')
         call_ids = tuple(call['id'] for call in calls)
         if 'message_index' in record:
             position = record['message_index']
@@ -336,8 +329,9 @@ def encode_request(protocol, chat_body, continuation=None):
             or type(messages) is not list or not messages
             or limit is not None and (type(limit) is not int or limit <= 0) or type(chat_body.get('stream', False)) is not bool):
         _fail('REQUEST')
-    responses = protocol == 'responses'
-    records = _continuations(protocol, continuation)
+    if protocol != 'responses':
+        _fail('UNSUPPORTED')
+    records = _continuations(continuation)
     canonical = [_message(message) for message in messages]
     encoded, used = [], set()
     for index, message in enumerate(canonical):
@@ -348,13 +342,8 @@ def encode_request(protocol, chat_body, continuation=None):
             expected, replay = records[key]
             if key in used or not assistant_message_matches(expected, message):
                 _fail('CONTINUATION')
-            if responses:
-                encoded.extend(replay)
-            else:
-                encoded.append(replay)
+            encoded.extend(replay)
             used.add(key)
-        elif not responses:
-            encoded.append(message)
         elif message['role'] == 'tool':
             encoded.append({'type': 'function_call_output', 'call_id': message['tool_call_id'],
                 'output': message['content'] or ''})
@@ -364,20 +353,19 @@ def encode_request(protocol, chat_body, continuation=None):
             encoded.extend({'type': 'function_call', 'call_id': call['id'], **call['function']} for call in calls)
     if used != set(records):
         _fail('CONTINUATION')
-    body = {'model': model, 'stream': chat_body.get('stream', False), 'input' if responses else 'messages': encoded}
+    body = {'model': model, 'stream': chat_body.get('stream', False), 'input': encoded}
     if limit is not None:
-        body['max_output_tokens' if responses else 'max_tokens'] = limit
-    if responses:
-        body['store'] = False
-        body['include'] = ['reasoning.encrypted_content']
+        body['max_output_tokens'] = limit
+    body['store'] = False
+    body['include'] = ['reasoning.encrypted_content']
     if 'tools' in chat_body:
-        body['tools'] = _tools(chat_body['tools'], responses)
+        body['tools'] = _tools(chat_body['tools'])
     if 'parallel_tool_calls' in chat_body:
         if type(chat_body['parallel_tool_calls']) is not bool:
             _fail('TOOL_CHOICE')
         body['parallel_tool_calls'] = chat_body['parallel_tool_calls']
     if 'tool_choice' in chat_body:
-        body['tool_choice'] = _choice(chat_body['tool_choice'], responses)
+        body['tool_choice'] = _choice(chat_body['tool_choice'])
     _bounded(body)
     return body
 
@@ -392,40 +380,16 @@ def decode_response(protocol, raw):
     _bounded(raw)
     if type(raw) is not dict or raw.get('error') is not None:
         _fail('RESPONSE')
-    responses, continuation = protocol == 'responses', None
-    if responses:
-        if raw.get('status') != 'completed':
-            _fail('INCOMPLETE')
-        message, replay = _response_items(raw.get('output'))
-        reason = 'tool_calls' if message.get('tool_calls') else 'stop'
-        continuation = {'message': json.loads(json.dumps(message)), 'output': replay}
-    else:
-        choices = raw.get('choices')
-        if type(choices) is not list or len(choices) != 1 or type(choices[0]) is not dict:
-            _fail('RESPONSE')
-        reason, source = choices[0].get('finish_reason'), choices[0].get('message')
-        if type(reason) is not str or reason not in {'stop', 'tool_calls'}:
-            _fail('INCOMPLETE')
-        if type(source) is not dict or source.get('role') != 'assistant':
-            _fail('RESPONSE')
-        if source.get('refusal') is not None:
-            _fail('REFUSAL')
-        fields = {key: source[key] for key in ('role', 'content', 'tool_calls') if key in source}
-        if fields.get('tool_calls') is None:
-            fields.pop('tool_calls', None)
-        message = _message(fields)
-        if (reason == 'tool_calls') != bool(message.get('tool_calls')):
-            _fail('RESPONSE')
-        reasoning = source.get('reasoning_content', source.get('reasoning'))
-        if reasoning is not None and type(reasoning) is not str:
-            _fail('RESPONSE')
-        if not message.get('tool_calls') and not (message['content'] or '').strip():
-            _fail('EMPTY_OUTPUT')
-        if reasoning is not None:
-            continuation = {'message': json.loads(json.dumps(message)), 'reasoning_content': reasoning}
+    if protocol != 'responses':
+        _fail('UNSUPPORTED')
+    if raw.get('status') != 'completed':
+        _fail('INCOMPLETE')
+    message, replay = _response_items(raw.get('output'))
+    reason = 'tool_calls' if message.get('tool_calls') else 'stop'
+    continuation = {'message': json.loads(json.dumps(message)), 'output': replay}
     value = {'id': 'chatcmpl-owner', 'object': 'chat.completion', 'created': 0, 'model': 'owner-model',
         'choices': [{'index': 0, 'message': message, 'finish_reason': reason}]}
-    usage = _usage(raw.get('usage'), responses)
+    usage = _usage(raw.get('usage'))
     if usage is not None:
         value['usage'] = usage
     _bounded([value, continuation])

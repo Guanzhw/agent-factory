@@ -95,7 +95,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         elif 'unknown-followup' in json.dumps(request['messages']):
             reply = '后续分析完成，原操作仍待核对。'
         elif 'unknown-journey-case' in system:
-            steps = [('uncertain_cli', {}),
+            steps = [('uncertain_cli', {'arguments': {}}),
                      ('research_edit_file', {'path': 'independent.txt', 'old': '', 'new': '独立任务完成'}),
                      ('research_read_file', {'path': 'independent.txt'})]
             if len(results) < len(steps):
@@ -125,7 +125,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
                 tool, arguments = 'research_run', {'argv': [sys.executable, '-c',
                     "import os,time; from pathlib import Path; Path('started.txt').write_text(str(os.getpid())); time.sleep(600)"]}
         else:
-            steps = [('demo_cli', {'mode': 'fail'}), ('demo_cli', {'mode': 'ok'}), ('ssh_servers', {}),
+            steps = [('demo_cli', {'arguments': {'mode': 'fail'}}), ('demo_cli', {'arguments': {'mode': 'ok'}}), ('ssh_servers', {}),
                      ('research_edit_file', {'path': '结果.txt', 'old': '', 'new': DOCUMENT}),
                      ('research_edit_file', {'path': '结果.txt', 'old': '状态：初稿', 'new': '状态：已复核'}),
                      ('research_delegate', {'goal': 'child-only'})]
@@ -413,6 +413,85 @@ class ChatJourney(unittest.TestCase):
         self.assertNotIn('source-secret-marker', json.dumps(self.model.requests[before:], ensure_ascii=False))
         self.assertIn('start', failed['allowedActions'])
         self.assertIn('共享来源已不可读', failed['turns'][-1]['failure'])
+
+    def test_initial_stream_refresh_disconnect_and_missing_session(self):
+        requests = []
+        self.page.on('request', lambda request: requests.append((request.method, request.url)))
+        self.send('切换模型后继续')
+        snapshot = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        identifier, address = snapshot['id'], self.page.url
+        endpoint = self.origin + '/api/factory/research/sessions/' + identifier
+        expect(self.page.locator('.rs-turn')).to_contain_text('切换模型后完成。')
+        self.page.reload()
+        expect(self.page.locator('.rs-turn')).to_contain_text('切换模型后完成。')
+        self.assertNotIn(('GET', endpoint), requests)
+        self.page.get_by_role('button', name='刷新会话', exact=True).click()
+        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_be_visible()
+        failed = []
+        def disconnect(route):
+            if len(failed) < 2:
+                failed.append(True)
+                if len(failed) == 1:
+                    route.fulfill(status=503, json={'detail': 'temporary fixture outage'})
+                else:
+                    route.abort()
+            else:
+                route.continue_()
+        self.page.route(endpoint + '/events', disconnect)
+        self.page.reload()
+        expect(self.page.locator('.rs-connection')).to_contain_text('正在重连')
+        expect(self.page.locator('.rs-turn')).to_contain_text('切换模型后完成。')
+        self.page.unroute(endpoint + '/events', disconnect)
+        self.page.goto(address.replace(identifier, str(uuid4())))
+        expect(self.page.locator('main').get_by_role('alert')).to_have_text('会话不存在或已不可访问。')
+        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_have_count(0)
+        self.page.goto(address)
+        expect(self.page.locator('.rs-turn')).to_contain_text('切换模型后完成。')
+        self.page.route(endpoint + '/events', lambda route: route.fulfill(status=401, json={'detail': 'expired'}))
+        self.page.reload()
+        expect(self.page.get_by_label('用户名', exact=True)).to_be_visible()
+        expect(self.page.locator('.rs-turn')).to_have_count(0)
+
+    def test_delayed_initial_stream_cannot_replace_a_new_turn_or_session(self):
+        self.send('切换模型后继续')
+        snapshot = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        endpoint = self.origin + '/api/factory/research/sessions/' + snapshot['id'] + '/events'
+        held = []
+        def delay(route):
+            if not held:
+                held.append(route)
+            else:
+                route.continue_()
+        def await_request():
+            deadline = time.monotonic() + 5
+            while not held and time.monotonic() < deadline:
+                self.page.wait_for_timeout(20)
+            self.assertEqual(len(held), 1)
+        def release():
+            await_request()
+            held[0].fulfill(content_type='text/event-stream', body='event: session\ndata: ' +
+                json.dumps(snapshot, ensure_ascii=False) + '\n\n')
+        self.page.route(endpoint, delay)
+        self.page.reload()
+        expect(self.page.get_by_text('正在读取会话详情…', exact=True)).to_be_visible()
+        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_have_count(0)
+        release()
+        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_be_visible()
+        held.clear()
+        self.page.get_by_role('button', name='刷新会话', exact=True).click()
+        await_request()
+        self.page.get_by_role('textbox', name='下一轮指令', exact=True).fill('切换模型后继续')
+        self.page.get_by_role('button', name='发送', exact=True).click()
+        self.wait_for(lambda value: len(value['turns']) == 2 and value['turns'][-1]['status'] == 'completed')
+        release()
+        expect(self.page.locator('.rs-turn')).to_have_count(2)
+        held.clear()
+        self.page.get_by_role('button', name='刷新会话', exact=True).click()
+        await_request()
+        self.page.get_by_role('button', name='新建会话', exact=True).click()
+        release()
+        expect(self.page.get_by_role('heading', name='今天想一起完成什么？')).to_be_visible()
+        expect(self.page.locator('.rs-turn')).to_have_count(0)
 
     def test_chat_tools_files_and_child(self):
         self.post('/personal-tools/resources', {'transport': 'cli', 'toolName': 'demo_cli',
