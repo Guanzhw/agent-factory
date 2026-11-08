@@ -1,7 +1,7 @@
 """Owner-authenticated personal research conversation commands and reads."""
 import asyncio
-import json
 import os
+from contextlib import AsyncExitStack
 from pathlib import Path
 import stat
 from urllib.parse import quote
@@ -13,6 +13,7 @@ from starlette.background import BackgroundTask
 
 from agent_factory.application_content import ObjectId
 from .projects import Reference, RequestId
+from .session_stream import changes, install_notifications, session_updates
 from .session_tools import _directory, _open_file, _windows_path, _workspace_parts
 
 
@@ -56,6 +57,8 @@ class SessionCommand(BaseModel):
 
 def session_router(auth, service):
     router = APIRouter(prefix='/api/factory/research/sessions')
+    initialized = False
+    initialize_lock = asyncio.Lock()
 
     @router.get('/options')
     def options(request: Request):
@@ -81,28 +84,30 @@ def session_router(auth, service):
 
     @router.get('/{identifier}/events')
     async def events(request: Request, identifier: str):
+        nonlocal initialized
         owner = auth.user(request)['id']
-        initial = await service.read(owner, identifier)
+        async with initialize_lock:
+            if not initialized:
+                await asyncio.to_thread(install_notifications, service.store)
+                initialized = True
+        resources = AsyncExitStack()
+        try:
+            notifications = await resources.enter_async_context(changes(service.store))
+            initial = await service.read(owner, identifier)
+        except BaseException:
+            await resources.aclose()
+            raise
 
         async def updates():
-            previous = None
-            snapshot = initial
-            while not await request.is_disconnected():
-                # Recheck the actual session on each read; this stream never
-                # starts a turn or manufactures progress from elapsed time.
-                if auth.user(request)['id'] != owner:
-                    return
-                encoded = json.dumps(snapshot, ensure_ascii=False, separators=(',', ':'))
-                if encoded != previous:
-                    yield 'event: session\ndata: ' + encoded + '\n\n'
-                    previous = encoded
-                else:
-                    yield ': connected\n\n'
-                await asyncio.sleep(0.5)
-                snapshot = await service.read(owner, identifier)
+            try:
+                async for value in session_updates(request, auth, service, owner, identifier, notifications, initial):
+                    yield value
+            finally:
+                await resources.aclose()
 
         return StreamingResponse(updates(), media_type='text/event-stream',
-            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+            headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
+            background=BackgroundTask(resources.aclose))
 
     @router.get('/{identifier}/files')
     def files(request: Request, identifier: str):

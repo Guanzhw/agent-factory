@@ -36,6 +36,39 @@ def chat_chunk(delta, finish=None):
 
 
 class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
+    async def test_streaming_admission_returns_before_execution_and_preserves_rejection(self):
+        from fastapi import FastAPI
+        from fastapi.responses import JSONResponse, StreamingResponse
+        from agent_factory.native_stream import submit_stream
+        app = FastAPI()
+        release, completed = asyncio.Event(), asyncio.Event()
+        async def execute():
+            await release.wait()
+            completed.set()
+        workers = []
+        @app.post('/runs')
+        async def submit():
+            workers.append(asyncio.create_task(execute()))
+            async def progress():
+                await completed.wait()
+                yield 'event: completed\n\n'
+            return StreamingResponse(progress(), media_type='text/event-stream')
+        @app.post('/rejected')
+        async def rejected():
+            return JSONResponse({'message': 'Job queue is full', 'code': 'REQUEST_REJECTED'}, status_code=429)
+        try:
+            response = await asyncio.wait_for(submit_stream(app, 'POST', '/runs', headers={}, data={}), timeout=2)
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(completed.is_set())
+            release.set()
+            await asyncio.wait_for(completed.wait(), timeout=2)
+            response = await submit_stream(app, 'POST', '/rejected', headers={}, data={})
+            self.assertEqual(response.status_code, 429)
+            self.assertEqual(response.json()['code'], 'REQUEST_REJECTED')
+        finally:
+            release.set()
+            await asyncio.gather(*workers)
+
     async def test_cancel_during_persistence_does_not_flush_same_segment_twice(self):
         started, release, finished = threading.Event(), threading.Event(), threading.Event()
         written = []

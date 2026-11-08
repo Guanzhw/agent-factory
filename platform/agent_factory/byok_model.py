@@ -18,6 +18,7 @@ from agno.models.deepseek import DeepSeek
 from openai import AsyncOpenAI, APIStatusError, Omit
 from openai._models import construct_type
 from openai.types.chat import ChatCompletion
+from openai.types.chat.chat_completion_chunk import ChoiceDeltaToolCall
 from openai.types.responses import Response
 from agno.models.response import ModelResponse
 
@@ -208,6 +209,10 @@ class OwnerChatModel(OpenAIChat):
         async def request():
             try:
                 result = await self._request(messages, on_text=text, on_reasoning=reasoning, **kwargs)
+                if result.tool_calls:
+                    # The native streaming loop consumes deltas, unlike ainvoke.
+                    result.tool_calls = [ChoiceDeltaToolCall(**{**call, "index": index})
+                        for index, call in enumerate(result.tool_calls)]
                 await chunks.put(result)
             except BaseException as error:
                 await chunks.put(error)

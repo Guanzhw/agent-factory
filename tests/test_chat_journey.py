@@ -388,6 +388,7 @@ class ChatJourney(unittest.TestCase):
             service._save_session(conn, row, {**row['body'], 'contextCheckpoint': {
                 **identity, 'summary': {'summary': 'source-summary-marker', 'topics': []}}})
         content.set_visibility(publisher, source['id'], 'personal', str(uuid4()))
+        expect(self.page.get_by_text(re.compile('旧共享来源或助手回答已不可用'))).to_be_visible()
         snapshot = self.session()
         self.assertIn('start', snapshot['allowedActions'])
         self.assertNotEqual(snapshot['state'], 'blocked')
@@ -573,6 +574,29 @@ class ChatJourney(unittest.TestCase):
             completed = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
             self.assertEqual(completed['turns'][-1]['status'], 'completed')
             self.assertEqual(submit.call_count, 1)
+
+    def test_incremental_progress_updates_existing_row_without_full_projection(self):
+        self.model.reasoning_pause = threading.Event()
+        self.addCleanup(self.model.reasoning_pause.set)
+        self.send('思考与内容顺序验收')
+        expect(self.page.locator('.rs-thinking').get_by_text('再核对最终输出。', exact=True)).to_be_visible()
+        snapshot = self.session()
+        turn = snapshot['turns'][-1]
+        event = turn['events'][-1]
+        self.assertEqual(event['type'], 'model_reasoning_delta')
+        service = self.state['research_sessions']
+        with patch.object(service, 'read', wraps=service.read) as reads:
+            # Commit another fragment to the same persisted row, as provider streaming does.
+            self.state['store'].model_delta(turn['taskId'], event['type'], '增量更新证据。', event['data']['responseId'])
+            expect(self.page.locator('.rs-thinking').last).to_contain_text('增量更新证据。')
+            self.page.wait_for_timeout(1100)
+            self.assertEqual(reads.call_count, 0)
+        self.model.reasoning_pause.set()
+        self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        expect(self.page.locator('.rs-turn')).to_contain_text('顺序验收最终回答。')
+        self.page.reload()
+        expect(self.page.locator('.rs-thinking').last).to_contain_text('增量更新证据。')
+        self.assertEqual(len([item for item in self.session()['turns'][-1]['events'] if item['id'] == event['id']]), 1)
 
     def test_initial_stream_refresh_disconnect_and_missing_session(self):
         requests = []

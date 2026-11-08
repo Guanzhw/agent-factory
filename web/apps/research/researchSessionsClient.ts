@@ -72,6 +72,7 @@ export const researchSessionsApi = {
     if ([403, 404].includes(response.status)) throw new ApiError('会话不存在或已不可访问。', response.status);
     if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) throw new ApiError('实时连接暂时中断，正在重连。', response.status);
     const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
+    let snapshot: ResearchSession | undefined;
     try {
       while (!signal.aborted) {
         const chunk = await reader.read(); if (chunk.done) break;
@@ -82,7 +83,20 @@ export const researchSessionsApi = {
           const frame = buffer.slice(0, end); buffer = buffer.slice(end + 2);
           const event = frame.split('\n').find(line => line.startsWith('event:'))?.slice(6).trim();
           const data = frame.split('\n').filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
-          if (event === 'session' && data) onSession(detail(JSON.parse(data) as ResearchSession, id));
+          if (event === 'session' && data) {
+            snapshot = detail(JSON.parse(data) as ResearchSession, id); onSession(snapshot);
+          }
+          if (event === 'turn_events' && data && snapshot) {
+            const patch = JSON.parse(data) as { sessionId: string; turnId: string; events: SessionEvent[] };
+            if (patch.sessionId !== id || !Array.isArray(patch.events)) throw new Error('实时记录无法核对，正在重新连接。');
+            snapshot = { ...snapshot, turns: snapshot.turns.map(turn => {
+              if (turn.id !== patch.turnId) return turn;
+              const events = new Map((turn.events ?? []).map(item => [item.id, item]));
+              patch.events.forEach(item => events.set(item.id, item));
+              return { ...turn, events: [...events.values()].sort((a, b) => a.id - b.id) };
+            }) };
+            onSession(snapshot);
+          }
           if (event === 'error') throw new Error('实时更新暂时不可用，正在重连。');
         }
       }
