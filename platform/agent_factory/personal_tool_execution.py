@@ -1,7 +1,8 @@
 """Native Function registration for owner-scoped CLI/MCP adapters.
 
-The native run and FunctionCall identify one durable effect. Neither an unknown
-acknowledgement nor a repeated native call may dispatch that effect again.
+Tools not declared read-only use the native run and FunctionCall to identify
+one durable effect. Neither an unknown acknowledgement nor a repeated native
+call may dispatch that effect again.
 """
 from __future__ import annotations
 
@@ -19,15 +20,16 @@ from .store import canonical, digest
 from .tool_output import output_preview, DEFAULT_OUTPUT_TOKENS
 
 
-def _unknown(**facts):
+def _unknown(*, read_only=False, **facts):
     return {'outcome': 'unknown', 'stopped': None, 'code': 'PERSONAL_TOOL_OUTCOME_UNKNOWN',
-            'message': 'The original operation is unconfirmed. Do not replay it. '
-                       'Inspect its original result if possible; other work can continue.', **facts}
+            'message': ('The read result is unconfirmed. You may read again; this does not confirm the original call.'
+                        if read_only else 'The original operation is unconfirmed. Do not replay it. '
+                        'Inspect its original result if possible; other work can continue.'), **facts}
 
 
-def _receipt(receipt, **identity):
+def _receipt(receipt, *, read_only=False, **identity):
     if not isinstance(receipt, dict):
-        return _unknown(**identity)
+        return _unknown(read_only=read_only, **identity)
     if receipt.get('outcome') == 'completed' and 'output' in receipt:
         output = receipt['output']
         text = json.dumps(output, ensure_ascii=False, allow_nan=False)
@@ -41,11 +43,12 @@ def _receipt(receipt, **identity):
             raise ToolInvocationError('PERSONAL_TOOL_FAILED' + detail, outcome='failed', stopped=True)
         return _unknown(**identity, outcome='failed', stopped=False,
             code='PERSONAL_TOOL_FAILED_CLEANUP_UNCONFIRMED', output=receipt.get('output'),
-            message='The operation failed, but cleanup is unconfirmed. Do not replay it. Other work can continue.')
+            message=('The read failed and cleanup is unconfirmed. You may read again; the original cleanup remains unconfirmed.'
+                     if read_only else 'The operation failed, but cleanup is unconfirmed. Do not replay it. Other work can continue.'))
     if (receipt.get('outcome') == 'cancelled' and receipt.get('cancelled') is True
             and receipt.get('stopped') is True):
         raise RunCancelledException('PERSONAL_TOOL_CANCELLED')
-    return _unknown(**identity)
+    return _unknown(read_only=read_only, **identity)
 
 
 def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context, *, exposed_name=None):
@@ -97,26 +100,29 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
         except Exception:
             raise ValueError('PERSONAL_TOOL_INPUT_INVALID') from None
         effect_key = 'personal-tool:' + call_id
-        identity = {'callId': call_id, 'effectKey': expected[2] + ':' + effect_key}
+        identity = {'callId': call_id}
+        if not descriptor.read_only:
+            identity['effectKey'] = expected[2] + ':' + effect_key
         def unknown(**facts):
             check_execution()
-            return _unknown(**identity, **facts)
+            return _unknown(read_only=descriptor.read_only, **identity, **facts)
 
-        request = {'ownerId': expected[0], 'taskId': expected[1],
-            'adapterId': descriptor.adapter_id, 'descriptor': fingerprint, 'connection': connection,
-            'callId': call_id, 'arguments': values}
-        try:
-            reservation = await asyncio.to_thread(store.effect_reserve, expected[2], effect_key, request)
-        except Exception:
-            return unknown()
-        if reservation.get('status') == 'done':
-            return _receipt(reservation.get('result'), **identity)
-        if reservation.get('status') != 'new':
-            previous = reservation.get('result')
-            if (reservation.get('status') == 'unknown' and isinstance(previous, dict)
-                    and previous.get('outcome') == 'failed' and previous.get('stopped') is False):
-                return _receipt(previous, **identity)
-            return unknown()
+        if not descriptor.read_only:
+            request = {'ownerId': expected[0], 'taskId': expected[1],
+                'adapterId': descriptor.adapter_id, 'descriptor': fingerprint, 'connection': connection,
+                'callId': call_id, 'arguments': values}
+            try:
+                reservation = await asyncio.to_thread(store.effect_reserve, expected[2], effect_key, request)
+            except Exception:
+                return unknown()
+            if reservation.get('status') == 'done':
+                return _receipt(reservation.get('result'), read_only=False, **identity)
+            if reservation.get('status') != 'new':
+                previous = reservation.get('result')
+                if (reservation.get('status') == 'unknown' and isinstance(previous, dict)
+                        and previous.get('outcome') == 'failed' and previous.get('stopped') is False):
+                    return _receipt(previous, read_only=False, **identity)
+                return unknown()
 
         def resolve_credential():
             try:
@@ -164,7 +170,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
             await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具结果待核对',
                 {**event, 'outcome': 'unknown'})
             return unknown()
-        if receipt.get('outcome') == 'failed' and receipt.get('stopped') is False:
+        if not descriptor.read_only and receipt.get('outcome') == 'failed' and receipt.get('stopped') is False:
             # Business failure is known, but local process custody is not
             # settled. Retain UNKNOWN evidence and never overwrite a receipt.
             try:
@@ -180,16 +186,17 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
             except Exception:
                 return unknown()
             await asyncio.to_thread(check_authorized)
-            return _receipt(receipt, **identity)
-        try:
-            await asyncio.to_thread(store.effect_complete, expected[2], effect_key, receipt)
-        except Exception:
-            return unknown()
+            return _receipt(receipt, read_only=descriptor.read_only, **identity)
+        if not descriptor.read_only:
+            try:
+                await asyncio.to_thread(store.effect_complete, expected[2], effect_key, receipt)
+            except Exception:
+                return unknown()
         # Preserve a known completion even if authority was revoked during
         # execution, but do not disclose its result without current access.
         await asyncio.to_thread(check_authorized)
         await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具执行记录', {**event, **receipt})
-        return _receipt(receipt, **identity)
+        return _receipt(receipt, read_only=descriptor.read_only, **identity)
 
     # Agno consumes top-level framework names; nesting preserves arbitrary MCP keys.
     schema = copy.deepcopy(dict(descriptor.input_schema))

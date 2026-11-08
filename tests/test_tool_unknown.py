@@ -105,3 +105,45 @@ class UnknownToolOutcome(unittest.IsolatedAsyncioTestCase):
         store.cancelled = True
         with self.assertRaises(RunCancelledException):
             await call(function, context, 'stopped', arguments={'operation': 'inspect'})
+
+    async def test_read_only_errors_and_stop_remain_visible_without_effects(self):
+        store = Effects()
+        context = RunContext(run_id='run', session_id='task', user_id='owner')
+        descriptor = ToolDescriptor(adapter_id='reader', revision='1', tool_name='reader', description='Read',
+            input_schema={'type': 'object', 'properties': {}}, transport='mcp',
+            credential_provider_id='reader', credential_destination='reader', capabilities=('tool:invoke',),
+            read_only=True)
+        events = []
+        store.event = lambda *args: events.append(args)
+        adapter = SimpleNamespace(descriptor=descriptor, invoke=AsyncMock(side_effect=[
+            ToolInvocationError('READ_FAILED', outcome='failed', stopped=True, output='file missing'),
+            ToolInvocationError('READ_DISCONNECTED', outcome='unknown', stopped=False),
+            ToolInvocationError('READ_CLEANUP_FAILED', outcome='failed', stopped=False, output='cleanup diagnostic'),
+            {'observed': True}, ToolInvocationError('READ_CANCELLED', outcome='cancelled', stopped=True)]))
+        service = SimpleNamespace(adapters={'reader': adapter})
+        store.personal_tools = service
+        handle = SimpleNamespace(configuration={'registrationRef': 'ref', 'revision': '1'},
+            adapter=adapter, service=service, requesting_actor='owner', check_authorized=lambda: None)
+        function = personal_tool_function(cast(PersonalToolAdapter, adapter), store, handle, context)
+        function._run_context = context
+        failed = await FunctionCall(function=function, call_id='failed', arguments={'arguments': {}}).aexecute()
+        self.assertNotEqual(failed.status, 'success')
+        self.assertIn('file missing', str(failed.error))
+        uncertain = await call(function, context, 'disconnected', arguments={})
+        self.assertEqual(uncertain['outcome'], 'unknown')
+        self.assertNotIn('effectKey', uncertain)
+        self.assertIn('You may read again', uncertain['message'])
+        cleanup = await call(function, context, 'cleanup', arguments={})
+        self.assertEqual((cleanup['outcome'], cleanup['stopped'], cleanup['output']),
+                         ('failed', False, 'cleanup diagnostic'))
+        self.assertIn('You may read again', cleanup['message'])
+        self.assertEqual(await call(function, context, 'retry', arguments={}), {'observed': True})
+        with self.assertRaises(RunCancelledException):
+            await call(function, context, 'adapter-cancelled', arguments={})
+        self.assertEqual([event[3].get('outcome') for event in events if event[1] == 'tool_finished'],
+                         ['failed', 'unknown', 'failed', 'completed', 'cancelled'])
+        self.assertEqual(store.rows, {})
+        store.cancelled = True
+        with self.assertRaises(RunCancelledException):
+            await call(function, context, 'stopped', arguments={})
+        self.assertEqual(adapter.invoke.await_count, 5)
