@@ -12,14 +12,13 @@ from threading import Thread
 from typing import Any, Callable, cast
 from uuid import uuid4
 
-import httpx
 from agno.exceptions import ModelProviderError
-from agno.metrics import MessageMetrics
 from agno.models.openai.chat import OpenAIChat
 from agno.models.deepseek import DeepSeek
 from openai import AsyncOpenAI, APIStatusError, Omit
 from openai._models import construct_type
 from openai.types.chat import ChatCompletion
+from openai.types.responses import Response
 from agno.models.response import ModelResponse
 
 
@@ -32,10 +31,7 @@ from .model_endpoint_policy import (
     generation_options as generation_options, model_id as model_id,
     model_origin as model_origin, max_output_tokens,
 )
-from .model_protocol import (
-    assistant_message_matches, decode_response, encode_request, function_call as function_call,
-    protocol_name, protocol_path,
-)
+from .model_protocol import OwnerResponses, protocol_name
 from .model_stream import read_model_stream
 
 PROVIDER_ID = 'byok-chat-v1'
@@ -56,7 +52,6 @@ class OwnerChatModel(OpenAIChat):
             role_map={**OpenAIChat.default_role_map, 'system': 'system', 'developer': 'developer'})
         self._base = base_url(configuration['baseURL'])
         self._protocol = protocol_name(configuration)
-        self.supports_native_structured_outputs = self._protocol == 'chat-completions'
         self._scope = continuation_scope(configuration)
         self._extensions = generation_options(configuration)
         self._credential = credential
@@ -67,6 +62,7 @@ class OwnerChatModel(OpenAIChat):
         self.auto_compact_token_limit = configuration.get("autoCompactTokenLimit")
         self._recheck = recheck
         self._session_id = session_id or 'af-agent-' + uuid4().hex
+        self._responses = OwnerResponses(configuration, self._scope, self._session_id) if self._protocol == 'responses' else None
 
     def __repr__(self):
         return 'OwnerChatModel(credentials=<redacted>)'
@@ -83,51 +79,14 @@ class OwnerChatModel(OpenAIChat):
                     if tool.get('type') == 'function' else tool for tool in tools]
             return {'model': self.id, 'messages': self._format_all_messages(messages, compress_tool_results),
                 'stream': True, **params, **self._extensions}
-        if response_format is not None:
-            raise rejected('PERSONAL_MODEL_UNSUPPORTED_FORMAT')
-        encoded, continuation = [], []
-        for index, message in enumerate(messages):
-            content = message.get_content(use_compressed_content=compress_tool_results)
-            if (message.role not in {'system', 'user', 'assistant', 'tool'}
-                    or content is not None and type(content) is not str
-                    or any(getattr(message, field, None) for field in ('images', 'videos', 'audio', 'files'))):
-                raise rejected('PERSONAL_MODEL_TEXT_ONLY')
-            item = {'role': message.role, 'content': content}
-            if message.role == 'tool': item['tool_call_id'] = message.tool_call_id
-            if message.tool_calls: item['tool_calls'] = [function_call(call) for call in message.tool_calls]
-            if message.role == 'assistant':
-                private = message.provider_data or {}
-                data = private.get('owner_model_continuation', private.get('owner_responses'))
-                required = bool(message.tool_calls)
-                if data is not None:
-                    if (type(data) is not dict or data.get('scope') != self._scope
-                            or data.get('session') != self._session_id):
-                        raise rejected('PERSONAL_MODEL_CONTINUATION_REQUIRED')
-                    record = data.get('continuation')
-                    expected = data.get('message', record.get('message') if type(record) is dict else None)
-                    if not assistant_message_matches(expected, item):
-                        raise rejected('PERSONAL_MODEL_CONTINUATION_REQUIRED')
-                    if record is not None:
-                        continuation.append({**record, 'message_index': index})
-                elif required:
-                    raise rejected('PERSONAL_MODEL_CONTINUATION_REQUIRED')
-            encoded.append(item)
-        chat = {'model': self.id, 'messages': encoded, 'max_tokens': self.max_tokens, 'stream': True}
-        if tools:
-            provider_tools = []
-            for tool in tools:
-                function = tool.get('function') if type(tool) is dict else None
-                if type(function) is dict and type(function.get('external_execution')) is bool:
-                    function = {key: value for key, value in function.items() if key != 'external_execution'}
-                    tool = {**tool, 'function': function}
-                provider_tools.append(tool)
-            chat.update(tools=provider_tools)
-        if tool_choice is not None:
-            chat['tool_choice'] = tool_choice
-        body = encode_request(self._protocol, chat, continuation=continuation)
-        if self.reasoning_effort is not None:
-            body['reasoning'] = {'effort': self.reasoning_effort, 'summary': 'auto'}
-        return body
+        if isinstance(tool_choice, dict) and tool_choice.get('type') == 'function' and 'function' in tool_choice:
+            tool_choice = {'type': 'function', 'name': tool_choice['function']['name']}
+        native = self._responses
+        assert native is not None
+        params = native.get_request_params(messages=messages, response_format=response_format,
+            tools=tools, tool_choice=tool_choice, run_response=kwargs.get('run_response'))
+        return {'model': self.id, 'input': native._format_messages(messages, compress_tool_results, tools),
+            'stream': True, **params}
 
     def _format_message(self, message, compress_tool_results=False):
         # Agno's generic OpenAI formatter omits DeepSeek-compatible reasoning replay.
@@ -153,33 +112,24 @@ class OwnerChatModel(OpenAIChat):
             lease = await asyncio.to_thread(self._credential)
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
-            if self._protocol == 'chat-completions':
-                headers: dict[str, Any] = chat_headers(self._base, lease, self._session_id)
-                if lease is None:
-                    headers['Authorization'] = Omit()
-                async with AsyncOpenAI(api_key=lease.password if lease else 'unused-local-model',
-                        base_url=self._base, max_retries=0, timeout=self._timeout_seconds) as client:
-                    options = {key: value for key, value in body.items() if key not in self._extensions}
-                    async with client.chat.completions.with_streaming_response.create(
-                            **options, extra_body=self._extensions, extra_headers=headers) as response:
-                        http_response = response.http_response
-                        value = await read_model_stream(http_response, self._protocol, progress, reasoning)
-            else:
-                async with httpx.AsyncClient(timeout=self._timeout_seconds) as client:
-                    request = client.build_request('POST', self._base + protocol_path(self._protocol), json=body,
-                        headers=chat_headers(self._base, lease, self._session_id))
-                    http_response = await client.send(request, stream=True)
-                    try:
-                        if http_response.status_code != 200:
-                            raise rejected('PERSONAL_MODEL_HTTP_' + str(http_response.status_code))
-                        value = await read_model_stream(http_response, self._protocol, progress, reasoning)
-                    finally:
-                        await http_response.aclose()
+            headers: dict[str, Any] = chat_headers(self._base, lease, self._session_id)
+            if lease is None:
+                headers['Authorization'] = Omit()
+            async with AsyncOpenAI(api_key=lease.password if lease else 'unused-local-model',
+                    base_url=self._base, max_retries=0, timeout=self._timeout_seconds) as client:
+                endpoint = client.responses if self._responses else client.chat.completions
+                extensions = {} if self._responses else self._extensions
+                options = {key: value for key, value in body.items() if key not in extensions}
+                async with endpoint.with_streaming_response.create(
+                        **options, extra_body=extensions, extra_headers=headers) as response:
+                    http_response = response.http_response
+                    value = await read_model_stream(http_response, self._protocol, progress, reasoning)
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
             result = self._parse_provider_response(value)
             if 'text/event-stream' not in http_response.headers.get('content-type', ''):
                 if self._protocol == 'responses':
+                    assert result.provider_data is not None
                     continuation = result.provider_data['owner_model_continuation']['continuation']
                     for item in continuation['output']:
                         if item['type'] == 'reasoning':
@@ -187,7 +137,7 @@ class OwnerChatModel(OpenAIChat):
                             if thought:
                                 await reasoning(thought)
                         elif item['type'] == 'message':
-                            await progress(''.join(part['text'] for part in item['content']))
+                            await progress(''.join(part['text'] for part in item['content'] if part.get('type') == 'output_text'))
                 else:
                     if result.reasoning_content:
                         await reasoning(result.reasoning_content)
@@ -297,29 +247,10 @@ class OwnerChatModel(OpenAIChat):
                 refusal = getattr(response.choices[0].message, 'refusal', None)
                 raise rejected('PERSONAL_MODEL_REFUSAL' if refusal else 'PERSONAL_MODEL_EMPTY_OUTPUT')
             return result
-        try:
-            response, continuation = decode_response(self._protocol, response)
-            message = response['choices'][0]['message']
-            result = ModelResponse(role='assistant', content=message.get('content'),
-                tool_calls=message.get('tool_calls', []))
-            if continuation is not None:
-                result.reasoning_content = continuation.get('reasoning_content')
-                if self._protocol == 'responses':
-                    result.reasoning_content = ''.join(part['text'] for item in continuation['output']
-                        if item['type'] == 'reasoning' for part in item.get('summary', []) + item.get('content', [])) or None
-            result.provider_data = {'owner_model_continuation': {'scope': self._scope,
-                'session': self._session_id, 'message': message, 'continuation': continuation}}
-            usage = response.get('usage')
-            if usage is not None:
-                result.response_usage = MessageMetrics(input_tokens=usage['prompt_tokens'],
-                    output_tokens=usage['completion_tokens'], total_tokens=usage['total_tokens'])
-            return result
-        except ValueError as error:
-            code = {'MODEL_PROTOCOL_EMPTY_OUTPUT': 'PERSONAL_MODEL_EMPTY_OUTPUT',
-                'MODEL_PROTOCOL_REFUSAL': 'PERSONAL_MODEL_REFUSAL'}.get(str(error))
-            raise rejected(code or 'PERSONAL_MODEL_RESPONSE_REJECTED') from None
-        except Exception:
-            raise rejected() from None
+        if isinstance(response, dict):
+            response = cast(Response, construct_type(type_=Response, value=response))
+        assert self._responses is not None
+        return self._responses._parse_provider_response(response, **kwargs)
 
     def _parse_provider_response_delta(self, response):
         return response
