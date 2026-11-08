@@ -760,7 +760,11 @@ class ChatJourney(unittest.TestCase):
         for arguments, outcome in (({'skill_name': 'journey-skill', 'script_path': 'nested/runner.py',
                                      'execute': 'false'}, 'completed'),
                                    ({'skill_name': 'journey-skill', 'script_path': 'missing.py',
-                                     'execute': True}, 'failed'), ({}, 'failed')):
+                                     'execute': True}, 'failed'), ({}, 'failed'),
+                                   ({'skill_name': 'journey-skill', 'script_path': 'nested/runner.py',
+                                     'execute': True, 'args': 123}, 'failed'),
+                                   ({'skill_name': 'journey-skill', 'script_path': 'nested/runner.py',
+                                     'execute': True, 'cwd': None}, 'failed')):
             call = FunctionCall(function=function, call_id='boundary-' + uuid4().hex, arguments=arguments)
             self.run_async(call.aexecute())
             boundary_calls.append((call, outcome))
@@ -784,7 +788,22 @@ class ChatJourney(unittest.TestCase):
                 self.assertEqual(observed[-1]['data']['output'], call.result)
             else:
                 self.assertNotIn('output', observed[-1]['data'])
+            if call.error:
+                self.assertEqual(observed[-1]['data']['message'], call.error)
+        # Render the actual native boundary events; the completed turn's snapshot is already frozen.
+        snapshot['turns'][-1]['events'] = boundary_events
+        self.page.route('**/research/sessions/' + snapshot['id'], lambda route: route.fulfill(json=snapshot))
+        self.page.route('**/research/sessions/*/events', lambda route: route.fulfill(content_type='text/event-stream',
+            body='event: session\ndata: ' + json.dumps(snapshot) + '\n\n'))
         self.page.reload()
+        self.page.locator('.rs-process > summary').click()
+        for call, _ in boundary_calls[3:5]:
+            assert call.error is not None
+            row = self.page.locator('.rs-tool-call').filter(has=self.page.get_by_text(call.error, exact=True))
+            expect(row).to_have_count(1)
+            row.locator(':scope > summary').click()
+            expect(row.get_by_text('失败', exact=True)).to_be_visible()
+            expect(row.get_by_text(call.error, exact=True)).to_be_visible()
         with self.page.expect_download() as download:
             self.page.get_by_role('link', name='skill-work/skill-result.json', exact=True).click()
         self.assertEqual(json.loads(Path(download.value.path()).read_bytes()), expected)

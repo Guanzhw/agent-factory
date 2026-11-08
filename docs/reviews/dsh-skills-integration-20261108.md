@@ -93,3 +93,11 @@ After this three-line fixture correction, all 22 Windows cases pass again in 126
 Cloud Codex owns governance and actual merging. Preserve #178 head `93119b30ac8f3a8f43881c6cef277ba71518779b` in main's ancestry, then retarget #179 to main and verify the resulting merge and CI. The joint branch already contains that cloud head. A read-only three-way simulation of squash/rebase first produces conflicts in `applications/research/skills.py`, `docs/DEVELOPMENT_CHECKS.md`, `tests/test_chat_journey.py` and `web/apps/research/SessionFiles.tsx`. Final head and exact-head CI are recorded in the PR and handoff. Local work prepares and validates the stack; it does not merge or deploy it.
 
 Private logs and synthetic reports stay under `D:/WorkSpace/agent-factory-local/design-evidence/`. They are not source artifacts.
+
+## Cloud final-review correction
+
+The cloud final review reproduced a missing event pair on `54fad947`: a valid script with `execute=true` but `args=123` or `cwd=null` fails native Agno/Pydantic validation before reaching `research_run`. Both Skills hooks previously assumed that a known script would emit command events and skipped the call. Native failure remained available to the model, but the process panel omitted it.
+
+The correction adds a fallback only when the native call has no result and the same call ID has no existing command event. It records the original arguments and native error as failed; cancellation without an error stays unknown. Normal script results take the existing fast path without a query or duplicate event. No new lifecycle store or retry behavior is introduced. The existing native Skills regression covers both invalid inputs, exact saved errors, one displayed failed row for each and the original three nonduplicated script executions. The browser uses the actual saved boundary events in a substituted snapshot because the earlier completed turn snapshot is frozen; it does not claim another real-model run.
+
+Independent source review found no blocker. Cloud check results and final head are recorded in the PR. This correction is validated on Linux; the earlier 22-case Windows result applies to `54fad947`, not to this later commit. No local Windows files, data or preview were modified, and no deployment was performed.

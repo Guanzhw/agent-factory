@@ -69,7 +69,15 @@ class ResearchSkills(Skills):
     def _read_finished(self, run_context, fc):
         event = self._read_event(fc)
         if event is None:
-            return
+            store = self.tools.sessions.store
+            if fc.result is not None or any(
+                item['data'].get('callId') == fc.call_id
+                for item in store.events(run_context.session_id)
+                if item['type'] in {'research_tool_started', 'research_tool_finished'}
+            ):
+                return
+            event = {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}}
+            store.event(run_context.session_id, 'tool_started', '技能脚本调用', event)
         if fc.result is None:
             event['outcome'] = 'failed' if fc.error else 'unknown'
             if fc.error:
