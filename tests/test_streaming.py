@@ -8,12 +8,12 @@ import unittest
 from uuid import uuid4
 
 import httpx
+from openai import AsyncOpenAI
 from agno.models.message import Message
 from sqlalchemy import create_engine, make_url, text
 from unittest.mock import patch
 
 from agent_factory.byok_model import OwnerChatModel
-from agent_factory.model_protocol import decode_response
 from agent_factory.model_stream import read_model_stream
 from agent_factory.store import Store
 
@@ -102,7 +102,10 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
         response = httpx.Response(200, headers={'content-type': 'text/event-stream'}, stream=Frames(values))
         raw = await read_model_stream(response, 'responses', content, reasoning)
         self.assertEqual(events, [('reasoning', '考虑'), ('content', '答案')])
-        self.assertEqual(decode_response('responses', raw)[1]['output'][0], output[0])
+        model = OwnerChatModel({'provider': 'openai', 'baseURL': 'https://api.openai.com/v1',
+            'model': 'fixture', 'protocol': 'responses'}, lambda: None)
+        replay = model._parse_provider_response(raw).provider_data['owner_model_continuation']['continuation']['output']
+        self.assertEqual(replay[0], output[0])
         events.clear()
         response = httpx.Response(200, headers={'content-type': 'text/event-stream'},
             stream=Frames([chat_chunk({'role': 'assistant', 'content': 'x'}) for _ in range(1001)]
@@ -140,7 +143,8 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
         model = OwnerChatModel({'provider': 'openai', 'baseURL': 'https://api.openai.com/v1',
             'model': 'fixture', 'protocol': 'responses'}, lambda: None, on_text=content, on_reasoning=reasoning)
         transport = httpx.MockTransport(lambda request: httpx.Response(200, json=response))
-        with patch('agent_factory.byok_model.httpx.AsyncClient', lambda **kwargs: client(transport=transport, **kwargs)):
+        with patch('agent_factory.byok_model.AsyncOpenAI',
+                lambda **kwargs: AsyncOpenAI(http_client=client(transport=transport), **kwargs)):
             result = await model.ainvoke([Message(role='user', content='你好')])
         self.assertEqual([(kind, value) for kind, value, _ in events], [('reasoning', '考虑一'),
             ('content', '答一'), ('reasoning', '考虑二'), ('content', '答二')])

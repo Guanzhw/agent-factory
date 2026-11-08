@@ -302,6 +302,42 @@ class ChatJourney(unittest.TestCase):
         identifier = self.session()['id']
         self.addCleanup(lambda: self.post('/research/sessions/' + identifier + '/stop', {}))
 
+    def test_responses_native_queue_tools_and_file_delivery(self):
+        from test_native_model import Endpoint, responses_reply
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Endpoint)
+        server.requests, server.hold = [], None
+        def answer(body):
+            if any(item.get('type') == 'function_call_output' for item in body['input']):
+                return 200, responses_reply('文件已经生成，可以下载。')
+            return 200, {'id': 'response-file', 'status': 'completed', 'output': [
+                {'type': 'function_call', 'id': 'fc_file', 'call_id': 'call_file', 'status': 'completed',
+                 'name': 'research_edit_file', 'arguments': json.dumps(
+                     {'path': 'responses.txt', 'old': '', 'new': 'Responses 文件交付'}, ensure_ascii=False)}]}
+        server.answer = answer
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.post('/personal-models', {'provider': 'openai-compatible', 'model': 'responses-regression',
+            'baseURL': f'http://127.0.0.1:{server.server_port}/v1', 'protocol': 'responses'})
+        self.page.reload()
+        self.page.get_by_role('button', name='选择模型', exact=True).click()
+        self.page.get_by_role('option', name='responses-regression', exact=True).click()
+        self.send('Responses 文件交付验收')
+        snapshot = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(snapshot['turns'][-1]['status'], 'completed', snapshot)
+        self.assertEqual(len(server.requests), 2)
+        output = next(item for item in server.requests[-1][0]['input']
+                      if item.get('type') == 'function_call_output')
+        self.assertEqual(output['call_id'], 'call_file')
+        expect(self.page.locator('.rs-turn')).to_contain_text('文件已经生成，可以下载。')
+        self.page.get_by_role('button', name='会话文件', exact=True).click()
+        with self.page.expect_download() as downloaded:
+            self.page.get_by_role('link', name='responses.txt', exact=True).click()
+        self.assertEqual(Path(downloaded.value.path()).read_text(encoding='utf-8'), 'Responses 文件交付')
+        self.page.reload()
+        expect(self.page.locator('.rs-turn')).to_contain_text('文件已经生成，可以下载。')
+        self.assertEqual(len(server.requests), 2)
+
     def test_own_source_remains_readable_and_context_survives_private_visibility(self):
         from agent_factory.application_content import ContentPublication, ContentSource
         content, sources = self.state['application_content'], self.state['research_peer_sources']
