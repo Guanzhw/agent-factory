@@ -66,11 +66,17 @@ class NativeHistory(journey.ChatJourney):
         db = service.runs.factory.bridge.native_db
         self.assertEqual(db.get_job(failed['turns'][-1]['runId'])['status'], 'completed')
         self.assertEqual(db.get_run(failed['turns'][-1]['runId']).status, RunStatus.error)
+        with service._write() as conn:
+            row = service._row(conn, self.owner, failed['id'])
+            service._save_session(conn, row, {**row['body'], 'contextCheckpoint': {
+                'throughSequence': 7, 'summary': {'summary': 'v1-successful-answers-only'}}})
         self.provider.answer = lambda _: (200, reply('recovered'))
         recovered = self.turn('recover-with-new-instruction', 8)
         self.assertEqual(recovered['turns'][-1]['status'], 'completed')
         wire = json.dumps(self.provider.requests[-1][0])
         self.assertIn('failed-user-instruction', wire)
+        self.assertIn('legacy-earliest-marker', wire)
+        self.assertNotIn('v1-successful-answers-only', wire)
         self.assertIn('failed', wire)
         db = service.runs.factory.bridge.native_db
         stored = db.get_session(value['id'], user_id=self.owner)
@@ -105,12 +111,22 @@ class NativeHistory(journey.ChatJourney):
             if body['messages'][-1]['content'] == 'Provide the summary of the conversation.' else 'initial-answer'))
         first = self.turn('initial-original-marker', 1)
         self.post(self.path + '/corrections', {'text': 'latest-correction-marker'})
+        service = self.state['research_sessions']
+        with service._write() as conn:
+            row = service._row(conn, self.owner, first['id'])
+            service._save_session(conn, row, {**row['body'], 'contextCheckpoint': {
+                'throughSequence': 1, 'projectionVersion': 1, 'summary': {'summary': 'v1-answer-only'}}})
         compact_model = self.post('/personal-models', {'provider': 'openai-compatible', 'model': 'history-compact',
             'baseURL': f'http://127.0.0.1:{self.provider.server_port}/v1', 'autoCompactTokenLimit': 1})
         self.post(self.path + '/turns', {'text': 'newer-instruction-marker', 'modelConnectionRef': compact_model['connectionRef']})
         value = self.wait_for(lambda row: len(row['turns']) == 2 and row['turns'][-1]['completedAt'] is not None)
         self.assertEqual(value['turns'][-1]['status'], 'completed')
         self.assertEqual(value['context']['compaction']['status'], 'ready')
+        summary_request = next(request for request, _ in self.provider.requests
+            if request['messages'][-1]['content'] == 'Provide the summary of the conversation.')
+        self.assertIn('initial-original-marker', json.dumps(summary_request))
+        self.assertIn('latest-correction-marker', json.dumps(summary_request))
+        self.assertNotIn('v1-answer-only', json.dumps(summary_request))
         primary = [request for request, _ in self.provider.requests if request.get('tools')][-1]
         wire = json.dumps(primary)
         self.assertIn('summarized-old-marker', wire)

@@ -67,13 +67,17 @@ class AdmissionRecovery(unittest.TestCase):
             self.assertEqual(duplicate['turns'][-1]['taskId'], task_id)
             with store.native_db.db_engine.connect() as conn:
                 jobs = Table(store.native_db.job_table_name, MetaData(), schema=store.native_db.db_schema, autoload_with=conn)
-                count = conn.execute(select(func.count()).select_from(jobs).where(jobs.c.session_id == task_id)).scalar()
+                count = conn.execute(select(func.count()).select_from(jobs).where(jobs.c.session_id == store.native_session_id(task))).scalar()
             self.assertEqual(count, 1)
             store.event(task_id, 'research_tool_started', 'read observation fixture', {'callId': 'read-fixture'})
             store.effect_reserve(task['run_id'], 'read-fixture', {'fixture': 'observation'})
             observed = read(path)['turns'][-1]
             self.assertTrue(any(event['data'].get('callId') == 'read-fixture' for event in observed['events']))
             self.assertEqual(observed['toolResults'][0]['status'], 'UNKNOWN')
+            with patch.object(service.runs.factory, 'delegation', None):
+                ungrouped = read(path)['turns'][-1]
+            self.assertEqual(ungrouped['toolResults'], observed['toolResults'])
+            self.assertEqual(ungrouped['status'], observed['status'])
             store.effect_complete(task['run_id'], 'read-fixture', {'output': 'latest observation'})
             updated = read(path)['turns'][-1]
             self.assertEqual(updated['toolResults'][0]['status'], 'DONE')

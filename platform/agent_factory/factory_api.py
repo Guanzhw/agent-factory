@@ -131,9 +131,8 @@ class FactoryAPI:
                 # Native acceptance preparation can cancel its ticket before saving a run.
                 snapshot = {'queue': ticket}
         task = self.store.task(task["id"], task["owner_id"])
-        effects = self.store.effects(task["id"])
         events = self.store.events(task["id"])
-        status = status_of({**task, "protected_failed": self.store.has_failures(task["id"])}, snapshot, effects, events, self.store)
+        status_task = {**task, "protected_failed": self.store.has_failures(task["id"])}
         group = None
         if self.delegation:
             group = await self.delegation.inspect_group(task["owner_id"], task["id"])
@@ -141,6 +140,9 @@ class FactoryAPI:
             # cancellation flag and failure provenance commit together; never
             # overwrite that cause using the caller's pre-await task snapshot.
             task = self.store.task(task["id"], task["owner_id"])
+        effects = group["parent"]["effects"] if group is not None else self.store.effects(task["id"])
+        status = status_of(status_task, snapshot, effects, events, self.store)
+        if group is not None:
             status = application_group_status(status, group)
             if task["cancel_requested"] and not group["allStopped"]:
                 status = "unknown" if group["unknown"] else "canceling"

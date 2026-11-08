@@ -132,12 +132,16 @@ class ReadOnlyQueueJourney(unittest.TestCase):
             self.assertEqual(len(server.requests), 4)
             expect(self.page.locator('.rs-turn')).to_contain_text('读取完成，模型故障后继续。')
         else:
+            self.assertEqual(turn['status'], 'failed', snapshot)
             self.assertTrue(store.effects(task['id']))
             self.assertEqual(len(server.requests), 2)
             self.assertTrue(any(e['type'] == 'research_reconciliation_required' for e in turn['events']))
         self.page.reload()
         expect(self.page.locator('.rs-turn')).to_have_count(1)
         self.assertEqual(len(server.requests), 4 if read_only else 2)
+        if not read_only:
+            self.assertTrue(any(e['type'] == 'research_reconciliation_required'
+                                for e in self.session()['turns'][-1]['events']))
 
     def test_read_only_cli_recovers_after_model_failure(self):
         self.exercise_retry(True)

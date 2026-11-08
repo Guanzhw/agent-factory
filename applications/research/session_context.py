@@ -16,6 +16,12 @@ def active_turns(row, turns):
     return [turn for turn in turns if turn['sequence'] > after]
 
 
+def checkpoint(row):
+    saved = row['body'].get('contextCheckpoint')
+    # Version 1 summarized only successful answers, not user requests or failures.
+    return saved if saved and saved.get('projectionVersion', 1) >= 2 else None
+
+
 def additions(turn):
     body = turn['body']
     messages = [Message(id=item['id'], role='user', content=item['text'])
