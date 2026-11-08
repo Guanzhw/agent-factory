@@ -28,10 +28,9 @@ class SourceContext(unittest.TestCase):
             'result': 'old-derived-secret', 'messages': [{'id': 'correction', 'kind': 'correction',
                 'text': 'old-correction-secret'}], 'assistantReplies': [
                     {'questionId': 'old', 'reply': {'text': 'old-reply-secret'}}]}}
-        _, identity = session_context.summary_source(row, [old])
-        row['body']['contextCheckpoint'] = {**identity, 'summary': {'summary': 'old-summary-secret'}}
+        row['body']['contextCheckpoint'] = {'throughSequence': 1, 'summary': {'summary': 'old-summary-secret'}}
         original = deepcopy((row, old))
-        service._prepare_turn_configuration = lambda conn, owner, row, turns: row
+        service._prepare_turn_configuration = lambda conn, owner, row, turns, request=None: row
         service._save_session = Mock()
         service._command = Mock()
         service.turns = Table('turns', MetaData(), Column('id', String), Column('session_id', String),
@@ -43,20 +42,20 @@ class SourceContext(unittest.TestCase):
                   {'questionId': 'new', 'reply': {'text': 'Available independent answer'}})]
         continued = collaboration._reserve(Mock(), row, [old], ready, 'event')
         saved_row = service._save_session.call_args.args[1]
-        payload = service._start(saved_row, continued).inputValues['sessionContext']
-        self.assertNotIn('old-', payload)
-        self.assertIn('Available independent answer', payload)
+        self.assertNotIn('sessionContext', service._start(saved_row, continued).inputValues or {})
+        additions = session_context.additions(continued)
+        self.assertNotIn('old-', str(additions))
+        self.assertIn('Available independent answer', str(additions))
         self.assertEqual(saved_row['body']['contextAfterSequence'], 1)
         self.assertEqual((row, old), original)
         service._context_sources('owner', saved_row, [old, continued])
         continued['body'].update(terminal=True, status='completed', result='Clean final answer')
-        summary, checkpoint = session_context.summary_source(saved_row, [old, continued])
-        self.assertNotIn('old-', str(summary))
-        saved_row['body']['contextCheckpoint'] = {**checkpoint, 'summary': {'summary': 'Clean summary'}}
-        projected = session_context.project(saved_row, [old, continued])
-        self.assertNotIn('old-', projected)
-        self.assertIn('Clean summary', projected)
-        self.assertIn('old-derived-secret', session_context.project(saved_row, [old, continued], raw=True))
+        active = session_context.active_turns(saved_row, [old, continued])
+        self.assertEqual([item['id'] for item in active], [continued['id']])
+        run = session_context.history_run(continued, None)
+        self.assertNotIn('old-', str(run.messages))
+        self.assertIn('Clean final answer', str(run.messages))
+        self.assertEqual(old['body']['result'], 'old-derived-secret')
 
     def test_source_service_failure_is_not_treated_as_revocation(self):
         service = object.__new__(ResearchSessions)

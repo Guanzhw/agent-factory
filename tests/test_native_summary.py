@@ -3,10 +3,15 @@ from http.server import ThreadingHTTPServer
 import json
 from threading import Event, Thread
 from types import SimpleNamespace
+from typing import Any
 import unittest
 
 from agno.exceptions import RunCancelledException, StopAgentRun
 from agno.run import RunContext
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.models.message import Message
+from agno.session.agent import AgentSession
 
 from agent_factory.byok_model import OwnerChatModel
 from agent_factory.model_dispatch import DelegatingModel
@@ -16,7 +21,7 @@ from test_native_model import Endpoint, reply
 
 class NativeSummary(unittest.TestCase):
     def setUp(self):
-        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Endpoint)
+        self.server: Any = ThreadingHTTPServer(('127.0.0.1', 0), Endpoint)
         self.server.requests, self.server.hold, self.server.started = [], None, Event()
         self.thread = Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -48,9 +53,19 @@ class NativeSummary(unittest.TestCase):
             return model
         main = OwnerChatModel(configuration, lambda: None)
         original_flags = (main.supports_native_structured_outputs, main.supports_json_schema_outputs)
-        result = summarize({'confirmedReplies': ['result was 42']}, context, auxiliary)
+        source = AgentSession(session_id='conversation', runs=[RunOutput(run_id='earlier',
+            status=RunStatus.completed, messages=[Message(role='user', content='result was 42'),
+                Message(role='assistant', tool_calls=[{'id': 'call', 'type': 'function',
+                    'function': {'name': 'measure', 'arguments': '{}'}}]),
+                Message(role='tool', tool_call_id='call', content='raw-observation-original', compressed_content='tool-observation-73')])])
+        result = summarize(source, auxiliary)
         self.assertEqual(result, {'summary': 'result was 42', 'topics': ['result']})
         request = self.server.requests[-1][0]
+        self.assertIn('tool-observation-73', json.dumps(request))
+        self.assertIn('measure', json.dumps(request))
+        self.assertNotIn('raw-observation-original', json.dumps(request))
+        assert source.runs and source.runs[0].messages
+        self.assertEqual(source.runs[0].messages[-1].role, 'tool')
         self.assertEqual(request.get('response_format', request.get('text', {}).get('format')), {'type': 'json_object'})
         self.assertEqual((main.supports_native_structured_outputs, main.supports_json_schema_outputs), original_flags)
         self.assertFalse(selected[-1].supports_native_structured_outputs)
@@ -58,7 +73,7 @@ class NativeSummary(unittest.TestCase):
             state.clear()
             state[cause] = True
             with self.assertRaises(exception):
-                summarize({'confirmedReplies': ['do not send this']}, context, auxiliary)
+                summarize(source, auxiliary)
         self.assertEqual(len(self.server.requests), 1)
         self.assertEqual(len({id(model) for model in selected}), 3)
 
