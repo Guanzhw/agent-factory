@@ -91,16 +91,18 @@ def build_runtime(store, native_db):
     class RetryAgent(Agent):
         def arun(self, input, **kwargs):
             run_id = kwargs.get('run_id')
-            ticket = native_db.get_job(run_id) if run_id else None
+            ticket = native_db.get_job(run_id) if native_db is not None and run_id else None
             if run_id and ticket and ticket['status'] == 'running' and ticket['attempt'] > 1 and not ticket['payload'].get('continue'):
                 previous = self.get_run_output(run_id, session_id=kwargs.get('session_id'), user_id=kwargs.get('user_id'))
                 effects = store.effects(store.task(run_id)['id'])
                 if previous and previous.messages and effects:
-                    calls = {call['id'] for message in previous.messages for call in message.tool_calls or []}
-                    results = {message.tool_call_id for message in previous.messages
+                    current = [message for message in previous.messages if not message.from_history]
+                    calls = {call['id'] for message in current for call in message.tool_calls or []}
+                    results = {message.tool_call_id for message in current
                                if message.role == 'tool' and message.tool_call_id}
-                    if (calls and calls == results
-                            and all(any(item['effect_key'].endswith(':' + call) for call in results) for item in effects)):
+                    recorded = {run_id + ':' + prefix + call for call in results
+                                for prefix in ('personal-tool:', 'research-session-tool:')}
+                    if calls and calls == results and all(item['effect_key'] in recorded for item in effects):
                         # This in-memory RunOutput belongs only to this claim; the marker is not persisted.
                         setattr(previous, '_factory_retry_attempt', ticket['attempt'])
                         return self.acontinue_run(run_response=previous, **kwargs)

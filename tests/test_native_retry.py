@@ -6,6 +6,8 @@ import threading
 import unittest
 from unittest.mock import patch
 
+from agno.agent import Agent
+from agno.models.message import Message
 from agent_factory.personal_cli import MemberCliAdapter
 import test_chat_journey as journey
 from test_native_model import Endpoint, chunk, reply
@@ -19,7 +21,7 @@ class NativeRetryJourney(unittest.TestCase):
     wait_for = journey.ChatJourney.wait_for
     send = journey.ChatJourney.send
 
-    def exercise(self, *, unknown=False, stop=False, completed=False):
+    def exercise(self, *, unknown=False, stop=False, completed=False, missing_result=False):
         marker = Path(self.folder.name) / (self.owner + '-executions.txt')
         self.post('/personal-tools/resources', {'transport': 'cli', 'toolName': 'append_once',
             'description': 'Append one marker', 'executable': sys.executable,
@@ -65,6 +67,18 @@ class NativeRetryJourney(unittest.TestCase):
             lost = patch.object(MemberCliAdapter, 'invoke', lost_result)
             lost.start()
             self.addCleanup(lost.stop)
+        if missing_result:
+            get_run = Agent.get_run_output
+            def missing_current_result(agent, *args, **kwargs):
+                previous = get_run(agent, *args, **kwargs)
+                if previous is not None:
+                    previous.messages = [message for message in previous.messages or [] if message.role != 'tool']
+                    previous.messages.insert(1, Message(role='tool', tool_call_id='append_1',
+                        content='Older result with the same call ID', from_history=True))
+                return previous
+            missing = patch.object(Agent, 'get_run_output', missing_current_result)
+            missing.start()
+            self.addCleanup(missing.stop)
         with patch.object(db, 'complete_job', side_effect=fail_settlement):
             self.send('Append once, then analyze the observation without repeating the operation.')
             self.assertTrue(settled.wait(20))
@@ -79,17 +93,18 @@ class NativeRetryJourney(unittest.TestCase):
             table = db._get_table(table_type='jobs')
             with db.Session() as conn, conn.begin():
                 conn.execute(table.update().where(table.c.id == task['run_id']).values(locked_at=0))
-            self.assertTrue(resumed.wait(15))
+            if not missing_result:
+                self.assertTrue(resumed.wait(15))
             if stop:
                 self.post('/research/sessions/' + current['id'] + '/stop', {})
                 release.set()
             final = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
-            self.assertEqual(final['turns'][-1]['status'], 'canceled' if stop else 'completed', final)
+            self.assertEqual(final['turns'][-1]['status'], 'canceled' if stop else 'failed' if missing_result else 'completed', final)
             self.assertEqual(final['turns'][-1]['taskId'], task['id'])
             self.assertEqual(db.get_job(task['run_id'])['attempt'], 2)
             self.assertEqual(marker.read_text(), 'once\n')
-            self.assertEqual(len(server.requests), 2 if completed else 3)
-            if not completed:
+            self.assertEqual(len(server.requests), 2 if completed or missing_result else 3)
+            if not completed and not missing_result:
                 self.assertTrue(any(message.get('role') == 'tool'
                     and ('unknown' if unknown else 'appended') in str(message.get('content')).lower()
                     for message in server.requests[2][0]['messages']))
@@ -108,3 +123,6 @@ class NativeRetryJourney(unittest.TestCase):
 
     def test_completed_native_run_needs_no_new_model_request(self):
         self.exercise(completed=True)
+
+    def test_history_result_cannot_replace_current_missing_result(self):
+        self.exercise(missing_result=True)
