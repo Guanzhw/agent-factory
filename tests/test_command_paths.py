@@ -137,3 +137,71 @@ class CommandPaths(unittest.IsolatedAsyncioTestCase):
             self.assertEqual((await call(read, context, 'unchanged', path='note.txt'))['text'], 'one one')
             await call(edit, context, 'corrected', path='note.txt', old='one one', new='two')
             self.assertEqual((await call(read, context, 'read', path='note.txt'))['text'], 'two')
+
+    async def test_native_edits_preserve_exact_names_and_unrelated_temp_files(self):
+        root = self.workspace
+        (root / 'A.txt').write_text('ASCII', encoding='utf-8')
+        (root / 'Ａ.txt').write_bytes(b'one\r\ntwo\r\n')
+        (root / 'Ａ.txt.tmp').write_text('unrelated material', encoding='utf-8')
+        def read(path):
+            return self.tools._files(root, 'research_read_file', {'path': path})['text']
+        self.assertEqual(read('Ａ.txt'), 'one\r\ntwo\r\n')
+        self.tools._edit(root, {'path': 'Ａ.txt', 'old': 'one\r\ntwo', 'new': 'edited\ntext'})
+        self.assertEqual(read('Ａ.txt'), ('edited\ntext\n').replace('\n', os.linesep))
+        self.assertEqual(read('A.txt'), 'ASCII')
+        self.assertEqual(read('Ａ.txt.tmp'), 'unrelated material')
+        (root / 'new.txt.tmp').write_text('keep me', encoding='utf-8')
+        self.tools._edit(root, {'path': 'new.txt', 'old': '', 'new': 'created'})
+        self.assertEqual(read('new.txt.tmp'), 'keep me')
+        with self.assertRaises(ToolInvocationError) as error:
+            self.tools._edit(root, {'path': 'new.txt', 'old': '', 'new': 'must not overwrite'})
+        self.assertEqual(error.exception.outcome, 'failed')
+        self.assertEqual(read('new.txt'), 'created')
+        self.assertEqual({p.name for p in root.iterdir()}, {'A.txt', 'Ａ.txt', 'Ａ.txt.tmp', 'new.txt', 'new.txt.tmp'})
+
+    @unittest.skipIf(sys.platform == 'win32', 'Symlink creation needs separately available Windows privileges')
+    async def test_native_edit_does_not_follow_unrelated_temp_symlink(self):
+        root = self.workspace
+        outside = root.parent / 'outside.txt'
+        outside.write_text('outside material', encoding='utf-8')
+        (root / 'note.txt').write_text('before', encoding='utf-8')
+        (root / 'note.txt.tmp').symlink_to(outside)
+        self.tools._edit(root, {'path': 'note.txt', 'old': 'before', 'new': 'after'})
+        self.assertEqual((root / 'note.txt').read_text(encoding='utf-8'), 'after')
+        self.assertFalse((root / 'note.txt').is_symlink())
+        self.assertEqual(outside.read_text(encoding='utf-8'), 'outside material')
+        self.assertTrue((root / 'note.txt.tmp').is_symlink())
+
+    async def test_new_file_does_not_overwrite_a_concurrent_creation(self):
+        from agno.tools.workspace import Workspace
+        original = Workspace.write_file
+        target = self.workspace / 'concurrent.txt'
+        def concurrent_write(toolkit, *args, **kwargs):
+            result = original(toolkit, *args, **kwargs)
+            target.write_text('other writer', encoding='utf-8')
+            return result
+        with patch.object(Workspace, 'write_file', concurrent_write), self.assertRaises(ToolInvocationError) as error:
+            self.tools._edit(self.workspace, {'path': 'concurrent.txt', 'old': '', 'new': 'new content'})
+        self.assertEqual(error.exception.outcome, 'failed')
+        self.assertEqual(target.read_text(encoding='utf-8'), 'other writer')
+        self.assertEqual([p.name for p in self.workspace.iterdir()], ['concurrent.txt'])
+
+    @unittest.skipIf(sys.platform == 'win32', 'Windows directory handles already deny ancestor rename')
+    async def test_edit_keeps_held_directory_when_its_name_is_replaced(self):
+        from agno.tools.workspace import Workspace
+        root = self.workspace
+        parent = root / 'sub'
+        parent.mkdir()
+        (parent / 'note.txt').write_text('owner-content', encoding='utf-8')
+        outside = root.parent / 'outside'
+        outside.mkdir()
+        original = Workspace.edit_file
+        def renamed_parent(toolkit, *args, **kwargs):
+            parent.rename(root / 'held-sub')
+            parent.symlink_to(outside, target_is_directory=True)
+            return original(toolkit, *args, **kwargs)
+        with patch.object(Workspace, 'edit_file', renamed_parent):
+            self.tools._edit(root, {'path': 'sub/note.txt', 'old': 'owner-content', 'new': 'edited'})
+        self.assertEqual((root / 'held-sub' / 'note.txt').read_text(encoding='utf-8'), 'edited')
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertEqual([p.name for p in (root / 'held-sub').iterdir()], ['note.txt'])
