@@ -51,7 +51,7 @@ def _receipt(receipt, *, read_only=False, **identity):
     return _unknown(read_only=read_only, **identity)
 
 
-def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context, *, exposed_name=None):
+def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context, *, exposed_name=None, mcp_connections=None):
     descriptor = replace(adapter.descriptor, input_schema=copy.deepcopy(dict(adapter.descriptor.input_schema)))
     fingerprint = digest(asdict(descriptor))
     service = store.personal_tools
@@ -137,7 +137,8 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context,
 
         invocation = ToolInvocation(owner_id=expected[0], connection_ref=connection['ref'],
             connection_revision=connection['revision'], call_id=call_id, arguments=values,
-            run_context=run_context, check_authorized=check_authorized, resolve_credential=resolve_credential)
+            run_context=run_context, check_authorized=check_authorized, resolve_credential=resolve_credential,
+            mcp_connections=mcp_connections)
         event = {'toolName': descriptor.tool_name, 'callId': call_id, 'arguments': values}
         await asyncio.to_thread(store.event, expected[1], 'tool_started', '开始执行工具', event)
         try:
