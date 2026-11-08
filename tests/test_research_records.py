@@ -15,7 +15,7 @@ class ResearchRecords(unittest.IsolatedAsyncioTestCase):
         self.addCleanup(self.engine.dispose)
         self.session = {'id': 'session', 'body': {'goal': 'Review existing results', 'boundaries': ''}}
         self.context = SimpleNamespace(user_id='alice', session_id='task', run_id='run')
-        sessions = SimpleNamespace(store=SimpleNamespace(engine=self.engine),
+        sessions = SimpleNamespace(store=SimpleNamespace(engine=self.engine, task_for_context=lambda context: {'id': 'task'}),
             db=SimpleNamespace(read=self.engine.connect, write=self.engine.begin),
             _execution=lambda conn, context: (self.session, None, None))
         self.publications = {}
