@@ -68,6 +68,7 @@ export const researchSessionsApi = {
       headers: { Accept: 'text/event-stream', 'X-Factory-Expected-Owner': owner } });
     assertAuthEpoch(epoch);
     if (response.status === 401) expireBrowserSession();
+    if ([403, 404].includes(response.status)) throw new ApiError('会话不存在或已不可访问。', response.status);
     if (!response.ok || !response.body || !response.headers.get('content-type')?.includes('text/event-stream')) throw new ApiError('实时连接暂时中断，正在重连。', response.status);
     const reader = response.body.getReader(); const decoder = new TextDecoder(); let buffer = '';
     try {
