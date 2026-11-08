@@ -5,7 +5,7 @@ import { assistantApi, type ResearchSource } from './live/assistantClient.js';
 import { researchSessionsApi as api, type CreateSession, type ResearchSession, type SessionAction, type SessionOptions, type SessionPage, type SessionTurn } from './researchSessionsClient.js';
 import { draftKey, readStored, removeStored, requestKey, writeStored, type PendingSessionRequest, type SessionDraft } from './researchSessionStorage.js';
 import { SessionQuestions } from './SessionQuestions.js';
-import { SessionActivity, hasUnconfirmedOperation } from './SessionActivity.js';
+import { SessionActivity, hasUnconfirmedOperation, isInFlightOperation } from './SessionActivity.js';
 import { ResearchReply } from './ResearchReply.js';
 import { CopyButton } from './CopyButton.js';
 import { SessionFiles } from './SessionFiles.js';
@@ -166,24 +166,34 @@ function ToolRecord({ item, active }: { item: SessionTurn['toolResults'][number]
 function TurnRecord({ turn, onQuestion }: { turn: SessionTurn; onQuestion: (id: string) => void }) {
   const replies = [...(turn.assistantReply ? [turn.assistantReply] : []), ...(turn.assistantReplies ?? [])];
   const children = turn.children ?? [];
-  const needsAttention = hasUnconfirmedOperation(turn) || turn.toolResults.some(item => item.result?.outcome === 'failed' || typeof toolOutput(item.result)?.exitCode === 'number' && toolOutput(item.result)?.exitCode !== 0) || children.some(child => ['failed', 'unknown', 'blocked'].includes(child.status)) || turn.events.some(event => event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required');
+  const legacyResults = turn.toolResults.filter(item => {
+    if (isInFlightOperation(turn, item)) return false;
+    const event = turn.events.findLast(event => ['research_tool_finished', 'tool_finished'].includes(event.type) && typeof event.data.callId === 'string' && item.effectKey.endsWith(':' + event.data.callId));
+    return !event || !item.result || item.status.toUpperCase() !== (event.data.cancelled === true ? 'CANCELLED' : 'DONE')
+      || event.data.outcome !== item.result.outcome
+      || !Object.entries(item.result).every(([key, value]) => JSON.stringify(event.data[key]) === JSON.stringify(value));
+  });
   return <article className="rs-turn"><header className="sr-only"><h3>第 {turn.sequence} 轮</h3><span>{turn.children?.length && turn.status === 'waiting_approval' ? (children.length ? '等待子助手结果' : '等待命令结果') : turnStates[turn.status] ?? turn.status}</span><time>{time(turn.createdAt)}</time></header>
     {turn.continuation && <div className="rs-continuation"><p>由同事回复自动发起本轮。创建轮次不代表回复已纳入模型请求，请核对下方引用与原问题状态。</p>{turn.continuation.questionIds.map(id => <button key={id} className="rs-text-button" onClick={() => onQuestion(id)}>自动继续的原问题 {id}</button>)}</div>}
     {turn.messages.map(message => <div key={message.id} className="rs-user-message"><div className={`rs-message rs-${message.kind}`}><span className={message.kind === 'correction' || turn.continuation ? 'rs-message-kind' : 'sr-only'}>{message.kind === 'correction' ? '你的纠正' : turn.continuation ? '自动继续指令' : '你的指令'}</span><p>{message.text}</p>{message.state === 'pending' && <small role="status">待纳入下一次模型请求</small>}</div><div className="rs-message-meta"><time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time><CopyButton text={message.text} label="复制用户消息"/></div></div>)}
-    <SessionActivity turn={turn} records={<details className="rs-execution"><summary>{needsAttention ? '诊断信息 · 执行需要核对' : '诊断信息'}</summary>
+    <SessionActivity turn={turn}/>
     {!!children.length && <section aria-label={`第 ${turn.sequence} 轮临时子助手`}><h4>临时子助手</h4><p className="rw-muted">本轮临时分工，使用你的工作区与授权。停止本会话也会请求停止子任务。</p>{children.map(child => <div className="rs-message rs-reply" key={child.childTaskId}>
       <p role="status">{childStates[child.status] ?? childStates.unknown}</p>
       <p className="rs-child-preview">{child.goal}</p><details className="rs-child-goal"><summary>查看委托内容</summary><p>{child.goal}</p></details>
       {child.status === 'completed' && (child.result !== null ? <details className="rs-child-result"><summary>查看子助手结果</summary><ResearchReply text={child.result}/></details> : <p className="rw-muted">尚无已确认的结果正文。</p>)}
     </div>)}</section>}
-    {!!turn.toolResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{turn.toolResults.map(item => <ToolRecord key={item.effectKey} item={item} active={!hasUnconfirmedOperation(turn) && ['queued', 'running', 'waiting_approval', 'finalizing'].includes(turn.status)}/>)}</section>}
-    <details className="rs-events"><summary>原始事件 · {turn.events.length} 条</summary><p className="rw-muted">以下是执行端保存的诊断记录。</p>{turn.events.length ? <ol>{turn.events.map(event => <li key={event.id}><time>{time(event.createdAt)}</time><strong>{memoryTools[String(event.data.toolName)]?.title ?? subagentTools[String(event.data.toolName)] ?? event.type}</strong>{event.type === 'research_tool_finished' && Object.hasOwn(memoryTools, String(event.data.toolName)) ? <MemoryEventResult data={event.data}/> : <p>{event.message}</p>}{Object.keys(event.data).length > 0 && <details><summary>事件详情</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details>}</li>)}</ol> : <p>还没有任务事件。</p>}</details>
-    </details>}/>
+    {!!legacyResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{legacyResults.map(item => <ToolRecord key={item.effectKey} item={item} active={!hasUnconfirmedOperation(turn) && ['queued', 'running', 'waiting_approval', 'finalizing'].includes(turn.status)}/>)}</section>}
     {turn.result !== null && <div className="rs-message rs-reply"><span className="sr-only">助手回复</span><ResearchReply text={turn.result}/><div className="rs-message-actions"><CopyButton text={turn.result} label="复制助手回复"/></div></div>}
     {!!replies.length && <section className="rs-adopted-reply" aria-label={`第 ${turn.sequence} 轮引用的同事回复`}><h4>本轮引用的同事回复</h4>{replies.map(reply => <div key={reply.questionId}><button className="rs-text-button" onClick={() => onQuestion(reply.questionId)}>核对原问题 {reply.questionId}</button>{reply.state === 'available' ? <><p>{reply.questionText}</p><p>{reply.reply.text}</p><p className="rw-muted">作为引用证据，不代表实验已验证。输入依据：{reply.reply.contentIds.length ? reply.reply.contentIds.join('、') : '无可用团队依据'}</p></> : <p role="status">引用的回复当前不可用，正文与来源已隐藏；后续研究需先核对权限。</p>}</div>)}</section>}
     {turn.failure && <p className="rw-error" role="alert">本轮未完成：{turn.failure}</p>}
 
   </article>;
+}
+
+function TurnDiagnostics({ turn }: { turn: SessionTurn }) {
+  return <details className="rs-execution"><summary>第 {turn.sequence} 轮 · {turnStates[turn.status] ?? turn.status}</summary>
+    <details className="rs-events"><summary>原始事件 · {turn.events.length} 条</summary><p className="rw-muted">以下是执行端保存的诊断记录。</p>{turn.events.length ? <ol>{turn.events.map(event => <li key={event.id}><time>{time(event.createdAt)}</time><strong>{memoryTools[String(event.data.toolName)]?.title ?? subagentTools[String(event.data.toolName)] ?? event.type}</strong>{event.type === 'research_tool_finished' && Object.hasOwn(memoryTools, String(event.data.toolName)) ? <MemoryEventResult data={event.data}/> : <p>{event.message}</p>}{Object.keys(event.data).length > 0 && <details><summary>事件详情</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details>}</li>)}</ol> : <p>还没有任务事件。</p>}</details>
+  </details>;
 }
 
 function SharedSources({ ownerId, ids }: { ownerId: string; ids: string[] }) {
@@ -283,6 +293,7 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
     </div></div>
     <aside id="rs-info-panel" popover="auto" className="rs-detail-panel" aria-label="会话信息"><header><h3>会话信息</h3><button type="button" popoverTarget="rs-info-panel" popoverTargetAction="hide" aria-label="关闭会话信息"><IconX size={18}/></button></header><p className={`rs-state rs-state-${value.state}`} role="status">{stateLabel}</p><p>{value.model.provider} · {value.model.model}</p><p>{connectionStatus}</p><h3>起始消息</h3><p>{value.goal}</p>{value.boundaries && <><h3>补充要求</h3><p>{value.boundaries}</p></>}<p>当前上下文 {value.context.characters} 字符。</p>    {value.collaboration?.enabled ? <p className="rs-collaboration-note">{value.state === 'stopped' ? '会话已停止，之后到达的同事回复不会自动继续研究。原问题仍可核对；停止本会话不会停止同事的任务。' : '此会话可自主询问同事助手，收到回复后继续。请求停止会取消尚未采用的自动继续安排，不会停止同事的任务。'}</p> : <p className="rw-muted">此会话沿用原配置，仅支持手动向同事助手提问；自主协作仅用于具备该能力的新会话。</p>}
     {value.capabilities?.memory === false && <p className="rw-muted">此会话的原工具配置不包含个人记忆。可使用上方“新建会话”，再直接告诉助手要记住、查找、纠正或忘记的偏好。</p>}
+    <section aria-label="诊断记录"><h3>诊断记录</h3>{value.turns.length ? value.turns.map(turn => <TurnDiagnostics key={turn.id} turn={turn}/>) : <p className="rw-muted">尚无执行轮次。</p>}</section>
     {value.allowedActions.includes('stop') && value.state !== 'running' && value.state !== 'stopping' && <button type="button" disabled={busy} onClick={onStop}>停止会话</button>}
 </aside>
     <aside ref={questions} id="rs-question-panel" popover="auto" className="rs-detail-panel" aria-label="同事问答"><header><h3>同事问答</h3><button type="button" popoverTarget="rs-question-panel" popoverTargetAction="hide" aria-label="关闭同事问答"><IconX size={18}/></button></header><SessionQuestions key={`${ownerId}:${value.id}:${value.blockReason ?? ''}`} ownerId={ownerId} sessionId={value.id} onAttention={setQuestionAttention} collaborationEnabled={value.collaboration?.enabled} questionId={questionId} onQuestion={onQuestion} onUse={value.allowedActions.includes('start') && !blocked && !busy ? id => { selectedReply.change(id); onQuestion(''); questions.current?.hidePopover(); composer.current?.focus(); composer.current?.scrollIntoView?.({ block: 'center' }); } : undefined}/></aside>

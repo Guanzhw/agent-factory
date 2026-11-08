@@ -73,13 +73,27 @@ class ModelSelection(unittest.TestCase):
         chat = OwnerChatModel(configuration, lambda: None)
         body = chat._body([Message(role='user', content='hello')])
         self.assertEqual(body['reasoning_effort'], 'high')
+        self.assertEqual(body['thinking'], {'type': 'enabled'})
         self.assertNotIn('reasoning', body)
         response = OwnerChatModel({**configuration, 'model': 'gpt-6-luna', 'protocol': 'responses'}, lambda: None)
         body = response._body([Message(role='user', content='hello')])
         self.assertEqual(body['reasoning']['effort'], 'high')
         self.assertNotIn('reasoning_effort', body)
         default = OwnerChatModel({key: value for key, value in configuration.items() if key != 'reasoningEffort'}, lambda: None)
-        self.assertNotIn('reasoning_effort', default._body([Message(role='user', content='hello')]))
+        body = default._body([Message(role='user', content='hello')])
+        self.assertNotIn('reasoning_effort', body)
+        self.assertEqual(body['thinking'], {'type': 'enabled'})
+
+    def test_deepseek_thinking_switch_is_scoped_to_verified_connection(self):
+        configuration = {'baseURL': GO, 'provider': 'openai-compatible', 'model': 'deepseek-v4.1-flash'}
+        for override in ({'model': 'ordinary'}, {'baseURL': 'https://example.test/v1'}, {'protocol': 'responses'}):
+            model = OwnerChatModel({**configuration, **override}, lambda: None)
+            self.assertNotIn('thinking', model._body([Message(role='user', content='hello')]))
+        for effort in ('low', 'high', 'max'):
+            model = OwnerChatModel({**configuration, 'reasoningEffort': effort}, lambda: None)
+            body = model._body([Message(role='user', content='hello')])
+            self.assertEqual(body['reasoning_effort'], effort)
+            self.assertEqual(body['thinking'], {'type': 'enabled'})
 
     def test_dispatch_passes_pinned_effort_to_model_and_auxiliary(self):
         native = SimpleNamespace(_on_text=Mock(), _on_reasoning=Mock())

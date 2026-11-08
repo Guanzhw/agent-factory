@@ -83,11 +83,16 @@ def chat_headers(base, lease, session_id):
 def generation_options(configuration):
     """Read the existing scoped option without rewriting historical records.
 
-    No new default or model selection is introduced. Future provider extensions
-    belong here and cannot override protocol, model, messages, auth or routing.
+    Provider extensions belong here and cannot override protocol, model,
+    messages, auth or routing. Stored configurations remain unchanged.
     """
     mode = configuration.get('thinkingMode')
     if mode is None or mode == 'default':
+        # This OpenCode model uses DeepSeek's explicit thinking switch, as in DSH/pi-ai.
+        if (configuration.get('baseURL') == GO_OPENAI_BASE
+                and configuration.get('model') == 'deepseek-v4.1-flash'
+                and configuration.get('protocol', 'chat-completions') == 'chat-completions'):
+            return {'thinking': {'type': 'enabled'}}
         return {}
     if (mode != 'disabled' or configuration.get('baseURL') != GO_BASE
             or configuration.get('model') != 'longcat-2.5-preview-free'

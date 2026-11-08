@@ -34,7 +34,7 @@ export function ChatModelPicker({ models, modelConnectionRef, reasoningEffort, o
       {!models.length && <p>请先配置一个模型。</p>}
       {efforts.length > 0 && <label>推理强度<select aria-label="推理强度" value={reasoningEffort ?? ''}
         onChange={event => onChange(modelConnectionRef, event.target.value || undefined)}>
-        <option value="">提供方默认</option>{efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}
+        <option value="">自动</option>{efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}
       </select></label>}
       <button type="button" className="rs-model-manage" onClick={() => { panel.current?.hidePopover(); onManage(); }}><IconSettings size={16}/>管理模型</button>
     </div>
