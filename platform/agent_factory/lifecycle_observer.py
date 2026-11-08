@@ -16,6 +16,8 @@ import json
 from types import SimpleNamespace
 from typing import Any, Callable
 
+from .task_status import native_status
+
 from agno.agent import Agent
 from agno.db.base import SessionType
 from fastapi import HTTPException
@@ -132,9 +134,9 @@ class FactoryLifecycleObserver:
             return "admission-rejected"
         if self.store.has_failures(task["id"]):
             return "protected-failure"
-        if ticket and ticket["status"] == "failed":
+        if ticket and native_status(ticket["status"], ticket.get("persistedRunStatus")) in {"failed", "error"}:
             return "native-failure"
-        if ticket and ticket["status"] == "cancelled":
+        if ticket and native_status(ticket["status"], ticket.get("persistedRunStatus")) in {"cancelled", "canceled"}:
             return "native-ended"
         if ticket and ticket["status"] == "completed":
             # Native completion does not renew an execution grant. Its pending
@@ -225,7 +227,8 @@ class FactoryLifecycleObserver:
                 "nativeStatus": ticket["status"] if ticket else None,
                 "persistedRunStatus": ticket.get("persistedRunStatus") if ticket else None,
                 "failed": (task["body"]["stoppedStatus"] == "failed" if task["body"].get("stoppedStatus") is not None
-                           else self.store.has_failures(task["id"]) or bool(ticket and ticket["status"] == "failed")),
+                           else self.store.has_failures(task["id"]) or bool(ticket and
+                               native_status(ticket["status"], ticket.get("persistedRunStatus")) in {"failed", "error"})),
                 "displayStatus": task["body"].get("stoppedStatus") or self._display_status(task, ticket, effects_unknown),
                 **({"content": ticket.get("content")} if include_content and ticket and stopped else {})}
 
@@ -282,7 +285,7 @@ class FactoryLifecycleObserver:
         # Match the detail projector: an ordinary in-flight effect is UNKNOWN
         # until its receipt arrives, but a verified running ticket stays running.
         # Once native execution pauses or ends, unresolved effects take priority.
-        raw = ticket["status"] or ticket.get("persistedRunStatus") or "queued"
+        raw = native_status(ticket["status"], ticket.get("persistedRunStatus"))
         if effects_unknown and raw != "running":
             return "unknown"
         if task["cancel_requested"] and raw not in {"cancelled", "canceled", "failed", "completed", "error"}:

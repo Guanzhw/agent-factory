@@ -153,6 +153,40 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0][2], events[1][2])
         self.assertNotEqual(events[1][2], events[-1][2])
 
+    async def test_native_stream_executes_tools_and_continues_after_failure(self):
+        calls = []
+        def diagnose() -> str:
+            """Inspect an ordinary command failure."""
+            calls.append('diagnose')
+            return 'exit 7: missing input'
+        def answer(body):
+            if any(message['role'] == 'tool' for message in body['messages']):
+                return 200, reply('continued after exit 7')
+            return 200, [chunk({'role': 'assistant', 'content': 'checking'}),
+                chunk({'tool_calls': [{'index': 0, 'id': 'call_diagnose', 'type': 'function',
+                    'function': {'name': 'diagnose', 'arguments': '{}'}}]}), chunk({}, 'tool_calls')]
+        self.server.answer = answer
+        agent = Agent(model=OwnerChatModel(self.config, lambda: None), tools=[diagnose], telemetry=False)
+        events = [event async for event in agent.arun('diagnose', stream=True, stream_events=True)]
+        self.assertEqual(calls, ['diagnose'])
+        self.assertTrue(any(getattr(event, 'content', None) == 'continued after exit 7' for event in events))
+        self.assertEqual(self.server.requests[-1][0]['messages'][-1]['content'], 'exit 7: missing input')
+        calls.clear()
+        def responses(body):
+            if any(item.get('type') == 'function_call_output' for item in body['input']):
+                return 200, responses_reply('continued after exit 7')
+            return 200, [{'type': 'response.completed', 'response': {'status': 'completed', 'output': [
+                {'id': 'fc_diagnose', 'type': 'function_call', 'call_id': 'call_diagnose',
+                    'name': 'diagnose', 'arguments': '{}', 'status': 'completed'}]}}]
+        self.server.answer = responses
+        agent = Agent(model=OwnerChatModel({**self.config, 'protocol': 'responses'}, lambda: None),
+            tools=[diagnose], telemetry=False)
+        events = [event async for event in agent.arun('diagnose', stream=True, stream_events=True)]
+        self.assertEqual(calls, ['diagnose'])
+        self.assertTrue(any(getattr(event, 'content', None) == 'continued after exit 7' for event in events))
+        results = [item for item in self.server.requests[-1][0]['input'] if item.get('type') == 'function_call_output']
+        self.assertEqual(results[0]['call_id'], 'call_diagnose')
+
     async def test_each_request_refreshes_owner_credentials_redacts_errors_and_cancel_is_not_success(self):
         for protocol in ('chat-completions', 'responses'):
             self.server.requests.clear()

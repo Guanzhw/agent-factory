@@ -22,6 +22,7 @@ from agent_factory.applications import GovernedStorage
 from agent_factory.control_commands import ControlCommand
 from agent_factory.runtime_hooks import effect_unresolved, runtime_custody_held
 from agent_factory.store import digest, now
+from agent_factory.task_status import native_status
 from .assistants import CreateAssistant
 from .session_setup import INSTRUCTIONS, MODE, ResearchSessionSetup, rejected
 from .session_memory import ResearchSessionMemory
@@ -272,7 +273,8 @@ class ResearchSessions:
                         child['status'] in {'completed', 'failed', 'cancelled', 'canceled'} for child in children):
                     # Ending the native turn does not resolve or replay its unknown operations.
                     observed_terminal = True
-                    status = {'completed': 'completed', 'failed': 'failed', 'cancelled': 'canceled'}[ticket['status']]
+                    status = {'error': 'failed', 'cancelled': 'canceled', 'canceled': 'canceled'}.get(
+                        native_status(ticket['status'], run.get('status')), ticket['status'])
                 # Ticket fallbacks may contain error text. Only exact persisted run
                 # messages accompanying an actually completed task are an answer.
                 if (status == 'completed' and observed_terminal and run.get('run_id') == task['run_id']
@@ -308,7 +310,11 @@ class ResearchSessions:
                     if status == 'completed':
                         body['failure'] = None
                     elif status == 'failed' and not body.get('contextFailure'):
-                        error = (snapshot.get('queue') or {}).get('error') or snapshot.get('error')
+                        native_error = None
+                        if native_status(None, run.get('status')) == 'error':
+                            native_error = next((event.get('error') for event in reversed(run.get('events') or [])
+                                if event.get('event') == 'RunError'), None) or run.get('content')
+                        error = (snapshot.get('queue') or {}).get('error') or snapshot.get('error') or native_error
                         if isinstance(error, str) and error.startswith('PERSONAL_MODEL_HTTP_'):
                             status_code = error.removeprefix('PERSONAL_MODEL_HTTP_')
                             body['failure'] = f'模型服务返回 HTTP {status_code}，本轮未完成。请检查模型服务或设置中的连接。'

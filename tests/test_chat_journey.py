@@ -387,6 +387,7 @@ class ChatJourney(unittest.TestCase):
                 'throughSequence': turn['sequence'], 'projectionVersion': 2, 'prefixDigest': 'legacy-digest',
                 'summary': {'summary': 'source-summary-marker', 'topics': []}}})
         content.set_visibility(publisher, source['id'], 'personal', str(uuid4()))
+        expect(self.page.get_by_text(re.compile('旧共享来源或助手回答已不可用'))).to_be_visible()
         snapshot = self.session()
         self.assertIn('start', snapshot['allowedActions'])
         self.assertNotEqual(snapshot['state'], 'blocked')
@@ -574,6 +575,54 @@ class ChatJourney(unittest.TestCase):
             completed = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
             self.assertEqual(completed['turns'][-1]['status'], 'completed')
             self.assertEqual(submit.call_count, 1)
+
+    def test_streamed_admission_lost_ack_recovers_original_run_without_replay(self):
+        from agent_factory.native_stream import submit_stream
+        async def lose_ack(*args, **kwargs):
+            response = await submit_stream(*args, **kwargs)
+            if response.status_code == 200:
+                raise ConnectionError('fixture: acknowledgement lost after durable admission')
+            return response
+        with patch('agent_factory.native_bridge.submit_stream', side_effect=lose_ack):
+            self.send('切换模型后继续')
+        first = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        turn = first['turns'][-1]
+        self.assertIs(self.state['store'].native_db.get_job(turn['runId'])['payload']['stream'], True)
+        before = len(self.model.requests)
+        self.post('/research/sessions/' + first['id'] + '/turns',
+            {'requestId': turn['requestId'], 'text': '切换模型后继续'})
+        self.page.reload()
+        expect(self.page.locator('.rs-turn')).to_contain_text('切换模型后完成。')
+        recovered = self.session()
+        self.assertEqual([item['runId'] for item in recovered['turns']], [turn['runId']])
+        self.assertEqual(len(self.model.requests), before)
+
+    def test_incremental_progress_updates_existing_row_without_full_projection(self):
+        self.model.reasoning_pause = threading.Event()
+        self.addCleanup(self.model.reasoning_pause.set)
+        self.send('思考与内容顺序验收')
+        expect(self.page.locator('.rs-thinking').get_by_text('再核对最终输出。', exact=True)).to_be_visible()
+        snapshot = self.session()
+        turn = snapshot['turns'][-1]
+        native = self.state['store'].native_db
+        self.assertIs(native.get_job(turn['runId'])['payload']['stream'], True)
+        event = turn['events'][-1]
+        self.assertEqual(event['type'], 'model_reasoning_delta')
+        service = self.state['research_sessions']
+        with patch.object(service, 'read', wraps=service.read) as reads:
+            # Commit another fragment to the same persisted row, as provider streaming does.
+            self.state['store'].model_delta(turn['taskId'], event['type'], '增量更新证据。', event['data']['responseId'])
+            expect(self.page.locator('.rs-thinking').last).to_contain_text('增量更新证据。')
+            self.page.wait_for_timeout(1100)
+            self.assertEqual(reads.call_count, 0)
+        self.model.reasoning_pause.set()
+        self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        persisted = native.get_run(turn['runId'])
+        self.assertTrue(any(event.event == 'RunContent' for event in persisted.events))
+        expect(self.page.locator('.rs-turn')).to_contain_text('顺序验收最终回答。')
+        self.page.reload()
+        expect(self.page.locator('.rs-thinking').last).to_contain_text('增量更新证据。')
+        self.assertEqual(len([item for item in self.session()['turns'][-1]['events'] if item['id'] == event['id']]), 1)
 
     def test_initial_stream_refresh_disconnect_and_missing_session(self):
         requests = []
@@ -841,6 +890,7 @@ class ChatJourney(unittest.TestCase):
         self.page.keyboard.press('Escape')
         self.model.reasoning_pause = threading.Event()
         self.addCleanup(self.model.reasoning_pause.set)
+        first_request = len(self.model.requests)
         self.send('思考与内容顺序验收')
         expect(self.page.locator('.rs-thinking').get_by_text('再核对最终输出。', exact=True)).to_be_visible()
         expect(self.page.locator('.rs-streaming-reply').get_by_text('顺序验收', exact=True)).to_be_visible()
@@ -859,7 +909,7 @@ class ChatJourney(unittest.TestCase):
         calls = [event for event in ordered if 'callId' in event['data']]
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[0]['data']['callId'], calls[1]['data']['callId'])
-        native_requests = [request for request in self.model.requests if any(message['role'] == 'user'
+        native_requests = [request for request in self.model.requests[first_request:] if any(message['role'] == 'user'
             and message['content'] == '思考与内容顺序验收' for message in request['messages'])]
         self.assertTrue(native_requests)
         self.assertTrue(all(request['model'] == 'deepseek-v4.1-flash'

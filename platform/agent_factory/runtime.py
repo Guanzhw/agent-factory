@@ -89,5 +89,6 @@ def build_runtime(store, native_db):
 
     executor = Agent(id='factory-executor', name='Factory', model=model, db=native_db,
         instructions=instructions, tools=selected_tools, pre_hooks=[bind_run],
+        store_events=True, events_to_skip=[],
         add_history_to_context=True, add_session_summary_to_context=True, telemetry=False)
     return executor, Registry(models=[model], dbs=[native_db])

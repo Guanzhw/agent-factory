@@ -36,6 +36,73 @@ def chat_chunk(delta, finish=None):
 
 
 class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_native_tail_waits_for_database_changes_without_projection_loop(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from research.session_stream import session_updates
+        queue, attempts = asyncio.Queue(), []
+        async def notifications():
+            while True:
+                yield await queue.get()
+        async def failed_tail(*args, **kwargs):
+            attempts.append(True)
+            raise ConnectionError('fixture native buffer unavailable')
+            yield
+        snapshot = {'id': 'session', 'turns': [{'id': 'turn', 'taskId': 'task', 'runId': 'run', 'status': 'running'}]}
+        updated = {**snapshot, 'state': 'stopped'}
+        service = SimpleNamespace(read=AsyncMock(return_value=updated))
+        request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+        auth = SimpleNamespace(user=lambda _: {'id': 'owner'})
+        with patch('research.session_stream.get_event_stream', return_value=SimpleNamespace(tail=failed_tail)):
+            stream = session_updates(request, auth, service, 'owner', 'session', notifications(), snapshot)
+            await anext(stream)
+            next_frame = asyncio.create_task(anext(stream))
+            try:
+                await asyncio.sleep(0.05)
+                self.assertEqual(attempts, [True])
+                service.read.assert_not_called()
+                await queue.put(SimpleNamespace(payload=json.dumps({'table': 'research_sessions', 'owner': 'owner'})))
+                self.assertIn('stopped', await asyncio.wait_for(next_frame, timeout=1))
+                service.read.assert_awaited_once()
+            finally:
+                next_frame.cancel()
+                await asyncio.gather(next_frame, return_exceptions=True)
+                await stream.aclose()
+
+    async def test_streaming_admission_returns_before_execution_and_preserves_rejection(self):
+        from fastapi import FastAPI, Request
+        from fastapi.responses import JSONResponse, StreamingResponse
+        from agent_factory.native_stream import submit_stream
+        app = FastAPI()
+        release, completed = asyncio.Event(), asyncio.Event()
+        async def execute():
+            await release.wait()
+            completed.set()
+        workers = []
+        @app.post('/runs')
+        async def submit(request: Request):
+            self.assertEqual(request.headers.get('authorization'), 'Bearer fixture')
+            workers.append(asyncio.create_task(execute()))
+            async def progress():
+                await completed.wait()
+                yield 'event: completed\n\n'
+            return StreamingResponse(progress(), media_type='text/event-stream')
+        @app.post('/rejected')
+        async def rejected():
+            return JSONResponse({'message': 'Job queue is full', 'code': 'REQUEST_REJECTED'}, status_code=429)
+        try:
+            response = await asyncio.wait_for(submit_stream(app, 'POST', '/runs', headers={'Authorization': 'Bearer fixture'}, data={}), timeout=2)
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(completed.is_set())
+            release.set()
+            await asyncio.wait_for(completed.wait(), timeout=2)
+            response = await submit_stream(app, 'POST', '/rejected', headers={}, data={})
+            self.assertEqual(response.status_code, 429)
+            self.assertEqual(response.json()['code'], 'REQUEST_REJECTED')
+        finally:
+            release.set()
+            await asyncio.gather(*workers)
+
     async def test_cancel_during_persistence_does_not_flush_same_segment_twice(self):
         started, release, finished = threading.Event(), threading.Event(), threading.Event()
         written = []

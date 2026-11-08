@@ -17,6 +17,7 @@ from agno.db.base import SessionType
 from sqlalchemy import MetaData, Table, inspect, select
 
 from .auth import EXECUTOR_ID
+from .native_stream import submit_stream
 
 INTERNAL_NATIVE: ContextVar[bool] = ContextVar("factory_internal_native", default=False)
 
@@ -76,15 +77,21 @@ class NativeBridge:
             raise RuntimeError("Native HTTP application has not been attached")
         self.auth.require_member(user_id)
         headers = {**kwargs.pop("headers", {}), "Authorization": f"Bearer {self.auth._issue_native_token(user_id)}"}
+        streaming = method == "POST" and path.endswith("/runs") and kwargs.get("data", {}).get("stream") == "true"
         trusted_context = INTERNAL_NATIVE.set(True)
         try:
-            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self._app),
-                                         base_url="http://native.agent-factory", timeout=30) as client:
-                response = await client.request(method, path, headers=headers, **kwargs)
+            if streaming:
+                response = await submit_stream(self._app, method, path, headers=headers, data=kwargs['data'])
+            else:
+                async with httpx.AsyncClient(transport=httpx.ASGITransport(app=self._app),
+                                             base_url="http://native.agent-factory", timeout=30) as client:
+                    response = await client.request(method, path, headers=headers, **kwargs)
         except httpx.TimeoutException as error:
             raise HTTPException(503, {"code": "NATIVE_ACK_UNKNOWN", "message": "Native acknowledgement timed out; reconcile the stored task before retrying"}) from error
         finally:
             INTERNAL_NATIVE.reset(trusted_context)
+        if streaming and response.status_code < 400:
+            return {}  # Submission resolves the exact durable ticket below.
         try:
             body = response.json()
         except ValueError as error:
@@ -119,11 +126,18 @@ class NativeBridge:
         envelope = {"plan_ref": plan_ref, "user_id": user_id, "task_id": task_id, "request_id": request_id}
         native_key = hashlib.sha256(json.dumps({"owner": user_id, "task": task_id, "request": request_id},
                                               sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        return await self._request("POST", f"/{component['kind']}s/{quote(component['id'], safe='')}/runs", user_id,
+        accepted = await self._request("POST", f"/{component['kind']}s/{quote(component['id'], safe='')}/runs", user_id,
             headers={"Idempotency-Key": native_key},
             data={"message": json.dumps(plan.get("inputValues", {}), separators=(",", ":")) if component["kind"] == "workflow" else plan["normalizedGoal"], "session_id": session_id,
-                  "background": "true", "stream": "false",
+                  "background": "true", "stream": "true" if component["kind"] == "agent" else "false",
                   "session_state": json.dumps({"factory_envelope": envelope}, separators=(",", ":"))})
+        if component['kind'] == 'workflow':
+            return accepted
+        original = await self.find_original_run(task_id, user_id, idempotency_key=native_key)
+        if original is None or original.get('queue') is None:
+            raise HTTPException(503, "NATIVE_ACK_UNKNOWN: accepted stream has no matching durable ticket")
+        self._ticket(original['queue'], original['run_id'], session_id, user_id, component)
+        return original
 
     @staticmethod
     def _run_path(run_id: str) -> str:
@@ -161,7 +175,7 @@ class NativeBridge:
         result["queue"] = jsonable_encoder(ticket)
         return result
 
-    async def find_original_run(self, session_id: str, user_id: str) -> dict[str, Any] | None:
+    async def find_original_run(self, session_id: str, user_id: str, *, idempotency_key: str | None = None) -> dict[str, Any] | None:
         """Read original admission; callers validate the ticket before binding it."""
         component = self._component(session_id, user_id)
         task_id = session_id
@@ -181,7 +195,9 @@ class NativeBridge:
                         table.c.session_id == session_id, table.c.user_id == user_id,
                         table.c.component_type == kind, table.c.component_id == identifier,
                     )
-                    if task is not None:
+                    if idempotency_key is not None:
+                        query = query.where(table.c.idempotency_key == idempotency_key)
+                    elif task is not None:
                         native_key = hashlib.sha256(json.dumps({'owner': user_id, 'task': task_id,
                             'request': task['request_id']}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
                         query = query.where(table.c.idempotency_key == native_key)
@@ -192,7 +208,7 @@ class NativeBridge:
                 ticket = tickets[0]
                 return {"run_id": ticket["id"], "session_id": session_id,
                         "status": ticket["status"], "queue": jsonable_encoder(ticket)}
-            if session_id != task_id:
+            if idempotency_key is not None or session_id != task_id:
                 # Other conversation turns do not prove this task was admitted.
                 return None
             session = self.native_db.get_session(session_id, session_type=session_type, user_id=user_id)
