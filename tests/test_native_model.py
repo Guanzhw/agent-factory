@@ -13,6 +13,7 @@ from agno.models.message import Message
 from pydantic import BaseModel
 
 from agent_factory.byok_model import OwnerChatModel
+from agent_factory.runtime import build_runtime
 
 
 def chunk(delta, finish=None):
@@ -87,6 +88,31 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
             compressed_content='summary=42')], compress_tool_results=True, response_format={'type': 'json_object'})
         self.assertEqual(self.server.requests[-1][0]['messages'][-1]['content'], 'summary=42')
         self.assertEqual(self.server.requests[-1][0]['response_format'], {'type': 'json_object'})
+
+    async def test_runtime_dispatch_forwards_native_json_mode_and_media_to_selected_owner(self):
+        class Answer(BaseModel):
+            count: int
+        self.server.answer = lambda _: (200, reply('{"count":42}'))
+        bound, selections = {}, []
+        plan = {'connectionRefs': {'model': 'configured-owner-model'}, 'normalizedGoal': 'read input'}
+        def bind(context):
+            bound.update(run_id=context.run_id, plan_id='plan-one')
+        def select(owner, reference, context, **_):
+            selections.append((owner, reference, context.session_id))
+            return OwnerChatModel(self.config, lambda: SimpleNamespace(password='owner-one'))
+        store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: plan,
+            task=lambda *_: bound, plan=lambda *_: plan, cancellation_requested=lambda _: False,
+            personal_models=SimpleNamespace(model_for=select))
+        executor, _ = build_runtime(store, None)
+        result = await executor.arun('read input', session_id='task-one', user_id='owner-one',
+            output_schema=Answer, images=[Image(url='https://example.invalid/image.png')])
+        self.assertEqual(result.content.count, 42)
+        request, headers = self.server.requests[-1]
+        self.assertEqual(request['response_format'], {'type': 'json_object'})
+        self.assertEqual(headers['Authorization'], 'Bearer owner-one')
+        self.assertEqual(selections, [('owner-one', 'configured-owner-model', 'task-one')])
+        user = next(message for message in request['messages'] if message['role'] == 'user')
+        self.assertEqual({part['type'] for part in user['content']}, {'text', 'image_url'})
 
     async def test_native_tool_loop_preserves_reasoning_and_order_without_private_replay_record(self):
         events = []
