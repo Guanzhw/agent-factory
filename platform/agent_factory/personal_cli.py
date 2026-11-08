@@ -55,8 +55,6 @@ class MemberCliAdapter:
         stopped, dispatched = True, False
         try:
             invocation.check_authorized()
-            if asyncio.get_running_loop().get_debug():
-                raise ToolInvocationError('CLI_DEBUG_LOGGING_UNSAFE', outcome='failed', stopped=True)
             lease = invocation.resolve_credential()
             env = dict(os.environ)
             env.update(self.configuration.get('environment', {}))

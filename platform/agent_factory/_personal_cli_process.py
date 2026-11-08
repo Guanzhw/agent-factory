@@ -251,6 +251,8 @@ async def _run_windows_cli_process(*, executable: str, argv: Sequence[str], env:
 
 def _retain_output(buffers, index, chunk, maximum):
     """Keep both ends of captured output; full chunks still reach the sink."""
+    if maximum == 0:
+        return
     buffers[index].extend(chunk)
     if maximum is None:
         return
@@ -282,7 +284,7 @@ async def run_cli_process(*, executable: str, argv: Sequence[str], env: Mapping[
             or timeout_seconds is not None and (type(timeout_seconds) not in (int, float)
                 or not math.isfinite(timeout_seconds) or timeout_seconds <= 0)
             or max_output_bytes is not None and (type(max_output_bytes) is not int or max_output_bytes <= 0)
-            or capture_max_bytes is not None and (type(capture_max_bytes) is not int or capture_max_bytes <= 0)):
+            or capture_max_bytes is not None and (type(capture_max_bytes) is not int or capture_max_bytes < 0)):
         raise CLIProcessError('PERSONAL_CLI_PROCESS_INVALID', dispatched=False, stopped=True)
     if sys.platform == 'win32':
         return await _run_windows_cli_process(executable=executable, argv=argv, env=env, cwd=cwd,

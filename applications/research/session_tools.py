@@ -227,7 +227,7 @@ def _directory(root, parts=(), *, create=False):
         os.close(descriptor)
 
 
-def _open_file(parent, name, *, edit=False, create=False):
+def _open_file(parent, name):
     leaf = os.path.basename(name)
     if leaf != name or leaf in {'', '.', '..'}:
         raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
@@ -239,8 +239,8 @@ def _open_file(parent, name, *, edit=False, create=False):
         _parts(name)
         try:
             handle = cast('pywintypes.HANDLEType', win32file.CreateFile(str(parent / name),
-                win32con.GENERIC_READ | (win32con.GENERIC_WRITE if edit else 0),
-                win32con.FILE_SHARE_READ, None, win32con.CREATE_NEW if create else win32con.OPEN_EXISTING,
+                win32con.GENERIC_READ,
+                win32con.FILE_SHARE_READ, None, win32con.OPEN_EXISTING,
                 win32file.FILE_FLAG_OPEN_REPARSE_POINT, None))
         except pywintypes.error:
             raise OSError('RESEARCH_FILE_UNAVAILABLE') from None
@@ -249,20 +249,14 @@ def _open_file(parent, name, *, edit=False, create=False):
             if (info[0] & (win32con.FILE_ATTRIBUTE_REPARSE_POINT | win32con.FILE_ATTRIBUTE_DIRECTORY)
                     or win32file.GetFileType(int(handle)) != win32con.FILE_TYPE_DISK):
                 raise ValueError('RESEARCH_FILE_UNSUPPORTED')
-            descriptor = msvcrt.open_osfhandle(int(handle), (os.O_RDWR if edit else os.O_RDONLY) | os.O_BINARY)
+            descriptor = msvcrt.open_osfhandle(int(handle), os.O_RDONLY | os.O_BINARY)
             handle.Detach()  # The CRT descriptor now owns this exact file handle.
             return descriptor
         except (pywintypes.error, OSError, ValueError):
-            if create:
-                # CREATE_NEW already changed the directory. Do not settle an
-                # unconfirmed new file as a harmless pre-write rejection.
-                raise ToolInvocationError('RESEARCH_TOOL_OUTCOME_UNKNOWN', outcome='unknown', stopped=True) from None
             raise OSError('RESEARCH_FILE_UNSUPPORTED') from None
         finally:
             handle.Close()
-    flags = (os.O_RDWR if edit else os.O_RDONLY) | getattr(os, 'O_NOFOLLOW') | getattr(os, 'O_NONBLOCK')
-    if create:
-        flags |= os.O_CREAT | os.O_EXCL
+    flags = os.O_RDONLY | getattr(os, 'O_NOFOLLOW') | getattr(os, 'O_NONBLOCK')
     return os.open(leaf, flags, 0o600, dir_fd=parent)
 
 
@@ -486,6 +480,8 @@ class ResearchSessionTools:
                     receipt = {'outcome': 'cancelled', 'cancelled': True, 'stopped': True, 'code': error.code}
                 elif error.outcome == 'failed' and error.stopped:
                     receipt = {'outcome': 'failed', 'stopped': True, 'code': error.code}
+                    if isinstance(error.output, str):
+                        receipt['message'] = error.output
                 else:
                     store.event(identity[1], 'research_tool_finished', '原操作结果未确认，请先核对',
                         {**event, 'outcome': 'unknown', 'stopped': error.stopped, 'code': error.code})
@@ -615,7 +611,7 @@ class ResearchSessionTools:
                     after = None
                 if result.startswith('Error'):
                     if after == before or not exists and after is None:
-                        raise _rejected('RESEARCH_EDIT_REJECTED')
+                        raise ToolInvocationError('RESEARCH_EDIT_REJECTED', outcome='failed', stopped=True, output=result)
                     raise ToolInvocationError('RESEARCH_TOOL_OUTCOME_UNKNOWN', outcome='unknown', stopped=True)
                 if after is None:
                     raise ToolInvocationError('RESEARCH_TOOL_OUTCOME_UNKNOWN', outcome='unknown', stopped=True)
@@ -682,7 +678,7 @@ class ResearchSessionTools:
             result = await run_cli_process(executable=executable, argv=argv[1:], env=environment,
                 cwd=cwd, stdin=b'', timeout_seconds=None,
                 max_output_bytes=None, before_spawn=check, check_authorized=check, on_output=append_output,
-                capture_max_bytes=1024 * 1024)
+                capture_max_bytes=0)
             returned = {**output, 'exitCode': result.returncode, 'stopped': result.stopped,
                 **command_output(saved, values.get('max_output_tokens', DEFAULT_OUTPUT_TOKENS) * 4)}
             if returned.get('truncated') or output_directory is not None:

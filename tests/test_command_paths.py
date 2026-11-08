@@ -6,10 +6,15 @@ import shutil
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from agno.exceptions import RunCancelledException
-from agent_factory.personal_tool_contract import ToolInvocationError
+from agno.run import RunContext
+from agent_factory._personal_cli_process import run_cli_process
+from agent_factory.personal_cli import MemberCliAdapter
+from agent_factory.personal_tool_contract import ToolDescriptor, ToolInvocation, ToolInvocationError
+from test_tool_unknown import Effects, call
 from research.session_tools import ResearchSessionTools, _directory, _open_file, _windows_path
 
 
@@ -90,3 +95,45 @@ class CommandPaths(unittest.IsolatedAsyncioTestCase):
         renamed = self.workspace.with_name(self.workspace.name + '-renamed')
         self.workspace.rename(renamed)
         renamed.rename(self.workspace)
+
+    async def test_personal_cli_runs_with_asyncio_debug_enabled(self):
+        self.assertTrue(asyncio.get_running_loop().get_debug())
+        descriptor = ToolDescriptor(adapter_id='debug-cli', revision='1', tool_name='debug_cli', description='Diagnostic',
+            input_schema={'type': 'object'}, transport='cli', credential_provider_id='fixture',
+            credential_destination=sys.executable, capabilities=('tool:invoke',))
+        adapter = MemberCliAdapter(descriptor, {'executable': sys.executable, 'arguments': ['-c', 'print(42)'],
+            'stdinJson': False, 'outputFormat': 'text'})
+        result = await adapter.invoke(ToolInvocation(owner_id='owner', connection_ref='fixture', connection_revision='1',
+            call_id='debug', arguments={}, run_context=None, check_authorized=lambda: None, resolve_credential=lambda: None))
+        self.assertEqual(result['text'].strip(), '42')
+
+    async def test_streamed_output_can_skip_duplicate_capture(self):
+        chunks = {'stdout': bytearray(), 'stderr': bytearray()}
+        result = await run_cli_process(executable=sys.executable, argv=['-c',
+            'import sys;sys.stdout.write("x"*100000);sys.stderr.write("diagnostic");sys.exit(7)'],
+            env=dict(os.environ), cwd=self.workspace, stdin=b'', timeout_seconds=None, max_output_bytes=None,
+            capture_max_bytes=0, on_output=lambda channel, chunk: chunks[channel].extend(chunk),
+            before_spawn=lambda: None, check_authorized=lambda: None)
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (7, b'', b''))
+        self.assertEqual(chunks, {'stdout': b'x' * 100000, 'stderr': b'diagnostic'})
+        self.assertTrue(result.stopped)
+
+    async def test_native_edit_diagnostic_allows_correction_and_read(self):
+        with tempfile.TemporaryDirectory() as root:
+            store = Effects()
+            context = RunContext(run_id='run', session_id='task', user_id='owner')
+            tools = ResearchSessionTools(workspace_root=Path(root))
+            tools.sessions = SimpleNamespace(store=store, authorize_tool=lambda *_:
+                {'ownerId': 'owner', 'id': 'session', 'turnId': 'turn'})
+            edit = tools._function(store, context, 'research_edit_file')
+            read = tools._function(store, context, 'research_read_file')
+            await call(edit, context, 'create', path='note.txt', old='', new='one one')
+            missing = await call(edit, context, 'missing', path='note.txt', old='missing', new='two')
+            self.assertEqual(missing['outcome'], 'failed')
+            self.assertIn('old_str not found', missing['message'])
+            ambiguous = await call(edit, context, 'ambiguous', path='note.txt', old='one', new='two')
+            self.assertEqual(ambiguous['outcome'], 'failed')
+            self.assertIn('matches 2 times', ambiguous['message'])
+            self.assertEqual((await call(read, context, 'unchanged', path='note.txt'))['text'], 'one one')
+            await call(edit, context, 'corrected', path='note.txt', old='one one', new='two')
+            self.assertEqual((await call(read, context, 'read', path='note.txt'))['text'], 'two')
