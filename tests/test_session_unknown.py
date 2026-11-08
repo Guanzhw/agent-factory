@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, Mock
 
+from agno.run import RunContext
 from fastapi import HTTPException
 from agent_factory.application_runs import StartNotSubmitted
 
@@ -86,7 +87,7 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
     async def test_unknown_does_not_block_model_but_queue_retry_still_does(self):
         row = self.session._row()
         self.session._execution = Mock(return_value=(row, self.turn, self.task))
-        context = SimpleNamespace(run_id='run', user_id='owner')
+        context = RunContext(run_id='run', session_id='task', user_id='owner')
         self.assertIsNone(self.session._model_boundary(self.conn, context)[-1])
         self.assertIsNone(self.turn['body']['blockReason'])
         self.ticket['attempt'] = 2
