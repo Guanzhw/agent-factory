@@ -310,8 +310,11 @@ class ResearchSessions:
                     if status == 'completed':
                         body['failure'] = None
                     elif status == 'failed' and not body.get('contextFailure'):
-                        error = ((snapshot.get('queue') or {}).get('error') or snapshot.get('error')
-                            or (run.get('content') if native_status(None, run.get('status')) == 'error' else None))
+                        native_error = None
+                        if native_status(None, run.get('status')) == 'error':
+                            native_error = next((event.get('error') for event in reversed(run.get('events') or [])
+                                if event.get('event') == 'RunError'), None) or run.get('content')
+                        error = (snapshot.get('queue') or {}).get('error') or snapshot.get('error') or native_error
                         if isinstance(error, str) and error.startswith('PERSONAL_MODEL_HTTP_'):
                             status_code = error.removeprefix('PERSONAL_MODEL_HTTP_')
                             body['failure'] = f'模型服务返回 HTTP {status_code}，本轮未完成。请检查模型服务或设置中的连接。'

@@ -136,7 +136,7 @@ class FactoryLifecycleObserver:
             return "protected-failure"
         if ticket and native_status(ticket["status"], ticket.get("persistedRunStatus")) in {"failed", "error"}:
             return "native-failure"
-        if ticket and ticket["status"] == "cancelled":
+        if ticket and native_status(ticket["status"], ticket.get("persistedRunStatus")) in {"cancelled", "canceled"}:
             return "native-ended"
         if ticket and ticket["status"] == "completed":
             # Native completion does not renew an execution grant. Its pending

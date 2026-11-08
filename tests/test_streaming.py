@@ -36,6 +36,39 @@ def chat_chunk(delta, finish=None):
 
 
 class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_native_tail_waits_for_database_changes_without_projection_loop(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+        from research.session_stream import session_updates
+        queue, attempts = asyncio.Queue(), []
+        async def notifications():
+            while True:
+                yield await queue.get()
+        async def failed_tail(*args, **kwargs):
+            attempts.append(True)
+            raise ConnectionError('fixture native buffer unavailable')
+            yield
+        snapshot = {'id': 'session', 'turns': [{'id': 'turn', 'taskId': 'task', 'runId': 'run', 'status': 'running'}]}
+        updated = {**snapshot, 'state': 'stopped'}
+        service = SimpleNamespace(read=AsyncMock(return_value=updated))
+        request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
+        auth = SimpleNamespace(user=lambda _: {'id': 'owner'})
+        with patch('research.session_stream.get_event_stream', return_value=SimpleNamespace(tail=failed_tail)):
+            stream = session_updates(request, auth, service, 'owner', 'session', notifications(), snapshot)
+            await anext(stream)
+            next_frame = asyncio.create_task(anext(stream))
+            try:
+                await asyncio.sleep(0.05)
+                self.assertEqual(attempts, [True])
+                service.read.assert_not_called()
+                await queue.put(SimpleNamespace(payload=json.dumps({'table': 'research_sessions', 'owner': 'owner'})))
+                self.assertIn('stopped', await asyncio.wait_for(next_frame, timeout=1))
+                service.read.assert_awaited_once()
+            finally:
+                next_frame.cancel()
+                await asyncio.gather(next_frame, return_exceptions=True)
+                await stream.aclose()
+
     async def test_streaming_admission_returns_before_execution_and_preserves_rejection(self):
         from fastapi import FastAPI, Request
         from fastapi.responses import JSONResponse, StreamingResponse

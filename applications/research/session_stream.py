@@ -79,7 +79,7 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
                         await pending.put({'native': run_id, 'type': event.get('event')})
         except Exception:
             # Database notifications remain authoritative if the in-memory tail expires.
-            await pending.put({'native': run_id, 'type': 'expired'})
+            return
 
     def watch():
         for turn in snapshot['turns']:
