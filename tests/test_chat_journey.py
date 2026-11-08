@@ -17,6 +17,7 @@ import time
 import unittest
 from unittest.mock import AsyncMock, patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import quote
 from uuid import uuid4
 
 from cryptography import x509
@@ -58,6 +59,12 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         tool, arguments, reply = None, {}, '任务完成，结果可下载。\n\n| 结果 | 状态 |\n| --- | --- |\n| 工具 | 已完成 |'
         if request['model'] == 'compression':
             reply = '压缩摘要：数值42'
+        elif user_text == '思考与内容顺序验收':
+            if not results:
+                tool, arguments = 'research_edit_file', {'path': 'ordered.txt', 'old': '', 'new': '顺序工具结果'}
+            reply = '顺序验收最终回答。'
+        elif user_text == '切换模型后继续':
+            reply = '切换模型后完成。'
         elif user_text == '聊天呈现验收':
             reply = PRESENTATION
         elif user_text in {'ssh 可用了吗?', '再看一下 SSH 状态'}:
@@ -125,11 +132,23 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
         self.end_headers()
-        for change, finish in [(delta, None), ({}, 'tool_calls' if tool else 'stop')]:
+        changes = [(delta, None), ({}, 'tool_calls' if tool else 'stop')]
+        if user_text == '思考与内容顺序验收':
+            changes = [({'role': 'assistant', 'reasoning_content': '先核对' if tool else '收到工具'}, None),
+                       ({'reasoning_content': '工具参数。' if tool else '结果后继续。'}, None),
+                       ({**delta, 'content': '即将写入顺序文件。' if tool else reply}, None),
+                       ({}, 'tool_calls' if tool else 'stop')]
+            if not tool:
+                changes[2:3] = [({'content': '顺序验收'}, None),
+                                ({'reasoning_content': '再核对最终输出。'}, None),
+                                ({'content': '最终回答。'}, None)]
+        for change, finish in changes:
             chunk = {'id': 'completion', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'regression',
                      'choices': [{'index': 0, 'delta': change, 'finish_reason': finish}]}
             self.wfile.write(('data: ' + json.dumps(chunk, ensure_ascii=False) + '\n\n').encode())
             self.wfile.flush()
+            if user_text == '思考与内容顺序验收' and change.get('reasoning_content') == '再核对最终输出。':
+                self.server.reasoning_pause.wait()
         self.wfile.write(b'data: [DONE]\n\n')
 
 
@@ -243,7 +262,7 @@ class ChatJourney(unittest.TestCase):
         self.page.get_by_role('button', name='保存并设为默认', exact=True).click()
         expect(self.page.get_by_text('默认模型', exact=True)).to_be_visible()
         self.page.get_by_role('button', name=re.compile('^返回')).click()
-        expect(self.page.get_by_role('combobox', name=re.compile('使用模型'))).to_have_value(re.compile('.+'))
+        expect(self.page.get_by_role('button', name='选择模型', exact=True)).to_contain_text('regression')
 
     def post(self, path, body):
         response = self.context.request.post(self.origin + '/api/factory' + path,
@@ -282,7 +301,8 @@ class ChatJourney(unittest.TestCase):
             'inputSchema': {'type': 'object', 'properties': {'mode': {'type': 'string'}}, 'required': ['mode']}})
         server = self.configure_ssh()
         self.page.get_by_role('textbox', name=re.compile('^研究目标')).fill('保留这份草稿')
-        self.page.get_by_role('button', name='配置我的模型', exact=True).click()
+        self.page.get_by_role('button', name='选择模型', exact=True).click()
+        self.page.get_by_role('button', name='管理模型', exact=True).click()
         self.page.get_by_role('button', name=re.compile('^返回')).click()
         expect(self.page.get_by_role('textbox', name=re.compile('^研究目标'))).to_have_value('保留这份草稿')
         self.send('完成工具任务并使用子助手')
@@ -301,6 +321,10 @@ class ChatJourney(unittest.TestCase):
         self.assertTrue(all(e['data']['outcome'] == 'completed' for e in edits), edits)
         # The next real HTTP model request must contain the tool's discovered server.
         self.assertTrue(any(server['reference'] in json.dumps(r['messages']) for r in self.model.requests))
+        command = next(tool['function'] for request in reversed(self.model.requests)
+            for tool in request.get('tools', []) if tool['function']['name'] == 'research_run')
+        self.assertIn(sys.platform, command['description'])
+        self.assertIn(sys.executable, command['description'])
         self.assertTrue(any(e['type'] == 'model_content_delta' for e in turn['events']))
         requests_before_refresh = len(self.model.requests)
         self.page.reload()
@@ -315,6 +339,17 @@ class ChatJourney(unittest.TestCase):
         workspace = self.state['store'].research_sessions.workspace(self.owner, snapshot['id'])
         self.assertEqual((workspace / '结果.txt').read_bytes(), expected_bytes)
         self.assertEqual((workspace / 'child.txt').read_text(encoding='utf-8'), '子助手已完成')
+        preview_url = re.compile('/files/download\\?path=' + re.escape(quote('结果.txt')) + '$')
+        pending_preview = []
+        self.page.route(preview_url, lambda route: pending_preview.append(route))
+        with self.page.expect_request(preview_url):
+            self.page.locator('.rs-files li').filter(has=self.page.get_by_role('link', name='结果.txt', exact=True)).get_by_role('button', name='预览', exact=True).click()
+        self.page.locator('.rs-files li').filter(has=self.page.get_by_role('link', name='child.txt', exact=True)).get_by_role('button', name='预览', exact=True).click()
+        expect(self.page.locator('.rs-file-preview')).to_have_text('子助手已完成')
+        pending_preview[0].fulfill(content_type='application/octet-stream', body='过期预览不得覆盖当前文件')
+        expect(self.page.locator('.rs-file-preview')).to_have_text('子助手已完成')
+        self.page.unroute(preview_url)
+        self.page.get_by_role('button', name='关闭预览', exact=True).click()
         sibling = Path(str(workspace) + '-neighbor')
         sibling.mkdir()
         (sibling / 'outside.txt').write_text('outside this session')
@@ -423,6 +458,90 @@ class ChatJourney(unittest.TestCase):
         self.assertLessEqual(overflow['scrollWidth'], overflow['width'], json.dumps(overflow, ensure_ascii=False))
         expect(self.page.get_by_role('link', name='结果.txt', exact=True)).to_be_visible()
 
+    def test_reasoning_content_order_and_inline_model_selection(self):
+        # The local protocol fixture declares its effort support; no real provider is contacted.
+        capabilities = patch('research.session_setup.reasoning_efforts',
+            side_effect=lambda configuration: ['low', 'high', 'max']
+            if configuration['model'] == 'deepseek-v4.1-flash' else [])
+        capabilities.start()
+        self.addCleanup(capabilities.stop)
+        model = self.post('/personal-models', {'provider': 'openai-compatible',
+            'baseURL': f'http://127.0.0.1:{self.model.server_port}/v1', 'model': 'deepseek-v4.1-flash',
+            'protocol': 'chat-completions'})
+        self.page.reload()
+        self.page.get_by_role('button', name='选择模型', exact=True).click()
+        self.page.get_by_role('option', name='deepseek-v4.1-flash', exact=True).click()
+        self.page.get_by_role('button', name='选择模型', exact=True).click()
+        self.page.get_by_role('combobox', name='推理强度', exact=True).select_option('high')
+        self.page.keyboard.press('Escape')
+        self.model.reasoning_pause = threading.Event()
+        self.addCleanup(self.model.reasoning_pause.set)
+        self.send('思考与内容顺序验收')
+        expect(self.page.locator('.rs-thinking').get_by_text('再核对最终输出。', exact=True)).to_be_visible()
+        expect(self.page.locator('.rs-streaming-reply').get_by_text('顺序验收', exact=True)).to_be_visible()
+        self.model.reasoning_pause.set()
+        snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
+        turn = snapshot['turns'][-1]
+        self.assertEqual(turn['result'], '顺序验收最终回答。')
+        self.assertEqual(snapshot['model']['connectionRef'], model['connectionRef'])
+        ordered = [event for event in turn['events'] if event['type'] in
+            {'model_reasoning_delta', 'model_content_delta', 'research_tool_started', 'research_tool_finished'}]
+        self.assertEqual([event['type'] for event in ordered], ['model_reasoning_delta', 'model_content_delta',
+            'research_tool_started', 'research_tool_finished', 'model_reasoning_delta', 'model_content_delta',
+            'model_reasoning_delta', 'model_content_delta'])
+        self.assertEqual([event['data']['text'] for event in ordered if 'text' in event['data']],
+            ['先核对工具参数。', '即将写入顺序文件。', '收到工具结果后继续。', '顺序验收', '再核对最终输出。', '最终回答。'])
+        calls = [event for event in ordered if 'callId' in event['data']]
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]['data']['callId'], calls[1]['data']['callId'])
+        native_requests = [request for request in self.model.requests if any(message['role'] == 'user'
+            and message['content'] == '思考与内容顺序验收' for message in request['messages'])]
+        self.assertTrue(native_requests)
+        self.assertTrue(all(request['model'] == 'deepseek-v4.1-flash'
+                            and request.get('reasoning_effort') == 'high' for request in native_requests))
+        self.page.reload()
+        process = self.page.locator('.rs-process')
+        expect(process).not_to_have_attribute('open', '')
+        process.locator(':scope > summary').click()
+        steps = process.locator('.rs-process-steps')
+        expect(steps).to_have_attribute('open', '')
+        call = steps.locator('.rs-tool-call')
+        expect(call).to_have_count(1)
+        steps.locator(':scope > summary').click()
+        expect(call.locator(':scope > summary')).to_be_hidden()
+        steps.locator(':scope > summary').click()
+        expect(call).not_to_have_attribute('open', '')
+        call.locator(':scope > summary').click()
+        expect(call.get_by_text('已完成', exact=True)).to_be_visible()
+        expect(steps.locator('.rs-thinking')).to_have_count(3)
+        expect(steps.locator('.rs-thinking').first).not_to_have_attribute('open', '')
+        steps.locator('.rs-thinking').first.locator(':scope > summary').click()
+        expect(steps.get_by_text('先核对工具参数。', exact=True)).to_be_visible()
+        text = steps.locator(':scope > ol').text_content()
+        self.assertLess(text.index('先核对工具参数。'), text.index('即将写入顺序文件。'))
+        self.assertLess(text.index('即将写入顺序文件。'), text.index('修改文件'))
+        self.assertLess(text.index('修改文件'), text.index('收到工具结果后继续。'))
+        self.assertNotIn('model_binding_selected', text)
+        self.assertNotIn('native_accepted', text)
+        self.assertNotIn('顺序验收', text)
+        self.assertNotIn('最终回答。', text)
+        self.page.screenshot(path=str(Path(self.folder.name) / 'thinking-content-order.png'))
+        expect(self.page.locator('.rs-turn > .rs-reply').get_by_text('顺序验收最终回答。', exact=True)).to_be_visible()
+        self.page.get_by_role('button', name='选择模型', exact=True).click()
+        self.page.get_by_role('option', name='regression', exact=True).click()
+        expect(self.page.get_by_role('combobox', name='推理强度', exact=True)).to_have_count(0)
+        self.page.get_by_role('textbox', name='下一轮指令', exact=True).fill('切换模型后继续')
+        self.page.get_by_role('button', name='发送', exact=True).click()
+        self.wait_for(lambda s: len(s['turns']) == 2 and s['turns'][-1]['status'] == 'completed')
+        latest = next(request for request in reversed(self.model.requests) if any(message['role'] == 'user'
+            and message['content'] == '切换模型后继续' for message in request['messages']))
+        self.assertEqual(latest['model'], 'regression')
+        self.assertNotIn('reasoning_effort', latest)
+        requests_before_refresh = len(self.model.requests)
+        self.page.reload()
+        expect(self.page.locator('.rs-turn')).to_have_count(2)
+        self.assertEqual(len(self.model.requests), requests_before_refresh)
+
     def test_ssh_question_and_followup_keep_current_user_message(self):
         server = self.configure_ssh()
         self.send('ssh 可用了吗?')
@@ -530,11 +649,19 @@ class ChatJourney(unittest.TestCase):
                           json.dumps(snapshot, ensure_ascii=False) + '\n\n')
         self.page.route('**/research/sessions/*/events', stream)
         self.page.route('**/research/sessions/' + snapshot['id'], lambda route: route.fulfill(json=snapshot))
+        self.page.evaluate('''value => sessionStorage.setItem(
+            `factory:research-sessions:${encodeURIComponent(value.owner)}:requests`,
+            JSON.stringify([{requestId: value.request, action: 'turn', sessionId: value.session}]))''',
+            {'owner': self.owner, 'request': str(uuid4()), 'session': snapshot['id']})
         self.page.reload()
-        expect(self.page.get_by_text(re.compile('秒未收到新执行事件'))).to_be_visible()
+        expect(self.page.locator('.rs-recovery')).to_be_visible()
+        expect(self.page.get_by_role('button', name='请求停止', exact=True)).to_be_enabled()
+        expect(self.page.get_by_text(re.compile('秒未收到更新'))).to_be_visible()
         self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-waiting.png'))
         expect(self.page.locator('.rs-content').get_by_text(re.compile('实时连接已断开'))).to_be_visible()
         expect(self.page.get_by_text('已开始 · 等待结果', exact=True)).to_be_visible()
+        self.page.locator('.rs-tool-call > summary').click()
+        expect(self.page.locator('.rs-tool-call')).to_have_attribute('open', '')
         snapshot.update(state='idle', allowedActions=['start', 'stop'])
         turn.update(status='completed', result='UI fixture answer\n\n| 结果 | 状态 |\n| --- | --- |\n| SSH | 已确认 |', events=[*turn['events'],
             event(2, 'tool_finished', {'outcome': 'unknown', 'code': 'SSH_TOOL_OUTCOME_UNKNOWN'})])
@@ -546,6 +673,7 @@ class ChatJourney(unittest.TestCase):
         process = self.page.locator('.rs-process')
         process.locator('summary').first.click()
         expect(process.locator('.rs-tool-call')).to_have_count(1)
+        expect(process.locator('.rs-tool-call')).to_have_attribute('open', '')
         expect(process.locator('.rs-tool-call').get_by_text('已完成', exact=True)).to_be_visible()
         expect(self.page.get_by_role('cell', name='SSH', exact=True)).to_be_visible()
         self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-reconciled.png'))
@@ -571,14 +699,15 @@ class ChatJourney(unittest.TestCase):
         expect(self.page.get_by_role('button', name='请求停止', exact=True)).to_have_count(0)
         summary = self.page.locator('.rs-process > summary')
         summary.click()
-        expect(self.page.locator('.rs-execution > summary')).to_be_visible()
-        self.assertLessEqual(pane.evaluate('el => el.scrollHeight - el.clientHeight'), 1)
-        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_have_count(0)
-        self.page.locator('.rs-execution > summary').click()
-        expect(self.page.locator('.rs-events > summary')).to_be_visible()
+        expect(self.page.locator('.rs-process-steps > summary')).to_be_visible()
         self.assertLessEqual(pane.evaluate('el => el.scrollHeight - el.clientHeight'), 1)
         expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_have_count(0)
         summary.click()
+        expect(self.page.locator('.rs-execution > summary')).to_be_visible()
+        expect(self.page.locator('.rs-process .rs-execution')).to_have_count(0)
+        self.page.locator('.rs-execution > summary').click()
+        expect(self.page.locator('.rs-events > summary')).to_be_visible()
+        self.page.locator('.rs-execution > summary').click()
         for name, panel_id in [('会话文件', 'rs-file-panel'), ('同事问答', 'rs-question-panel'),
                                ('会话信息', 'rs-info-panel')]:
             panel = self.page.locator('#' + panel_id)
@@ -600,6 +729,7 @@ class ChatJourney(unittest.TestCase):
         composer = self.page.get_by_role('textbox', name='下一轮指令', exact=True)
         composer.fill('模型设置往返保留草稿')
         self.page.locator('.rs-composer-model').click()
+        self.page.get_by_role('button', name='管理模型', exact=True).click()
         expect(self.page.get_by_role('heading', name='我的模型/API', exact=True)).to_be_visible()
         self.page.get_by_role('button', name=re.compile('^返回')).click()
         expect(composer).to_have_value('模型设置往返保留草稿')
@@ -671,6 +801,7 @@ class ChatJourney(unittest.TestCase):
         self.send('聊天呈现验收')
         snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
         self.assertEqual(snapshot['turns'][-1]['result'], PRESENTATION)
+        expect(self.page.locator('.rs-process')).to_have_count(0)
         expect(self.page.locator('.rs-code-block')).to_have_count(2)
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollHeight'), 900)
         pane = self.page.locator('.rs-content')
@@ -690,7 +821,7 @@ class ChatJourney(unittest.TestCase):
         self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
         composer = self.page.get_by_role('textbox', name='下一轮指令', exact=True)
         expect(self.page.get_by_role('button', name='发送', exact=True)).to_be_disabled()
-        expect(self.page.locator('.rs-composer-model')).to_have_text('regression')
+        expect(self.page.locator('.rs-composer-model')).to_contain_text('regression')
         composer.fill('\n'.join(['draft line'] * 8))
         self.assertGreater(composer.evaluate('el => el.clientHeight'), 80)
         composer.fill('')
@@ -717,8 +848,9 @@ class ChatJourney(unittest.TestCase):
         self.page.reload()
         expect(self.page.get_by_role('textbox', name='补充或纠正当前研究', exact=True)).to_be_visible()
         self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
-        expect(self.page.locator('.rs-process')).to_have_attribute('open', '')
+        expect(self.page.locator('.rs-process')).to_have_count(0)
         self.page.locator('.rs-execution > summary').click()
+        pane.evaluate('el => { el.scrollTop = Math.max(0, el.scrollTop - 240); }')
         expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
         reading_position = pane.evaluate('el => el.scrollTop')
         turn['events'][0]['id'] += 1

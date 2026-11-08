@@ -40,11 +40,13 @@ class DelegatingModel(Model):
     def _complete_selection(self, prepared):
         response, plan, context, current, _, _ = prepared
         reference = plan['connectionRefs']['model']
+        effort = (plan.get('inputValues') or {}).get('reasoningEffort')
         def auxiliary():
-            model = self.store.personal_models.model_for(context.user_id, reference, context)
+            model = self.store.personal_models.model_for(context.user_id, reference, context, reasoning_effort=effort)
             model._on_text = None
+            model._on_reasoning = None
             return model
-        model = self.store.personal_models.model_for(context.user_id, reference, context)
+        model = self.store.personal_models.model_for(context.user_id, reference, context, reasoning_effort=effort)
         self._provider_hooks(model, context, current, auxiliary, plan)
         window = getattr(model, 'context_window', None)
         threshold = getattr(model, 'auto_compact_token_limit', None)

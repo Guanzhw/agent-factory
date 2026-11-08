@@ -38,6 +38,9 @@ class ResearchSubagents:
             row, turn, task = self.sessions._execution(conn, context)
         inputs = {'sessionId': row['id'], 'turnId': turn['id'], 'sessionContext': json.dumps({
             'goal': row['body']['goal'], 'boundaries': row['body']['boundaries'], 'subtask': goal})}
+        configuration = turn['body'].get('configuration', row['body']['configuration'])
+        if 'reasoningEffort' in configuration['model']:
+            inputs['reasoningEffort'] = configuration['model']['reasoningEffort']
         result = await self.store.delegation.create(context.user_id, task['id'], goal, 'autonomous',
             'research-child:' + digest({'run': context.run_id, 'call': call_id}), input_values=inputs)
         child = result['childTask']

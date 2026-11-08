@@ -1,0 +1,10 @@
+.rw-chat-shell .rs-model-picker { min-width: 0; }
+.rw-chat-shell .rs-model-picker > button { display: flex; align-items: center; gap: 6px; max-width: 100%; anchor-name: --chat-model-picker; }
+.rw-chat-shell .rs-model-picker > button > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rw-chat-shell .rs-model-popover { position: fixed; position-anchor: --chat-model-picker; inset: auto anchor(right) calc(anchor(top) + 8px) auto; width: min(320px, calc(100vw - 32px)); max-height: min(480px, 65dvh); overflow-y: auto; margin: 0; padding: 8px; border: 1px solid #414141; border-radius: 12px; background: #242424; color: #ededed; box-shadow: 0 12px 36px #0005; }
+.rw-chat-shell .rs-model-popover [role=listbox] { display: grid; gap: 3px; }
+.rw-chat-shell .rs-model-popover [role=option] { display: flex; justify-content: space-between; gap: 12px; text-align: left; min-height: 40px; padding: 8px 10px; border: 0; background: transparent; color: inherit; }
+.rw-chat-shell .rs-model-popover [role=option][aria-selected=true] { background: #414141; }
+.rw-chat-shell .rs-model-popover label { display: grid; gap: 6px; margin: 8px 2px; padding-top: 8px; border-top: 1px solid #414141; font-size: 12px; }
+.rw-chat-shell .rs-model-popover select { width: 100%; margin: 0; }
+.rw-chat-shell .rs-model-manage { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; border: 0; background: transparent; color: inherit; }

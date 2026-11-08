@@ -45,7 +45,7 @@ def rejected(code='PERSONAL_MODEL_RESPONSE_REJECTED'):
 
 class OwnerChatModel(Model):
     def __init__(self, configuration, credential: Callable, *, recheck=None, session_id=None,
-            timeout_seconds=300, on_text=None):
+            timeout_seconds=300, on_text=None, on_reasoning=None):
         super().__init__(id=model_id(configuration['model']), provider=configuration['provider'],
             name='Owner Model', retries=0)
         self._base = base_url(configuration['baseURL'])
@@ -54,9 +54,11 @@ class OwnerChatModel(Model):
         self._scope = continuation_scope(configuration)
         generation_options(configuration)
         self._thinking_mode = configuration.get('thinkingMode')
+        self._reasoning_effort = configuration.get('reasoningEffort')
         self._credential = credential
         self._timeout_seconds = timeout_seconds
         self._on_text = on_text
+        self._on_reasoning = on_reasoning
         self.context_window = configuration.get("contextWindow")
         self.auto_compact_token_limit = configuration.get("autoCompactTokenLimit")
         self.factory_wire_stream = True
@@ -110,6 +112,11 @@ class OwnerChatModel(Model):
         if tool_choice is not None:
             chat['tool_choice'] = tool_choice
         body = encode_request(self._protocol, chat, continuation=continuation)
+        if self._reasoning_effort is not None:
+            if self._protocol == 'responses':
+                body['reasoning'] = {'effort': self._reasoning_effort, 'summary': 'auto'}
+            else:
+                body['reasoning_effort'] = self._reasoning_effort
         # Existing provider extensions are a configuration concern, never codec
         # logic and never an untrusted native request override.
         if self._protocol == 'chat-completions':
@@ -117,13 +124,18 @@ class OwnerChatModel(Model):
                 'thinkingMode': self._thinking_mode}))
         return body
 
-    async def _request(self, messages, *, on_text=None, **kwargs):
+    async def _request(self, messages, *, on_text=None, on_reasoning=None, **kwargs):
         response_id = uuid4().hex
         async def progress(text):
             if self._on_text is not None:
                 await self._on_text(text, response_id)
             if on_text is not None:
                 await on_text(text)
+        async def reasoning(text):
+            if self._on_reasoning is not None:
+                await self._on_reasoning(text, response_id)
+            if on_reasoning is not None:
+                await on_reasoning(text)
         try:
             body = self._body(messages, **kwargs)
             # Resolve on every call. Rotation/revocation never leaves a cached key.
@@ -137,11 +149,27 @@ class OwnerChatModel(Model):
                 try:
                     if response.status_code != 200:
                         raise rejected('PERSONAL_MODEL_HTTP_' + str(response.status_code))
-                    value = await read_model_stream(response, self._protocol, progress)
+                    value = await read_model_stream(response, self._protocol, progress, reasoning)
                 finally:
                     await response.aclose()
             if self._recheck is not None:
                 await asyncio.to_thread(self._recheck)
+            result = self._parse_provider_response(value)
+            if 'text/event-stream' not in response.headers.get('content-type', ''):
+                if self._protocol == 'responses':
+                    continuation = result.provider_data['owner_model_continuation']['continuation']
+                    for item in continuation['output']:
+                        if item['type'] == 'reasoning':
+                            thought = ''.join(part['text'] for part in item.get('summary', []) + item.get('content', []))
+                            if thought:
+                                await reasoning(thought)
+                        elif item['type'] == 'message':
+                            await progress(''.join(part['text'] for part in item['content']))
+                else:
+                    if result.reasoning_content:
+                        await reasoning(result.reasoning_content)
+                    if result.content:
+                        await progress(result.content)
         except asyncio.CancelledError:
             raise
         except ModelProviderError:
@@ -155,7 +183,7 @@ class OwnerChatModel(Model):
                 'PERSONAL_MODEL_STREAM_INCOMPLETE'}
             raise rejected(code if code in known else
                 'PERSONAL_MODEL_REQUEST_FAILED_' + type(error).__name__.upper()) from None
-        return self._parse_provider_response(value)
+        return result
 
     def invoke(self, messages, **kwargs):
         with ThreadPoolExecutor(max_workers=1) as executor:
@@ -200,16 +228,18 @@ class OwnerChatModel(Model):
         chunks = asyncio.Queue()
         async def text(value):
             await chunks.put(ModelResponse(role='assistant', content=value))
+        async def reasoning(value):
+            await chunks.put(ModelResponse(role='assistant', reasoning_content=value))
         async def request():
             try:
-                result = await self._request(messages, on_text=text, **kwargs)
+                result = await self._request(messages, on_text=text, on_reasoning=reasoning, **kwargs)
                 await chunks.put(result)
             except BaseException as error:
                 await chunks.put(error)
             finally:
                 await chunks.put(None)
         task = asyncio.create_task(request())
-        streamed = False
+        streamed, reasoning_streamed = False, False
         try:
             while True:
                 value = await chunks.get()
@@ -220,8 +250,11 @@ class OwnerChatModel(Model):
                 if value.provider_data:
                     if streamed:
                         value.content = None
+                    if reasoning_streamed:
+                        value.reasoning_content = None
                 else:
-                    streamed = True
+                    streamed = streamed or value.content is not None
+                    reasoning_streamed = reasoning_streamed or value.reasoning_content is not None
                 yield value
         finally:
             task.cancel()
@@ -234,6 +267,11 @@ class OwnerChatModel(Model):
             message = response['choices'][0]['message']
             result = ModelResponse(role='assistant', content=message.get('content'),
                 tool_calls=message.get('tool_calls', []))
+            if continuation is not None:
+                result.reasoning_content = continuation.get('reasoning_content')
+                if self._protocol == 'responses':
+                    result.reasoning_content = ''.join(part['text'] for item in continuation['output']
+                        if item['type'] == 'reasoning' for part in item.get('summary', []) + item.get('content', [])) or None
             result.provider_data = {'owner_model_continuation': {'scope': self._scope,
                 'session': self._session_id, 'message': message, 'continuation': continuation}}
             usage = response.get('usage')

@@ -365,12 +365,26 @@ class Store:
         self.sql("INSERT INTO af_events(task_id,type,message,data,created_at) VALUES(:id,:type,:message,CAST(:data AS JSONB),:at)",
                  id=task["id"], type=event_type, message=message, data=canonical(data or {}), at=now())
 
+    def model_delta(self, identifier, event_type, text, response_id):
+        task = self.task(identifier)
+        stamp = now()
+        # Keep one ordered row per adjacent model segment, including across refresh.
+        self.sql("""WITH latest AS (
+                SELECT id,type,data FROM af_events WHERE task_id=:id ORDER BY id DESC LIMIT 1
+            ), updated AS (
+                UPDATE af_events SET data=jsonb_set(data,'{text}',to_jsonb((data->>'text') || CAST(:text AS TEXT)))
+                    || jsonb_build_object('updatedAt', CAST(:at AS TEXT))
+                WHERE id=(SELECT id FROM latest WHERE type=:type AND data->>'responseId'=:response)
+                RETURNING id
+            ) INSERT INTO af_events(task_id,type,message,data,created_at)
+                SELECT :id,:type,:message,CAST(:data AS JSONB),:at WHERE NOT EXISTS(SELECT id FROM updated)""",
+            id=task['id'], type=event_type, text=text, response=response_id,
+            message='正在思考' if event_type == 'model_reasoning_delta' else '正在生成回答',
+            data=canonical({'responseId': response_id, 'text': text, 'updatedAt': stamp}), at=stamp)
+
     def events(self, task_id):
         return [{"id": row["id"], "jobId": task_id, "type": row["type"], "message": row["message"], "data": row["data"], "createdAt": row["created_at"]}
-                for row in self.sql("""SELECT * FROM af_events WHERE task_id=:id AND (
-                    type <> 'model_content_delta' OR id IN (
-                        SELECT id FROM af_events WHERE task_id=:id AND type='model_content_delta'
-                        ORDER BY id DESC LIMIT 1000)) ORDER BY id""", id=task_id)]
+                for row in self.sql("SELECT * FROM af_events WHERE task_id=:id ORDER BY id", id=task_id)]
 
     def has_failures(self, task_id):
         # A bounded display window cannot erase an earlier protected failure

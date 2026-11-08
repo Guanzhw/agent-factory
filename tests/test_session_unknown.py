@@ -37,7 +37,7 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
         self.session._save_turn = save
         run = {'run_id': 'run', 'session_id': 'task', 'user_id': 'owner',
             'status': 'completed', 'content': 'Finished; command outcome remains unknown.',
-            'messages': [{'role': 'assistant'}]}
+            'messages': [{'role': 'assistant', 'content': 'Finished; command outcome remains unknown.'}]}
         self.session.runs = SimpleNamespace(factory=SimpleNamespace(
             bridge=SimpleNamespace(native_db=SimpleNamespace(get_job=Mock(return_value=self.ticket))),
             detail=AsyncMock(return_value={'job': {'status': 'finalizing'}, 'events': [],

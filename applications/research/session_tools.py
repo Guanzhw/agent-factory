@@ -161,6 +161,13 @@ def _workspace_parts(workspace, value, *, directory=False):
     return list(native_path.relative_to(workspace.resolve()).parts)
 
 
+def _windows_path(path):
+    absolute = os.path.abspath(path)
+    if absolute.startswith('\\\\?\\'):
+        return Path(absolute)
+    return Path('\\\\?\\UNC\\' + absolute[2:] if absolute.startswith('\\\\') else '\\\\?\\' + absolute)
+
+
 @contextmanager
 def _windows_directory(root, parts=(), *, create=False):
     # Deny ancestor rename/deletion while allowing native Workspace child replacement.
@@ -169,7 +176,7 @@ def _windows_directory(root, parts=(), *, create=False):
     import pywintypes
     import win32con
     import win32file
-    path = Path(root)
+    path = _windows_path(root)
     with ExitStack() as held:
         current = Path(path.anchor)
         for index, part in enumerate((path.anchor, *path.parts[1:], *parts)):
@@ -521,7 +528,10 @@ class ResearchSessionTools:
             async with call_lock:
                 return await invoke(run_context=run_context, fc=fc, **arguments)
 
-        return Function(name=name, description=TOOLS[name][0], parameters=TOOLS[name][1],
+        description = TOOLS[name][0]
+        if name == 'research_run':
+            description += f' Host platform: {sys.platform}. Python executable: {sys.executable}.'
+        return Function(name=name, description=description, parameters=TOOLS[name][1],
             entrypoint=serialized, skip_entrypoint_processing=True, external_execution=name == WAIT)
 
     @staticmethod
@@ -654,15 +664,21 @@ class ResearchSessionTools:
             except RunCancelledException:
                 raise asyncio.CancelledError() from None
 
-        saved = output_directory or Path(tempfile.mkdtemp(prefix='.command-output-', dir=workspace))
-        for channel in ('stdout', 'stderr'):
-            (saved / (channel + '.txt')).touch(exist_ok=True)
-
-        def append_output(channel, chunk):
-            with (saved / (channel + '.txt')).open('ab') as stream:
-                stream.write(chunk)
-
         try:
+            output_root = _windows_path(workspace) if sys.platform == 'win32' else workspace
+            try:
+                saved = output_directory or Path(tempfile.mkdtemp(prefix='.command-output-', dir=output_root))
+                if sys.platform == 'win32':
+                    saved = _windows_path(saved)
+                for channel in ('stdout', 'stderr'):
+                    (saved / (channel + '.txt')).touch(exist_ok=True)
+            except OSError:
+                raise _rejected('RESEARCH_COMMAND_OUTPUT_UNAVAILABLE') from None
+
+            def append_output(channel, chunk):
+                with (saved / (channel + '.txt')).open('ab') as stream:
+                    stream.write(chunk)
+
             environment = dict(os.environ)
             environment['PATH'] = command_path
             result = await run_cli_process(executable=executable, argv=argv[1:], env=environment,
@@ -672,8 +688,8 @@ class ResearchSessionTools:
             returned = {**output, 'exitCode': result.returncode, 'stopped': result.stopped,
                 **command_output(saved, values.get('max_output_tokens', DEFAULT_OUTPUT_TOKENS) * 4)}
             if returned.get('truncated') or output_directory is not None:
-                returned.update(stdoutPath=(saved / 'stdout.txt').relative_to(workspace).as_posix(),
-                    stderrPath=(saved / 'stderr.txt').relative_to(workspace).as_posix())
+                returned.update(stdoutPath=(saved / 'stdout.txt').relative_to(output_root).as_posix(),
+                    stderrPath=(saved / 'stderr.txt').relative_to(output_root).as_posix())
             else:
                 shutil.rmtree(saved)
             return returned

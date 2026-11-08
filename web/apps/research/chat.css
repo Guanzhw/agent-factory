@@ -133,8 +133,8 @@
 .rw-chat-shell .rs-code-block pre { max-height: none; margin: 0; padding: 12px; border: 0; border-radius: 0; white-space: pre; }
 .rw-chat-shell .rs-code-block .rs-code-wrap, .rw-chat-shell .rs-code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .rw-chat-shell .rs-activity { margin: 0 0 16px; }
-.rw-chat-shell .rs-process > summary, .rw-chat-shell .rs-tool-call > summary { display: flex; align-items: center; gap: 6px; padding: 4px 0; min-height: 33px; list-style: none; font-size: 13px; }
-.rw-chat-shell .rs-process > summary::-webkit-details-marker, .rw-chat-shell .rs-tool-call > summary::-webkit-details-marker { display: none; }
+.rw-chat-shell :is(.rs-process, .rs-process-steps, .rs-thinking, .rs-tool-call) > summary { display: flex; align-items: center; gap: 6px; padding: 4px 0; min-height: 33px; list-style: none; font-size: 13px; }
+.rw-chat-shell :is(.rs-process, .rs-process-steps, .rs-thinking, .rs-tool-call) > summary::-webkit-details-marker { display: none; }
 .rw-chat-shell .rs-activity-current { font-weight: 400; }
 .rw-chat-shell .rs-process > summary { border-bottom: 1px solid #2d2d2d; font-size: 14px; line-height: 24px; }
 .rw-chat-shell .rs-tool-call > summary span { color: #a2a4a6; font-size: 12px; margin-left: auto; }
@@ -150,6 +150,13 @@
 .rw-chat-shell .rs-action-warning > details > summary { color: #f2b8b5; }
 .rw-chat-shell .rs-waiting { font-size: 12px; color: #e9c283; }
 .rw-chat-shell .rs-streaming-reply { margin-top: 16px; }
+.rw-chat-shell .rs-thinking > .rs-markdown { color: #b7b7b7; padding-left: 12px; border-left: 1px solid #43454a; }
+.rw-chat-shell .rs-thinking time, .rw-chat-shell .rs-step-message > small { color: #a2a4a6; font-size: 11px; font-weight: 400; }
+.rw-chat-shell .rs-thinking time { margin-left: auto; }
+.rw-chat-shell .rs-generating { color: #b7b7b7; font-size: 13px; }
+.rw-chat-shell .rs-generating::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 8px; border-radius: 50%; background: #7aaaff; animation: rs-pulse 1.2s ease-in-out infinite alternate; }
+@keyframes rs-pulse { to { opacity: .3; } }
+@media (prefers-reduced-motion: reduce) { .rw-chat-shell .rs-generating::before { animation: none; } }
 .rw-chat-shell .rs-execution { margin-top: 10px; }
 .rw-chat-shell .rs-execution > summary { color: #a2a4a6; font-size: 11px; }
 .rw-chat-shell .rs-events { border-color: #343434; }

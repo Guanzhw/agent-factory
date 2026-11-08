@@ -12,6 +12,10 @@ A small per-run dispatcher resolves the selected model for the current owner. Ag
 
 The browser receives actual conversation state and model/tool progress. The current SSE endpoint checks for changed snapshots on the server; it is not a cross-replica event bus. Settings and chat share one interface and preserve drafts across navigation.
 
+Provider text and visible reasoning keep their original response identities and order. Adjacent text of the same kind is saved as one segment, flushed at most every 200ms and at segment boundaries or completion. Running turns read these records directly instead of copying every text fragment into the conversation row. The final answer comes from the completed native run's last assistant message; Agno's aggregate run content can also contain earlier messages before tool calls. Older terminal snapshots remain intact.
+
+Chat selects an existing model connection and its verified reasoning effort for the next turn. The native plan pins that choice, including delegated work. Unknown model capabilities expose only the provider default. Auxiliary compression and summary requests do not emit chat content or reasoning.
+
 Removed governance, budget, lease and prepared-handoff services no longer gate Agent execution. Historical rows and user files are preserved. Prior platform and Windows acceptance results apply only to the revisions they exercised; current static checks and actual use are recorded separately.
 
 Native Agno Skills loads instructions and references from bundled research skills, the launch project's `.agents/skills`, and optional `FACTORY_SKILL_PATHS` directories. The pinned loader only discovers immediate resources, so a small subclass lists nested files. Script reads remain native; execution uses the existing research command function, preserving arguments, cwd, full output files, cancellation and original-call replay protection. This replaces the SDK's synchronous 30-second `subprocess.run` path, not the Skills model or parser.
