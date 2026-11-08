@@ -126,8 +126,10 @@ class CollaborationAdmission(unittest.TestCase):
                 waiting = []
                 deadline = time.monotonic() + 10
                 while not b.done() and time.monotonic() < deadline:
-                    waiting = self.store.sql("SELECT 1 FROM pg_stat_activity WHERE datname=current_database() "
-                                             "AND wait_event='advisory' AND application_name='collaboration-second-delivery'")
+                    waiting = self.store.sql("SELECT 1 FROM pg_stat_activity a JOIN pg_locks l ON a.pid=l.pid "
+                        "WHERE a.datname=current_database() AND a.application_name='collaboration-second-delivery' "
+                        "AND l.locktype='advisory' AND NOT l.granted "
+                        "AND l.objid=(hashtext('research_sessions_v1')::bigint & 4294967295)")
                     if waiting:
                         break
                     time.sleep(.02)
