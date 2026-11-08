@@ -2,11 +2,14 @@
 import json
 
 from agno.agent import Agent
+from agno.agent._messages import get_continue_run_messages
 from agno.exceptions import InputCheckError, RunCancelledException
 from agno.registry import Registry
 from agno.run import RunContext
+from agno.session.agent import AgentSession
 
 from .model_dispatch import DelegatingModel
+from .native_messages import pair_tool_results
 from .personal_mcp import MCPRunConnections
 
 
@@ -95,14 +98,22 @@ def build_runtime(store, native_db):
             if run_id and ticket and ticket['status'] == 'running' and ticket['attempt'] > 1 and not ticket['payload'].get('continue'):
                 previous = self.get_run_output(run_id, session_id=kwargs.get('session_id'), user_id=kwargs.get('user_id'))
                 effects = store.effects(store.task(run_id)['id'])
-                if previous and previous.messages and effects:
+                if previous and previous.messages and previous.session_id and previous.user_id:
                     current = [message for message in previous.messages if not message.from_history]
                     calls = {call['id'] for message in current for call in message.tool_calls or []}
-                    results = {message.tool_call_id for message in current
-                               if message.role == 'tool' and message.tool_call_id}
-                    recorded = {run_id + ':' + prefix + call for call in results
+                    recorded = {run_id + ':' + prefix + call for call in calls
                                 for prefix in ('personal-tool:', 'research-session-tool:')}
-                    if calls and calls == results and all(item['effect_key'] in recorded for item in effects):
+                    if calls and all(item['effect_key'] in recorded for item in effects):
+                        session = self.get_session(session_id=previous.session_id, user_id=previous.user_id)
+                        if not isinstance(session, AgentSession):
+                            raise InputCheckError('Native retry session is unavailable')
+                        context = RunContext(run_id=run_id, session_id=previous.session_id,
+                            user_id=previous.user_id, session_state=previous.session_state or {})
+                        bind_run(context, session, self)
+                        previous.messages = pair_tool_results(get_continue_run_messages(self, previous.messages,
+                            session=session, run_response=previous).messages)
+                        # The prepared view already supplies valid history; never re-read the unfiltered session.
+                        self.add_history_to_context = False
                         # This in-memory RunOutput belongs only to this claim; the marker is not persisted.
                         setattr(previous, '_factory_retry_attempt', ticket['attempt'])
                         return self.acontinue_run(run_response=previous, **kwargs)

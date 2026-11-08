@@ -562,10 +562,18 @@ class ResearchSessions:
             blocked = 'RESEARCH_QUEUE_IDENTITY_UNCONFIRMED'
         elif type(ticket.get('attempt')) is not int or ticket['attempt'] < 1:
             blocked = 'RESEARCH_QUEUE_ATTEMPT_UNCONFIRMED'
-        elif (ticket['attempt'] > 1 and (context.metadata or {}).get('factoryNativeRetryAttempt') != ticket['attempt']
+        elif (ticket['attempt'] > 1 and (task['researchChild'] or body.get('lastAttempt') != ticket['attempt'])
+                and (context.metadata or {}).get('factoryNativeRetryAttempt') != ticket['attempt']
                 and (self.store.effects(task['id']) or self.store.sql(
                 'SELECT 1 FROM af_delegation_links WHERE owner_id=:owner AND parent_id=:parent LIMIT 1',
-                owner=context.user_id, parent=task['id'])) and not self.subagents.permits_continuation(task, ticket)):
+                owner=context.user_id, parent=task['id']) or self.store.sql(
+                "SELECT 1 FROM af_events started WHERE task_id=:id AND type='tool_started' "
+                "AND data->>'toolName'='ssh_run' AND NOT EXISTS (SELECT 1 FROM af_events finished "
+                "WHERE finished.task_id=started.task_id AND finished.type='tool_finished' "
+                "AND finished.data->>'callId'=started.data->>'callId' "
+                "AND finished.data->>'toolName'='ssh_run' AND finished.data->>'outcome'='failed' "
+                "AND finished.data->'output'->>'stopped'='true') LIMIT 1", id=task['id']))
+                and not self.subagents.permits_continuation(task, ticket)):
             blocked = 'RESEARCH_RESTART_REQUIRES_RECONCILIATION'
         if blocked:
             if task['researchChild']:
@@ -640,7 +648,7 @@ class ResearchSessions:
             if blocked:
                 raise StopAgentRun(blocked)
             messages[:] = [item for item in messages if not item.from_history or item.id == correction]
-            messages.insert(1, Message(id='research-summary:' + context.run_id, role='user', from_history=True,
+            messages.insert(1, Message(id='research-summary:' + context.run_id, role='user', from_history=False,
                 content='Previous conversation summary: ' + summary['summary']))
         except (ValueError, ModelProviderError):
             self._summary_outcome(context.user_id, turn['id'], claim, 'failed', 'RESEARCH_SUMMARY_MODEL_FAILED')

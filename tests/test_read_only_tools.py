@@ -39,7 +39,7 @@ class ReadOnlyQueueJourney(unittest.TestCase):
             number = len(server.requests)
             if number == 2:
                 return 503, {'error': {'message': 'one model outage', 'type': 'server_error'}}
-            if number in {1, 3}:
+            if number == 1:
                 return 200, [chunk({'role': 'assistant', 'tool_calls': [{
                     'index': 0, 'id': 'read_version_' + str(number), 'type': 'function',
                     'function': {'name': 'read_python_version', 'arguments': json.dumps({'arguments': {}})}}]}),
@@ -127,14 +127,16 @@ class ReadOnlyQueueJourney(unittest.TestCase):
             return
         self.assertEqual(store.native_db.get_job(task['run_id'])['attempt'], 2, snapshot)
         outputs = [e['data']['output'] for e in turn['events'] if e['type'] == 'tool_finished']
-        self.assertEqual(outputs, [{'version': sys.version_info.major}] * (2 if read_only else 1))
+        self.assertEqual(outputs, [{'version': sys.version_info.major}])
         # The failed request reached the provider with the actual subprocess result.
         self.assertTrue(any(m.get('role') == 'tool' and 'version' in str(m.get('content'))
                             for m in server.requests[1][0]['messages']))
         if read_only:
             self.assertEqual(turn['status'], 'completed', snapshot)
             self.assertEqual(store.effects(task['id']), [])
-            self.assertEqual(len(server.requests), 4)
+            self.assertEqual(len(server.requests), 3)
+            self.assertTrue(any(m.get('role') == 'tool' and 'version' in str(m.get('content'))
+                                for m in server.requests[2][0]['messages']))
             expect(self.page.locator('.rs-turn')).to_contain_text('读取完成，模型故障后继续。')
         else:
             self.assertEqual(turn['status'], 'failed', snapshot)
@@ -143,7 +145,7 @@ class ReadOnlyQueueJourney(unittest.TestCase):
             self.assertTrue(any(e['type'] == 'research_reconciliation_required' for e in turn['events']))
         self.page.reload()
         expect(self.page.locator('.rs-turn')).to_have_count(1)
-        self.assertEqual(len(server.requests), 4 if read_only else 2)
+        self.assertEqual(len(server.requests), 3 if read_only else 2)
         if not read_only:
             self.assertTrue(any(e['type'] == 'research_reconciliation_required'
                                 for e in self.session()['turns'][-1]['events']))
