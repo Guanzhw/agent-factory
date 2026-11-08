@@ -21,12 +21,14 @@ Start with a working chat experience and an Agent that completes real tasks. Put
 ## Implement and review
 
 1. Inspect callers and the pinned SDK before changing a shared contract.
-2. Reproduce the user-visible failure or run one small authorized real task.
-3. Prefer installed Agno capabilities over duplicate implementations. Remove project restrictions that obstruct Agent execution or add user steps. For existing autonomous-session limits, compare the same scope and units against the pinned Codex reference: remove limits without a corresponding Codex limit and align comparable defaults. Do not add a capability just because Codex has it. New abstractions or compatibility paths need a present requirement or reproduced failure.
-4. Apply the installed [Ponytail skill](.agents/skills/ponytail/SKILL.md). The old test suite was deleted; the user subsequently authorized a minimal feature-based regression suite. Maintain the minimal feature regressions in tests; do not restore old tests or implementation constraints. Validate real user outcomes, run relevant checks and review the complete diff. Independent review checks correctness, removable code, and reusable native capabilities.
+2. State the expected user outcome, then reproduce the user-visible failure or run one small authorized real task. For documentation-only changes, check claims against the current implementation and evidence.
+3. Prefer deletion, existing code and native Agno capabilities before adding code. Remove project restrictions that obstruct Agent execution or add user steps. For existing autonomous-session limits, compare the same scope and units against the pinned Codex reference: remove limits without a corresponding Codex limit and align comparable defaults. Do not add a capability just because Codex has it. New abstractions or compatibility paths need a present requirement or reproduced failure.
+4. Apply the installed [Ponytail skill](.agents/skills/ponytail/SKILL.md). Keep the authorized minimal feature regressions; do not restore the deleted suite or tests that freeze internal implementation. Assert observable behavior, including relevant failure, Stop and recovery paths. Passing mocks, static checks or screenshots alone do not prove a real task works. Run relevant checks and review the complete diff. Independent review checks correctness, removable code and reusable native capabilities.
 5. Open a Draft PR using the repository template. Report behavior, evidence, remaining limitations, and next steps. Merge only with applicable user authorization.
 
 For delegated work, state the user outcome, writable files, acceptance check, and non-goals. A discovered dependency requires an explicit scope update.
+
+When a mistake repeats, capture its trigger, wrong assumption, corrected rule and verification in the existing relevant instruction or regression test. Replace conflicting or duplicate guidance instead of adding another checklist or process.
 
 Check limits against the real task. Earlier 12 KB file limits, eight-call tool budgets, short model deadlines, and small output-token settings blocked otherwise valid work. Raising a constant alone does not establish usability. Keep failed runs as evidence and separate product requirements from arbitrary QA restrictions.
 
