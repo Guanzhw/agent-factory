@@ -43,3 +43,33 @@ Only hashes and startup fixture text are included; vendored code is not copied.
 The local profile explicitly enables the reviewed distutils shim and requires
 complete installed inventory plus matching wheel payload. No compiler or runtime
 compatibility result follows from these static pins.
+
+## DeepSeek Harness visual reference
+
+The conversation layout, dark colors, system font stack, and folded tool presentation refer to DeepSeek Harness 0.2.2-rc.1. Agent Factory retains its own React components, native Agno execution, and branding.
+
+Source: https://github.com/deepseek-ai/deepseek-harness/tree/66491b05e3f05ad35bcdd4f6cd7ed26041d9e3db
+
+Relevant sources: `apps/web`, `packages/bundle/web-app`, and the `packages/client/ui-theme`, `ui-sidebar`, `ui-chat`, and `ui-conversation` packages. The locally installed packages declare the same version and MIT license. The full notice follows.
+
+MIT License
+
+Copyright (c) 2026 DeepSeek
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

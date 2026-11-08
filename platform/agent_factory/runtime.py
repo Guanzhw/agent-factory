@@ -38,13 +38,36 @@ def build_runtime(store, native_db):
         functions = research.functions(run_context) if research is not None else []
         ssh = getattr(store, 'personal_ssh', None)
         if ssh is not None:
-            functions.extend(ssh.functions(run_context.user_id))
+            ssh_functions = ssh.functions(run_context.user_id)
+            for function in ssh_functions:
+                function.pre_hook = ssh_started
+                function.post_hook = ssh_finished
+            functions.extend(ssh_functions)
         personal = getattr(store, 'personal_tools', None)
         if personal is not None:
             functions.extend(personal.functions(run_context.user_id, run_context,
                 reserved_names={function.name for function in functions} |
                     ({function.name for function in executor.skills.get_tools()} if executor.skills else set())))
         return functions
+
+    def ssh_started(run_context, fc):
+        store.event(run_context.session_id, 'tool_started', '开始执行 SSH 工具',
+            {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}})
+
+    def ssh_finished(run_context, fc):
+        event = {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}}
+        if fc.result is not None:
+            event['output'] = fc.result
+        if fc.function.name == 'ssh_run' and fc.result is not None and 'outcome' in fc.result:
+            event.update(outcome=fc.result['outcome'], code=fc.result['code'])
+        elif fc.result is None or fc.function.name == 'ssh_run' and fc.result['stopped'] is False:
+            # Native post-hooks also run after cancellation, when remote stop is unconfirmed.
+            event.update(outcome='unknown', code='SSH_TOOL_OUTCOME_UNKNOWN')
+            if fc.error:
+                event['message'] = fc.error
+        else:
+            event['outcome'] = 'completed'
+        store.event(run_context.session_id, 'tool_finished', 'SSH 工具执行记录', event)
 
     executor = Agent(id='factory-executor', name='Factory', model=model, db=native_db,
         instructions=instructions, tools=selected_tools, pre_hooks=[bind_run],

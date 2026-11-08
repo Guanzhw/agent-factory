@@ -109,7 +109,7 @@ class NativeBridge:
                                               sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         return await self._request("POST", f"/{component['kind']}s/{quote(component['id'], safe='')}/runs", user_id,
             headers={"Idempotency-Key": native_key},
-            data={"message": json.dumps(plan.get("inputValues", {}), separators=(",", ":")) if component["kind"] == "workflow" else "Execute the persisted factory plan.", "session_id": session_id,
+            data={"message": json.dumps(plan.get("inputValues", {}), separators=(",", ":")) if component["kind"] == "workflow" else plan["normalizedGoal"], "session_id": session_id,
                   "background": "true", "stream": "false",
                   "session_state": json.dumps({"factory_envelope": envelope}, separators=(",", ":"))})
 

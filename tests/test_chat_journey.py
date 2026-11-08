@@ -15,7 +15,7 @@ import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from uuid import uuid4
 
@@ -37,7 +37,8 @@ from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
 from research.session_tools import ResearchSessionTools, _directory, _open_file
 
-DOCUMENT = '研究结果：文件内容保持完整。\n' * 2000
+DOCUMENT = '状态：初稿\n' + '研究结果：文件内容保持完整。\n' * 2000
+PRESENTATION = "### 聊天呈现\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 可读 |\n\n```python\nprint('中文验收')  # " + 'long ' * 40 + '\n```\n\n```\n\n```\n\n' + '\n\n'.join(f'第 {i} 段：保留历史阅读位置，同时提供回到底部。' for i in range(60))
 
 
 class ModelEndpoint(BaseHTTPRequestHandler):
@@ -53,9 +54,25 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         results = [(names.get(m.get('tool_call_id')), m.get('content'))
                    for m in request['messages'] if m['role'] == 'tool']
         system = '\n'.join(m['content'] for m in request['messages'] if m['role'] == 'system')
-        tool, arguments, reply = None, {}, '任务完成，结果可下载。'
+        user_text = next((m['content'] for m in reversed(request['messages']) if m['role'] == 'user'), '')
+        tool, arguments, reply = None, {}, '任务完成，结果可下载。\n\n| 结果 | 状态 |\n| --- | --- |\n| 工具 | 已完成 |'
         if request['model'] == 'compression':
             reply = '压缩摘要：数值42'
+        elif user_text == '聊天呈现验收':
+            reply = PRESENTATION
+        elif user_text in {'ssh 可用了吗?', '再看一下 SSH 状态'}:
+            if not results:
+                tool = 'ssh_servers'
+            reply = '已找到配置的 SSH 服务器；本轮只查询配置，连接状态尚未探测。'
+        elif user_text in {'SSH 断线回执验收', 'SSH 空命令验收', 'SSH 启动失败验收', 'SSH 派发异常验收', 'SSH 取消验收', 'SSH 准备失败验收', 'SSH 清理失败验收', 'SSH 参数缺失验收'}:
+            if not results:
+                tool = 'ssh_servers'
+            elif len(results) == 1:
+                tool, arguments = 'ssh_run', {'reference': ast.literal_eval(results[0][1])[0]['reference'],
+                                             'argv': [] if user_text == 'SSH 空命令验收' else ['pwd']}
+                if user_text == 'SSH 参数缺失验收':
+                    del arguments['argv']
+            reply = 'SSH 结果未确认，需要核对原命令。'
         elif '"goal": "child-only"' in system:
             if not results:
                 tool, arguments = 'research_edit_file', {'path': 'child.txt', 'old': '', 'new': '子助手已完成'}
@@ -95,6 +112,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         else:
             steps = [('demo_cli', {'mode': 'fail'}), ('demo_cli', {'mode': 'ok'}), ('ssh_servers', {}),
                      ('research_edit_file', {'path': '结果.txt', 'old': '', 'new': DOCUMENT}),
+                     ('research_edit_file', {'path': '结果.txt', 'old': '状态：初稿', 'new': '状态：已复核'}),
                      ('research_delegate', {'goal': 'child-only'})]
             if len(results) < len(steps):
                 tool, arguments = steps[len(results)]
@@ -179,14 +197,19 @@ class ChatJourney(unittest.TestCase):
             cls.app = create_app(settings, session_tools=ResearchSessionTools(workspace_root=root / 'research'))
         cls.state = factory_state(cls.app)
         cls.server = uvicorn.Server(uvicorn.Config(cls.app, ssl_certfile=str(root / 'cert.pem'),
-            ssl_keyfile=str(root / 'key.pem'), log_level='warning', access_log=False))
+            ssl_keyfile=str(root / 'key.pem'), log_level='warning', access_log=False,
+            timeout_graceful_shutdown=35))
         thread = threading.Thread(target=lambda: cls.server.run(sockets=[listener]), daemon=True)
         thread.start()
         def shutdown():
             cls.server.should_exit = True
-            thread.join(20)
+            # Match the production transport budget, then allow application cleanup.
+            thread.join(75)
             if thread.is_alive():
                 raise RuntimeError('Application did not stop')
+            if (not cls.server.lifespan.shutdown_event.is_set() or cls.server.lifespan.error_occurred
+                    or cls.server.lifespan.shutdown_failed):
+                raise RuntimeError('Application lifespan shutdown failed')
         cls.addClassCleanup(shutdown)
         deadline = time.monotonic() + 30
         while not cls.server.started:
@@ -267,11 +290,15 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(snapshot['turns'][-1]['status'], 'completed', snapshot)
         turn = snapshot['turns'][-1]
         outputs = [e['data']['output'] for e in turn['events'] if e['type'] == 'tool_finished']
-        self.assertIn({'exitCode': 7, 'stdout': 'diagnostic\n', 'stderr': 'problem\n'}, outputs)
+        self.assertIn({'exitCode': 7, 'stdout': 'diagnostic' + os.linesep, 'stderr': 'problem' + os.linesep}, outputs)
         self.assertIn({'ok': True}, outputs)
         self.assertEqual(len(turn['children']), 1)
         self.assertEqual(turn['children'][0]['status'], 'completed')
         self.assertIn('子助手已完成', turn['children'][0]['result'])
+        edits = [e for e in turn['events'] if e['type'] == 'research_tool_finished'
+                 and e['data'].get('toolName') == 'research_edit_file']
+        self.assertTrue(edits, turn['events'])
+        self.assertTrue(all(e['data']['outcome'] == 'completed' for e in edits), edits)
         # The next real HTTP model request must contain the tool's discovered server.
         self.assertTrue(any(server['reference'] in json.dumps(r['messages']) for r in self.model.requests))
         self.assertTrue(any(e['type'] == 'model_content_delta' for e in turn['events']))
@@ -281,35 +308,93 @@ class ChatJourney(unittest.TestCase):
         with self.page.expect_download() as download:
             self.page.get_by_role('link', name='结果.txt', exact=True).click()
         self.assertEqual(download.value.suggested_filename, '结果.txt')
-        self.assertEqual(Path(download.value.path()).read_bytes(), DOCUMENT.encode())
+        expected_bytes = DOCUMENT.replace('状态：初稿', '状态：已复核').replace('\n', os.linesep).encode()
+        self.assertEqual(Path(download.value.path()).read_bytes(), expected_bytes)
         workspace = self.state['store'].research_sessions.workspace(self.owner, snapshot['id'])
+        self.assertEqual((workspace / '结果.txt').read_bytes(), expected_bytes)
+        self.assertEqual((workspace / 'child.txt').read_text(encoding='utf-8'), '子助手已完成')
         sibling = Path(str(workspace) + '-neighbor')
         sibling.mkdir()
         (sibling / 'outside.txt').write_text('outside this session')
-        (workspace / 'escape').symlink_to(sibling, target_is_directory=True)
+        if sys.platform == 'win32':
+            import _winapi
+            _winapi.CreateJunction(str(sibling), str(workspace / 'escape'))
+        else:
+            (workspace / 'escape').symlink_to(sibling, target_is_directory=True)
         download_url = self.origin + '/api/factory/research/sessions/' + snapshot['id'] + '/files/download'
         for path in ('../' + sibling.name + '/outside.txt', str(sibling / 'outside.txt'), 'escape/outside.txt'):
             with self.subTest(download=path):
                 self.assertEqual(self.context.request.get(download_url, params={'path': path}).status, 404)
         normalized = self.context.request.get(download_url, params={'path': 'unused/../结果.txt'})
-        self.assertEqual(normalized.body(), DOCUMENT.encode())
+        self.assertEqual(normalized.body(), expected_bytes)
         blocked = workspace / '不可读实验目录'
         blocked.mkdir()
         (blocked / 'hidden.txt').write_text('not listable')
-        blocked.chmod(0)
+        if sys.platform == 'win32':
+            import ntsecuritycon
+            import win32api
+            import win32security
+            original_acl = win32security.GetNamedSecurityInfo(str(blocked), win32security.SE_FILE_OBJECT,
+                win32security.DACL_SECURITY_INFORMATION).GetSecurityDescriptorDacl()
+            user_sid = win32security.LookupAccountName(None, win32api.GetUserName())[0]
+            denied_acl = win32security.ACL()
+            denied_acl.AddAccessDeniedAce(win32security.ACL_REVISION, ntsecuritycon.FILE_LIST_DIRECTORY, user_sid)
+            denied_acl.AddAccessAllowedAce(win32security.ACL_REVISION, ntsecuritycon.FILE_ALL_ACCESS, user_sid)
         try:
+            if sys.platform == 'win32':
+                win32security.SetNamedSecurityInfo(str(blocked), win32security.SE_FILE_OBJECT,
+                    win32security.DACL_SECURITY_INFORMATION, None, None, denied_acl, None)
+            else:
+                blocked.chmod(0)
+            with self.assertRaises(PermissionError):
+                with os.scandir(blocked) as entries:
+                    list(entries)
             response = self.context.request.get(download_url.removesuffix('/download'))
             self.assertEqual(response.status, 200)
             self.assertIn('结果.txt', [file['path'] for file in response.json()['files']])
             self.assertEqual([issue['path'] for issue in response.json()['errors']], [blocked.name])
+            reason = response.json()['errors'][0]['message']
+            self.assertTrue(reason)
             self.page.get_by_role('button', name='刷新文件列表', exact=True).click()
             expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(blocked.name)
+            expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(reason)
+            expect(self.page.locator('.rs-files').get_by_text('还没有生成文件。', exact=True)).to_have_count(0)
             with self.page.expect_download() as partial_download:
                 self.page.get_by_role('link', name='结果.txt', exact=True).click()
-            self.assertEqual(Path(partial_download.value.path()).read_bytes(), DOCUMENT.encode())
-            self.page.screenshot(path='/tmp/factory-partial-files.png', full_page=True)
+            self.assertEqual(Path(partial_download.value.path()).read_bytes(), expected_bytes)
+            self.page.screenshot(path=str(Path(self.folder.name) / 'partial-files.png'), full_page=True)
+            next_session = self.post('/research/sessions', {'title': '文件列表切换验收', 'goal': '尚未执行',
+                'boundaries': '', 'modelConnectionRef': snapshot['model']['connectionRef']})
+            self.page.get_by_role('button', name='刷新会话', exact=True).click()
+            pending = []
+            next_files = '**/research/sessions/' + next_session['id'] + '/files'
+            self.page.route(next_files, lambda route: pending.append(route))
+            with self.page.expect_request(next_files):
+                self.page.get_by_role('button', name=re.compile('^文件列表切换验收')).click()
+            expect(self.page.get_by_role('heading', name='文件列表切换验收', exact=True)).to_be_visible()
+            file_panel = self.page.locator('.rs-files')
+            expect(file_panel.get_by_role('status')).to_have_text('正在读取文件…')
+            expect(file_panel.get_by_role('link')).to_have_count(0)
+            expect(file_panel.get_by_role('alert')).to_have_count(0)
+            expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(0)
+            self.assertEqual(len(pending), 1)
+            pending[0].fulfill(status=503, json={'detail': '文件列表读取失败验收'})
+            expect(file_panel.get_by_role('alert')).to_have_text('文件列表读取失败验收')
+            expect(file_panel.get_by_role('link')).to_have_count(0)
+            expect(file_panel.get_by_text(blocked.name, exact=False)).to_have_count(0)
+            expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(0)
+            self.page.unroute(next_files)
+            self.page.get_by_role('button', name='刷新文件列表', exact=True).click()
+            expect(file_panel.get_by_role('alert')).to_have_count(0)
+            expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(1)
+            self.page.get_by_role('button', name=re.compile('^' + re.escape(snapshot['title']))).click()
+            expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(blocked.name)
         finally:
-            blocked.chmod(0o700)
+            if sys.platform == 'win32':
+                win32security.SetNamedSecurityInfo(str(blocked), win32security.SE_FILE_OBJECT,
+                    win32security.DACL_SECURITY_INFORMATION, None, None, original_acl, None)
+            else:
+                blocked.chmod(0o700)
         self.page.get_by_role('button', name='刷新文件列表', exact=True).click()
         expect(self.page.locator('.rs-files [role="alert"]')).to_have_count(0)
         expect(self.page.get_by_role('link', name=blocked.name + '/hidden.txt', exact=True)).to_be_visible()
@@ -320,6 +405,215 @@ class ChatJourney(unittest.TestCase):
         self.page.locator('.rs-files').scroll_into_view_if_needed()
         self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
         expect(self.page.get_by_role('link', name='结果.txt', exact=True)).to_be_visible()
+
+    def test_ssh_question_and_followup_keep_current_user_message(self):
+        server = self.configure_ssh()
+        self.send('ssh 可用了吗?')
+        for question in ('ssh 可用了吗?', '再看一下 SSH 状态'):
+            if question != 'ssh 可用了吗?':
+                self.post('/research/sessions/' + self.session()['id'] + '/turns', {'text': question})
+            snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] in {'completed', 'failed', 'unknown', 'cancelled'})
+            turn = snapshot['turns'][-1]
+            self.assertEqual(turn['status'], 'completed', snapshot)
+            self.assertIn('已找到配置的 SSH 服务器', turn['result'])
+            events = [e for e in turn['events'] if e['data'].get('toolName') == 'ssh_servers']
+            self.assertEqual([e['type'] for e in events], ['tool_started', 'tool_finished'])
+            self.assertEqual(events[0]['data']['callId'], events[1]['data']['callId'])
+            self.assertEqual(events[0]['data']['arguments'], {})
+            self.assertEqual(events[1]['data']['outcome'], 'completed')
+            self.assertEqual(events[1]['data']['output'][0]['reference'], server['reference'])
+            self.assertTrue(any(any(m['role'] == 'user' and m['content'] == question for m in r['messages'])
+                for r in self.model.requests))
+        store = self.state['store']
+        for _ in range(1001):
+            store.event(turn['taskId'], 'model_content_delta', 'window fixture', {'responseId': 'window', 'text': 'x'})
+        self.assertEqual(len([e for e in self.session()['turns'][-1]['events']
+                              if e['data'].get('toolName') == 'ssh_servers']), 2)
+        before_refresh = len(self.model.requests)
+        self.page.reload()
+        expect(self.page.get_by_text('已找到配置的 SSH 服务器', exact=False).first).to_be_visible()
+        process = self.page.locator('.rs-process').last
+        process.locator('summary').first.click()
+        call = process.locator('.rs-tool-call').first
+        call.locator('summary').first.click()
+        call.get_by_text('调用参数', exact=True).click()
+        expect(call.locator('pre').first).to_have_text('{}')
+        call.get_by_text('完整工具结果', exact=True).click()
+        expect(call.get_by_text(server['reference'], exact=False).first).to_be_visible()
+        self.assertEqual(len(self.session()['turns']), 2)
+        self.assertEqual(len(self.model.requests), before_refresh)
+
+        disconnected = {'exitCode': 255, 'stdout': '', 'stderr': 'connection lost', 'stopped': False}
+        with patch.object(self.state['store'].personal_ssh, 'run', new=AsyncMock(return_value=disconnected)):
+            self.post('/research/sessions/' + self.session()['id'] + '/turns', {'text': 'SSH 断线回执验收'})
+            snapshot = self.wait_for(lambda s: len(s['turns']) == 3 and s['turns'][-1]['status'] == 'completed')
+        receipt = next(e['data'] for e in snapshot['turns'][-1]['events']
+                       if e['type'] == 'tool_finished' and e['data'].get('toolName') == 'ssh_run')
+        self.assertEqual(receipt['outcome'], 'unknown')
+        self.assertEqual(receipt['output'], disconnected)
+        self.assertEqual(receipt['code'], 'SSH_TOOL_OUTCOME_UNKNOWN')
+        expect(self.page.get_by_text('原工具操作结果未知，需核对原任务，不要重发同一操作。', exact=True)).to_be_visible()
+
+    def test_ssh_rejection_and_uncertain_dispatch(self):
+        from contextlib import contextmanager
+        from tempfile import TemporaryDirectory
+        self.configure_ssh()
+        @contextmanager
+        def directory(**kwargs):
+            if message == 'SSH 准备失败验收':
+                raise PermissionError('synthetic private path must not appear in receipt')
+            with TemporaryDirectory(**kwargs) as folder:
+                yield folder
+            if message == 'SSH 清理失败验收':
+                raise OSError('synthetic private path must not appear in receipt')
+        cases = [('SSH 空命令验收', None, 'failed', 'SSH_COMMAND_INVALID'),
+                 ('SSH 参数缺失验收', None, 'failed', 'SSH_COMMAND_INVALID'),
+                 ('SSH 准备失败验收', None, 'failed', 'SSH_PREPARATION_FAILED'),
+                 ('SSH 启动失败验收', CLIProcessError('SPAWN_FAILED', dispatched=False, stopped=True), 'failed', 'SSH_SPAWN_FAILED'),
+                 ('SSH 派发异常验收', CLIProcessError('CONNECTION_LOST', dispatched=True, stopped=True), 'unknown', 'SSH_CONNECTION_LOST'),
+                 ('SSH 取消验收', CLIProcessError('CANCELLED', dispatched=False, stopped=True, cancelled=True), 'unknown', 'SSH_CANCELLED'),
+                 ('SSH 清理失败验收', None, 'unknown', 'SSH_EXECUTION_OUTCOME_UNKNOWN')]
+        for index, (message, error, outcome, code) in enumerate(cases):
+            with self.subTest(message=message), patch('agent_factory.personal_ssh.TemporaryDirectory', directory), patch(
+                    'agent_factory.personal_ssh.run_cli_process', new=AsyncMock(side_effect=error,
+                        return_value=CLIProcessResult(returncode=0, stdout=b'/tmp\n', stderr=b''))) as process:
+                if index == 0:
+                    self.send(message)
+                else:
+                    self.post('/research/sessions/' + self.session()['id'] + '/turns', {'text': message})
+                snapshot = self.wait_for(lambda s: len(s['turns']) == index + 1 and s['turns'][-1]['status'] == 'completed')
+                receipt = next(event['data'] for event in snapshot['turns'][-1]['events']
+                               if event['type'] == 'tool_finished' and event['data'].get('toolName') == 'ssh_run')
+                self.assertEqual(receipt['outcome'], outcome)
+                self.assertEqual(receipt['code'], code)
+                if message in {'SSH 空命令验收', 'SSH 参数缺失验收', 'SSH 准备失败验收'}:
+                    process.assert_not_called()
+                else:
+                    process.assert_awaited_once()
+                expect(self.page.locator('.rs-turn')).to_have_count(index + 1)
+                expect(self.page.locator('.rs-turn').last.locator('.rs-process > summary')).to_contain_text('已完成')
+                call = self.page.locator('.rs-turn').last.locator('.rs-tool-call').last
+                self.page.locator('.rs-turn').last.locator('.rs-process > summary').click()
+                expect(call.get_by_text('失败' if outcome == 'failed' else '结果未确认', exact=True)).to_be_visible()
+
+    def test_activity_wait_disconnect_and_reconciliation_display(self):
+        # UI-only snapshots isolate transport loss and missing/late events.
+        self.send('ssh 可用了吗?')
+        snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
+        turn = snapshot['turns'][-1]
+        old = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=30)).isoformat()
+        def event(identifier, kind, data):
+            return {'id': identifier, 'jobId': turn['taskId'], 'type': kind, 'message': 'UI fixture',
+                    'createdAt': old, 'data': {'callId': 'display-call', 'toolName': 'ssh_run', **data}}
+        turn.update(status='running', result=None, events=[event(1, 'tool_started',
+            {'arguments': {'argv': ['pwd'], 'reference': 'synthetic-server'}})])
+        snapshot.update(state='running', allowedActions=['correct', 'stop'])
+        def stream(route):
+            route.fulfill(content_type='text/event-stream', body='event: session\ndata: ' +
+                          json.dumps(snapshot, ensure_ascii=False) + '\n\n')
+        self.page.route('**/research/sessions/*/events', stream)
+        self.page.route('**/research/sessions/' + snapshot['id'], lambda route: route.fulfill(json=snapshot))
+        self.page.reload()
+        expect(self.page.get_by_text(re.compile('秒未收到新执行事件'))).to_be_visible()
+        self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-waiting.png'))
+        expect(self.page.get_by_text(re.compile('实时连接已断开'))).to_be_visible()
+        expect(self.page.get_by_text('已开始 · 等待结果', exact=True)).to_be_visible()
+        snapshot.update(state='idle', allowedActions=['start', 'stop'])
+        turn.update(status='completed', result='UI fixture answer\n\n| 结果 | 状态 |\n| --- | --- |\n| SSH | 已确认 |', events=[*turn['events'],
+            event(2, 'tool_finished', {'outcome': 'unknown', 'code': 'SSH_TOOL_OUTCOME_UNKNOWN'})])
+        expect(self.page.get_by_text(re.compile('原工具操作结果未知'))).to_be_visible()
+        self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-unknown.png'))
+        turn['events'].append(event(3, 'tool_finished', {'outcome': 'completed', 'reconciled': True,
+                                                     'output': {'stdout': '/tmp', 'exitCode': 0}}))
+        expect(self.page.get_by_text(re.compile('原工具操作结果未知'))).not_to_be_visible()
+        process = self.page.locator('.rs-process')
+        process.locator('summary').first.click()
+        expect(process.locator('.rs-tool-call')).to_have_count(1)
+        expect(process.locator('.rs-tool-call').get_by_text('已完成', exact=True)).to_be_visible()
+        expect(self.page.get_by_role('cell', name='SSH', exact=True)).to_be_visible()
+        self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-reconciled.png'))
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+        self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-mobile.png'))
+
+    def test_chat_copy_composer_and_scroll_following(self):
+        self.context.grant_permissions(['clipboard-read', 'clipboard-write'])
+        self.send('聊天呈现验收')
+        snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
+        self.assertEqual(snapshot['turns'][-1]['result'], PRESENTATION)
+        expect(self.page.locator('.rs-code-block')).to_have_count(2)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollHeight'), 900)
+        pane = self.page.locator('.rs-content')
+        code = self.page.locator('.rs-code-block').first
+        self.page.get_by_role('button', name='复制代码', exact=True).first.click()
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'), "print('中文验收')  # " + 'long ' * 40)
+        expect(code.get_by_role('checkbox', name='自动换行')).to_be_checked()
+        self.assertEqual(code.locator('code').evaluate('el => getComputedStyle(el).whiteSpace'), 'pre-wrap')
+        code.get_by_role('checkbox', name='自动换行').uncheck()
+        self.assertEqual(code.locator('code').evaluate('el => getComputedStyle(el).whiteSpace'), 'pre')
+        self.page.get_by_role('button', name='复制助手回复', exact=True).click()
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()').replace('\r\n', '\n'), PRESENTATION)
+        self.page.get_by_role('button', name='复制用户消息', exact=True).click()
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'), '聊天呈现验收')
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
+        self.page.get_by_role('button', name='回到底部', exact=True).click()
+        self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
+        composer = self.page.get_by_role('textbox', name='下一轮指令', exact=True)
+        expect(self.page.get_by_role('button', name='发送', exact=True)).to_be_disabled()
+        expect(self.page.locator('.rs-composer-model')).to_have_text('regression')
+        composer.fill('\n'.join(['draft line'] * 8))
+        self.assertGreater(composer.evaluate('el => el.clientHeight'), 80)
+        composer.fill('')
+        self.assertLessEqual(composer.evaluate('el => el.clientHeight'), 44)
+        composer.fill('resize ' * 20)
+        desktop_height = composer.evaluate('el => el.clientHeight')
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.assertGreater(composer.evaluate('el => el.clientHeight'), desktop_height)
+        self.page.set_viewport_size({'width': 1280, 'height': 900})
+        composer.fill('')
+        expect(self.page.get_by_role('button', name='发送', exact=True)).to_be_disabled()
+        before = len(self.model.requests)
+        composer.press('Enter')
+        self.assertEqual(len(self.model.requests), before)
+
+        turn = snapshot['turns'][-1]
+        turn.update(status='running', completedAt=None, result=None, events=[{'id': 100, 'jobId': turn['taskId'],
+            'type': 'model_content_delta', 'message': 'UI fixture', 'createdAt': turn['createdAt'],
+            'data': {'responseId': 'presentation', 'text': PRESENTATION}}])
+        snapshot.update(state='running', allowedActions=['correct', 'stop'])
+        self.page.route('**/research/sessions/*/events', lambda route: route.fulfill(content_type='text/event-stream',
+            body='event: session\ndata: ' + json.dumps(snapshot, ensure_ascii=False) + '\n\n'))
+        self.page.route('**/research/sessions/' + snapshot['id'], lambda route: route.fulfill(json=snapshot))
+        self.page.reload()
+        expect(self.page.get_by_role('textbox', name='补充或纠正当前研究', exact=True)).to_be_visible()
+        self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
+        self.page.locator('.rs-execution > summary').click()
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
+        reading_position = pane.evaluate('el => el.scrollTop')
+        turn['events'][0]['id'] += 1
+        turn['events'][0]['data']['text'] += '\n\n展开记录时的新内容'
+        expect(self.page.get_by_text('展开记录时的新内容', exact=True)).to_be_attached()
+        self.assertLess(abs(pane.evaluate('el => el.scrollTop') - reading_position), 2)
+        self.page.get_by_role('button', name='回到底部', exact=True).click()
+        self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_have_count(0)
+        pane.evaluate('el => { el.scrollTop = 0; }')
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
+        turn['events'][0]['id'] += 1
+        turn['events'][0]['data']['text'] += '\n\n历史阅读期间的新内容'
+        expect(self.page.get_by_text('历史阅读期间的新内容', exact=True)).to_be_attached()
+        self.assertLess(pane.evaluate('el => el.scrollTop'), 5)
+        self.page.get_by_role('button', name='回到底部', exact=True).click()
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_have_count(0)
+        turn['events'][0]['id'] += 1  # Event count stays fixed, as in the retained fragment window.
+        turn['events'][0]['data']['text'] += '\n\n恢复跟随后新内容'
+        expect(self.page.get_by_text('恢复跟随后新内容', exact=True)).to_be_attached()
+        self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        expect(self.page.get_by_role('button', name='请求停止', exact=True)).to_be_visible()
+        self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollHeight'), 844)
+        self.page.screenshot(path=str(Path(self.folder.name) / 'chat-detail-mobile.png'))
 
     @staticmethod
     def run_async(coroutine):
@@ -343,8 +637,22 @@ class ChatJourney(unittest.TestCase):
         async def observe_key(**kwargs):
             key = Path(kwargs['argv'][kwargs['argv'].index('-i') + 1])
             key_paths.append(key)
-            self.assertEqual(key.stat().st_mode & 0o777, 0o600)
-            self.assertEqual(key.parent.stat().st_mode & 0o777, 0o700)
+            if sys.platform == 'win32':
+                import win32api
+                import win32con
+                import win32security
+                token = win32security.OpenProcessToken(win32api.GetCurrentProcess(), win32con.TOKEN_QUERY)
+                try:
+                    user = win32security.GetTokenInformation(token, win32security.TokenUser)[0]
+                    acl = win32security.GetNamedSecurityInfo(str(key), win32security.SE_FILE_OBJECT,
+                        win32security.DACL_SECURITY_INFORMATION).GetSecurityDescriptorDacl()
+                    self.assertEqual(acl.GetAceCount(), 1)
+                    self.assertEqual(acl.GetAce(0)[2], user)
+                finally:
+                    win32api.CloseHandle(token)
+            else:
+                self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(key.parent.stat().st_mode & 0o777, 0o700)
             serialization.load_ssh_private_key(key.read_bytes(), password=None)
             if len(key_paths) == 2:
                 raise CLIProcessError('CONNECTION_LOST', dispatched=True, stopped=True)
@@ -386,6 +694,15 @@ class ChatJourney(unittest.TestCase):
             for path in ('../outside', '/etc/passwd', '.', '..'):
                 with self.subTest(path=path), self.assertRaises(ValueError):
                     _open_file(parent, path)
+        if sys.platform == 'win32':
+            root = Path(self.folder.name) / 'directory-lock'
+            root.mkdir()
+            ResearchSessionTools._edit(root, {'path': '中文.txt', 'old': '', 'new': 'before'})
+            ResearchSessionTools._edit(root, {'path': '中文.txt', 'old': 'before', 'new': 'after'})
+            self.assertEqual((root / '中文.txt').read_text(encoding='utf-8'), 'after')
+            with _directory(root), self.assertRaises(OSError) as blocked:
+                root.rename(root.with_name('directory-moved'))
+            self.assertEqual(blocked.exception.winerror, 32)
 
     def test_external_skill_resources_and_long_script(self):
         first_request = len(self.model.requests)
@@ -405,7 +722,7 @@ class ChatJourney(unittest.TestCase):
         self.assertIn('time.sleep(31)', results[2])
         failed, succeeded = (ast.literal_eval(value) for value in results[3:5])
         self.assertEqual(failed['exitCode'], 7)
-        self.assertEqual(failed['stderr'], 'skill diagnostic\n')
+        self.assertEqual(failed['stderr'], 'skill diagnostic' + os.linesep)
         workspace = self.state['store'].research_sessions.workspace(self.owner, snapshot['id'])
         self.assertEqual(json.loads(failed['stdout']), {'args': ['argument with spaces', '中文'], 'cwd': str(workspace)})
         self.assertEqual(succeeded['exitCode'], 0)
@@ -415,7 +732,78 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(resource['exitCode'], 0)
         self.assertEqual(json.loads(resource['stdout']), {'asset': 'External skill asset: 73.\n',
             'cwd': json.loads(results[0])['source_path']})
+        calls = [call for message in final for call in message.get('tool_calls', [])]
+        self.assertEqual(len(calls), 6)
+        events = snapshot['turns'][-1]['events']
+        for call, result in zip(calls[:3], results[:3]):
+            with self.subTest(skill_read=call['function']['name']):
+                started_events = [event['data'] for event in events if event['type'] == 'tool_started'
+                                  and event['data'].get('callId') == call['id']]
+                finished_events = [event['data'] for event in events if event['type'] == 'tool_finished'
+                                   and event['data'].get('callId') == call['id']]
+                expected_call = {'toolName': call['function']['name'], 'callId': call['id'],
+                                 'arguments': json.loads(call['function']['arguments'])}
+                self.assertEqual(started_events, [expected_call])
+                self.assertEqual(finished_events, [{**expected_call, 'outcome': 'completed', 'output': result}])
+        executed = [event['data'] for event in events if event['type'] == 'research_tool_finished'
+                    and event['data'].get('toolName') == 'research_run']
+        self.assertEqual([event['callId'] for event in executed], [call['id'] for call in calls[3:]])
+        self.assertEqual(len([event for event in events if event['type'] in {'tool_started', 'tool_finished'}]), 6)
+        from agno.exceptions import RunCancelledException
+        from agno.run import RunContext
+        from agno.tools.function import FunctionCall
+        function = next(tool for tool in self.state['executor'].skills.get_tools() if tool.name == 'get_skill_script')
+        function.process_entrypoint()
+        function._run_context = RunContext(user_id=self.owner, session_id=snapshot['turns'][-1]['taskId'],
+                                          run_id=snapshot['turns'][-1]['runId'])
+        boundary_calls = []
+        for arguments, outcome in (({'skill_name': 'journey-skill', 'script_path': 'nested/runner.py',
+                                     'execute': 'false'}, 'completed'),
+                                   ({'skill_name': 'journey-skill', 'script_path': 'missing.py',
+                                     'execute': True}, 'failed'), ({}, 'failed'),
+                                   ({'skill_name': 'journey-skill', 'script_path': 'nested/runner.py',
+                                     'execute': True, 'args': 123}, 'failed'),
+                                   ({'skill_name': 'journey-skill', 'script_path': 'nested/runner.py',
+                                     'execute': True, 'cwd': None}, 'failed')):
+            call = FunctionCall(function=function, call_id='boundary-' + uuid4().hex, arguments=arguments)
+            self.run_async(call.aexecute())
+            boundary_calls.append((call, outcome))
+        self.assertEqual(boundary_calls[0][0].result, results[2])
+        self.assertIn('error', json.loads(boundary_calls[1][0].result))
+        self.assertTrue(boundary_calls[2][0].error)
+        # Exercise Agno's cancellation finally-hook; this is an injected cancellation.
+        with patch.object(function, 'entrypoint', AsyncMock(side_effect=RunCancelledException('fixture cancellation'))):
+            call = FunctionCall(function=function, call_id='boundary-' + uuid4().hex,
+                                arguments={'skill_name': 'journey-skill'})
+            with self.assertRaises(RunCancelledException):
+                self.run_async(call.aexecute())
+            boundary_calls.append((call, 'unknown'))
+        boundary_events = self.state['store'].events(snapshot['turns'][-1]['taskId'])
+        for call, outcome in boundary_calls:
+            observed = [event for event in boundary_events if event['data'].get('callId') == call.call_id]
+            self.assertEqual([event['type'] for event in observed], ['tool_started', 'tool_finished'])
+            self.assertTrue(all(event['data']['arguments'] == call.arguments for event in observed))
+            self.assertEqual(observed[-1]['data']['outcome'], outcome)
+            if call.result is not None:
+                self.assertEqual(observed[-1]['data']['output'], call.result)
+            else:
+                self.assertNotIn('output', observed[-1]['data'])
+            if call.error:
+                self.assertEqual(observed[-1]['data']['message'], call.error)
+        # Render the actual native boundary events; the completed turn's snapshot is already frozen.
+        snapshot['turns'][-1]['events'] = boundary_events
+        self.page.route('**/research/sessions/' + snapshot['id'], lambda route: route.fulfill(json=snapshot))
+        self.page.route('**/research/sessions/*/events', lambda route: route.fulfill(content_type='text/event-stream',
+            body='event: session\ndata: ' + json.dumps(snapshot) + '\n\n'))
         self.page.reload()
+        self.page.locator('.rs-process > summary').click()
+        for call, _ in boundary_calls[3:5]:
+            assert call.error is not None
+            row = self.page.locator('.rs-tool-call').filter(has=self.page.get_by_text(call.error, exact=True))
+            expect(row).to_have_count(1)
+            row.locator(':scope > summary').click()
+            expect(row.get_by_text('失败', exact=True)).to_be_visible()
+            expect(row.get_by_text(call.error, exact=True)).to_be_visible()
         with self.page.expect_download() as download:
             self.page.get_by_role('link', name='skill-work/skill-result.json', exact=True).click()
         self.assertEqual(json.loads(Path(download.value.path()).read_bytes()), expected)
@@ -437,7 +825,7 @@ class ChatJourney(unittest.TestCase):
             self.assertEqual(len(unknown), 1)
             self.assertIsNone(unknown[0]['result'])
             workspace = self.state['store'].research_sessions.workspace(self.owner, snapshot['id'])
-            self.assertEqual((workspace / 'independent.txt').read_text(), '独立任务完成')
+            self.assertEqual((workspace / 'independent.txt').read_text(encoding='utf-8'), '独立任务完成')
             results = [m['content'] for m in self.model.requests[-1]['messages'] if m['role'] == 'tool']
             self.assertIn('SIMULATED_LOST_RESPONSE', results[0])
             self.assertIn('独立任务完成', results[-1])
@@ -471,12 +859,23 @@ class ChatJourney(unittest.TestCase):
             self.page.wait_for_timeout(100)
         self.assertTrue(response.ok, 'Command did not start')
         pid = int(response.text())
-        os.kill(pid, 0)  # Prove the command is still alive before exercising Stop.
+        if sys.platform == 'win32':
+            import win32api
+            import win32con
+            import win32event
+            handle = win32api.OpenProcess(win32con.SYNCHRONIZE, False, pid)
+            self.addCleanup(handle.Close)
+            self.assertEqual(win32event.WaitForSingleObject(handle, 0), win32event.WAIT_TIMEOUT)
+        else:
+            os.kill(pid, 0)
         self.page.get_by_role('button', name='请求停止', exact=True).click()
         snapshot = self.wait_for(lambda s: s['state'] == 'stopped')
         self.assertIn(snapshot['turns'][-1]['status'], ['cancelled', 'canceled'])
-        with self.assertRaises(ProcessLookupError):
-            os.kill(pid, 0)
+        if sys.platform == 'win32':
+            self.assertEqual(win32event.WaitForSingleObject(handle, 0), win32event.WAIT_OBJECT_0)
+        else:
+            with self.assertRaises(ProcessLookupError):
+                os.kill(pid, 0)
         self.page.reload()
         self.assertEqual(len(self.session()['turns']), 1)
 

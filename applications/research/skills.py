@@ -10,6 +10,7 @@ from agno.skills import LocalSkills, Skills
 from agno.skills.utils import get_interpreter_command
 from agno.tools.function import FunctionCall
 from agno.utils.path_safety import safe_join_relative_path
+from pydantic import TypeAdapter, ValidationError
 
 
 class ProjectSkills(LocalSkills):
@@ -34,6 +35,60 @@ class ResearchSkills(Skills):
         # Extra frontmatter used by standard clients need not prevent loading.
         super().__init__([ProjectSkills(str(path), validate=False) for path in paths if Path(path).is_dir()])
 
+    def get_tools(self):
+        tools = super().get_tools()
+        for tool in tools:
+            tool.pre_hook = self._read_started
+            tool.post_hook = self._read_finished
+        return tools
+
+    def _script_execution(self, skill_name, script_path: str | None, execute: bool):
+        skill = self.get_skill(skill_name)
+        if execute and skill is not None and script_path and script_path in skill.scripts:
+            return skill, script_path
+        return None
+
+    def _read_event(self, fc):
+        arguments = fc.arguments or {}
+        # Executed scripts already have research_run events with this call ID.
+        if fc.function.name == 'get_skill_script':
+            try:
+                execute = TypeAdapter(bool).validate_python(arguments.get('execute', False))
+            except ValidationError:
+                # The native entrypoint still rejects invalid values; record that failure.
+                execute = False
+            if self._script_execution(arguments.get('skill_name'), arguments.get('script_path'), execute) is not None:
+                return None
+        return {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': arguments}
+
+    def _read_started(self, run_context, fc):
+        event = self._read_event(fc)
+        if event is not None:
+            self.tools.sessions.store.event(run_context.session_id, 'tool_started', '开始读取技能资源', event)
+
+    def _read_finished(self, run_context, fc):
+        event = self._read_event(fc)
+        if event is None:
+            store = self.tools.sessions.store
+            if fc.result is not None or any(
+                item['data'].get('callId') == fc.call_id
+                for item in store.events(run_context.session_id)
+                if item['type'] in {'research_tool_started', 'research_tool_finished'}
+            ):
+                return
+            event = {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}}
+            store.event(run_context.session_id, 'tool_started', '技能脚本调用', event)
+        if fc.result is None:
+            event['outcome'] = 'failed' if fc.error else 'unknown'
+            if fc.error:
+                event['message'] = fc.error
+        else:
+            result = json.loads(fc.result)
+            event.update(outcome='failed' if 'error' in result else 'completed', output=fc.result)
+            if 'error' in result:
+                event['message'] = result['error']
+        self.tools.sessions.store.event(run_context.session_id, 'tool_finished', '技能资源读取记录', event)
+
     def _get_skill_instructions(self, skill_name: str) -> str:
         """Load native skill instructions and the directory containing their resources."""
         result = json.loads(super()._get_skill_instructions(skill_name))
@@ -54,9 +109,10 @@ class ResearchSkills(Skills):
             args: Script arguments, passed unchanged as separate argv entries.
             cwd: Working directory; relative paths use the session workspace. Use source_path from skill instructions for skill resources.
         """
-        skill = self.get_skill(skill_name)
-        if not execute or skill is None or not script_path or script_path not in skill.scripts:
+        execution = self._script_execution(skill_name, script_path, execute)
+        if execution is None:
             return super()._get_skill_script(skill_name, script_path, execute=False)
+        skill, script_path = execution
         script = safe_join_relative_path(Path(skill.source_path) / 'scripts', script_path)
         with script.open(encoding='utf-8') as stream:
             first_line = stream.readline().strip()

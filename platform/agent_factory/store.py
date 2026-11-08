@@ -367,7 +367,10 @@ class Store:
 
     def events(self, task_id):
         return [{"id": row["id"], "jobId": task_id, "type": row["type"], "message": row["message"], "data": row["data"], "createdAt": row["created_at"]}
-                for row in self.sql("SELECT * FROM (SELECT * FROM af_events WHERE task_id=:id ORDER BY id DESC LIMIT 1000) AS recent ORDER BY id", id=task_id)]
+                for row in self.sql("""SELECT * FROM af_events WHERE task_id=:id AND (
+                    type <> 'model_content_delta' OR id IN (
+                        SELECT id FROM af_events WHERE task_id=:id AND type='model_content_delta'
+                        ORDER BY id DESC LIMIT 1000)) ORDER BY id""", id=task_id)]
 
     def has_failures(self, task_id):
         # A bounded display window cannot erase an earlier protected failure
