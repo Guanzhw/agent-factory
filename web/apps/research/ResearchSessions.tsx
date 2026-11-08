@@ -220,8 +220,8 @@ function ContextStatus({ value, blocked }: { value: ResearchSession; blocked: bo
     {summary.status === 'needed' && <p>{canStart ? '填写下一轮指令并点击“开始这一轮”后，会先整理早期助手回复，再继续研究。打开或刷新不会执行。' : '早期助手回复需要整理；当前不能开始新一轮，请先核对会话状态和原任务记录。'}</p>}
     {summary.status === 'preparing' && <p>正在为这一轮准备摘要，尚未进入研究请求。整理完成不代表你的纠正已被纳入。</p>}
     {summary.status === 'ready' && <p>历史摘要仅作背景；当前目标、停止边界和最新纠正单独保留，原文和操作证据仍可查看。</p>}
-    {summary.status === 'failed' && <p>本轮未能保存可用摘要，没有据此继续研究。{canStart ? '你可以填写下一轮指令并明确开始，再尝试整理。' : '当前不能开始新一轮，请先核对会话状态和原任务记录。'}</p>}
-    {summary.status === 'unknown' && <p>上次整理请求没有确认结果，不会自动重发。{canStart ? '填写下一轮指令并明确开始，可能新增一次用于整理的模型请求。' : '当前不能开始新一轮，请先核对会话状态和原任务记录。'}</p>}
+    {summary.status === 'failed' && <p>未能生成可用的新摘要。继续处理时保留原有有效上下文，本轮不会反复尝试整理。</p>}
+    {summary.status === 'unknown' && <p>上次整理结果尚未确认，未采用新摘要。继续处理时保留原有有效上下文，本轮不会自动重发整理请求。</p>}
     <p>{summary.throughSequence > 0 ? `${summary.status === 'ready' ? '已确认的摘要覆盖至' : '上次已确认的摘要覆盖至'}第 ${summary.throughSequence} 轮。` : '尚无已确认的摘要。'} 完整研究记录仍保留在上方。</p>
     {summary.code && <p className="rs-context-code">原因代码：<code>{summary.code}</code></p>}
   </section>;

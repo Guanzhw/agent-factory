@@ -56,8 +56,25 @@ class ModelEndpoint(BaseHTTPRequestHandler):
                    for m in request['messages'] if m['role'] == 'tool']
         system = '\n'.join(m['content'] for m in request['messages'] if m['role'] == 'system')
         user_text = next((m['content'] for m in reversed(request['messages']) if m['role'] == 'user'), '')
+        if request['model'] == 'summary-failure' and user_text == 'Provide the summary of the conversation.':
+            entered, release = getattr(self.server, 'summary_pause', (None, None))
+            if entered is not None:
+                entered.set()
+                release.wait()
+            self.send_response(503)
+            self.end_headers()
+            self.wfile.write(b'synthetic summary provider failure')
+            return
         tool, arguments, reply = None, {}, '任务完成，结果可下载。\n\n| 结果 | 状态 |\n| --- | --- |\n| 工具 | 已完成 |'
-        if request['model'] == 'compression':
+        if user_text == '摘要故障前的背景':
+            reply = 'summary-history-answer-marker'
+        elif '摘要失败后继续' in user_text:
+            if not results:
+                tool, arguments = 'research_edit_file', {'path': 'summary-fallback.txt', 'old': '', 'new': 'Summary fallback works'}
+            reply = '摘要失败后仍已完成文件写入。'
+        elif request['model'] == 'summary-failure':
+            reply = 'Tool output retained.'
+        elif request['model'] == 'compression':
             reply = '压缩摘要：数值42'
         elif user_text == '思考与内容顺序验收':
             if not results:
@@ -302,42 +319,6 @@ class ChatJourney(unittest.TestCase):
         identifier = self.session()['id']
         self.addCleanup(lambda: self.post('/research/sessions/' + identifier + '/stop', {}))
 
-    def test_responses_native_queue_tools_and_file_delivery(self):
-        from test_native_model import Endpoint, responses_reply
-        server = ThreadingHTTPServer(('127.0.0.1', 0), Endpoint)
-        server.requests, server.hold = [], None
-        def answer(body):
-            if any(item.get('type') == 'function_call_output' for item in body['input']):
-                return 200, responses_reply('文件已经生成，可以下载。')
-            return 200, {'id': 'response-file', 'status': 'completed', 'output': [
-                {'type': 'function_call', 'id': 'fc_file', 'call_id': 'call_file', 'status': 'completed',
-                 'name': 'research_edit_file', 'arguments': json.dumps(
-                     {'path': 'responses.txt', 'old': '', 'new': 'Responses 文件交付'}, ensure_ascii=False)}]}
-        server.answer = answer
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.server_close)
-        self.addCleanup(server.shutdown)
-        self.post('/personal-models', {'provider': 'openai-compatible', 'model': 'responses-regression',
-            'baseURL': f'http://127.0.0.1:{server.server_port}/v1', 'protocol': 'responses'})
-        self.page.reload()
-        self.page.get_by_role('button', name='选择模型', exact=True).click()
-        self.page.get_by_role('option', name='responses-regression', exact=True).click()
-        self.send('Responses 文件交付验收')
-        snapshot = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
-        self.assertEqual(snapshot['turns'][-1]['status'], 'completed', snapshot)
-        self.assertEqual(len(server.requests), 2)
-        output = next(item for item in server.requests[-1][0]['input']
-                      if item.get('type') == 'function_call_output')
-        self.assertEqual(output['call_id'], 'call_file')
-        expect(self.page.locator('.rs-turn')).to_contain_text('文件已经生成，可以下载。')
-        self.page.get_by_role('button', name='会话文件', exact=True).click()
-        with self.page.expect_download() as downloaded:
-            self.page.get_by_role('link', name='responses.txt', exact=True).click()
-        self.assertEqual(Path(downloaded.value.path()).read_text(encoding='utf-8'), 'Responses 文件交付')
-        self.page.reload()
-        expect(self.page.locator('.rs-turn')).to_contain_text('文件已经生成，可以下载。')
-        self.assertEqual(len(server.requests), 2)
-
     def test_own_source_remains_readable_and_context_survives_private_visibility(self):
         from agent_factory.application_content import ContentPublication, ContentSource
         content, sources = self.state['application_content'], self.state['research_peer_sources']
@@ -491,6 +472,82 @@ class ChatJourney(unittest.TestCase):
         self.assertNotIn('source-secret-marker', json.dumps(self.model.requests[before:], ensure_ascii=False))
         self.assertIn('start', failed['allowedActions'])
         self.assertIn('共享来源已不可读', failed['turns'][-1]['failure'])
+
+    def test_summary_provider_failure_keeps_history_and_work_continues_but_stop_still_stops(self):
+        self.post('/personal-models', {'provider': 'openai-compatible', 'model': 'summary-failure',
+            'baseURL': f'http://127.0.0.1:{self.model.server_port}/v1', 'autoCompactTokenLimit': 1})
+        self.page.reload()
+        self.page.get_by_role('button', name='选择模型', exact=True).click()
+        self.page.get_by_role('option', name='summary-failure', exact=True).click()
+        self.send('摘要故障前的背景')
+        first = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        self.assertEqual(first['model']['autoCompactTokenLimit'], 1)
+        path = '/research/sessions/' + first['id']
+        before = len(self.model.requests)
+        self.post(path + '/turns', {'text': '摘要失败后继续'})
+        finished = self.wait_for(lambda value: len(value['turns']) == 2 and value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(finished['turns'][-1]['status'], 'completed')
+        self.assertEqual(finished['context']['compaction']['status'], 'failed')
+        requests = self.model.requests[before:]
+        summary_calls = [r for r in requests if r['messages'][-1]['content'] == 'Provide the summary of the conversation.']
+        self.assertEqual(len(summary_calls), 1)
+        primary_calls = [r for r in requests if r.get('tools')]
+        self.assertGreaterEqual(len(primary_calls), 2)
+        for request in primary_calls:
+            self.assertIn('summary-history-answer-marker', json.dumps(request, ensure_ascii=False))
+        workspace = self.state['research_sessions'].workspace(self.owner, first['id'])
+        self.assertEqual((workspace / 'summary-fallback.txt').read_text(), 'Summary fallback works')
+        entered, release = threading.Event(), threading.Event()
+        self.model.summary_pause = (entered, release)
+        self.addCleanup(release.set)
+        self.addCleanup(lambda: delattr(self.model, 'summary_pause'))
+        before_stop = len(self.model.requests)
+        try:
+            self.post(path + '/turns', {'text': 'Stop while the summary is pending'})
+            self.assertTrue(entered.wait(30), 'Native summary HTTP request was not reached')
+            self.post(path + '/stop', {})
+        finally:
+            release.set()
+        stopped = self.wait_for(lambda value: len(value['turns']) == 3 and value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(stopped['turns'][-1]['status'], 'canceled')
+        self.assertIn(stopped['context']['compaction']['status'], {'failed', 'unknown'})
+        self.assertEqual(len(self.model.requests) - before_stop, 1)
+
+    def test_responses_native_queue_tools_and_file_delivery(self):
+        from test_native_model import Endpoint, responses_reply
+        server = ThreadingHTTPServer(('127.0.0.1', 0), Endpoint)
+        server.requests, server.hold = [], None
+        def answer(body):
+            if any(item.get('type') == 'function_call_output' for item in body['input']):
+                return 200, responses_reply('文件已经生成，可以下载。')
+            return 200, {'id': 'response-file', 'status': 'completed', 'output': [
+                {'type': 'function_call', 'id': 'fc_file', 'call_id': 'call_file', 'status': 'completed',
+                 'name': 'research_edit_file', 'arguments': json.dumps(
+                     {'path': 'responses.txt', 'old': '', 'new': 'Responses 文件交付'}, ensure_ascii=False)}]}
+        server.answer = answer
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        self.post('/personal-models', {'provider': 'openai-compatible', 'model': 'responses-regression',
+            'baseURL': f'http://127.0.0.1:{server.server_port}/v1', 'protocol': 'responses'})
+        self.page.reload()
+        self.page.get_by_role('button', name='选择模型', exact=True).click()
+        self.page.get_by_role('option', name='responses-regression', exact=True).click()
+        self.send('Responses 文件交付验收')
+        snapshot = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(snapshot['turns'][-1]['status'], 'completed', snapshot)
+        self.assertEqual(len(server.requests), 2)
+        output = next(item for item in server.requests[-1][0]['input']
+                      if item.get('type') == 'function_call_output')
+        self.assertEqual(output['call_id'], 'call_file')
+        expect(self.page.locator('.rs-turn')).to_contain_text('文件已经生成，可以下载。')
+        self.page.get_by_role('button', name='会话文件', exact=True).click()
+        with self.page.expect_download() as downloaded:
+            self.page.get_by_role('link', name='responses.txt', exact=True).click()
+        self.assertEqual(Path(downloaded.value.path()).read_text(encoding='utf-8'), 'Responses 文件交付')
+        self.page.reload()
+        expect(self.page.locator('.rs-turn')).to_contain_text('文件已经生成，可以下载。')
+        self.assertEqual(len(server.requests), 2)
 
     def test_prequeue_failure_can_continue_without_duplicate_submission(self):
         sessions = self.state['research_sessions']

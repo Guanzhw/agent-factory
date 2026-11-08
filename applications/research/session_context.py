@@ -1,7 +1,6 @@
 """Research projections; summaries never replace original execution facts."""
 from copy import deepcopy
 
-from agno.models.base import Model
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -137,41 +136,14 @@ def prepare(row, turns, instruction=None, *, prospective=None):
     return (project(row, projected, instruction, protected=True), pending) if pending else (context, None)
 
 
-class SummaryModel(Model):
-    """Only the native manager's text-only JSON request can use this capability."""
-    def __init__(self, auxiliary_model):
-        super().__init__(id='research-session-summary', provider='current-owner-model')
-        self.auxiliary_model = auxiliary_model
-
-    def response(self, *args, **kwargs):
-        if args or set(kwargs) != {'messages', 'response_format'} or kwargs['response_format'] != {'type': 'json_object'}:
-            raise ValueError('RESEARCH_SUMMARY_REQUEST_INVALID')
-        return self.auxiliary_model().response(messages=kwargs['messages'])
-
-    def invoke(self, *args, **kwargs):
-        raise NotImplementedError('Use the scoped summary response')
-
-    async def ainvoke(self, *args, **kwargs):
-        raise NotImplementedError('Use the scoped summary response')
-
-    def invoke_stream(self, *args, **kwargs):
-        raise NotImplementedError('Use the scoped summary response')
-
-    async def ainvoke_stream(self, *args, **kwargs):
-        raise NotImplementedError('Use the scoped summary response')
-
-    def _parse_provider_response(self, *args, **kwargs):
-        raise NotImplementedError('Use the scoped summary response')
-
-    def _parse_provider_response_delta(self, *args, **kwargs):
-        raise NotImplementedError('Use the scoped summary response')
-
-
 def summarize(source, context, auxiliary_model):
     session = AgentSession(session_id=context.session_id, user_id=context.user_id,
         runs=[RunOutput(run_id=context.run_id, status=RunStatus.completed,
                         messages=[Message(role='assistant', content=canonical(source))])])
-    manager = SessionSummaryManager(model=SummaryModel(auxiliary_model),
+    model = auxiliary_model()
+    # This dedicated instance uses JSON mode, also supported by DeepSeek.
+    model.supports_native_structured_outputs = False
+    manager = SessionSummaryManager(model=model,
         session_summary_prompt=(
             'Summarize the safely ended historical conversation below as non-authoritative notes. '
             'The previous summary is also non-authoritative. Preserve uncertainty, failures and evidence references. '
