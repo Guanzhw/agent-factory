@@ -6,9 +6,10 @@ The independent branch `codex/dsh-skills-integration-20261108` combines the loca
 | --- | --- |
 | Local chat and Windows files | `b5527799a82aed77a6caec59da00577e5a66dd7d` |
 | PR #178, native Skills and unknown-result continuation | `bf8ad58d1b78fd0df66192f4c1455001beb7ffef` |
+| Latest PR #178, partial-file-list contract | `93119b30ac8f3a8f43881c6cef277ba71518779b` |
 | Common base | `15e192b24d03aba10c14983ee30461d24e554b95` |
 
-The integration uses a two-parent local merge. Only `docs/DEVELOPMENT_CHECKS.md` has a textual conflict. Its resolution keeps both coverage lists and distinguishes historical checks from combined validation. No whole-file replacement, main rewrite, push, or remote PR creation is performed.
+The initial integration uses a two-parent merge. Only `docs/DEVELOPMENT_CHECKS.md` has a textual conflict. Its resolution keeps both coverage lists and distinguishes historical checks from combined validation. A later merge retains the latest cloud head. The original frontend branch remains intact. The joint branch is published as [Draft PR #179](https://github.com/Guanzhw/agent-factory/pull/179), based on the cloud feature branch. Main is unchanged.
 
 ## Shared behavior retained
 
@@ -31,7 +32,21 @@ The first combined Windows run executes 20 cases in 103.195 seconds. Nineteen pa
 
 The corrected full run passes all 20 cases in 102.661 seconds, including the 31-second external skill, original-call non-replay and independent follow-up, parent/child file generation and exact download bytes, both actual-PID Stop cases, SSH disconnect presentation, and successful lifespan shutdown. Frontend lint, types and build, Ruff, Pyright and whitespace checks pass. Existing CSS/bundle and Windows TLS/RST warnings remain; successful bounded shutdown does not prove normal closure of every socket. These checks use a scripted provider, not a combined real-provider acceptance.
 
-The existing local HTTPS preview is restarted with the combined code while retaining its PostgreSQL data and configuration. Its `/api/health` returns `ok: true` and `runtime: Agno 3.1.0`. The isolated test PostgreSQL cluster is stopped after validation. Health is startup evidence, not a real-provider result.
+The existing local HTTPS preview is restarted with the combined code while retaining its PostgreSQL data and configuration. Its `/api/health` returns `ok: true` and `runtime: Agno 3.1.0`. Health is startup evidence; later provider evidence is recorded below.
+
+The latest cloud head adds partial file-list errors. Its matching component is retained. A native Windows ACL denies directory listing while accessible files remain downloadable; restoring access and refreshing recovers the listing. The normal-encoding full suite, including these cases and the chat-detail follow-up, passes 21 cases in 112.939 seconds. Frontend lint/types/build, Ruff and Pyright pass. See [the actual-source chat comparison](chat-detail-fidelity-20261108.md) for the user-visible changes and retained failed attempts.
+
+## Combined live acceptance
+
+The current subscription model completes one combined task in 20 seconds. Native receipts confirm one read-only SSH invocation with exit 0 and the three requested outputs. File receipts confirm creation, replacement and reading of a Chinese-named file with the expected two lines and 34 native-platform bytes. Actual Edge checks verify code copying and narrow composition without document overflow; refresh retains the original completed turn.
+
+That run exposes a missing process record for native skill instruction reads: installed Agno adds its skill Functions outside the selected-tools SSH hooks. The correction attaches native pre/post hooks to those Functions, retaining original arguments and complete native instruction/reference/script-source results. Script execution keeps its existing command records without duplicates. Hook classification uses the same installed Pydantic boolean conversion as the entrypoint, including accepted `execute='false'` reads. Native error results remain failed; cancellation without a result remains unknown.
+
+The new assertions reproduce all three missing read pairs before the fix. The corrected native Skills journey passes in 74.608 seconds with default Windows encoding, including exact read pairs, three unique script executions, native returned errors, missing required arguments and explicitly injected cancellation. One intermediate attempt uses a terminal session snapshot for events appended directly by a fixture; the test now reads the owning persistent event store for those boundary-only checks. That failed attempt remains preserved. A fresh independent source review finds no remaining blocker. Valid-script preparation exceptions before command dispatch retain their existing native path and are outside this resource-read correction.
+
+After restarting the preview with the fix, a real subscription-provider follow-up completes in 12 seconds. Its two visible calls load the bundled instructions and the listed reference. Expanded tool results contain the actual full documents; no remote command, script or file mutation is requested in this follow-up. Refresh preserves two turns with the original five-call SSH/file turn and the new two-call Skills turn. `chat-details-20261108/12-factory-skills-final.png` records the resulting UI.
+
+The final post-hook full suite passes all 21 cases in 113.536 seconds with default Windows encoding. Frontend lint/types/build, Ruff, Pyright and whitespace checks pass. Counted executable/source extensions, including the checked-in SVG asset, total 23,803 physical lines in 142 files, below the 25,000-line limit. The isolated test cluster is stopped after validation; the retained local preview and its PostgreSQL remain running.
 
 ## Native reparse evidence
 
@@ -53,10 +68,12 @@ The browser inventory and bound tab both confirm the existing HTTPS Factory file
 
 A fresh tab is opened at that exact session URL, brought to the front, and checked again. The next native-window access is refused because Computer Use cannot reliably determine the current browser URL on Windows. Browser actions stop immediately. Download-event and helper timeouts from the previous attempt remain failures. No successful real Edge download is claimed.
 
-Minimum recovery condition: a supported browser-control surface must reliably verify the active window URL and allow the download interaction. Alternatively, the user can download the exact file manually and supply its saved path for byte/hash verification. A restored tab DOM alone has already been tried and does not satisfy the native-window guard. Combined real-provider, SSH and Edge delivery acceptance remains pending that recovery.
+The later supported Edge tab verifies the exact current combined session URL and clicks its ordinary 34-byte file link while waiting for a download event. The click succeeds, but the event times out after 15 seconds. No native-window workaround or browser security setting is used. Real-provider, SSH and file operations are confirmed separately; real Edge download-manager delivery remains unverified.
 
-## Reviewable publication plan
+Minimum recovery condition: a supported browser download returns a saved path for byte/hash verification. Alternatively, the user can download that exact file manually and supply its saved path. Repeating a tab-level click without a new delivery signal does not establish success.
 
-Prepare the frontend Draft PR against `feat/native-research-skills-20261107`, with `codex/dsh-skills-integration-20261108` as its head. This keeps #178's changes in its own review while exposing the frontend, Windows and integration corrections as a separate diff. Recheck the cloud head before any authorized publication. Keep both PRs draft pending combined real acceptance. No remote publication is currently authorized.
+## Reviewable publication
+
+Draft PR #179 uses `feat/native-research-skills-20261107` as its base and `codex/dsh-skills-integration-20261108` as its head. This keeps #178's changes in their own review while exposing the frontend, Windows and integration corrections as a separate diff. The cloud head is checked before publication. Both PRs remain draft; no automatic merge or force push is performed.
 
 Private logs and synthetic reports stay under `D:/WorkSpace/agent-factory-local/design-evidence/`. They are not source artifacts.

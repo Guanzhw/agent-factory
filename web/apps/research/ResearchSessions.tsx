@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
-import { IconArrowUp, IconPlus, IconRefresh, IconSearch, IconSquare, IconFolder, IconLayoutSidebar } from '@tabler/icons-react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
+import { IconArrowDown, IconArrowUp, IconPlus, IconRefresh, IconSearch, IconSquare, IconFolder, IconLayoutSidebar } from '@tabler/icons-react';
 import { ApiError } from '../../api.js';
 import { assistantApi, type ResearchSource } from './live/assistantClient.js';
 import { researchSessionsApi as api, type CreateSession, type ResearchSession, type SessionAction, type SessionOptions, type SessionPage, type SessionTurn } from './researchSessionsClient.js';
@@ -7,6 +7,7 @@ import { draftKey, readStored, removeStored, requestKey, writeStored, type Pendi
 import { SessionQuestions } from './SessionQuestions.js';
 import { SessionActivity, hasUnconfirmedOperation } from './SessionActivity.js';
 import { ResearchReply } from './ResearchReply.js';
+import { CopyButton } from './CopyButton.js';
 import { SessionFiles } from './SessionFiles.js';
 import './sessions.css';
 
@@ -118,7 +119,7 @@ function CreateSessionForm({ ownerId, options, busy, blocked, onModels, onCreate
 
     <div className="rs-composer-context"><IconFolder size={16}/>{options?.workspace.configured ? '会话工作区' : '工作区尚未配置'}</div>
     <form ref={form} className="rw-form" noValidate onSubmit={event => { event.preventDefault(); submit(); }}><fieldset disabled={busy || blocked}>
-      <label className="rs-prompt"><span className="sr-only">研究目标</span><textarea placeholder="向 Agent Factory 发送消息…" rows={3} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }} value={value.goal} onChange={event => draft.change({ ...value, goal: event.target.value })} aria-invalid={!!errors.goal}/>{errors.goal && <span role="alert">{errors.goal}</span>}</label>
+      <label className="rs-prompt"><span className="sr-only">研究目标</span><textarea placeholder="向 Agent Factory 发送消息…" rows={1} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); } }} value={value.goal} onChange={event => draft.change({ ...value, goal: event.target.value })} aria-invalid={!!errors.goal}/>{errors.goal && <span role="alert">{errors.goal}</span>}</label>
       <div className="rs-compose-toolbar">      <label className="rs-model-picker"><span className="sr-only">使用模型</span><select value={value.modelConnectionRef} onChange={event => draft.change({ ...value, modelConnectionRef: event.target.value })} aria-invalid={!!errors.model}><option value="">选择模型连接</option>{options?.models.map(model => <option key={model.connectionRef} value={model.connectionRef} disabled={!model.available}>{model.model}{!model.available ? '（不可用）' : ''}</option>)}</select>{errors.model && <span role="alert">{errors.model}</span>}</label>
       <button type="button" className="rs-text-button" onClick={onModels}>配置我的模型</button>
 <button className="rw-primary rs-send" aria-label="发送消息" disabled={!options?.available || !value.goal.trim()}>{busy ? '正在发送…' : <IconArrowUp size={20}/>}</button></div>
@@ -164,11 +165,11 @@ function TurnRecord({ turn, onQuestion }: { turn: SessionTurn; onQuestion: (id: 
   const replies = [...(turn.assistantReply ? [turn.assistantReply] : []), ...(turn.assistantReplies ?? [])];
   const children = turn.children ?? [];
   const needsAttention = hasUnconfirmedOperation(turn) || turn.toolResults.some(item => item.result?.outcome === 'failed' || typeof toolOutput(item.result)?.exitCode === 'number' && toolOutput(item.result)?.exitCode !== 0) || children.some(child => ['failed', 'unknown', 'blocked'].includes(child.status)) || turn.events.some(event => event.data.outcome === 'unknown' || event.type === 'research_reconciliation_required');
-  return <article className="rs-turn"><header><h3>第 {turn.sequence} 轮</h3><span>{turn.children?.length && turn.status === 'waiting_approval' ? (children.length ? '等待子助手结果' : '等待命令结果') : turnStates[turn.status] ?? turn.status}</span><time>{time(turn.createdAt)}</time></header>
+  return <article className="rs-turn"><header className="sr-only"><h3>第 {turn.sequence} 轮</h3><span>{turn.children?.length && turn.status === 'waiting_approval' ? (children.length ? '等待子助手结果' : '等待命令结果') : turnStates[turn.status] ?? turn.status}</span><time>{time(turn.createdAt)}</time></header>
     {turn.continuation && <div className="rs-continuation"><p>由同事回复自动发起本轮。创建轮次不代表回复已纳入模型请求，请核对下方引用与原问题状态。</p>{turn.continuation.questionIds.map(id => <button key={id} className="rs-text-button" onClick={() => onQuestion(id)}>自动继续的原问题 {id}</button>)}</div>}
-    {turn.messages.map(message => <div key={message.id} className={`rs-message rs-${message.kind}`}><div className="rs-message-heading"><strong>{message.kind === 'correction' ? '你的纠正' : turn.continuation ? '自动继续指令' : '你的指令'}</strong><span>{message.state === 'included' ? '已纳入研究请求' : '待纳入研究请求'}</span></div><p>{message.text}</p></div>)}
+    {turn.messages.map(message => <div key={message.id} className="rs-user-message"><div className={`rs-message rs-${message.kind}`}><span className={message.kind === 'correction' || turn.continuation ? 'rs-message-kind' : 'sr-only'}>{message.kind === 'correction' ? '你的纠正' : turn.continuation ? '自动继续指令' : '你的指令'}</span><p>{message.text}</p>{message.state === 'pending' && <small role="status">待纳入下一次模型请求</small>}</div><div className="rs-message-meta"><time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time><CopyButton text={message.text} label="复制用户消息"/></div></div>)}
     <SessionActivity turn={turn}/>
-    {turn.result !== null && <div className="rs-message rs-reply"><strong>助手回复</strong><ResearchReply text={turn.result}/></div>}
+    {turn.result !== null && <div className="rs-message rs-reply"><span className="sr-only">助手回复</span><ResearchReply text={turn.result}/><div className="rs-message-actions"><CopyButton text={turn.result} label="复制助手回复"/></div></div>}
     {!!replies.length && <section className="rs-adopted-reply" aria-label={`第 ${turn.sequence} 轮引用的同事回复`}><h4>本轮引用的同事回复</h4>{replies.map(reply => <div key={reply.questionId}><button className="rs-text-button" onClick={() => onQuestion(reply.questionId)}>核对原问题 {reply.questionId}</button>{reply.state === 'available' ? <><p>{reply.questionText}</p><p>{reply.reply.text}</p><p className="rw-muted">作为引用证据，不代表实验已验证。输入依据：{reply.reply.contentIds.length ? reply.reply.contentIds.join('、') : '无可用团队依据'}</p></> : <p role="status">引用的回复当前不可用，正文与来源已隐藏；后续研究需先核对权限。</p>}</div>)}</section>}
     {turn.failure && <p className="rw-error" role="alert">本轮未完成：{turn.failure}</p>}
     <details className="rs-execution"><summary>{needsAttention ? '执行需要核对 · 查看原始记录' : '原始执行记录'}</summary>
@@ -218,26 +219,27 @@ function SessionDetail({ ownerId, value, busy, blocked, questionId, onQuestion, 
   const draft = useDraft(draftKey(ownerId, value.id), ''); const [error, setError] = useState('');
   const selectedReply = useDraft(`${draftKey(ownerId, value.id)}:reply`, '');
   const composer = useRef<HTMLTextAreaElement | null>(null);
-  const end = useRef<HTMLDivElement | null>(null); const following = useRef(true);
-  useEffect(() => {
-    const pane = end.current?.closest('.rs-content'); if (!pane) return;
+  const end = useRef<HTMLDivElement | null>(null); const [following, setFollowing] = useState(true);
+  useLayoutEffect(() => {
+    const pane = end.current?.closest('.rs-content'); const content = end.current?.parentElement;
+    if (!pane || !content) return;
     const scroll = () => {
-      following.current = window.matchMedia('(max-width:760px)').matches
-        ? document.documentElement.scrollHeight - window.scrollY - window.innerHeight < 180
-        : pane.scrollHeight - pane.scrollTop - pane.clientHeight < 180;
+      setFollowing(pane.scrollHeight - pane.scrollTop - pane.clientHeight < 180);
     };
-    pane.addEventListener('scroll', scroll, { passive: true }); window.addEventListener('scroll', scroll, { passive: true });
-    return () => { pane.removeEventListener('scroll', scroll); window.removeEventListener('scroll', scroll); };
-  }, []);
+    // Child file lists and native textarea sizing also change the content height.
+    const resize = new ResizeObserver(() => { if (following) pane.scrollTop = pane.scrollHeight; });
+    resize.observe(content);
+    pane.addEventListener('scroll', scroll, { passive: true });
+    return () => { resize.disconnect(); pane.removeEventListener('scroll', scroll); };
+  }, [following]);
   const latest = value.turns.at(-1);
-  useEffect(() => { if (following.current) end.current?.scrollIntoView?.({ block: 'end' }); }, [value.turns.length, latest?.events.length, latest?.result]);
   const correction = value.state === 'running' && value.allowedActions.includes('correct');
   const stateLabel = value.state === 'idle' ? value.turns.length ? value.allowedActions.includes('start') ? '可继续' : '本轮已结束' : '待开始' : states[value.state];
   async function send() {
     if (!draft.value.trim()) { setError('请输入消息。'); return; }
-    setError(''); if (await onSend(draft.value.trim(), correction, !correction && selectedReply.value || undefined)) { draft.change(''); if (!correction) selectedReply.change(''); }
+    setError(''); setFollowing(true); if (await onSend(draft.value.trim(), correction, !correction && selectedReply.value || undefined)) { draft.change(''); if (!correction) selectedReply.change(''); }
   }
-  return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`} role="status">{stateLabel}</span></div>{value.allowedActions.includes('stop') && <button disabled={busy || value.state === 'stopping'} onClick={onStop}><IconSquare size={14}/>{value.state === 'idle' ? '停止会话' : '请求停止'}</button>}</header>
+  return <section className="rs-detail" aria-label="研究会话详情" onClick={event => { if ((event.target as Element).closest('summary')) setFollowing(false); }}><header className="rs-detail-heading"><div><h2>{value.title}</h2><span className={`rs-state rs-state-${value.state}`} role="status">{stateLabel}</span></div>{value.allowedActions.includes('stop') && !correction && <button disabled={busy || value.state === 'stopping'} onClick={onStop}><IconSquare size={14}/>{value.state === 'idle' ? '停止会话' : '请求停止'}</button>}</header>
     {value.state === 'stopping' && <p className="rs-warning" role="status">正在停止，等待当前操作结束…</p>}
     {value.state === 'blocked' && <p className="rw-error" role="alert">本会话不能开始新一轮：{reasons[value.blockReason ?? ''] ?? '原操作需要核对。'} 历史和原任务记录仍可查看，不会自动重放。<code>{value.blockReason}</code></p>}
     <details className="rs-agreement"><summary>{value.model.provider} · {value.model.model} · 会话信息</summary><h3>起始消息</h3><p>{value.goal}</p>{value.boundaries && <><h3>补充要求</h3><p>{value.boundaries}</p></>}<p>当前上下文 {value.context.characters} 字符。</p>    {value.collaboration?.enabled ? <p className="rs-collaboration-note">{value.state === 'stopped' ? '会话已停止，之后到达的同事回复不会自动继续研究。原问题仍可核对；停止本会话不会停止同事的任务。' : '此会话可自主询问同事助手，收到回复后继续。请求停止会取消尚未采用的自动继续安排，不会停止同事的任务。'}</p> : <p className="rw-muted">此会话沿用原配置，仅支持手动向同事助手提问；自主协作仅用于具备该能力的新会话。</p>}
@@ -247,9 +249,20 @@ function SessionDetail({ ownerId, value, busy, blocked, questionId, onQuestion, 
     {!!value.sharedSourceIds.length && <SharedSources key={`${value.id}:${value.blockReason ?? ''}:${value.sharedSourceIds.join(',')}`} ownerId={ownerId} ids={value.sharedSourceIds}/>}
     <details className="rs-collaboration-details" open={!!questionId}><summary>同事问答</summary><SessionQuestions key={`${ownerId}:${value.id}:${value.blockReason ?? ''}`} ownerId={ownerId} sessionId={value.id} collaborationEnabled={value.collaboration?.enabled} questionId={questionId} onQuestion={onQuestion} onUse={value.allowedActions.includes('start') && !blocked && !busy ? id => { selectedReply.change(id); onQuestion(''); composer.current?.focus(); composer.current?.scrollIntoView?.({ block: 'center' }); } : undefined}/></details>
     <SessionFiles key={value.id} ownerId={ownerId} sessionId={value.id} revision={`${latest?.id}:${latest?.status}`}/>
-    <ContextStatus value={value} blocked={blocked}/><div ref={end} className="rs-conversation-end"/>
-    {(value.allowedActions.includes('start') || correction) && <form className="rw-form rs-composer" noValidate onSubmit={event => { event.preventDefault(); void send(); }}><fieldset disabled={busy || blocked}>{selectedReply.value && <div className="rs-selected-reply"><p>已选择下一轮引用：<code>{selectedReply.value}</code>。{correction ? '当前纠正不会采用这条回复。' : '提交下一轮时会重新核对回复与来源权限。'}</p><button type="button" onClick={() => selectedReply.change('')}>取消选用回复</button></div>}<label><span className="sr-only">{correction ? '补充或纠正当前研究' : '下一轮指令'}</span><textarea ref={composer} rows={2} placeholder="继续对话…" onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} value={draft.value} onChange={event => draft.change(event.target.value)} aria-invalid={!!error}/></label><p className="rw-muted">{correction ? '补充消息会在下一次模型请求中纳入。' : 'Enter 发送 · Shift + Enter 换行'}</p>{error && <p role="alert" className="rw-error">{error}</p>}<button className="rw-primary rs-send" aria-label={correction ? '保存纠正' : '发送'}>{busy ? '正在提交…' : <IconArrowUp size={20}/>}</button></fieldset></form>}
+    <ContextStatus value={value} blocked={blocked}/>
+    {(value.allowedActions.includes('start') || correction) && <form className="rw-form rs-composer" noValidate onSubmit={event => { event.preventDefault(); void send(); }}>
+      {!following && <button type="button" className="rs-jump-latest" aria-label="回到底部" onClick={() => { setFollowing(true); end.current?.scrollIntoView({ block: 'end' }); }}><IconArrowDown size={18}/></button>}
+      <fieldset disabled={busy || blocked}>{selectedReply.value && <div className="rs-selected-reply"><p>已选择下一轮引用：<code>{selectedReply.value}</code>。{correction ? '当前纠正不会采用这条回复。' : '提交下一轮时会重新核对回复与来源权限。'}</p><button type="button" onClick={() => selectedReply.change('')}>取消选用回复</button></div>}
+        <label><span className="sr-only">{correction ? '补充或纠正当前研究' : '下一轮指令'}</span><textarea ref={composer} rows={1} placeholder="继续对话…" onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); if (draft.value.trim()) void send(); } }} value={draft.value} onChange={event => draft.change(event.target.value)} aria-invalid={!!error}/></label>
+        {error && <p role="alert" className="rw-error">{error}</p>}
+        <div className="rs-compose-toolbar"><p className="rw-muted">{correction ? '发送将补充当前任务' : 'Enter 发送 · Shift + Enter 换行'}</p><span className="rs-composer-model" title={`${value.model.provider} · ${value.model.model}`}>{value.model.model}</span>
+          {correction && value.allowedActions.includes('stop') && <button type="button" className="rs-stop" aria-label="请求停止" onClick={onStop}><IconSquare size={16}/></button>}
+          <button className="rw-primary rs-send" aria-label={correction ? '保存纠正' : '发送'} disabled={!draft.value.trim()}>{busy ? '正在提交…' : <IconArrowUp size={20}/>}</button>
+        </div>
+      </fieldset>
+    </form>}
     {!draft.saved && <p className="rw-error" role="alert">浏览器无法保存草稿；离开前请复制当前输入。</p>}
+    <div ref={end} className="rs-conversation-end"/>
   </section>;
 }
 

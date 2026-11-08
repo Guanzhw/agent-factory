@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { IconChevronRight, IconTool, IconCircleCheck, IconAlertCircle, IconClock } from '@tabler/icons-react';
+import { IconChevronRight, IconCircleCheck, IconAlertCircle, IconClock } from '@tabler/icons-react';
 import { ResearchReply } from './ResearchReply.js';
 import type { SessionEvent, SessionTurn } from './researchSessionsClient.js';
 
 const tools: Record<string, string> = {
   ssh_servers: '查找 SSH 服务器', ssh_run: '执行 SSH 命令',
+  get_skill_instructions: '读取技能说明', get_skill_reference: '读取技能参考', get_skill_script: '读取技能脚本',
   research_project: '读取研究目标', research_experiment: '启动实验', research_record_experiment: '记录实验结果',
   research_experiment_result: '查看实验结果', research_assess: '整理实验评估',
   research_read_file: '读取文件', research_search: '搜索工作区内容', research_edit_file: '修改文件',
@@ -57,9 +58,10 @@ function ActionRecord({ event, start, active }: { event: SessionEvent; start?: S
       const path = typeof result.path === 'string' ? result.path : typeof relativePath === 'string' ? relativePath : '';
       const Icon = failed || unknown ? IconAlertCircle : finished ? IconCircleCheck : IconClock;
       const args = start?.data.arguments ?? event.data.arguments;
+      const parameters = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : null;
+      const preview = path || (Array.isArray(parameters?.argv) ? parameters.argv.join(' ') : typeof parameters?.skill_name === 'string' ? parameters.skill_name : '');
       return <li className={failed || unknown ? 'rs-action-warning' : ''}><details className="rs-tool-call">
-        <summary><Icon size={16}/><strong>{activityName(event)}</strong><span>{state}</span><IconChevronRight className="rs-disclosure" size={14}/></summary>
-        {path && <code>{path}</code>}
+        <summary><Icon size={16}/><strong>{activityName(event)}</strong>{preview && <code className="rs-tool-preview" title={preview}>{preview}</code>}<span>{state}</span><IconChevronRight className="rs-disclosure" size={14}/></summary>
         <small>{new Date((start ?? event).createdAt).toLocaleTimeString('zh-CN')}{finished && ` → ${new Date(event.createdAt).toLocaleTimeString('zh-CN')}`}</small>
         {args !== undefined ? <details><summary>调用参数</summary><pre>{JSON.stringify(args, null, 2)}</pre></details> : <p className="rw-muted">此记录未保存调用参数。</p>}
         {typeof event.data.code === 'string' && <p role="alert">错误：<code>{event.data.code}</code></p>}
@@ -68,8 +70,10 @@ function ActionRecord({ event, start, active }: { event: SessionEvent; start?: S
         {typeof result.exitCode === 'number' && <p>命令退出码：{result.exitCode}{result.exitCode === 0 ? '（执行成功）' : '（请查看输出）'}</p>}
         {finished && outcome === 'completed' && typeof result.afterSha256 === 'string' && path && <p>已保存文件，可在下方“会话文件”中下载。</p>}
         {result.truncated === true && <p>输出较长，当前显示预览。完整输出：{[result.stdoutPath, result.stderrPath].filter(value => typeof value === 'string').map(path => <code key={String(path)}>{String(path)} </code>)}</p>}
-        {typeof result.stdout === 'string'  && result.stdout && <details><summary>查看命令输出</summary><pre>{result.stdout}</pre></details>}
-        {typeof result.stderr === 'string' && result.stderr && <details><summary>查看错误输出</summary><pre>{result.stderr}</pre></details>}
+        {typeof result.text === 'string' && <details open><summary>文件内容</summary><pre>{result.text}</pre></details>}
+        {typeof result.stdout === 'string' && result.stdout && <details open><summary>查看命令输出</summary><pre>{result.stdout}</pre></details>}
+        {typeof result.stderr === 'string' && result.stderr && <details open={failed || unknown}><summary>查看错误输出</summary><pre>{result.stderr}</pre></details>}
+        {finished && event.data.output !== undefined && typeof result.text !== 'string' && typeof result.stdout !== 'string' && typeof result.afterSha256 !== 'string' && <details open><summary>工具结果</summary><pre>{typeof event.data.output === 'string' ? event.data.output : JSON.stringify(event.data.output, null, 2)}</pre></details>}
         {finished ? <details><summary>完整工具结果</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details> : <p role="status">尚未收到结束事件，无法确认结果。</p>}
       </details></li>;
 }
@@ -90,6 +94,8 @@ export function SessionActivity({ turn }: { turn: SessionTurn }) {
   const latest = events.at(-1);
   const failures = recent.filter(event => event.data.outcome === 'failed' || typeof output(event).exitCode === 'number' && output(event).exitCode !== 0).length;
   const seconds = Math.max(0, Math.floor((now - new Date(latest?.createdAt ?? turn.createdAt).getTime()) / 1000));
+  const elapsed = turn.completedAt ? Math.max(0, Math.round((Date.parse(turn.completedAt) - Date.parse(turn.createdAt)) / 1000)) : null;
+  const duration = elapsed === null ? '' : elapsed < 60 ? `${elapsed}秒` : `${Math.floor(elapsed / 60)}分${elapsed % 60}秒`;
   const responses = new Map<string, string>();
   for (const event of events) if (event.type === 'model_content_delta' && typeof event.data.text === 'string' && typeof event.data.responseId === 'string') {
     responses.set(event.data.responseId, (responses.get(event.data.responseId) ?? '') + event.data.text);
@@ -97,7 +103,7 @@ export function SessionActivity({ turn }: { turn: SessionTurn }) {
   const liveText = turn.result === null ? [...responses.values()].at(-1) : undefined;
   return <section className="rs-activity" aria-label={`第 ${turn.sequence} 轮行动与结果`}>
     <details className="rs-process" open={active}>
-    <summary><IconTool size={16}/><span className="rs-activity-current" role="status">{activitySummary(turn)}</span><small>{recent.length ? `${recent.length} 项工具调用` : '执行过程'}{failures > 0 && ` · ${failures} 项失败`}</small><IconChevronRight className="rs-disclosure" size={14}/></summary>
+    <summary><span className="rs-activity-current" role="status">{turn.status === 'completed' ? `已完成${duration ? `，用时 ${duration}` : ''}` : activitySummary(turn)}</span><IconChevronRight className="rs-disclosure" size={14}/><small>{recent.length ? `${recent.length} 项工具调用` : '执行过程'}{failures > 0 && ` · ${failures} 项失败`}</small></summary>
     <p className="rs-event-clock">{latest ? `最近事件：${new Date(latest.createdAt).toLocaleTimeString('zh-CN')}` : '尚无执行事件'}{active && ` · ${seconds} 秒前`}</p>
     {active && seconds >= 15 && <p className="rs-waiting">已有 {seconds} 秒未收到新执行事件。<span role="status">当前活动与结果尚未确认。</span></p>}
     {recent.length > 0 && <ol>{recent.map(event => <ActionRecord key={event.id} event={event} active={active} start={actions.find(item => ['research_tool_started', 'tool_started'].includes(item.type) && typeof event.data.callId === 'string' && item.data.callId === event.data.callId)}/>)}</ol>}

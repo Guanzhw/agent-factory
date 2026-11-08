@@ -38,6 +38,7 @@ from agent_factory_server.research import create_app
 from research.session_tools import ResearchSessionTools, _directory, _open_file
 
 DOCUMENT = '状态：初稿\n' + '研究结果：文件内容保持完整。\n' * 2000
+PRESENTATION = "### 聊天呈现\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 可读 |\n\n```python\nprint('中文验收')  # " + 'long ' * 40 + '\n```\n\n```\n\n```\n\n' + '\n\n'.join(f'第 {i} 段：保留历史阅读位置，同时提供回到底部。' for i in range(60))
 
 
 class ModelEndpoint(BaseHTTPRequestHandler):
@@ -57,6 +58,8 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         tool, arguments, reply = None, {}, '任务完成，结果可下载。\n\n| 结果 | 状态 |\n| --- | --- |\n| 工具 | 已完成 |'
         if request['model'] == 'compression':
             reply = '压缩摘要：数值42'
+        elif user_text == '聊天呈现验收':
+            reply = PRESENTATION
         elif user_text in {'ssh 可用了吗?', '再看一下 SSH 状态'}:
             if not results:
                 tool = 'ssh_servers'
@@ -481,12 +484,88 @@ class ChatJourney(unittest.TestCase):
         process = self.page.locator('.rs-process')
         process.locator('summary').first.click()
         expect(process.locator('.rs-tool-call')).to_have_count(1)
-        expect(process.get_by_text('已完成', exact=True)).to_be_visible()
+        expect(process.locator('.rs-tool-call').get_by_text('已完成', exact=True)).to_be_visible()
         expect(self.page.get_by_role('cell', name='SSH', exact=True)).to_be_visible()
         self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-reconciled.png'))
         self.page.set_viewport_size({'width': 390, 'height': 844})
         self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
         self.page.screenshot(path=str(Path(self.folder.name) / 'ui-fixture-mobile.png'))
+
+    def test_chat_copy_composer_and_scroll_following(self):
+        self.context.grant_permissions(['clipboard-read', 'clipboard-write'])
+        self.send('聊天呈现验收')
+        snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
+        self.assertEqual(snapshot['turns'][-1]['result'], PRESENTATION)
+        expect(self.page.locator('.rs-code-block')).to_have_count(2)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollHeight'), 900)
+        pane = self.page.locator('.rs-content')
+        code = self.page.locator('.rs-code-block').first
+        self.page.get_by_role('button', name='复制代码', exact=True).first.click()
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'), "print('中文验收')  # " + 'long ' * 40)
+        expect(code.get_by_role('checkbox', name='自动换行')).to_be_checked()
+        self.assertEqual(code.locator('code').evaluate('el => getComputedStyle(el).whiteSpace'), 'pre-wrap')
+        code.get_by_role('checkbox', name='自动换行').uncheck()
+        self.assertEqual(code.locator('code').evaluate('el => getComputedStyle(el).whiteSpace'), 'pre')
+        self.page.get_by_role('button', name='复制助手回复', exact=True).click()
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()').replace('\r\n', '\n'), PRESENTATION)
+        self.page.get_by_role('button', name='复制用户消息', exact=True).click()
+        self.assertEqual(self.page.evaluate('navigator.clipboard.readText()'), '聊天呈现验收')
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
+        self.page.get_by_role('button', name='回到底部', exact=True).click()
+        self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
+        composer = self.page.get_by_role('textbox', name='下一轮指令', exact=True)
+        expect(self.page.get_by_role('button', name='发送', exact=True)).to_be_disabled()
+        expect(self.page.locator('.rs-composer-model')).to_have_text('regression')
+        composer.fill('\n'.join(['draft line'] * 8))
+        self.assertGreater(composer.evaluate('el => el.clientHeight'), 80)
+        composer.fill('')
+        self.assertLessEqual(composer.evaluate('el => el.clientHeight'), 44)
+        composer.fill('resize ' * 20)
+        desktop_height = composer.evaluate('el => el.clientHeight')
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.assertGreater(composer.evaluate('el => el.clientHeight'), desktop_height)
+        self.page.set_viewport_size({'width': 1280, 'height': 900})
+        composer.fill('')
+        expect(self.page.get_by_role('button', name='发送', exact=True)).to_be_disabled()
+        before = len(self.model.requests)
+        composer.press('Enter')
+        self.assertEqual(len(self.model.requests), before)
+
+        turn = snapshot['turns'][-1]
+        turn.update(status='running', completedAt=None, result=None, events=[{'id': 100, 'jobId': turn['taskId'],
+            'type': 'model_content_delta', 'message': 'UI fixture', 'createdAt': turn['createdAt'],
+            'data': {'responseId': 'presentation', 'text': PRESENTATION}}])
+        snapshot.update(state='running', allowedActions=['correct', 'stop'])
+        self.page.route('**/research/sessions/*/events', lambda route: route.fulfill(content_type='text/event-stream',
+            body='event: session\ndata: ' + json.dumps(snapshot, ensure_ascii=False) + '\n\n'))
+        self.page.reload()
+        expect(self.page.get_by_role('textbox', name='补充或纠正当前研究', exact=True)).to_be_visible()
+        self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
+        self.page.locator('.rs-execution > summary').click()
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
+        reading_position = pane.evaluate('el => el.scrollTop')
+        turn['events'][0]['id'] += 1
+        turn['events'][0]['data']['text'] += '\n\n展开记录时的新内容'
+        expect(self.page.get_by_text('展开记录时的新内容', exact=True)).to_be_attached()
+        self.assertLess(abs(pane.evaluate('el => el.scrollTop') - reading_position), 2)
+        self.page.get_by_role('button', name='回到底部', exact=True).click()
+        self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
+        pane.evaluate('el => { el.scrollTop = 0; }')
+        expect(self.page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
+        turn['events'][0]['id'] += 1
+        turn['events'][0]['data']['text'] += '\n\n历史阅读期间的新内容'
+        expect(self.page.get_by_text('历史阅读期间的新内容', exact=True)).to_be_attached()
+        self.assertLess(pane.evaluate('el => el.scrollTop'), 5)
+        self.page.get_by_role('button', name='回到底部', exact=True).click()
+        turn['events'][0]['id'] += 1  # Event count stays fixed, as in the retained fragment window.
+        turn['events'][0]['data']['text'] += '\n\n恢复跟随后新内容'
+        expect(self.page.get_by_text('恢复跟随后新内容', exact=True)).to_be_attached()
+        self.page.wait_for_function("() => { const p = document.querySelector('.rs-content'); return p.scrollHeight - p.scrollTop - p.clientHeight < 5; }")
+        self.page.set_viewport_size({'width': 390, 'height': 844})
+        expect(self.page.get_by_role('button', name='请求停止', exact=True)).to_be_visible()
+        self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollHeight'), 844)
+        self.page.screenshot(path=str(Path(self.folder.name) / 'chat-detail-mobile.png'))
 
     @staticmethod
     def run_async(coroutine):
@@ -605,6 +684,58 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(resource['exitCode'], 0)
         self.assertEqual(json.loads(resource['stdout']), {'asset': 'External skill asset: 73.\n',
             'cwd': json.loads(results[0])['source_path']})
+        calls = [call for message in final for call in message.get('tool_calls', [])]
+        self.assertEqual(len(calls), 6)
+        events = snapshot['turns'][-1]['events']
+        for call, result in zip(calls[:3], results[:3]):
+            with self.subTest(skill_read=call['function']['name']):
+                started_events = [event['data'] for event in events if event['type'] == 'tool_started'
+                                  and event['data'].get('callId') == call['id']]
+                finished_events = [event['data'] for event in events if event['type'] == 'tool_finished'
+                                   and event['data'].get('callId') == call['id']]
+                expected_call = {'toolName': call['function']['name'], 'callId': call['id'],
+                                 'arguments': json.loads(call['function']['arguments'])}
+                self.assertEqual(started_events, [expected_call])
+                self.assertEqual(finished_events, [{**expected_call, 'outcome': 'completed', 'output': result}])
+        executed = [event['data'] for event in events if event['type'] == 'research_tool_finished'
+                    and event['data'].get('toolName') == 'research_run']
+        self.assertEqual([event['callId'] for event in executed], [call['id'] for call in calls[3:]])
+        self.assertEqual(len([event for event in events if event['type'] in {'tool_started', 'tool_finished'}]), 6)
+        from agno.exceptions import RunCancelledException
+        from agno.run import RunContext
+        from agno.tools.function import FunctionCall
+        function = next(tool for tool in self.state['executor'].skills.get_tools() if tool.name == 'get_skill_script')
+        function.process_entrypoint()
+        function._run_context = RunContext(user_id=self.owner, session_id=snapshot['turns'][-1]['taskId'],
+                                          run_id=snapshot['turns'][-1]['runId'])
+        boundary_calls = []
+        for arguments, outcome in (({'skill_name': 'journey-skill', 'script_path': 'nested/runner.py',
+                                     'execute': 'false'}, 'completed'),
+                                   ({'skill_name': 'journey-skill', 'script_path': 'missing.py',
+                                     'execute': True}, 'failed'), ({}, 'failed')):
+            call = FunctionCall(function=function, call_id='boundary-' + uuid4().hex, arguments=arguments)
+            self.run_async(call.aexecute())
+            boundary_calls.append((call, outcome))
+        self.assertEqual(boundary_calls[0][0].result, results[2])
+        self.assertIn('error', json.loads(boundary_calls[1][0].result))
+        self.assertTrue(boundary_calls[2][0].error)
+        # Exercise Agno's cancellation finally-hook; this is an injected cancellation.
+        with patch.object(function, 'entrypoint', AsyncMock(side_effect=RunCancelledException('fixture cancellation'))):
+            call = FunctionCall(function=function, call_id='boundary-' + uuid4().hex,
+                                arguments={'skill_name': 'journey-skill'})
+            with self.assertRaises(RunCancelledException):
+                self.run_async(call.aexecute())
+            boundary_calls.append((call, 'unknown'))
+        boundary_events = self.state['store'].events(snapshot['turns'][-1]['taskId'])
+        for call, outcome in boundary_calls:
+            observed = [event for event in boundary_events if event['data'].get('callId') == call.call_id]
+            self.assertEqual([event['type'] for event in observed], ['tool_started', 'tool_finished'])
+            self.assertTrue(all(event['data']['arguments'] == call.arguments for event in observed))
+            self.assertEqual(observed[-1]['data']['outcome'], outcome)
+            if call.result is not None:
+                self.assertEqual(observed[-1]['data']['output'], call.result)
+            else:
+                self.assertNotIn('output', observed[-1]['data'])
         self.page.reload()
         with self.page.expect_download() as download:
             self.page.get_by_role('link', name='skill-work/skill-result.json', exact=True).click()

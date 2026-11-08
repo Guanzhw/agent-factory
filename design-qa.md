@@ -1,6 +1,6 @@
 # DSH-style local chat visual QA
 
-final result: passed
+final result: passed for the documented UI states; real Edge download delivery remains unverified
 
 This result covers the chat UI and event presentation. The full Windows regression suite now passes. Live Edge download acceptance remains incomplete because browser control stops, as recorded in [integration notes](docs/reviews/dsh-web-integration-20261108.md).
 
@@ -35,7 +35,7 @@ The requested Library image could not be materialized because this session expos
 4. Completed process headers collapse by default. Expanding a tool reveals parameters, actual output, exit code, errors, and the complete receipt. A real historical command failure is visibly labeled. The actual SSH run adds three tool rows, returns a final answer, and survives refresh without a new turn or additional tool calls.
 5. Settings resource cards initially retain light surfaces. Scoped dark card colors restore readable foregrounds; actual Settings and model-card screenshots confirm the correction.
 
-No actionable P0, P1, or P2 visual findings remain in these states.
+The initial broad-layout result did not cover the remaining chat-detail gaps. A later actual-source comparison identified message metadata, copying, readable tool output, code controls, composition and scroll recovery. Those corrections and current evidence are recorded in [the chat-detail comparison](docs/reviews/chat-detail-fidelity-20261108.md). This assessment applies to those inspected states.
 
 ## Required fidelity surfaces
 
@@ -58,5 +58,7 @@ Actual provider acceptance uses the user's existing OpenCode Go subscription and
 ## Follow-up polish and limits
 
 P3: Factory retains product-specific navigation, labels, branding, and table borders. DSH plugin controls, permission modes, token meters, hidden reasoning, and team chrome are not added without corresponding Factory data or capabilities.
+
+The current follow-up adds message and code copying, code wrapping, compact process timing, readable native file/command output, a growing model-labeled composer, active Stop and return-to-bottom. It keeps a single bounded conversation scroller at narrow widths. The final normal-encoding 21-case Windows suite passes in 113.536 seconds. Actual Edge checks confirm clipboard content, two-line narrow composition, a 44-pixel Send target and no document overflow. A fresh subscription-provider task confirms SSH exit 0 and a 34-byte Chinese file create/edit/read cycle; its follow-up verifies two visible native Skills reads. A supported tab-level download click still times out waiting for its download event, so real Edge delivery remains open.
 
 The real model also creates, edits and reads a 40-byte Chinese file; its final answer and file link are visible. Live Edge download waiting times out, then Computer Use stops because it cannot reliably establish the browser URL. The scripted Chromium download passes. Windows TLS/RST warnings and the existing global CSS and bundle-size warnings remain. These limits are recorded separately from this UI comparison result.
