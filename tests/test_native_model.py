@@ -279,6 +279,36 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
         self.server.hold.set()
         self.assertEqual(called, [])
 
+    async def test_responses_legacy_calls_and_results_share_ids_across_complete_history(self):
+        self.server.answer = lambda _: (200, responses_reply('continued'))
+        model = OwnerChatModel({**self.config, 'protocol': 'responses'}, lambda: None, session_id='same-session')
+        for origin in ('foreign', 'missing', 'same'):
+            messages = []
+            for number in range(2):
+                identifier = f'call_old_{number}'
+                output = [{'type': 'function_call', 'id': f'fc_original_{number}', 'call_id': identifier,
+                    'name': 'inspect_result', 'arguments': '{}', 'status': 'completed'}]
+                saved = {'scope': model._scope if origin == 'same' else 'old-scope', 'session': 'same-session',
+                    'continuation': {'output': output}}
+                messages.extend([Message(role='assistant', tool_calls=[{'id': identifier, 'type': 'function',
+                    'function': {'name': 'inspect_result', 'arguments': '{}'}}],
+                    provider_data=None if origin == 'missing' else {'owner_model_continuation': saved}),
+                    Message(role='tool', tool_call_id=identifier, content=f'result-{number}')])
+            await model.ainvoke(messages)
+            items = self.server.requests[-1][0]['input']
+            calls = [item['call_id'] for item in items if item.get('type') == 'function_call']
+            results = [item['call_id'] for item in items if item.get('type') == 'function_call_output']
+            self.assertEqual(calls, results, origin)
+            self.assertEqual(len(set(calls)), 2, origin)
+            self.assertEqual([item['output'] for item in items if item.get('type') == 'function_call_output'],
+                ['result-0', 'result-1'])
+            if origin == 'same':
+                self.assertEqual(calls, ['call_old_0', 'call_old_1'])
+                self.assertEqual([item['id'] for item in items if item.get('type') == 'function_call'],
+                    ['fc_original_0', 'fc_original_1'])
+            self.assertEqual(messages[0].tool_calls[0]['id'], 'call_old_0')
+            self.assertEqual(messages[1].tool_call_id, 'call_old_0')
+
     async def test_responses_keeps_all_reasoning_items_and_phase(self):
         output = [{'id': 'reason-one', 'type': 'reasoning', 'summary': [], 'encrypted_content': 'cipher-one'},
             {'id': 'reason-two', 'type': 'reasoning', 'summary': [], 'encrypted_content': 'cipher-two'},

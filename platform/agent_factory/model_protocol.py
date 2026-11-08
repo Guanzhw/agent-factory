@@ -4,6 +4,7 @@ from copy import deepcopy
 from agno.exceptions import ModelProviderError
 from agno.models.openai.responses import OpenAIResponses
 from agno.tools.function import Function
+from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
 
 
 def protocol_name(configuration):
@@ -41,6 +42,8 @@ class OwnerResponses(OpenAIResponses):
 
     def _format_messages(self, messages, compress_tool_results=False, tools=None):
         inputs = []
+        # Normalize the whole transcript so foreign calls and their results share IDs.
+        messages = reformat_tool_call_ids(normalize_tool_messages(messages), provider='openai_responses')
         call_ids = self._build_fc_id_to_call_id_map(messages)
         for message in messages:
             private = message.provider_data or {}
@@ -48,7 +51,12 @@ class OwnerResponses(OpenAIResponses):
             if (message.role == 'assistant' and saved and saved.get('scope') == self._scope
                     and saved.get('session') == self._session_id):
                 # Replay every original item in order, including encrypted reasoning and phase.
-                inputs.extend(deepcopy(saved['continuation']['output']))
+                output = saved['continuation']['output']
+                originals = [item for item in output if item['type'] == 'function_call']
+                for call, original in zip(message.tool_calls or [], originals):
+                    call_ids[call['id']] = original['call_id']
+                    call_ids[call.get('call_id', call['id'])] = original['call_id']
+                inputs.extend(deepcopy(output))
                 continue
             message = message.model_copy(update={'provider_data': None})
             if message.role == 'tool' and message.tool_call_id is not None:
