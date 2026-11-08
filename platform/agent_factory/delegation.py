@@ -13,6 +13,7 @@ from uuid import uuid4
 from fastapi import HTTPException
 from sqlalchemy import text
 
+from .native_bridge import NativeAdmissionRejected
 from .store import effect_unresolved, digest, now, runtime_custody_held
 
 ACTIVE = {"queued", "pending", "running", "paused"}
@@ -272,19 +273,13 @@ class DelegationService:
                 receipt = await self.bridge.submit({**plan, "task_id": task["id"]}, owner, native_request)
                 self.store.accept(task["id"], receipt["run_id"])
                 self.store.event(task["id"], "native_accepted", "Independent native child ticket accepted", {"runId": receipt["run_id"]})
-            except HTTPException as error:
-                if error.status_code < 500:
-                    self.store.admission_failed(task["id"], "Native child admission rejected")
-                    raise
-                self.store.admission_unknown(task["id"])
+            except NativeAdmissionRejected:
+                self.store.admission_failed(task["id"], "Native queue is full; submission was not accepted", never_submitted=True)
+                raise
             except Exception:
                 self.store.admission_unknown(task["id"])
         elif not task.get("run_id") and task["admission"] != "rejected":
-            receipt = await self.bridge.find_run(task["id"], owner)
-            if receipt:
-                self.store.accept(task["id"], receipt["run_id"])
-            else:
-                self.store.admission_unknown(task["id"])
+            task = await self.store.lifecycle_observer.recover_admission(task)
         task = self.store.task(task["id"], owner)
         if task.get("run_id") and receipt is None:
             receipt = {"run_id": task["run_id"], "session_id": task["id"]}

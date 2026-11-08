@@ -294,6 +294,30 @@ class ChatJourney(unittest.TestCase):
         identifier = self.session()['id']
         self.addCleanup(lambda: self.post('/research/sessions/' + identifier + '/stop', {}))
 
+    def test_prequeue_failure_can_continue_without_duplicate_submission(self):
+        sessions = self.state['research_sessions']
+        factory = sessions.runs.factory
+        with patch.object(factory.bridge, 'submit', wraps=factory.bridge.submit) as submit:
+            with patch.object(sessions.runs, '_prepare', side_effect=RuntimeError('preparation unavailable')):
+                with self.page.expect_response(lambda r: r.request.method == 'POST' and r.url.endswith('/turns')) as sent:
+                    self.send('切换模型后继续')
+            failed = self.session()
+            self.assertEqual(failed['turns'][-1]['status'], 'failed')
+            self.assertIsNotNone(failed['turns'][-1]['completedAt'])
+            self.assertEqual(submit.call_count, 0)
+            path = '/research/sessions/' + failed['id'] + '/turns'
+            duplicate = self.post(path, sent.value.request.post_data_json)
+            self.assertEqual(len(duplicate['turns']), 1)
+            self.assertEqual(submit.call_count, 0)
+            with patch.object(factory, '_instantiate_preflight', side_effect=HTTPException(409, 'model unavailable')):
+                failed = self.post(path, {'text': '切换模型后继续'})
+            self.assertEqual(failed['turns'][-1]['status'], 'failed')
+            self.assertEqual(submit.call_count, 0)
+            self.post(path, {'text': '切换模型后继续'})
+            completed = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
+            self.assertEqual(completed['turns'][-1]['status'], 'completed')
+            self.assertEqual(submit.call_count, 1)
+
     def test_initial_stream_refresh_disconnect_and_missing_session(self):
         requests = []
         self.page.on('request', lambda request: requests.append((request.method, request.url)))
