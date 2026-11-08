@@ -1,396 +1,82 @@
-"""Responses continuation compatibility not supplied by Agno 3.1.0.
+"""Agno Responses formatting with lossless stateless continuation replay."""
+from copy import deepcopy
 
-Continuations are private replay data for an assistant turn, not public request
-extensions. Callers keep them in their existing scoped history.
-"""
-from __future__ import annotations
-
-import json
-import re
-from decimal import Decimal
-from typing import Any, NoReturn, cast
-
-_PATHS = {'chat-completions': '/chat/completions', 'responses': '/responses'}
-_REQUEST_FIELDS = {'model', 'messages', 'max_tokens', 'stream', 'tools', 'parallel_tool_calls', 'tool_choice'}
-
-
-def _fail(code='INVALID') -> NoReturn:
-    raise ValueError('MODEL_PROTOCOL_' + code)
-
-
-def _bounded(value):
-    """Validate JSON shape without imposing a model-independent byte budget."""
-    try:
-        json.dumps(value, ensure_ascii=False, allow_nan=False)
-    except (TypeError, ValueError, UnicodeError, RecursionError):
-        _fail()
-    pending = [value]
-    while pending:
-        item = pending.pop()
-        if type(item) is dict:
-            if any(type(key) is not str for key in item):
-                _fail()
-            pending.extend(item.values())
-        elif type(item) is list:
-            pending.extend(item)
-        elif item is not None and type(item) not in {str, int, float, bool}:
-            _fail()
+from agno.exceptions import ModelProviderError
+from agno.models.openai.responses import OpenAIResponses
+from agno.tools.function import Function
+from agno.utils.message import normalize_tool_messages, reformat_tool_call_ids
 
 
 def protocol_name(configuration):
-    if type(configuration) is not dict:
-        _fail('CONFIGURATION')
     value = configuration.get('protocol', 'chat-completions')
-    protocol_path(value)
+    if not isinstance(value, str) or value not in {'chat-completions', 'responses'}:
+        raise ValueError('MODEL_PROTOCOL_UNSUPPORTED')
     return value
 
 
-def protocol_path(protocol):
-    if type(protocol) is not str or protocol not in _PATHS:
-        _fail('UNSUPPORTED')
-    return _PATHS[protocol]
+class OwnerResponses(OpenAIResponses):
+    def __init__(self, configuration, scope, session_id):
+        super().__init__(id=configuration['model'], provider=configuration['provider'],
+            store=False, use_previous_response_id=False, retries=0, max_retries=0,
+            max_output_tokens=configuration.get('maxOutputTokens'),
+            reasoning_effort=configuration.get('reasoningEffort'),
+            reasoning_summary='auto' if configuration.get('reasoningEffort') else None,
+            include=['reasoning.encrypted_content'],
+            role_map={'system': 'system', 'user': 'user', 'assistant': 'assistant', 'tool': 'tool'})
+        self._scope, self._session_id = scope, session_id
 
+    def _format_tool_params(self, messages, tools=None):
+        # Agno 3.1.0 mutates nullable property types into their first alternative.
+        # Preserve the schema and the existing non-strict function default.
+        formatted = []
+        for tool in tools or []:
+            if isinstance(tool, Function):
+                tool = {'type': 'function', 'function': tool.to_dict()}
+            if tool.get('type') != 'function':
+                formatted.append(deepcopy(tool))
+                continue
+            formatted.append({**{key: deepcopy(value) for key, value in tool['function'].items()
+                if key not in {'external_execution', 'requires_confirmation', 'approval_type'}},
+                'type': 'function', 'strict': tool['function'].get('strict', False)})
+        return formatted
 
-def _identifier(value):
-    if type(value) is not str or not value or any(ord(c) < 32 for c in value):
-        _fail('TOOL')
-    return value
+    def _format_messages(self, messages, compress_tool_results=False, tools=None):
+        inputs = []
+        # Normalize the whole transcript so foreign calls and their results share IDs.
+        messages = reformat_tool_call_ids(normalize_tool_messages(messages), provider='openai_responses')
+        call_ids = self._build_fc_id_to_call_id_map(messages)
+        for message in messages:
+            private = message.provider_data or {}
+            saved = private.get('owner_model_continuation', private.get('owner_responses'))
+            if (message.role == 'assistant' and saved and saved.get('scope') == self._scope
+                    and saved.get('session') == self._session_id):
+                # Replay every original item in order, including encrypted reasoning and phase.
+                output = saved['continuation']['output']
+                originals = [item for item in output if item['type'] == 'function_call']
+                for call, original in zip(message.tool_calls or [], originals):
+                    call_ids[call['id']] = original['call_id']
+                    call_ids[call.get('call_id', call['id'])] = original['call_id']
+                inputs.extend(deepcopy(output))
+                continue
+            message = message.model_copy(update={'provider_data': None})
+            if message.role == 'tool' and message.tool_call_id is not None:
+                message.tool_call_id = call_ids.get(message.tool_call_id, message.tool_call_id)
+            inputs.extend(super()._format_messages([message], compress_tool_results, tools))
+        return inputs
 
-
-def _name(value):
-    if type(value) is not str or not re.fullmatch(r'[A-Za-z0-9_-]+', value):
-        _fail('TOOL')
-    return value
-
-
-def function_call(call):
-    if (type(call) is not dict or call.get('type') != 'function'
-            or type(call.get('function')) is not dict):
-        _fail('TOOL')
-    identifier, function = _identifier(call.get('id')), call['function']
-    name, arguments = _name(function.get('name')), function.get('arguments')
-    if type(arguments) is not str:
-        _fail('TOOL')
-    try:
-        parsed = json.loads(arguments)
-    except (ValueError, RecursionError):
-        _fail('TOOL')
-    if type(parsed) is not dict:
-        _fail('TOOL')
-    _bounded(parsed)
-    _bounded(arguments)
-    return {'id': identifier, 'type': 'function', 'function': {'name': name, 'arguments': arguments}}
-
-
-def _calls(value):
-    if type(value) is not list:
-        _fail('TOOL')
-    calls = [function_call(call) for call in value]
-    if len({call['id'] for call in calls}) != len(calls):
-        _fail('TOOL')
-    return calls
-
-
-def _message(value):
-    if (type(value) is not dict or set(value) - {'role', 'content', 'tool_calls', 'tool_call_id'}
-            or type(value.get('role')) is not str or value['role'] not in {'system', 'user', 'assistant', 'tool'}):
-        _fail('MESSAGE')
-    role, content = value['role'], value.get('content')
-    if content is not None and type(content) is not str:
-        _fail('MESSAGE')
-    result = {'role': role, 'content': content}
-    if role == 'tool':
-        result['tool_call_id'] = _identifier(value.get('tool_call_id'))
-    elif 'tool_call_id' in value:
-        _fail('MESSAGE')
-    if 'tool_calls' in value:
-        calls = _calls(value['tool_calls'])
-        if calls and role != 'assistant':
-            _fail('MESSAGE')
-        if calls:
-            result['tool_calls'] = calls
-    return result
-
-
-def _tools(value):
-    if type(value) is not list:
-        _fail('TOOL')
-    tools, names = [], set()
-    for tool in value:
-        if (type(tool) is not dict or set(tool) != {'type', 'function'}
-                or tool.get('type') != 'function' or type(tool.get('function')) is not dict):
-            _fail('TOOL')
-        source = tool['function']
-        if set(source) - {'name', 'description', 'parameters', 'strict'}:
-            _fail('TOOL')
-        name = _name(source.get('name'))
-        if name in names:
-            _fail('TOOL')
-        names.add(name)
-        function: dict[str, Any] = {'name': name}
-        if 'description' in source:
-            if type(source['description']) is not str:
-                _fail('TOOL')
-            function['description'] = source['description']
-        if 'parameters' in source:
-            if type(source['parameters']) is not dict:
-                _fail('TOOL')
-            function['parameters'] = json.loads(json.dumps(source['parameters']))
-        if 'strict' in source:
-            if type(source['strict']) is not bool:
-                _fail('TOOL')
-            function['strict'] = source['strict']
-        else:
-            # Preserve the non-strict default of the canonical CC request.
-            function['strict'] = False
-        tools.append({'type': 'function', **function})
-    return tools
-
-
-def _choice(value):
-    if type(value) is str and value in {'auto', 'none', 'required'}:
-        return value
-    if (type(value) is dict and set(value) == {'type', 'function'} and value['type'] == 'function'
-            and type(value['function']) is dict and set(value['function']) == {'name'}):
-        name = _name(value['function']['name'])
-        return {'type': 'function', 'name': name}
-    _fail('TOOL_CHOICE')
-
-
-def _usage(value):
-    if type(value) is not dict:
-        return None
-    incoming = value.get('input_tokens')
-    outgoing = value.get('output_tokens')
-    total = value.get('total_tokens')
-    if (not all(type(n) is int and 0 <= n < 2**63 for n in (incoming, outgoing, total))
-            or total != cast(int, incoming) + cast(int, outgoing)):
-        return None
-    return {'prompt_tokens': incoming, 'completion_tokens': outgoing, 'total_tokens': total}
-
-
-def _response_items(output):
-    if type(output) is not list:
-        _fail('RESPONSE')
-    content, calls, replay = [], [], []
-    for source in output:
-        if type(source) is not dict:
-            _fail('RESPONSE')
-        if source.get('status', 'completed') != 'completed':
-            _fail('INCOMPLETE')
-        kind = source.get('type')
-        if kind == 'message':
-            if source.get('role') != 'assistant' or type(source.get('content')) is not list:
-                _fail('RESPONSE')
-            parts = []
-            for part in source['content']:
-                if type(part) is not dict:
-                    _fail('RESPONSE')
-                if part.get('type') == 'refusal':
-                    _fail('REFUSAL')
-                if part.get('type') != 'output_text' or type(part.get('text')) is not str:
-                    _fail('UNSUPPORTED_OUTPUT')
-                content.append(part['text'])
-                parts.append({'type': 'output_text', 'text': part['text'], 'annotations': []})
-            item = {'type': 'message', 'role': 'assistant', 'content': parts, 'status': 'completed'}
-            if source.get('phase') is not None:
-                if type(source['phase']) is not str or source['phase'] not in {'commentary', 'final_answer'}:
-                    _fail('UNSUPPORTED_OUTPUT')
-                item['phase'] = source['phase']
-        elif kind == 'function_call':
-            call = function_call({'id': source.get('call_id'), 'type': 'function', 'function': {
-                'name': source.get('name'), 'arguments': source.get('arguments')}})
-            calls.append(call)
-            item = {'type': 'function_call', 'call_id': call['id'], **call['function'], 'status': 'completed'}
-        elif kind == 'reasoning':
-            if 'id' not in source:
-                _fail('RESPONSE')
-            summary = source.get('summary', [])
-            if type(summary) is not list:
-                _fail('RESPONSE')
-            summaries = []
-            for part in summary:
-                if type(part) is not dict or part.get('type') != 'summary_text' or type(part.get('text')) is not str:
-                    _fail('RESPONSE')
-                summaries.append({'type': 'summary_text', 'text': part['text']})
-            item = {'type': 'reasoning', 'summary': summaries}
-            if 'encrypted_content' in source and source['encrypted_content'] is not None:
-                if type(source['encrypted_content']) is not str:
-                    _fail('RESPONSE')
-                item['encrypted_content'] = source['encrypted_content']
-            if 'content' in source and source['content'] not in (None, []):
-                parts = source['content']
-                if type(parts) is not list or any(type(part) is not dict
-                        or part.get('type') != 'reasoning_text' or type(part.get('text')) is not str for part in parts):
-                    _fail('UNSUPPORTED_OUTPUT')
-                item['content'] = [{'type': 'reasoning_text', 'text': part['text']} for part in parts]
-        elif kind == 'refusal':
-            _fail('REFUSAL')
-        else:
-            _fail('UNSUPPORTED_OUTPUT')
-        if 'id' in source:
-            item['id'] = _identifier(source['id'])
-        replay.append(item)
-    calls = _calls(calls)
-    if not calls and not ''.join(content).strip():
-        _fail('EMPTY_OUTPUT')
-    message = {'role': 'assistant', 'content': ''.join(content) if content else None}
-    if calls:
-        message['tool_calls'] = calls
-    return message, replay
-
-
-def _json_equal(left, right):
-    """Compare JSON types, not Python's interchangeable bool/int values."""
-    if type(left) in {int, Decimal} and type(right) in {int, Decimal}:
-        return left == right  # JSON has one number type; 1 and 1.0 are equivalent.
-    if type(left) is not type(right):
-        return False
-    if type(left) is dict:
-        return left.keys() == right.keys() and all(_json_equal(left[key], right[key]) for key in left)
-    if type(left) is list:
-        return len(left) == len(right) and all(_json_equal(a, b) for a, b in zip(left, right))
-    return left == right
-
-
-def assistant_message_matches(expected, actual) -> bool:
-    """Validate and compare a canonical assistant message without rewriting it.
-
-    SDKs normalize empty assistant text and parse/stringify tool arguments.
-    Compare that meaning while leaving the original replay payload untouched.
-    Decimal avoids treating a changed JSON decimal as equal through rounding.
-    """
-    _bounded([expected, actual])
-    expected, actual = _message(expected), _message(actual)
-    if expected['role'] != 'assistant' or actual['role'] != 'assistant':
-        return False
-    left, right = expected.get('tool_calls', []), actual.get('tool_calls', [])
-    if not left and not right:
-        return expected['content'] == actual['content']
-    if (not left or len(left) != len(right)
-            or (expected['content'] or '') != (actual['content'] or '')):
-        return False
-    for a, b in zip(left, right):
-        if a['id'] != b['id'] or a['function']['name'] != b['function']['name']:
-            return False
-        if not _json_equal(json.loads(a['function']['arguments'], parse_float=Decimal),
-                json.loads(b['function']['arguments'], parse_float=Decimal)):
-            return False
-    return True
-
-
-def _continuations(value):
-    if value is None:
-        return {}
-    _bounded(value)
-    if type(value) is not list:
-        _fail('CONTINUATION')
-    records, identifiers = {}, set()
-    for record in value:
-        if (type(record) is not dict or set(record) not in (
-                {'message', 'output'}, {'message', 'output', 'message_index'})):
-            _fail('CONTINUATION')
-        message = _message(record['message'])
-        calls = message.get('tool_calls', [])
-        if message['role'] != 'assistant' or not calls and 'message_index' not in record:
-            _fail('CONTINUATION')
-        decoded, replay = _response_items(record['output'])
-        if message != decoded:
-            _fail('CONTINUATION')
-        call_ids = tuple(call['id'] for call in calls)
-        if 'message_index' in record:
-            position = record['message_index']
-            if type(position) is not int or position < 0:
-                _fail('CONTINUATION')
-            key = ('index', position)
-        else:
-            key = ('calls', call_ids)
-        if key in records or identifiers.intersection(call_ids):
-            _fail('CONTINUATION')
-        identifiers.update(call_ids)
-        records[key] = (message, replay)
-    return records
-
-
-def encode_request(protocol, chat_body, continuation=None):
-    """Encode a canonical CC request; continuation is a list of decode records.
-
-    A replay record must match exactly one assistant message by ordered call
-    IDs or an explicit message_index, and canonical message semantics. Text-only
-    reasoning requires an index so identical answers cannot select a turn.
-    Callers verify the scoped transcript before assigning those indices.
-    """
-    protocol_path(protocol)
-    _bounded(chat_body)
-    if type(chat_body) is not dict or set(chat_body) - _REQUEST_FIELDS:
-        _fail('REQUEST')
-    model, messages, limit = (chat_body.get(field) for field in ('model', 'messages', 'max_tokens'))
-    if (type(model) is not str or not model.strip()
-            or type(messages) is not list or not messages
-            or limit is not None and (type(limit) is not int or limit <= 0) or type(chat_body.get('stream', False)) is not bool):
-        _fail('REQUEST')
-    if protocol != 'responses':
-        _fail('UNSUPPORTED')
-    records = _continuations(continuation)
-    canonical = [_message(message) for message in messages]
-    encoded, used = [], set()
-    for index, message in enumerate(canonical):
-        calls = message.get('tool_calls', [])
-        indexed = ('index', index)
-        key = indexed if indexed in records else ('calls', tuple(call['id'] for call in calls))
-        if key in records:
-            expected, replay = records[key]
-            if key in used or not assistant_message_matches(expected, message):
-                _fail('CONTINUATION')
-            encoded.extend(replay)
-            used.add(key)
-        elif message['role'] == 'tool':
-            encoded.append({'type': 'function_call_output', 'call_id': message['tool_call_id'],
-                'output': message['content'] or ''})
-        else:
-            if message['content'] is not None:
-                encoded.append({'role': message['role'], 'content': message['content']})
-            encoded.extend({'type': 'function_call', 'call_id': call['id'], **call['function']} for call in calls)
-    if used != set(records):
-        _fail('CONTINUATION')
-    body = {'model': model, 'stream': chat_body.get('stream', False), 'input': encoded}
-    if limit is not None:
-        body['max_output_tokens'] = limit
-    body['store'] = False
-    body['include'] = ['reasoning.encrypted_content']
-    if 'tools' in chat_body:
-        body['tools'] = _tools(chat_body['tools'])
-    if 'parallel_tool_calls' in chat_body:
-        if type(chat_body['parallel_tool_calls']) is not bool:
-            _fail('TOOL_CHOICE')
-        body['parallel_tool_calls'] = chat_body['parallel_tool_calls']
-    if 'tool_choice' in chat_body:
-        body['tool_choice'] = _choice(chat_body['tool_choice'])
-    _bounded(body)
-    return body
-
-
-def decode_response(protocol, raw):
-    """Return (safe CC envelope, private replay record or None).
-
-    Missing or invalid usage is omitted, never a zero count or an execution
-    failure. This codec makes no inference about billing or dispatch outcomes.
-    """
-    protocol_path(protocol)
-    _bounded(raw)
-    if type(raw) is not dict or raw.get('error') is not None:
-        _fail('RESPONSE')
-    if protocol != 'responses':
-        _fail('UNSUPPORTED')
-    if raw.get('status') != 'completed':
-        _fail('INCOMPLETE')
-    message, replay = _response_items(raw.get('output'))
-    reason = 'tool_calls' if message.get('tool_calls') else 'stop'
-    continuation = {'message': json.loads(json.dumps(message)), 'output': replay}
-    value = {'id': 'chatcmpl-owner', 'object': 'chat.completion', 'created': 0, 'model': 'owner-model',
-        'choices': [{'index': 0, 'message': message, 'finish_reason': reason}]}
-    usage = _usage(raw.get('usage'))
-    if usage is not None:
-        value['usage'] = usage
-    _bounded([value, continuation])
-    return value, continuation
+    def _parse_provider_response(self, response, **kwargs):
+        if response.error or response.status != 'completed':
+            raise ModelProviderError(message='PERSONAL_MODEL_STREAM_INCOMPLETE', model_name='Owner Model')
+        result = super()._parse_provider_response(response, **kwargs)
+        output = [item.model_dump(exclude_none=True) for item in response.output]
+        # Native parsing keeps only the last reasoning item and formatting drops phase.
+        result.provider_data = {'owner_model_continuation': {'scope': self._scope,
+            'session': self._session_id, 'continuation': {'output': output}}}
+        result.reasoning_content = ''.join(part['text'] for item in output if item['type'] == 'reasoning'
+            for part in item.get('summary', []) + item.get('content', []) if 'text' in part) or None
+        if not result.content and not result.tool_calls:
+            refusal = any(part.get('type') == 'refusal' for item in output if item['type'] == 'message'
+                for part in item.get('content', []))
+            raise ModelProviderError(message='PERSONAL_MODEL_REFUSAL' if refusal else 'PERSONAL_MODEL_EMPTY_OUTPUT',
+                model_name='Owner Model')
+        return result
