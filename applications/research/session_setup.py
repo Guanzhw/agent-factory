@@ -2,6 +2,7 @@
 from copy import deepcopy
 
 from fastapi import HTTPException
+from agent_factory.model_reasoning import reasoning_efforts
 
 from .session_tools import COLLABORATION_TOOLS
 from .session_memory import MEMORY_TOOLS
@@ -29,7 +30,8 @@ class ResearchSessionSetup:
         self.store, self.connections, self.models, self.tools = store, connections, models, tools
 
     def options(self, owner):
-        models = [{key: item[key] for key in ('connectionRef', 'provider', 'model', 'available', 'contextWindow', 'autoCompactTokenLimit') if key in item}
+        models = [{**{key: item[key] for key in ('connectionRef', 'provider', 'model', 'available', 'contextWindow', 'autoCompactTokenLimit') if key in item},
+                   'reasoningEfforts': reasoning_efforts(item)}
                   for item in self.models.list(owner)]
         available = set(self.tools.available_tools)
         workspace = bool(getattr(self.tools, 'workspace_root', None))
@@ -42,13 +44,16 @@ class ResearchSessionSetup:
                           'isolation': 'host-user-not-os-sandbox'},
             'accounting': {'tokenMetered': False, 'costMetered': False}}
 
-    def prepare(self, owner, model_ref):
+    def prepare(self, owner, model_ref, reasoning_effort=None):
         options = self.options(owner)
         if not options['available']:
             raise rejected(options['unavailableCode'], '请先配置可用模型。')
         model = next((item for item in options['models'] if item.get('connectionRef') == model_ref and item.get('available')), None)
         if model is None:
             raise rejected('RESEARCH_MODEL_UNAVAILABLE', '所选模型连接当前不可用。')
+        if reasoning_effort is not None and reasoning_effort not in model['reasoningEfforts']:
+            raise rejected('RESEARCH_REASONING_EFFORT_UNSUPPORTED', '所选模型不支持此推理强度。', 422)
+        model = {**model, **({'reasoningEffort': reasoning_effort} if reasoning_effort is not None else {})}
         return {'connectionRefs': {'model': model_ref}, 'model': deepcopy(model),
                 'autonomousCollaboration': options['collaboration']['available'],
                 'personalMemory': options['memory']['available']}

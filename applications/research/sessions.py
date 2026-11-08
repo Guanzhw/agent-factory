@@ -134,7 +134,7 @@ class ResearchSessions:
 
     def create(self, owner, request):
         self.auth.require_member(owner)
-        value = request.model_dump(exclude={'requestId'})
+        value = request.model_dump(exclude={'requestId'}, exclude_none=True)
         if value.get('projectId') is None:
             value.pop('projectId', None)
         fingerprint = digest({'action': 'create', **value})
@@ -142,7 +142,7 @@ class ResearchSessions:
             old = self.db.old(conn, self.commands, owner, request.requestId, fingerprint)
             if old is not None:
                 return old['sessionId']
-            configuration = self.setup.prepare(owner, value['modelConnectionRef'])
+            configuration = self.setup.prepare(owner, value['modelConnectionRef'], value.get('reasoningEffort'))
             assistant = self.assistants.create(owner, CreateAssistant(
                 requestId='session-identity:' + digest({'owner': owner, 'request': request.requestId})[:32]))
             identifier, stamp = str(uuid4()), now()
@@ -214,10 +214,12 @@ class ResearchSessions:
                 if (status == 'completed' and observed_terminal and run.get('run_id') == task['run_id']
                         and run.get('session_id') == task['id'] and run.get('user_id') == owner
                         and str(run.get('status', '')).lower() == 'completed'
-                        and isinstance(run.get('messages'), list)
-                        and any(item.get('role') == 'assistant' for item in run['messages'] if isinstance(item, dict))
-                        and isinstance(run.get('content'), str)):
-                    result = run['content']
+                        and isinstance(run.get('messages'), list)):
+                    # Agno run.content also contains intermediate messages before tool calls.
+                    answer = next((item for item in reversed(run['messages'])
+                        if isinstance(item, dict) and item.get('role') == 'assistant'), None)
+                    if answer is not None and not answer.get('tool_calls') and isinstance(answer.get('content'), str):
+                        result = answer['content']
                 if native_ended and observed_terminal and not body.get('stopRequestId'):
                     if body.get('blockReason') == 'RESEARCH_RESTART_REQUIRES_RECONCILIATION':
                         status, result = 'failed', None
@@ -235,10 +237,11 @@ class ResearchSessions:
                     # Terminal metadata cannot upgrade an unconfirmed native answer.
                     observed_terminal, status = False, 'finalizing'
                 body.update(taskId=task['id'], runId=task.get('run_id'), status=status,
-                            terminal=observed_terminal, events=detail['events'], children=children,
-                            toolResults=[{'effectKey': item['effect_key'], 'status': item['status'], 'result': item['result']}
-                                         for item in snapshot.get('effects', [])])
+                            terminal=observed_terminal, children=children)
                 if observed_terminal:
+                    body.update(events=detail['events'], toolResults=[
+                        {'effectKey': item['effect_key'], 'status': item['status'], 'result': item['result']}
+                        for item in snapshot.get('effects', [])])
                     body['completedAt'] = body.get('completedAt') or now()
                     body['result'] = result
                     if status == 'completed':
@@ -250,7 +253,8 @@ class ResearchSessions:
                             body['failure'] = f'模型服务返回 HTTP {status_code}，本轮未完成。请检查模型服务或设置中的连接。'
                         else:
                             body['failure'] = str(error or body.get('failure') or '本轮执行失败，请查看工具记录。')
-                self._save_turn(conn, current, body)
+                if current['body'] != body:
+                    self._save_turn(conn, current, body)
 
     def _safe(self, owner, turn):
         body = turn['body']
@@ -275,11 +279,16 @@ class ResearchSessions:
         return ApplicationStart(requestId=turn['application_request_id'],
             mode=MODE, goal=messages[0]['text'] if messages else row['body']['goal'],
             connectionRefs=configuration['connectionRefs'],
-            inputValues={'sessionId': row['id'], 'turnId': turn['id'], 'sessionContext': turn['body']['context']})
+            inputValues={'sessionId': row['id'], 'turnId': turn['id'], 'sessionContext': turn['body']['context'],
+                **({'reasoningEffort': configuration['model']['reasoningEffort']}
+                   if 'reasoningEffort' in configuration['model'] else {})})
 
-    def _prepare_turn_configuration(self, conn, owner, row, turns):
+    def _prepare_turn_configuration(self, conn, owner, row, turns, request=None):
         previous = row['body']['configuration']
-        configuration = self.setup.prepare(owner, previous['connectionRefs']['model'])
+        model_ref = (request.modelConnectionRef if request is not None else None) or previous['connectionRefs']['model']
+        effort = request.reasoningEffort if request is not None and 'reasoningEffort' in request.model_fields_set else (
+            previous['model'].get('reasoningEffort') if model_ref == previous['connectionRefs']['model'] else None)
+        configuration = self.setup.prepare(owner, model_ref, effort)
         # Pin each original turn before refreshing the session's selected tools.
         # Native plans and request identities remain unchanged for recovery.
         for prior in turns:
@@ -291,7 +300,8 @@ class ResearchSessions:
     def _reserve(self, owner, identifier, request):
         question_id = request.model_dump().get('assistantQuestionId')
         fingerprint = digest({'action': 'turn', 'sessionId': identifier, 'text': request.text,
-            **({'assistantQuestionId': question_id} if question_id is not None else {})})
+            **({'assistantQuestionId': question_id} if question_id is not None else {}),
+            **{key: getattr(request, key) for key in ('modelConnectionRef', 'reasoningEffort') if key in request.model_fields_set}})
         with self._write() as conn:
             old = self.db.old(conn, self.commands, owner, request.requestId, fingerprint)
             if old is not None:
@@ -301,7 +311,7 @@ class ResearchSessions:
                 raise rejected('RESEARCH_TURN_ACTIVE_OR_UNCONFIRMED', '原轮次尚未安全结束，请先核对其状态。')
             self._sources(owner, row['body']['sharedSourceIds'])
             self._replies(owner, identifier, turns)
-            row = self._prepare_turn_configuration(conn, owner, row, turns)
+            row = self._prepare_turn_configuration(conn, owner, row, turns, request)
             configuration = row['body']['configuration']
             turn_id, stamp = str(uuid4()), now()
             body = {'requestId': request.requestId, 'configuration': deepcopy(configuration),
@@ -757,7 +767,11 @@ class ResearchSessions:
                     **({'continuation': deepcopy(item['body']['continuation'])} if 'continuation' in item['body'] else {}),
                     **{key: deepcopy(item['body'].get(key))
                     for key in ('requestId', 'taskId', 'runId', 'status', 'createdAt', 'completedAt', 'result',
-                                'messages', 'events', 'toolResults', 'children', 'failure')}} for item in turns]}
+                                'messages', 'events', 'toolResults', 'children', 'failure')},
+                    **({'events': self.store.events(item['body']['taskId']),
+                        'toolResults': [{'effectKey': effect['effect_key'], 'status': effect['status'], 'result': effect['result']}
+                            for effect in self.store.effects(item['body']['taskId'])]}
+                       if item['body'].get('taskId') and not item['body'].get('terminal') else {})} for item in turns]}
 
     async def listing(self, owner, after=''):
         self.auth.require_member(owner)

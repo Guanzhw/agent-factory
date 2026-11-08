@@ -1,0 +1,2 @@
+.rs-file-preview { max-width: 100%; margin-block: 8px; }
+.rs-file-preview pre { max-height: 60vh; overflow: auto; padding: 12px; border: 1px solid #444; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; }

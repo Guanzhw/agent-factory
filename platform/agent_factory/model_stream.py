@@ -1,5 +1,7 @@
 """Official OpenAI stream decoding/aggregation at the owner transport boundary."""
+import asyncio
 from typing import Any, cast
+from time import monotonic
 
 from openai import AsyncOpenAI, AsyncStream
 from openai.types.chat import ChatCompletionChunk
@@ -7,7 +9,7 @@ from openai.lib.streaming.chat import ChatCompletionStreamState
 
 
 
-async def read_model_stream(response, protocol, on_text=None):
+async def read_model_stream(response, protocol, on_text=None, on_reasoning=None):
     if 'text/event-stream' not in response.headers.get('content-type', ''):
         await response.aread()
         return response.json()
@@ -20,15 +22,46 @@ async def read_model_stream(response, protocol, on_text=None):
     result, completed = None, False
     reasoning = ''
     role_seen = False
+    pending, pending_kind, last_emit = '', '', 0.0
+    async def flush():
+        nonlocal pending, last_emit
+        callback = on_reasoning if pending_kind == 'reasoning' else on_text
+        text = pending
+        pending, last_emit = '', monotonic()
+        if text and callback is not None:
+            await callback(text)
+    async def progress(kind, text):
+        nonlocal pending, pending_kind
+        if not text:
+            return
+        if pending_kind != kind:
+            await flush()
+            pending_kind = kind
+        pending += text
+        if monotonic() - last_emit >= 0.2:
+            await flush()
+    stream = AsyncStream(cast_to=dict[str, Any], response=response, client=client).__aiter__()
+    next_value = asyncio.ensure_future(anext(stream))
     try:
-        stream = AsyncStream(cast_to=dict[str, Any], response=response, client=client)
-        async for value in stream:
+        while True:
+            ready, _ = await asyncio.wait({next_value},
+                timeout=max(0.2 - (monotonic() - last_emit), 0) if pending else None)
+            if not ready:
+                await flush()
+                continue
+            try:
+                value = next_value.result()
+            except StopAsyncIteration:
+                break
+            next_value = asyncio.ensure_future(anext(stream))
             if value.get('error') or value.get('type') in {'error', 'response.failed', 'response.incomplete'}:
                 raise ValueError('PERSONAL_MODEL_STREAM_FAILED')
             text = ''
             if protocol == 'responses':
                 if value.get('type') == 'response.output_text.delta':
                     text = value.get('delta', '')
+                elif value.get('type') in {'response.reasoning_summary_text.delta', 'response.reasoning_text.delta'}:
+                    await progress('reasoning', value.get('delta', ''))
                 elif value.get('type') == 'response.completed':
                     result, completed = value['response'], True
             else:
@@ -51,10 +84,12 @@ async def read_model_stream(response, protocol, on_text=None):
                     if choice.get('index', 0) == 0:
                         delta = choice.get('delta', {})
                         text += delta.get('content') or ''
-                        reasoning += delta.get('reasoning_content') or ''
+                        thought = delta.get('reasoning_content') or delta.get('reasoning') or ''
+                        reasoning += thought
+                        await progress('reasoning', thought)
                         completed = completed or bool(choice.get('finish_reason'))
-            if text and on_text is not None:
-                await on_text(text)
+            await progress('content', text)
+        await flush()
         if not completed:
             raise ValueError('PERSONAL_MODEL_STREAM_INCOMPLETE')
         if protocol == 'chat-completions':
@@ -63,4 +98,9 @@ async def read_model_stream(response, protocol, on_text=None):
                 result['choices'][0]['message']['reasoning_content'] = reasoning
         return result
     finally:
-        await client.close()
+        next_value.cancel()
+        await asyncio.gather(next_value, return_exceptions=True)
+        try:
+            await flush()
+        finally:
+            await client.close()

@@ -5,7 +5,7 @@ import type { ResearchQuestion } from './live/assistantClient.js';
 export interface SessionOptions {
   available: boolean; unavailableCode: string | null;
   collaboration?: { available: boolean };
-  models: { connectionRef: string; provider: string; model: string; available: boolean }[];
+  models: { connectionRef: string; provider: string; model: string; available: boolean; reasoningEfforts?: string[] }[];
   workspace: { configured: boolean; hostCommands: boolean; isolation: 'host-user-not-os-sandbox' };
   accounting: { tokenMetered: boolean; costMetered: boolean };
 }
@@ -32,7 +32,7 @@ export interface SessionSummary {
   state: 'idle' | 'running' | 'stopping' | 'stopped' | 'blocked';
   collaboration?: { enabled: boolean };
   capabilities?: { memory: boolean };
-  model: { connectionRef: string; provider: string; model: string };
+  model: { connectionRef: string; provider: string; model: string; reasoningEffort?: string; reasoningEfforts?: string[] };
   context: {
     characters: number; maximumCharacters: number | null; rawCharacters?: number;
     compaction?: { status: 'needed' | 'preparing' | 'ready' | 'failed' | 'unknown'; throughSequence: number; code?: string };
@@ -46,7 +46,7 @@ export interface SessionRequest {
   requestId: string; action: SessionAction; sessionId: string; turnId: string | null;
   session: ResearchSession; createsExecution: false; automaticReplay: false;
 }
-export interface CreateSession { projectId?: string; requestId: string; title: string; goal: string; boundaries: string; modelConnectionRef: string }
+export interface CreateSession { projectId?: string; requestId: string; title: string; goal: string; boundaries: string; modelConnectionRef: string; reasoningEffort?: string }
 export interface SessionPage { items: SessionSummary[]; nextCursor: string | null }
 const base = '/research/sessions';
 const path = (id: string) => `${base}/${encodeURIComponent(id)}`;
@@ -88,7 +88,7 @@ export const researchSessionsApi = {
     if (!signal.aborted) throw new Error('实时连接已断开，正在重连。');
   },
   create: async (owner: string, body: CreateSession) => detail(await factoryRequest<ResearchSession>(base, 'POST', body, undefined, owner)),
-  turn: async (owner: string, id: string, body: { requestId: string; text: string; assistantQuestionId?: string }) => detail(await factoryRequest<ResearchSession>(`${path(id)}/turns`, 'POST', body, undefined, owner), id),
+  turn: async (owner: string, id: string, body: { requestId: string; text: string; assistantQuestionId?: string; modelConnectionRef?: string; reasoningEffort?: string | null }) => detail(await factoryRequest<ResearchSession>(`${path(id)}/turns`, 'POST', body, undefined, owner), id),
   questions: (owner: string, id: string, after = '', requestId = '', signal?: AbortSignal) => factoryRequest<{ items: ResearchQuestion[]; nextCursor: string | null }>(`${path(id)}/questions?limit=20&after=${encodeURIComponent(after)}${requestId ? `&requestId=${encodeURIComponent(requestId)}` : ''}`, 'GET', undefined, signal, owner),
   ask: (owner: string, id: string, body: { requestId: string; assistantId: string; text: string }) => factoryRequest<ResearchQuestion>(`${path(id)}/questions`, 'POST', body, undefined, owner),
   correct: async (owner: string, id: string, body: { requestId: string; text: string }) => detail(await factoryRequest<ResearchSession>(`${path(id)}/corrections`, 'POST', body, undefined, owner), id),

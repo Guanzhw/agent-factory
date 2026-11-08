@@ -214,16 +214,20 @@ class PersonalModels:
             self.connections.sharing.set(conn, owner, reference, visibility)
             return self.db.record(conn, self.commands, owner, request_id, fingerprint, 'model.sharing', self._public(conn, owner, reference))
 
-    def model_for(self, owner, reference, context):
+    def model_for(self, owner, reference, context, *, reasoning_effort=None):
         handle = self.connections.resolve(owner, reference, 'model', task_id=context.session_id)
         if not isinstance(handle, OwnerModelHandle) or handle.actor != owner:
             raise HTTPException(403, 'PERSONAL_MODEL_OWNER_REQUIRED')
         async def on_text(text, response_id):
-            await asyncio.to_thread(self.store.event, context.session_id,
-                'model_content_delta', '正在生成回答', {'text': text, 'responseId': response_id})
-        return OwnerChatModel(handle.body, handle.credential,
+            await asyncio.to_thread(self.store.model_delta, context.session_id,
+                'model_content_delta', text, response_id)
+        async def on_reasoning(text, response_id):
+            await asyncio.to_thread(self.store.model_delta, context.session_id,
+                'model_reasoning_delta', text, response_id)
+        configuration = {**handle.body, **({'reasoningEffort': reasoning_effort} if reasoning_effort is not None else {})}
+        return OwnerChatModel(configuration, handle.credential,
             recheck=handle.check, session_id='af-task-' + context.session_id,
-            on_text=on_text)
+            on_text=on_text, on_reasoning=on_reasoning)
 
 
 class OwnerModelHandle:

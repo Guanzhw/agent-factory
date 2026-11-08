@@ -13,7 +13,7 @@ from starlette.background import BackgroundTask
 
 from agent_factory.application_content import ObjectId
 from .projects import Reference, RequestId
-from .session_tools import _directory, _open_file, _workspace_parts
+from .session_tools import _directory, _open_file, _windows_path, _workspace_parts
 
 
 # openai/codex 0ed34eb9: protocol/src/user_input.rs::MAX_USER_INPUT_TEXT_CHARS.
@@ -27,6 +27,7 @@ class CreateSession(BaseModel):
     goal: str = Field(min_length=1)
     boundaries: str = ''
     modelConnectionRef: Reference
+    reasoningEffort: str | None = None
     projectId: Reference | None = None
 
     @model_validator(mode='after')
@@ -44,6 +45,8 @@ class SessionText(BaseModel):
 
 class SessionTurn(SessionText):
     assistantQuestionId: ObjectId | None = None
+    modelConnectionRef: Reference | None = None
+    reasoningEffort: str | None = None
 
 
 class SessionCommand(BaseModel):
@@ -104,6 +107,7 @@ def session_router(auth, service):
     @router.get('/{identifier}/files')
     def files(request: Request, identifier: str):
         workspace = service.workspace(auth.user(request)['id'], identifier)
+        workspace = _windows_path(workspace) if os.name == 'nt' else workspace
         result = []
         errors = []
         def unavailable(error):

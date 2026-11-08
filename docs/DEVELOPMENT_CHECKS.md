@@ -1,5 +1,13 @@
 # Development checks
 
+## DSH interaction validation on 2026-11-08
+
+The ordered chat correction passes all 39 minimal cases on Windows with isolated PostgreSQL 17 in 153.583 seconds. Frontend lint/types/build, Python Ruff, full-worktree Pyright and whitespace checks pass. The build retains baseline empty-selector and bundle-size warnings. The existing Python environment is reused without running `uv sync` against the live service.
+
+Native HTTP fixtures cover interleaved thinking/content, three disclosure levels, stable tool rows, model/effort request serialization, unknown outcomes, Stop, refresh, long conversations and stale file previews. Three real-process cases cover long Windows output paths, exit 7, Stop and output-preparation rejection. Independent review also checks long-path file listing/download bytes and retained directory protection.
+
+The local DSH page and installed frontend are inspected directly. Actual DeepSeek high/low requests, visible reasoning, file creation/read, command exit 0/7, native Stop of a live PID and read-only recovery are separately verified. After the user confirms Save in Edge, the final 2,240-byte file matches the workspace and API download byte-for-byte and by SHA-256, with no temporary download remaining. Luna/low returns HTTP 403. Computer Use stops before final-patch UI Stop; that remains distinct from the passing scripted browser and real API evidence. See [the interaction acceptance record](reviews/dsh-chat-interaction-20261108.md).
+
 The old test suite was deleted at the user's request on 2026-11-07. The user subsequently requested minimal feature-based regression coverage using Ponytail. The new suite covers a small set of browser journeys and focused review regressions; it does not restore the old tests or their implementation constraints.
 
 ## Run

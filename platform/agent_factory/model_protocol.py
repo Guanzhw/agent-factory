@@ -219,9 +219,12 @@ def _response_items(output):
                 if type(source['encrypted_content']) is not str:
                     _fail('RESPONSE')
                 item['encrypted_content'] = source['encrypted_content']
-            # Other reasoning content is outside this deliberately small subset.
             if 'content' in source and source['content'] not in (None, []):
-                _fail('UNSUPPORTED_OUTPUT')
+                parts = source['content']
+                if type(parts) is not list or any(type(part) is not dict
+                        or part.get('type') != 'reasoning_text' or type(part.get('text')) is not str for part in parts):
+                    _fail('UNSUPPORTED_OUTPUT')
+                item['content'] = [{'type': 'reasoning_text', 'text': part['text']} for part in parts]
         elif kind == 'refusal':
             _fail('REFUSAL')
         else:
@@ -413,7 +416,7 @@ def decode_response(protocol, raw):
         message = _message(fields)
         if (reason == 'tool_calls') != bool(message.get('tool_calls')):
             _fail('RESPONSE')
-        reasoning = source.get('reasoning_content')
+        reasoning = source.get('reasoning_content', source.get('reasoning'))
         if reasoning is not None and type(reasoning) is not str:
             _fail('RESPONSE')
         if not message.get('tool_calls') and not (message['content'] or '').strip():

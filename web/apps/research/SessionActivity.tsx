@@ -35,6 +35,7 @@ export function activitySummary(turn: SessionTurn): string {
     ? `${activityName(last)}已返回结果，等待后续记录` : `${activityName(last)}结果需要核对`;
   if (last.type === 'research_reconciliation_required') return '原操作结果尚未确认，请核对原任务';
   if (last.type === 'model_content_delta') return '已收到部分回复';
+  if (last.type === 'model_reasoning_delta') return '正在思考';
   if (last.type === 'model_binding_selected') return '已选定模型，等待回复或工具记录';
   if (['native_accepted', 'admission_reserved'].includes(last.type)) return '任务已提交，等待开始执行';
   return '等待新的执行记录';
@@ -53,12 +54,12 @@ function ActionRecord({ event, start, active }: { event: SessionEvent; start?: S
       const finished = ['research_tool_finished', 'tool_finished'].includes(event.type);
       const outcome = event.data.outcome;
       const relativePath = event.data.relativePath;
-      const failed = outcome === 'failed' || typeof result.exitCode === 'number' && result.exitCode !== 0;
+      const failed = outcome === 'failed' || outcome === 'completed' && typeof result.exitCode === 'number' && result.exitCode !== 0;
       const unknown = outcome === 'unknown' || !finished && !active;
       const state = (!finished ? active ? '已开始 · 等待结果' : '缺少结束记录 · 结果未知' : outcome === 'unknown' ? '结果未确认' : failed ? '失败' : outcome === 'cancelled' ? '已停止' : outcome === 'completed' ? '已完成' : '需核对结果');
       const path = typeof result.path === 'string' ? result.path : typeof relativePath === 'string' ? relativePath : '';
       const Icon = failed || unknown ? IconAlertCircle : finished ? IconCircleCheck : IconClock;
-      const args = start?.data.arguments ?? event.data.arguments;
+      const args = event.data.arguments ?? start?.data.arguments;
       const parameters = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : null;
       const preview = path || (Array.isArray(parameters?.argv) ? parameters.argv.join(' ') : typeof parameters?.skill_name === 'string' ? parameters.skill_name : '');
       return <li className={failed || unknown ? 'rs-action-warning' : ''}><details className="rs-tool-call">
@@ -78,6 +79,29 @@ function ActionRecord({ event, start, active }: { event: SessionEvent; start?: S
         {finished ? <details><summary>完整工具结果</summary><pre>{JSON.stringify(event.data, null, 2)}</pre></details> : <p role="status">尚未收到结束事件，无法确认结果。</p>}
       </details></li>;
 }
+type TextStep = { kind: 'thinking' | 'message'; id: number; responseId: string; text: string; createdAt: string };
+type ToolStep = { kind: 'tool'; id: number; event: SessionEvent; start?: SessionEvent };
+function orderedSteps(events: SessionEvent[]) {
+  const steps: (TextStep | ToolStep)[] = [];
+  const calls = new Map<string, ToolStep>();
+  for (const event of events) {
+    if (['model_content_delta', 'model_reasoning_delta'].includes(event.type) && typeof event.data.text === 'string' && typeof event.data.responseId === 'string') {
+      const kind = event.type === 'model_reasoning_delta' ? 'thinking' : 'message';
+      const previous = steps.at(-1);
+      if (previous?.kind === kind && previous.responseId === event.data.responseId) previous.text += event.data.text;
+      else steps.push({ kind, id: event.id, responseId: event.data.responseId, text: event.data.text, createdAt: event.createdAt });
+    } else if (['research_tool_started', 'research_tool_finished', 'tool_started', 'tool_finished'].includes(event.type)) {
+      const key = typeof event.data.callId === 'string' ? event.data.callId : `event-${event.id}`;
+      const existing = calls.get(key);
+      if (existing) existing.event = event;
+      else {
+        const step: ToolStep = { kind: 'tool', id: event.id, event, ...(['research_tool_started', 'tool_started'].includes(event.type) ? { start: event } : {}) };
+        calls.set(key, step); steps.push(step);
+      }
+    }
+  }
+  return steps;
+}
 export function SessionActivity({ turn, records }: { turn: SessionTurn; records?: ReactNode }) {
   const [now, setNow] = useState(Date.now);
   const active = ['reserved', 'queued', 'running', 'waiting_approval', 'finalizing', 'canceling'].includes(turn.status);
@@ -87,30 +111,31 @@ export function SessionActivity({ turn, records }: { turn: SessionTurn; records?
     return () => clearInterval(timer);
   }, [active]);
   const events = [...turn.events].sort((a, b) => a.id - b.id);
-  const actions = events.filter(event => ['research_tool_started', 'research_tool_finished', 'tool_started', 'tool_finished'].includes(event.type));
-  const calls = new Map<string, SessionEvent>();
-  for (const event of actions) calls.set(typeof event.data.callId === 'string' ? event.data.callId : `event-${event.id}`, event);
-  const recent = [...calls.values()];
-  const failures = recent.filter(event => event.data.outcome === 'failed' || typeof output(event).exitCode === 'number' && output(event).exitCode !== 0).length;
+  const steps = orderedSteps(events);
+  const last = steps.at(-1);
+  // DSH groups one response's reasoning separately from its accumulated answer.
+  const responseId = last && last.kind !== 'tool' ? last.responseId : undefined;
+  const reply = steps.filter((step): step is TextStep => step.kind === 'message' && step.responseId === responseId);
+  const process = steps.filter(step => step.kind !== 'message' || step.responseId !== responseId);
+  const failures = steps.filter(step => step.kind === 'tool' && (step.event.data.outcome === 'failed' || step.event.data.outcome === 'completed' && typeof output(step.event).exitCode === 'number' && output(step.event).exitCode !== 0)).length;
   const children = turn.children ?? [];
   const latest = events.at(-1);
-  const seconds = Math.max(0, Math.floor((now - new Date(latest?.createdAt ?? turn.createdAt).getTime()) / 1000));
+  const updatedAt = typeof latest?.data.updatedAt === 'string' ? latest.data.updatedAt : latest?.createdAt ?? turn.createdAt;
+  const seconds = Math.max(0, Math.floor((now - new Date(updatedAt).getTime()) / 1000));
   const elapsed = turn.completedAt ? Math.max(0, Math.round((Date.parse(turn.completedAt) - Date.parse(turn.createdAt)) / 1000)) : null;
   const duration = elapsed === null ? '' : elapsed < 60 ? `${elapsed}秒` : `${Math.floor(elapsed / 60)}分${elapsed % 60}秒`;
-  const responses = new Map<string, string>();
-  for (const event of events) if (event.type === 'model_content_delta' && typeof event.data.text === 'string' && typeof event.data.responseId === 'string') {
-    responses.set(event.data.responseId, (responses.get(event.data.responseId) ?? '') + event.data.text);
-  }
-  const liveText = turn.result === null ? [...responses.values()].at(-1) : undefined;
+  const liveText = turn.result === null ? reply.map(step => step.text).join('') : undefined;
+  const descriptions = [...new Set(process.map(step => step.kind === 'tool' ? activityName(step.event) : step.kind === 'thinking' ? '思考' : '阶段性消息'))];
   return <section className="rs-activity" aria-label={`第 ${turn.sequence} 轮行动与结果`}>
-    <details className="rs-process" open={active}>
+    {process.length > 0 ? <details className="rs-process" open={active}>
     <summary><span className="rs-activity-current" role="status">{turn.status === 'completed' ? `已完成${duration ? `，用时 ${duration}` : ''}` : activitySummary(turn)}{failures > 0 && ` · ${failures} 项失败`}</span><IconChevronRight className="rs-disclosure" size={14}/></summary>
-    <p className="rs-event-clock">{latest ? `最近事件：${new Date(latest.createdAt).toLocaleTimeString('zh-CN')}` : '尚无执行事件'}{active && ` · ${seconds} 秒前`}</p>
-    {active && seconds >= 15 && <p className="rs-waiting">已有 {seconds} 秒未收到新执行事件。<span role="status">当前活动与结果尚未确认。</span></p>}
-    {recent.length > 0 && <ol>{recent.map(event => <ActionRecord key={event.id} event={event} active={active} start={actions.find(item => ['research_tool_started', 'tool_started'].includes(item.type) && typeof event.data.callId === 'string' && item.data.callId === event.data.callId)}/>)}</ol>}
-    {records}
-    </details>
+    <details className="rs-process-steps" open><summary>{descriptions.join('、')} · {process.length} 个步骤<IconChevronRight className="rs-disclosure" size={14}/></summary>
+    <ol>{process.map(step => step.kind === 'tool' ? <ActionRecord key={step.id} event={step.event} start={step.start} active={active}/> : <li key={step.id} className={step.kind === 'thinking' ? 'rs-thinking-step' : 'rs-step-message'}>{step.kind === 'thinking' ? <details className="rs-thinking" open={active && step === last}><summary>思考<time>{new Date(step.createdAt).toLocaleTimeString('zh-CN')}</time><IconChevronRight className="rs-disclosure" size={14}/></summary><ResearchReply text={step.text}/></details> : <><small>阶段性消息 · {new Date(step.createdAt).toLocaleTimeString('zh-CN')}</small><ResearchReply text={step.text}/></>}</li>)}</ol>
+    </details></details> : active && <p className="rs-generating" role="status">{liveText ? '正在生成回答…' : activitySummary(turn)}</p>}
+    {!process.length && ['cancelled', 'canceled'].includes(turn.status) && <p role="status">{activitySummary(turn)}</p>}
+    {active && seconds >= 15 && <p className="rs-waiting" role="status">已有 {seconds} 秒未收到更新，正在等待执行端。</p>}
     {liveText && <div className="rs-streaming-reply"><ResearchReply text={liveText}/><small>本次收到的部分回复</small></div>}
+    {records}
     {!!children.length && <div className="rs-active-children"><strong>子助手</strong>{children.map(child => <div key={child.childTaskId}><p role="status">{({ running: '执行中', queued: '排队中', completed: '已完成', failed: '未完成', cancelled: '已停止' } as Record<string, string>)[child.status] ?? '等待结果'}</p><p className="rs-child-preview">{child.goal}</p><details><summary>查看委托内容</summary><p>{child.goal}</p></details></div>)}</div>}
     {children.some(child => ['failed', 'unknown', 'blocked'].includes(child.status)) && <p role="alert">子助手有未完成或未确认的结果，请展开执行详情核对。</p>}
     {hasUnconfirmedOperation(turn) && <p role="alert">原工具操作结果未知，需核对原任务，不要重发同一操作。</p>}
