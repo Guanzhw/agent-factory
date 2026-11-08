@@ -40,3 +40,19 @@ The existing subscription model completes the combined acceptance task in 20 sec
 The ordinary Edge file link is clicked while waiting for a browser download event. The click succeeds, but no download event arrives within 15 seconds. Later read-only diagnosis finds the complete 34 bytes in its temporary file. After the user clicks Save, the completed `.txt` matches the exact session source byte-for-byte and by SHA-256, and `.crdownload` disappears. The user's screenshot shows Open file. Real Edge delivery is therefore verified with manual Save; the earlier observation timeout is retained without treating it as an application failure. Scripted Chromium's independent byte check remains separate evidence. See the joint notes for the full hash and browser-tool limitation.
 
 Final verification after the Skills event correction passes all 21 cases in 113.536 seconds, alongside frontend checks, Ruff and Pyright. The local preview retains the verified code and both real acceptance turns.
+
+
+## Second chat-detail correction
+
+The second Product Design pass starts from merged source `37af529` on local branch `codex/dsh-chat-detail-round2-20261108`. It uses a fresh preflight, same-size desktop/tablet/phone captures, the actual installed DSH component/CSS modules, implementation and a new design-QA pass. [Current design QA](../../design-qa.md) supersedes the earlier chat-detail acceptance for the affected surfaces.
+
+The source contracts come from installed `@deepseek-ai` packages under the DSH dependency tree:
+
+- `dsh-client-ui-conversation/lib/client.js:20057,20634,21701,22015-22120`: independent header, 76px tabbed height, composer hierarchy, 28px panel radius, 36px editor and 34px primary action.
+- `dsh-client-ui-chat/lib/client.js:4793,4880-5005,5053,5931,5965-6009`: real activity labels, compact disclosure, right-aligned user stack and copy/time actions.
+- `dsh-client-ui-sidebar-files/lib/client.js:2197,2229-2242`: real right-side file access.
+- `dsh-client-ui-layout/lib/client.js:13,250,479`: 1024px auto-collapse and 768px drawer boundaries.
+
+The delivered frontend removes idle status clutter from the body, moves management details into working native popovers, and preserves unknown results, failed-tool counts, file-read errors and idle cancellation of future collaboration. A short conversation no longer offers Jump when it cannot scroll. Long streamed replies retain the reader's position until following resumes. The independent 76px header remains fixed while the conversation scrolls. A reproduced long-title overflow is fixed in the owning grid rather than hidden.
+
+All 23 minimal Windows regressions pass in 125.435 seconds on the final code. The pending-request regression proves that an unconfirmed request blocks new composition while an allowed idle Stop still reaches the real stop API, persists stopped state and causes no model call. The old disabled condition fails this regression before the final implementation passes. The first full attempt's selector failures and actual 396px-at-390px overflow remain in external evidence. Frontend lint/types/build, Ruff, Pyright and whitespace checks pass; independent final source review reports no remaining confirmed blocker. The preview's backend and existing running user session are left active. The changes are prepared for draft PR review. Merge and deployment remain separate.
