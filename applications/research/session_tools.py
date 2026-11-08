@@ -152,13 +152,7 @@ def _workspace_parts(workspace, value, *, directory=False):
     relative = Path(os.path.relpath(target, root))
     if not relative.parts and not directory:
         raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
-    # Pass the normalized path into the pinned native path resolver, avoiding
-    # its relative-only API restriction while retaining its filename handling.
-    resolved = Workspace(root=workspace, allowed=[], confirm=[], exclude_patterns=[])
-    error, native_path = resolved._resolve(relative.as_posix())
-    if error:
-        raise ValueError('RESEARCH_WORKSPACE_PATH_INVALID')
-    return list(native_path.relative_to(workspace.resolve()).parts)
+    return list(relative.parts)
 
 
 def _windows_path(path):
@@ -589,43 +583,53 @@ class ResearchSessionTools:
     @staticmethod
     def _edit(workspace, values):
         old, new = values['old'], values['new']
-        invoked = False
+        committing = False
         try:
             parts = _workspace_parts(workspace, values['path'])
             with _directory(workspace, parts[:-1], create=not old) as parent:
                 try:
-                    _entry_stat(parent, parts[-1])
                     before = _read(parent, parts[-1])
                     exists = True
                 except FileNotFoundError:
                     before, exists = '', False
-                toolkit = Workspace(root=workspace, allowed=['write', 'edit'], confirm=[],
-                                         exclude_patterns=[], require_read_before_write=False)
-                invoked = True
-                # Native text IO reads universal newlines; accept the exact CRLF
-                # snippet returned by our byte-faithful read tool as well.
-                native_old = old.replace('\r\n', '\n').replace('\r', '\n')
-                result = (toolkit.edit_file('/'.join(parts), native_old, new) if old else
-                          toolkit.write_file('/'.join(parts), new, overwrite=False))
-                try:
-                    _entry_stat(parent, parts[-1])
-                    after = _read(parent, parts[-1])
-                except FileNotFoundError:
-                    after = None
-                if result.startswith('Error'):
-                    if after == before or not exists and after is None:
+                # Agno's fixed .tmp sibling must never overwrite unrelated workspace files.
+                with tempfile.TemporaryDirectory(prefix='factory-edit-') as directory:
+                    staged = Path(directory) / 'content'
+                    if exists:
+                        staged.write_bytes(before.encode('utf-8'))
+                    toolkit = Workspace(root=directory, allowed=['write', 'edit'], confirm=[],
+                        exclude_patterns=[], require_read_before_write=False)
+                    native_old = old.replace('\r\n', '\n').replace('\r', '\n')
+                    result = (toolkit.edit_file('content', native_old, new) if old else
+                              toolkit.write_file('content', new, overwrite=False))
+                    if result.startswith('Error'):
                         raise ToolInvocationError('RESEARCH_EDIT_REJECTED', outcome='failed', stopped=True, output=result)
-                    raise ToolInvocationError('RESEARCH_TOOL_OUTCOME_UNKNOWN', outcome='unknown', stopped=True)
-                if after is None:
-                    raise ToolInvocationError('RESEARCH_TOOL_OUTCOME_UNKNOWN', outcome='unknown', stopped=True)
+                    after = staged.read_bytes()
+                    pending = '.' + Path(directory).name
+                    pending_path = parent / pending if sys.platform == 'win32' else pending
+                    location = {} if sys.platform == 'win32' else {'dir_fd': parent}
+                    handle = os.open(pending_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, **location)
+                    try:
+                        with os.fdopen(handle, 'wb') as output:
+                            output.write(after)
+                        committing = True
+                        if sys.platform == 'win32':
+                            (os.replace if old else os.rename)(pending_path, parent / parts[-1])
+                        else:
+                            (os.replace if old else os.link)(pending, parts[-1], src_dir_fd=parent, dst_dir_fd=parent)
+                    finally:
+                        try:
+                            os.unlink(pending_path, **location)
+                        except FileNotFoundError:
+                            pass
                 return {'path': values['path'], 'created': not exists,
                     'beforeSha256': hashlib.sha256(before.encode()).hexdigest(),
-                    'afterSha256': hashlib.sha256(after.encode()).hexdigest(), 'bytes': len(after.encode())}
+                    'afterSha256': hashlib.sha256(after).hexdigest(), 'bytes': len(after)}
+        except FileExistsError:
+            raise _rejected('RESEARCH_EDIT_TARGET_EXISTS') from None
         except (ValueError, OSError, UnicodeError):
-            if not invoked:
+            if not committing:
                 raise _rejected('RESEARCH_EDIT_TARGET_INVALID') from None
-            # Native writes return errors rather than raising; an IO failure while
-            # checking their result remains uncertain and must not be replayed.
             raise ToolInvocationError('RESEARCH_EDIT_OUTCOME_UNKNOWN', outcome='unknown', stopped=True) from None
 
     async def _run(self, workspace, values, guard, execution, *, output_directory=None):
