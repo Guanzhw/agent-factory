@@ -105,8 +105,10 @@ def session_router(auth, service):
     def files(request: Request, identifier: str):
         workspace = service.workspace(auth.user(request)['id'], identifier)
         result = []
+        errors = []
         def unavailable(error):
-            raise HTTPException(503, '暂时无法读取会话文件，请重试。') from error
+            errors.append({'path': Path(error.filename).relative_to(workspace).as_posix(),
+                           'message': error.strerror or '读取失败'})
         for directory, _, names in os.walk(workspace, onerror=unavailable):
             for name in names:
                 file = Path(directory) / name
@@ -118,7 +120,7 @@ def session_router(auth, service):
                     continue
                 except OSError as error:
                     unavailable(error)
-        return sorted(result, key=lambda item: item['path'])
+        return {'files': sorted(result, key=lambda item: item['path']), 'errors': errors}
 
     @router.get('/{identifier}/files/download')
     def download(request: Request, identifier: str, path: str):

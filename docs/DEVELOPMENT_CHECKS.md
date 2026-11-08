@@ -29,6 +29,8 @@ Two focused cases exercise SSH revocation through the real database/API and nati
 - A native SSH result with exit 255 and `stopped=False` retains its output and remains unknown in saved events and the UI.
 - A separate UI snapshot case covers missing events, transport EOF and reconnection, terminal unknown results, later reconciliation, one row per call ID, Markdown tables, and narrow screens. These snapshots are synthetic and do not prove provider or SSH connectivity.
 - Native file creation and replacement produce a larger-than-52-KB UTF-8 document; the browser downloads identical native-platform bytes with a Chinese filename. Downloads reject parent traversal, sibling-prefix paths and escaping links (a native junction on Windows). Held Windows ancestor directories reject rename.
+- An unreadable experiment directory leaves other files visible and downloadable, with the failed path shown; restoring permissions and refreshing clears the warning and lists the recovered files.
+- Session switches clear previous files and errors while the next request is pending or fails; loading and transport failure do not appear as an empty workspace.
 - A child Agent creates a file, returns its result and the parent resumes. Refresh retains one original turn; files remain downloadable on desktop/mobile.
 - Stop terminates an actually running local command; refreshing does not repeat it.
 - External Skills load native instructions, nested references and script source. A script preserves shebang flags, arguments and cwd, returns exit-7 diagnostics, then another invocation runs longer than 30 seconds and produces a downloadable result. Stop terminates an actual skill-script PID.

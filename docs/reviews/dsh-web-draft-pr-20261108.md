@@ -2,7 +2,7 @@
 
 Title: Improve research chat visibility and fix Windows native file replacement
 
-Proposed base: `feat/native-research-skills-20261107` at `bf8ad58d1b78fd0df66192f4c1455001beb7ffef`, keeping PR #178's changes in their own review.
+Proposed base: `feat/native-research-skills-20261107` at `93119b30ac8f3a8f43881c6cef277ba71518779b`, keeping PR #178's changes in their own review.
 
 Proposed head: `codex/dsh-skills-integration-20261108`. Original frontend commit `b552779` and its independent branch remain preserved.
 
@@ -16,6 +16,8 @@ Windows directory handles permit native Workspace child-file replacement while r
 
 All 20 combined regressions pass on Windows with disposable PostgreSQL in 102.661 seconds, including native parent/child files, existing-file editing, exact Chinese-name download bytes, junction escape rejection, long-running Skills, unknown-call non-replay and continuation, both PID Stop paths, SSH disconnect events and lifespan shutdown. Frontend lint/types/build, Ruff, Pyright and whitespace checks pass. Independent review finds no source blocker.
 
+That complete run applies to the previous integrated base `0997f8e`. The latest #178 file-list contract `{files, errors}` is now integrated with its matching component. A targeted real Windows ACL/browser/API/download journey passes in 47.869 seconds with `PYTHONUTF8=1`, including partial-list warnings, byte-exact accessible downloads, session switching, loading/failure/empty states and permission recovery. A complete normal-encoding run follows the chat-detail corrections.
+
 The existing OpenCode Go subscription completes the exact SSH question with discovery and two read-only calls, both exit 0. A second real session creates, edits and reads a Chinese file. Desktop and narrow UI evidence is separate from scripted regressions. See [integration and evidence notes](dsh-web-integration-20261108.md).
 
 ## Not verified
@@ -24,4 +26,4 @@ Live Edge download acceptance stops after download waiting times out and Compute
 
 ## Next step
 
-Review the [combined integration evidence](dsh-skills-integration-20261108.md), restore reliable browser URL recognition, and complete the real-provider/SSH/file-delivery journey. Keep the PR draft pending that acceptance. Remote push and PR creation await explicit authorization; neither has been performed.
+Refine the screenshot-confirmed chat details, run the complete normal-encoding suite, and complete the real-provider/SSH/file-delivery journey when browser control can verify its target. Keep the PR draft pending that acceptance. See [combined integration evidence](dsh-skills-integration-20261108.md).

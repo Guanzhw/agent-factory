@@ -322,6 +322,77 @@ class ChatJourney(unittest.TestCase):
                 self.assertEqual(self.context.request.get(download_url, params={'path': path}).status, 404)
         normalized = self.context.request.get(download_url, params={'path': 'unused/../结果.txt'})
         self.assertEqual(normalized.body(), expected_bytes)
+        blocked = workspace / '不可读实验目录'
+        blocked.mkdir()
+        (blocked / 'hidden.txt').write_text('not listable')
+        if sys.platform == 'win32':
+            import ntsecuritycon
+            import win32api
+            import win32security
+            original_acl = win32security.GetNamedSecurityInfo(str(blocked), win32security.SE_FILE_OBJECT,
+                win32security.DACL_SECURITY_INFORMATION).GetSecurityDescriptorDacl()
+            user_sid = win32security.LookupAccountName(None, win32api.GetUserName())[0]
+            denied_acl = win32security.ACL()
+            denied_acl.AddAccessDeniedAce(win32security.ACL_REVISION, ntsecuritycon.FILE_LIST_DIRECTORY, user_sid)
+            denied_acl.AddAccessAllowedAce(win32security.ACL_REVISION, ntsecuritycon.FILE_ALL_ACCESS, user_sid)
+        try:
+            if sys.platform == 'win32':
+                win32security.SetNamedSecurityInfo(str(blocked), win32security.SE_FILE_OBJECT,
+                    win32security.DACL_SECURITY_INFORMATION, None, None, denied_acl, None)
+            else:
+                blocked.chmod(0)
+            with self.assertRaises(PermissionError):
+                with os.scandir(blocked) as entries:
+                    list(entries)
+            response = self.context.request.get(download_url.removesuffix('/download'))
+            self.assertEqual(response.status, 200)
+            self.assertIn('结果.txt', [file['path'] for file in response.json()['files']])
+            self.assertEqual([issue['path'] for issue in response.json()['errors']], [blocked.name])
+            reason = response.json()['errors'][0]['message']
+            self.assertTrue(reason)
+            self.page.get_by_role('button', name='刷新文件列表', exact=True).click()
+            expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(blocked.name)
+            expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(reason)
+            expect(self.page.locator('.rs-files').get_by_text('还没有生成文件。', exact=True)).to_have_count(0)
+            with self.page.expect_download() as partial_download:
+                self.page.get_by_role('link', name='结果.txt', exact=True).click()
+            self.assertEqual(Path(partial_download.value.path()).read_bytes(), expected_bytes)
+            self.page.screenshot(path=str(Path(self.folder.name) / 'partial-files.png'), full_page=True)
+            next_session = self.post('/research/sessions', {'title': '文件列表切换验收', 'goal': '尚未执行',
+                'boundaries': '', 'modelConnectionRef': snapshot['model']['connectionRef']})
+            self.page.get_by_role('button', name='刷新会话', exact=True).click()
+            pending = []
+            next_files = '**/research/sessions/' + next_session['id'] + '/files'
+            self.page.route(next_files, lambda route: pending.append(route))
+            with self.page.expect_request(next_files):
+                self.page.get_by_role('button', name=re.compile('^文件列表切换验收')).click()
+            expect(self.page.get_by_role('heading', name='文件列表切换验收', exact=True)).to_be_visible()
+            file_panel = self.page.locator('.rs-files')
+            expect(file_panel.get_by_role('status')).to_have_text('正在读取文件…')
+            expect(file_panel.get_by_role('link')).to_have_count(0)
+            expect(file_panel.get_by_role('alert')).to_have_count(0)
+            expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(0)
+            self.assertEqual(len(pending), 1)
+            pending[0].fulfill(status=503, json={'detail': '文件列表读取失败验收'})
+            expect(file_panel.get_by_role('alert')).to_have_text('文件列表读取失败验收')
+            expect(file_panel.get_by_role('link')).to_have_count(0)
+            expect(file_panel.get_by_text(blocked.name, exact=False)).to_have_count(0)
+            expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(0)
+            self.page.unroute(next_files)
+            self.page.get_by_role('button', name='刷新文件列表', exact=True).click()
+            expect(file_panel.get_by_role('alert')).to_have_count(0)
+            expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(1)
+            self.page.get_by_role('button', name=re.compile('^' + re.escape(snapshot['title']))).click()
+            expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(blocked.name)
+        finally:
+            if sys.platform == 'win32':
+                win32security.SetNamedSecurityInfo(str(blocked), win32security.SE_FILE_OBJECT,
+                    win32security.DACL_SECURITY_INFORMATION, None, None, original_acl, None)
+            else:
+                blocked.chmod(0o700)
+        self.page.get_by_role('button', name='刷新文件列表', exact=True).click()
+        expect(self.page.locator('.rs-files [role="alert"]')).to_have_count(0)
+        expect(self.page.get_by_role('link', name=blocked.name + '/hidden.txt', exact=True)).to_be_visible()
         expect(self.page.get_by_role('link', name='child.txt', exact=True)).to_be_visible()
         self.assertEqual(len(self.session()['turns']), 1)  # Refresh must not start another run.
         self.assertEqual(len(self.model.requests), requests_before_refresh)
