@@ -48,13 +48,14 @@ def _receipt(receipt, **identity):
     return _unknown(**identity)
 
 
-def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context):
+def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context, *, exposed_name=None):
     descriptor = replace(adapter.descriptor, input_schema=copy.deepcopy(dict(adapter.descriptor.input_schema)))
     fingerprint = digest(asdict(descriptor))
     service = store.personal_tools
     expected = (context.user_id, context.session_id, context.run_id)
     connection = {'ref': handle.configuration['registrationRef'], 'revision': handle.configuration['revision']}
-    async def invoke(*, run_context, fc, **arguments):
+    name = exposed_name or descriptor.tool_name
+    async def invoke(*, run_context, fc, arguments):
         # Agno injects both values, removing framework arguments supplied by
         # a model. Never infer or manufacture a replacement call identity.
         call_id = fc.call_id if isinstance(fc, FunctionCall) else None
@@ -65,7 +66,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context)
         def check_execution():
             try:
                 if ((run_context.user_id, run_context.session_id, run_context.run_id) != expected
-                        or fc.call_id != call_id or fc.function.name != descriptor.tool_name
+                        or fc.call_id != call_id or fc.function.name != name
                         or fc.function._run_context is not run_context
                         or service.adapters.get(descriptor.adapter_id) is not adapter
                         or handle.adapter is not adapter or handle.service is not service
@@ -190,6 +191,13 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context)
         await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具执行记录', {**event, **receipt})
         return _receipt(receipt, **identity)
 
-    return Function(name=descriptor.tool_name, description=descriptor.description,
-        parameters=copy.deepcopy(dict(descriptor.input_schema)), entrypoint=invoke,
+    # Agno consumes top-level framework names; nesting preserves arbitrary MCP keys.
+    schema = copy.deepcopy(dict(descriptor.input_schema))
+    # Keep local $ref targets scoped to the original schema after nesting.
+    schema.setdefault('$id', 'urn:factory:tool-arguments:' + fingerprint)
+    return Function(name=name, description=descriptor.description +
+        f' Original tool: {descriptor.tool_name}; connection: {connection["ref"]}. '
+        'Pass the tool input object inside arguments.',
+        parameters={'type': 'object', 'properties': {'arguments': schema},
+                    'required': ['arguments'], 'additionalProperties': False}, entrypoint=invoke,
         skip_entrypoint_processing=True)

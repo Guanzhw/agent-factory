@@ -87,7 +87,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
         elif 'unknown-followup' in json.dumps(request['messages']):
             reply = '后续分析完成，原操作仍待核对。'
         elif 'unknown-journey-case' in system:
-            steps = [('uncertain_cli', {}),
+            steps = [('uncertain_cli', {'arguments': {}}),
                      ('research_edit_file', {'path': 'independent.txt', 'old': '', 'new': '独立任务完成'}),
                      ('research_read_file', {'path': 'independent.txt'})]
             if len(results) < len(steps):
@@ -117,7 +117,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
                 tool, arguments = 'research_run', {'argv': [sys.executable, '-c',
                     "import os,time; from pathlib import Path; Path('started.txt').write_text(str(os.getpid())); time.sleep(600)"]}
         else:
-            steps = [('demo_cli', {'mode': 'fail'}), ('demo_cli', {'mode': 'ok'}), ('ssh_servers', {}),
+            steps = [('demo_cli', {'arguments': {'mode': 'fail'}}), ('demo_cli', {'arguments': {'mode': 'ok'}}), ('ssh_servers', {}),
                      ('research_edit_file', {'path': '结果.txt', 'old': '', 'new': DOCUMENT}),
                      ('research_edit_file', {'path': '结果.txt', 'old': '状态：初稿', 'new': '状态：已复核'}),
                      ('research_delegate', {'goal': 'child-only'})]

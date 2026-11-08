@@ -24,7 +24,7 @@ def validate_tool_schema(schema: Mapping[str, Any]) -> dict[str, Any]:
     from jsonschema import Draft202012Validator
     try:
         value = bounded_tool_json(dict(schema), maximum=None)
-        if value.get('type') != 'object' or {'fc', 'run_context', '_agno_run_context'} & set(value.get('properties', {})):
+        if value.get('type') != 'object':
             raise ValueError()
         Draft202012Validator.check_schema(value)
         return value
@@ -61,8 +61,6 @@ def validate_tool_arguments(schema: Mapping[str, Any], arguments: Mapping[str, A
     from referencing import Registry
     try:
         value = bounded_tool_json(dict(arguments), maximum=None)
-        if {'fc', 'run_context', '_agno_run_context'} & set(value):
-            raise ValueError()
         Draft202012Validator(dict(schema), registry=Registry()).validate(value)
         return value
     except Exception:

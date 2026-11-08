@@ -67,14 +67,21 @@ class PersonalTools:
         names = set(reserved_names)
         result = []
         resources = sorted(self.list(owner), key=lambda item: (item.get('ownerId') != owner, item['registrationRef']))
+        original_names = {item['toolName'] for item in resources}
         for item in resources:
-            if not item.get('available') or item['toolName'] in names:
+            if not item.get('available'):
                 continue
             self.ensure_registered(item['adapterId'])
             with self.connections._read() as conn:
                 handle = self.binding(conn, owner, item['registrationRef']).opaque_handle
-            result.append(personal_tool_function(handle.adapter, self.connections.store, handle, context))
-            names.add(item['toolName'])
+            name = item['toolName']
+            if name in names:
+                name = 'personal_' + digest(item['registrationRef'])[:24]
+                while name in names or name in original_names:
+                    name += '_'
+            result.append(personal_tool_function(handle.adapter, self.connections.store, handle, context,
+                exposed_name=name))
+            names.add(name)
         return result
 
     def catalog_tools(self):
