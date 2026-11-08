@@ -111,11 +111,12 @@ class ToolDescriptor:
 
 @dataclass(frozen=True)
 class ToolInvocation:
-    """One owner-scoped call. Never cache this object or its credential lease.
+    """One owner-scoped call. Recheck authority and resolve credentials for each call.
 
     Call check_authorized before dispatch.
     resolve_credential repeats exact owner/ref/revision/provider/target checks.
-    call_id identifies the original durable effect; retry must not redispatch it.
+    call_id identifies a non-read-only durable effect; retry must not redispatch it.
+    MCP connections may live until the native execution closes them.
     """
     owner_id: str
     connection_ref: str
@@ -125,6 +126,7 @@ class ToolInvocation:
     run_context: Any = field(repr=False)
     check_authorized: Callable[[], None] = field(repr=False)
     resolve_credential: Callable[[], SecretLease | None] = field(repr=False)
+    mcp_connections: Any = field(default=None, repr=False)
 
 
 class ToolInvocationError(RuntimeError):
