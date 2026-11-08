@@ -94,7 +94,7 @@ TOOLS = {
         _schema({'memory_id': MEMORY_ID}, ['memory_id'])),
     'research_read_file': ('Read a UTF-8 file in this research session workspace.',
         _schema({'path': PATH_SCHEMA}, ['path'])),
-    'research_search': ('Find literal text in a workspace UTF-8 file or directory. Returns all matching lines, with their full text.',
+    'research_search': ('Find literal text in a workspace UTF-8 file or directory. Returns matching lines with full text and reports unreadable paths in errors.',
         _schema({'query': {'type': 'string', 'minLength': 1},
             'path': {**PATH_SCHEMA, 'description': 'Workspace-relative file or directory; omitted means workspace root.'}}, ['query'])),
     'research_edit_file': ('Replace one exact occurrence in a workspace file. Empty old creates a new file only. '
@@ -559,27 +559,29 @@ class ResearchSessionTools:
                             matches.append({'path': '/'.join(parts), 'line': line, 'text': text})
                     return {'matches': matches, 'truncated': False, 'entriesScanned': 1}
             with _directory(workspace, parts) as descriptor:
-                matches, scanned = [], 0
+                matches, scanned, errors = [], 0, []
 
                 def search(parent, prefix):
                     nonlocal scanned
                     for filename in sorted(os.listdir(parent)):
                         scanned += 1
-                        info = _entry_stat(parent, filename)
                         relative = '/'.join((*prefix, filename))
-                        if stat.S_ISDIR(info.st_mode):
-                            with _child_directory(parent, filename) as child:
-                                search(child, (*prefix, filename))
-                        elif stat.S_ISREG(info.st_mode):
-                            try:
+                        try:
+                            info = _entry_stat(parent, filename)
+                            if stat.S_ISDIR(info.st_mode):
+                                with _child_directory(parent, filename) as child:
+                                    search(child, (*prefix, filename))
+                            elif stat.S_ISREG(info.st_mode):
                                 content = _read(parent, filename)
-                            except UnicodeError:
-                                continue
-                            for line, text in enumerate(content.splitlines(), 1):
-                                if values['query'] in text:
-                                    matches.append({'path': relative, 'line': line, 'text': text})
+                                for line, text in enumerate(content.splitlines(), 1):
+                                    if values['query'] in text:
+                                        matches.append({'path': relative, 'line': line, 'text': text})
+                        except UnicodeError:
+                            continue
+                        except OSError as error:
+                            errors.append({'path': relative, 'message': str(error)})
                 search(descriptor, tuple(parts))
-                return {'matches': matches, 'truncated': False, 'entriesScanned': scanned}
+                return {'matches': matches, 'truncated': False, 'entriesScanned': scanned, 'errors': errors}
         parts = _workspace_parts(workspace, values['path'])
         with _directory(workspace, parts[:-1]) as parent:
             return {'path': values['path'], 'text': _read(parent, parts[-1])}
