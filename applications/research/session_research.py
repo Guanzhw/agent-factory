@@ -3,7 +3,6 @@ from copy import deepcopy
 from types import SimpleNamespace
 from uuid import NAMESPACE_URL, uuid5
 
-from agno.exceptions import StopAgentRun
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
 from agent_factory.application_content import ContentPublication, ContentSource
@@ -65,8 +64,7 @@ class ResearchSessionResearch:
 
     def _publish(self, row, revision, assessment=None, source_ids=None):
         body = row['body']
-        # Share curated intent and receipt identities, never command output,
-        # private conversation context, workspace paths or resource credentials.
+        # These are explicitly submitted research notes, not automatic workspace or transcript capture.
         content = {key: deepcopy(body[key]) for key in
             ('hypothesis', 'conditions', 'projectId', 'goalVersion', 'status', 'evidenceIds', 'observations') if key in body}
         content.update(kind='research.experiment.' + revision, experimentId=row['id'],
@@ -86,29 +84,45 @@ class ResearchSessionResearch:
     def _identifier(context, call_id):
         return str(uuid5(NAMESPACE_URL, 'research-experiment:' + context.user_id + ':' + context.run_id + ':' + call_id))
 
-    def _direct(self, context, values):
-        effects = {item['effect_key']: item for item in self.store.effects(context.session_id)
-                   if item['effect_key'].startswith(context.run_id + ':research-session-tool:')
-                   and item['status'] == 'DONE' and (item.get('result') or {}).get('outcome') == 'completed'
-                   and isinstance((item.get('result') or {}).get('output'), dict)
-                   and isinstance(item['result']['output'].get('exitCode'), int)
-                   and item['result']['output'].get('stopped') is True}
-        keys = values.get('effectKeys') or list(effects)
-        if not keys or set(keys) - effects.keys():
-            raise rejected('RESEARCH_ORIGINAL_RESULT_REQUIRED')
-        return {'status': 'completed' if all(effects[key]['result']['output']['exitCode'] == 0 for key in keys)
-                else 'failed', 'evidenceIds': keys, 'observations': [
-                    {'evidenceId': key, 'exitCode': effects[key]['result']['output']['exitCode'], 'stopped': True}
-                    for key in keys]}
+    @staticmethod
+    def _record(values):
+        return {'status': 'recorded',
+                'evidenceIds': deepcopy(values.get('evidenceIds', values.get('effectKeys', []))),
+                'observations': deepcopy(values.get('observations', []))}
+
+    def _create(self, context, call_id, name, values, session):
+        identifier = self._identifier(context, call_id)
+        source_ids = set()
+        for source_id in session['body'].get('sharedSourceIds', []):
+            source = self.content.read(context.user_id, source_id)
+            source_ids.update([source_id, *source.get('sourceContentIds', [])])
+        body = {'hypothesis': values.get('hypothesis', ''), 'conditions': values.get('conditions', ''),
+                'projectId': session['body'].get('projectId'),
+                'goalVersion': session['body'].get('projectGoalVersion'),
+                'status': 'pending_admission', 'evidenceIds': [], 'sourceContentIds': sorted(source_ids),
+                'createdAt': now(), 'request': deepcopy(values), 'toolName': name,
+                'callId': call_id, 'runId': context.run_id}
+        if name != 'research_experiment':
+            body.update(self._record(values))
+        with self.db.write() as conn:
+            existing = conn.execute(select(self.experiments).where(self.experiments.c.id == identifier)).mappings().first()
+            if existing is None:
+                conn.execute(self.experiments.insert().values(id=identifier, owner_id=context.user_id,
+                    session_id=session['id'], task_id=context.session_id, body=body))
+            elif existing['body']['request'] != values or existing['body']['toolName'] != name:
+                raise rejected('RESEARCH_EXPERIMENT_REQUEST_CONFLICT')
+        return self._row(context.user_id, session['id'], identifier), existing is not None
 
     def reconcile(self, context, call_id, name, values):
         session = self._context(context)
-        identifier = values['experimentId'] if name == 'research_assess' else self._identifier(context, call_id)
+        identifier = values.get('experimentId') if name == 'research_assess' else None
+        identifier = identifier or self._identifier(context, call_id)
         row = self._row(context.user_id, session['id'], identifier)
         body = row['body']
         if name == 'research_assess':
             item = body.get('assessments', {}).get(context.run_id + ':' + call_id)
-            if item and item['assessment'] == values['assessment']:
+            if item and all(item.get(field) == values[field] for field in
+                            ('assessment', 'evidenceIds', 'observations') if field in values):
                 return self._assessment_receipt(row, context.run_id + ':' + call_id)
             return None
         if body['request'] != values or body['toolName'] != name:
@@ -118,9 +132,12 @@ class ResearchSessionResearch:
     def _recover(self, row):
         body = row['body']
         name = body['toolName']
+        if name == 'research_assess':
+            key = body['runId'] + ':' + body['callId']
+            return self._assessment_receipt(row, key) if key in body.get('assessments', {}) else None
         context = SimpleNamespace(user_id=row['owner_id'], session_id=row['task_id'], run_id=body['runId'])
         if name == 'research_record_experiment' and body['status'] == 'pending_admission':
-            body = {**body, **self._direct(context, body['request'])}
+            body = {**body, **self._record(body['request'])}
         if name == 'research_experiment' and not body.get('childTaskId'):
             # A lost response is reconciled against the exact durable child
             # request. Never dispatch a replacement child to discover its state.
@@ -131,9 +148,9 @@ class ResearchSessionResearch:
                 return None
             child = self.store.task(links[0]['child_id'], context.user_id)
             body = {**body, 'childTaskId': child['id'], 'status': 'unknown', 'evidenceIds': [child['id']]}
-        if not body.get('startRecordId'):
+        if name == 'research_experiment' and not body.get('startRecordId'):
             body['startRecordId'] = self._publish({**row, 'body': body}, 'start')
-        if name == 'research_record_experiment' and body['status'] in {'completed', 'failed', 'canceled'} and not body.get('terminalRecordId'):
+        if name == 'research_record_experiment' and body['status'] in {'recorded', 'completed', 'failed', 'canceled'} and not body.get('terminalRecordId'):
             body['terminalRecordId'] = self._publish({**row, 'body': body}, 'terminal')
         self._save(row['id'], body)
         return self._projection(self._row(row['owner_id'], row['session_id'], row['id']))
@@ -141,7 +158,9 @@ class ResearchSessionResearch:
     def _assessment_receipt(self, row, key):
         item = deepcopy(row['body']['assessments'][key])
         if not item.get('recordId'):
-            item['recordId'] = self._publish(row, 'assessment-' + digest(key)[:32], item['assessment'],
+            publication = {**row, 'body': {**row['body'], **{field: item[field] for field in
+                ('evidenceIds', 'observations') if field in item}}}
+            item['recordId'] = self._publish(publication, 'assessment-' + digest(key)[:32], item['assessment'],
                 item.get('sourceContentIds', row['body'].get('sourceContentIds', [])))
             with self.db.write() as conn:
                 body = deepcopy(conn.execute(select(self.experiments.c.body).where(
@@ -157,7 +176,7 @@ class ResearchSessionResearch:
 
     async def invoke(self, context, call_id, name, values):
         session = self._context(context)
-        project = self._project(context.user_id, session)
+        project = self._project(context.user_id, session) if name in {'research_project', 'research_experiment'} else None
         if name == 'research_project':
             if project:
                 # Execution bindings and resource references remain owner custody.
@@ -168,12 +187,13 @@ class ResearchSessionResearch:
             return {'project': project, 'sessionGoal': session['body']['goal'],
                     'boundaries': session['body']['boundaries']}
         if name in {'research_experiment_result', 'research_assess'}:
-            row = self._row(context.user_id, session['id'], values['experimentId'])
+            if name == 'research_assess' and not values.get('experimentId'):
+                row, _ = self._create(context, call_id, name, values, session)
+            else:
+                row = self._row(context.user_id, session['id'], values['experimentId'])
             if name == 'research_experiment_result':
                 await self._observe(row)
                 return self._projection(self._row(context.user_id, session['id'], row['id']))
-            if not row['body'].get('terminalRecordId'):
-                raise rejected('RESEARCH_ORIGINAL_RESULT_REQUIRED')
             dependencies = set(row['body'].get('sourceContentIds', []))
             for identifier in session['body'].get('sharedSourceIds', []):
                 source = self.content.read(context.user_id, identifier)
@@ -181,53 +201,40 @@ class ResearchSessionResearch:
             with self.db.write() as conn:
                 row = conn.execute(select(self.experiments).where(self.experiments.c.id == row['id'])).mappings().one()
                 body = deepcopy(row['body'])
-                item = {'assessment': values['assessment'], 'evidenceIds': body['evidenceIds'],
+                item = {'experimentId': row['id'], 'assessment': values['assessment'],
+                        'evidenceIds': deepcopy(values.get('evidenceIds', body['evidenceIds'])),
+                        'observations': deepcopy(values.get('observations', body.get('observations', []))),
                         'verificationStatus': 'agent_analysis', 'sourceContentIds': sorted(dependencies)}
                 key = context.run_id + ':' + call_id
                 old = body.setdefault('assessments', {}).get(key)
-                if old is not None and old['assessment'] != values['assessment']:
+                if old is not None and any(old.get(field) != values[field] for field in
+                                          ('assessment', 'evidenceIds', 'observations') if field in values):
                     raise rejected('RESEARCH_EXPERIMENT_REQUEST_CONFLICT')
                 body['assessments'][key] = old or item
                 conn.execute(self.experiments.update().where(self.experiments.c.id == row['id']).values(body=body))
             return self._assessment_receipt(self._row(context.user_id, session['id'], row['id']), key)
-        if project and project['state'] == 'ended':
+        if name == 'research_experiment' and project and project['state'] == 'ended':
             raise rejected('RESEARCH_PROJECT_ENDED')
-        identifier = self._identifier(context, call_id)
-        direct = self._direct(context, values) if name == 'research_record_experiment' else None
-        source_ids = set()
-        for source_id in session['body'].get('sharedSourceIds', []):
-            source = self.content.read(context.user_id, source_id)
-            source_ids.update([source_id, *source.get('sourceContentIds', [])])
-        with self.db.write() as conn:
-            existing = conn.execute(select(self.experiments).where(self.experiments.c.id == identifier)).mappings().first()
-            body = {'hypothesis': values['hypothesis'], 'conditions': values['conditions'],
-                    'projectId': session['body'].get('projectId'),
-                    'goalVersion': session['body'].get('projectGoalVersion'),
-                    'status': 'pending_admission', 'evidenceIds': [], 'sourceContentIds': sorted(source_ids), 'createdAt': now(),
-                    'request': deepcopy(values), 'toolName': name, 'callId': call_id, 'runId': context.run_id}
-            if existing is None:
-                conn.execute(self.experiments.insert().values(id=identifier, owner_id=context.user_id,
-                    session_id=session['id'], task_id=context.session_id, body=body))
-        if existing is not None:
+        row, existing = self._create(context, call_id, name, values, session)
+        identifier, body = row['id'], deepcopy(row['body'])
+        if existing:
             result = self.reconcile(context, call_id, name, values)
             if result is None:
-                raise StopAgentRun('RESEARCH_TOOL_OUTCOME_UNKNOWN')
+                return {**self._projection(row), 'status': 'unknown', 'outcome': 'unknown',
+                        'code': 'RESEARCH_TOOL_OUTCOME_UNKNOWN',
+                        'message': 'The original experiment outcome is unconfirmed. Do not restart it. '
+                                   'Other work can continue.'}
             return result
-        row = self._row(context.user_id, session['id'], identifier)
-        body['startRecordId'] = self._publish(row, 'start')
-        self._save(identifier, body)
-        if direct is not None:
-            body.update(direct)
-        else:
-            child = await self.sessions.subagents.start(context, call_id, values['goal'])
-            body.update(childTaskId=child['childTaskId'], status=child['status'], evidenceIds=[child['childTaskId']])
-        self._save(identifier, body)
-        row = self._row(context.user_id, session['id'], identifier)
-        if direct is not None:
+        if name == 'research_record_experiment':
             body['terminalRecordId'] = self._publish(row, 'terminal')
             self._save(identifier, body)
         else:
-            await self._observe(row)
+            body['startRecordId'] = self._publish(row, 'start')
+            self._save(identifier, body)
+            child = await self.sessions.subagents.start(context, call_id, values['goal'])
+            body.update(childTaskId=child['childTaskId'], status=child['status'], evidenceIds=[child['childTaskId']])
+            self._save(identifier, body)
+            await self._observe(self._row(context.user_id, session['id'], identifier))
         return self._projection(self._row(context.user_id, session['id'], identifier))
 
     async def _observe(self, row):

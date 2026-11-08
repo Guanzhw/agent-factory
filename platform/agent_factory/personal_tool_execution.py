@@ -10,7 +10,7 @@ import copy
 import json
 from dataclasses import asdict, replace
 
-from agno.exceptions import RunCancelledException, StopAgentRun
+from agno.exceptions import RunCancelledException
 from agno.tools.function import Function, FunctionCall
 
 from .personal_remote_provider import SecretLease
@@ -19,19 +19,15 @@ from .store import canonical, digest
 from .tool_output import output_preview, DEFAULT_OUTPUT_TOKENS
 
 
-def _unknown():
-    # A normal tool error invites another model turn with a new call ID.
-    # Native stop prevents that replacement while the original effect stays UNKNOWN.
-    return StopAgentRun('PERSONAL_TOOL_OUTCOME_UNKNOWN')
+def _unknown(**facts):
+    return {'outcome': 'unknown', 'stopped': None, 'code': 'PERSONAL_TOOL_OUTCOME_UNKNOWN',
+            'message': 'The original operation is unconfirmed. Do not replay it. '
+                       'Inspect its original result if possible; other work can continue.', **facts}
 
 
-def _failed_cleanup():
-    return StopAgentRun('PERSONAL_TOOL_FAILED_CLEANUP_UNCONFIRMED')
-
-
-def _receipt(receipt):
+def _receipt(receipt, **identity):
     if not isinstance(receipt, dict):
-        raise _unknown()
+        return _unknown(**identity)
     if receipt.get('outcome') == 'completed' and 'output' in receipt:
         output = receipt['output']
         text = json.dumps(output, ensure_ascii=False, allow_nan=False)
@@ -43,11 +39,13 @@ def _receipt(receipt):
         if receipt.get('stopped') is True:
             detail = ': ' + json.dumps(receipt['output'], ensure_ascii=False) if 'output' in receipt else ''
             raise ToolInvocationError('PERSONAL_TOOL_FAILED' + detail, outcome='failed', stopped=True)
-        raise _failed_cleanup()
+        return _unknown(**identity, outcome='failed', stopped=False,
+            code='PERSONAL_TOOL_FAILED_CLEANUP_UNCONFIRMED', output=receipt.get('output'),
+            message='The operation failed, but cleanup is unconfirmed. Do not replay it. Other work can continue.')
     if (receipt.get('outcome') == 'cancelled' and receipt.get('cancelled') is True
             and receipt.get('stopped') is True):
         raise RunCancelledException('PERSONAL_TOOL_CANCELLED')
-    raise _unknown()
+    return _unknown(**identity)
 
 
 def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context):
@@ -98,21 +96,26 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context)
         except Exception:
             raise ValueError('PERSONAL_TOOL_INPUT_INVALID') from None
         effect_key = 'personal-tool:' + call_id
+        identity = {'callId': call_id, 'effectKey': expected[2] + ':' + effect_key}
+        def unknown(**facts):
+            check_execution()
+            return _unknown(**identity, **facts)
+
         request = {'ownerId': expected[0], 'taskId': expected[1],
             'adapterId': descriptor.adapter_id, 'descriptor': fingerprint, 'connection': connection,
             'callId': call_id, 'arguments': values}
         try:
             reservation = await asyncio.to_thread(store.effect_reserve, expected[2], effect_key, request)
         except Exception:
-            raise _unknown() from None
+            return unknown()
         if reservation.get('status') == 'done':
-            return _receipt(reservation.get('result'))
+            return _receipt(reservation.get('result'), **identity)
         if reservation.get('status') != 'new':
             previous = reservation.get('result')
             if (reservation.get('status') == 'unknown' and isinstance(previous, dict)
                     and previous.get('outcome') == 'failed' and previous.get('stopped') is False):
-                raise _failed_cleanup()
-            raise _unknown()
+                return _receipt(previous, **identity)
+            return unknown()
 
         def resolve_credential():
             try:
@@ -151,7 +154,7 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context)
             else:
                 await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具结果待核对',
                     {**event, 'outcome': 'unknown'})
-                raise _unknown() from None
+                return unknown(stopped=error.stopped, code=error.code)
         except RunCancelledException:
             raise RunCancelledException('PERSONAL_TOOL_CANCELLED') from None
         except asyncio.CancelledError:
@@ -159,10 +162,10 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context)
         except Exception:
             await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具结果待核对',
                 {**event, 'outcome': 'unknown'})
-            raise _unknown() from None
+            return unknown()
         if receipt.get('outcome') == 'failed' and receipt.get('stopped') is False:
             # Business failure is known, but local process custody is not
-            # settled. Retain UNKNOWN capacity and never overwrite a receipt.
+            # settled. Retain UNKNOWN evidence and never overwrite a receipt.
             try:
                 rows = await asyncio.to_thread(store.sql, """
                     UPDATE af_effects SET result=CAST(:result AS JSONB)
@@ -174,18 +177,18 @@ def personal_tool_function(adapter: PersonalToolAdapter, store, handle, context)
                 if len(rows) != 1:
                     raise ValueError('Effect receipt was not recorded')
             except Exception:
-                raise _unknown() from None
+                return unknown()
             await asyncio.to_thread(check_authorized)
-            raise _failed_cleanup()
+            return _receipt(receipt, **identity)
         try:
             await asyncio.to_thread(store.effect_complete, expected[2], effect_key, receipt)
         except Exception:
-            raise _unknown() from None
+            return unknown()
         # Preserve a known completion even if authority was revoked during
         # execution, but do not disclose its result without current access.
         await asyncio.to_thread(check_authorized)
         await asyncio.to_thread(store.event, expected[1], 'tool_finished', '工具执行记录', {**event, **receipt})
-        return _receipt(receipt)
+        return _receipt(receipt, **identity)
 
     return Function(name=descriptor.tool_name, description=descriptor.description,
         parameters=copy.deepcopy(dict(descriptor.input_schema)), entrypoint=invoke,
