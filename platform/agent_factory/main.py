@@ -88,7 +88,7 @@ def create_app(settings=None, *, diagnostics=None, queue_max_attempts=2,
     at('PREPARATION_APP_NATIVE_GRAPH')
     executor, registry = build_runtime(store, native_db)
     at('PREPARATION_APP_BRIDGE')
-    bridge = NativeBridge(settings, native_db, auth)
+    bridge = NativeBridge(settings, native_db, auth, store=store)
     at('PREPARATION_APP_DELEGATION')
     delegation = DelegationService(settings, store, auth, bridge)
     delegation.initialize()

@@ -12,7 +12,6 @@ from agent_factory.personal_tool_contract import ToolInvocationError
 from agent_factory.runtime_hooks import effect_unresolved, runtime_custody_held
 from .conversations import SessionQuestion
 from .session_setup import rejected
-from . import session_context
 
 
 TERMINAL = {'included', 'blocked', 'stopped'}
@@ -122,10 +121,10 @@ class ResearchCollaboration:
             if intent is None:
                 return None
             body = intent['body']
+            task = self.store.task_for_context(context)
             if (body['originTaskId'], body['runId'], body['callId'], body['arguments']) != (
-                    context.session_id, context.run_id, call_id, arguments):
+                    task['id'], context.run_id, call_id, arguments):
                 raise PermissionError('RESEARCH_COLLABORATION_MESSAGE_MISMATCH')
-            self.store.task(context.session_id, context.user_id)
             return self._proof(intent)
 
     def _reconcile_receipt(self, intent):
@@ -307,13 +306,6 @@ class ResearchCollaboration:
             return turn
         body = deepcopy(turn['body'])
         body['assistantReplies'] = [*body.get('assistantReplies', []), *[snapshot for _, snapshot in ready]]
-        prospective = [{**item, 'body': body} if item['id'] == turn['id'] else item for item in turns]
-        try:
-            self.sessions._capacity(row, prospective)
-        except HTTPException as error:
-            for intent, _ in ready:
-                self._save(conn, intent, state='blocked', code=cast(dict, error.detail)['code'])
-            return turn
         self.sessions._save_turn(conn, turn, body)
         return {**turn, 'body': body}
 
@@ -368,10 +360,6 @@ class ResearchCollaboration:
             'collaborationEventId': event_id}
         turn = {'id': identifier, 'session_id': row['id'], 'owner_id': row['owner_id'],
             'application_request_id': request_id, 'sequence': len(turns) + 1, 'body': body}
-        context, compaction = session_context.prepare(row, turns, prospective=turn)
-        body['context'] = context
-        if compaction:
-            body['compaction'] = compaction
         body['startFingerprint'] = digest(service._start(row, turn).model_dump(exclude={'interfaceVersion', 'requestId'}))
         conn.execute(service.turns.insert().values(**turn))
         for intent, _ in ready:

@@ -106,11 +106,12 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
         plan = {'connectionRefs': {'model': 'configured-owner-model'}, 'normalizedGoal': 'read input'}
         def bind(context):
             bound.update(run_id=context.run_id, plan_id='plan-one')
+            return plan
         def select(owner, reference, context, **_):
             selections.append((owner, reference, context.session_id))
             return OwnerChatModel(self.config, lambda: SimpleNamespace(password='owner-one'))
         store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: plan,
-            task=lambda *_: bound, plan=lambda *_: plan, cancellation_requested=lambda _: False,
+            task=lambda *_: bound, task_for_context=lambda _: bound, plan=lambda *_: plan, cancellation_requested=lambda _: False,
             personal_models=SimpleNamespace(model_for=select))
         executor, _ = build_runtime(store, None)
         result = await executor.arun('read input', session_id='task-one', user_id='owner-one',
@@ -221,14 +222,16 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
             return 200, [{'type': 'response.output_text.delta', 'delta': 'inspect first'},
                 {'type': 'response.completed', 'response': {'status': 'completed', 'output': output}}]
         self.server.answer = answer
-        def bind(context): bound.update(run_id=context.run_id, plan_id='plan-one')
+        def bind(context):
+            bound.update(run_id=context.run_id, plan_id='plan-one')
+            return plan
         selected = []
         def select(owner, reference, context, **_):
             selected.append((owner, reference, context.session_id))
             return OwnerChatModel({**self.config, 'protocol': 'responses'},
                 lambda: SimpleNamespace(password='responses-owner'))
         store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: plan,
-            task=lambda *_: bound, plan=lambda *_: plan, cancellation_requested=lambda _: False,
+            task=lambda *_: bound, task_for_context=lambda _: bound, plan=lambda *_: plan, cancellation_requested=lambda _: False,
             personal_models=SimpleNamespace(model_for=select), research_tools=SimpleNamespace(functions=lambda _: [tool]))
         executor, _ = build_runtime(store, None)
         class Answer(BaseModel):

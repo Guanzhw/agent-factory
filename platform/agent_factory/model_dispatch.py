@@ -25,7 +25,7 @@ class DelegatingModel(Model):
             response = arguments[index]
         if not isinstance(response, RunOutput) or not response.run_id or not response.session_id or not response.user_id:
             raise InputCheckError('Model selection requires the native run identity')
-        task = self.store.task(response.session_id, response.user_id)
+        task = self.store.task_for_context(response)
         if task['run_id'] != response.run_id:
             raise InputCheckError('Model run differs from its task')
         context = RunContext(run_id=response.run_id, session_id=response.session_id, user_id=response.user_id,

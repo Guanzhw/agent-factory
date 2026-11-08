@@ -213,6 +213,10 @@ class Store:
                 self.assistant_messages.validate_admission(conn, owner, request_id, plan)
             task_id = str(uuid4())
             body = {"createdAt": now(), "updatedAt": now(), "lastStatus": "queued", "requestId": request_id}
+            sessions = getattr(self, 'research_sessions', None)
+            native_session = sessions.native_session_for_plan(plan) if sessions is not None else None
+            if native_session is not None:
+                body['nativeSessionId'] = native_session
             row = conn.execute(text("INSERT INTO af_tasks(id,owner_id,plan_id,request_id,fingerprint,body) VALUES(:id,:owner,:plan,:request,:fp,CAST(:body AS JSONB)) RETURNING *"),
                                {"id": task_id, "owner": owner, "plan": plan["id"], "request": request_id, "fp": fp, "body": canonical(body)}).mappings().first()
             if row is None:
@@ -312,20 +316,40 @@ class Store:
                  id=task_id, complete=True, evidence=canonical({'neverSubmitted': True} if never_submitted else {}))
         self.event(task_id, "admission_rejected", message, {})
 
+    @staticmethod
+    def native_session_id(task):
+        return task['body'].get('nativeSessionId', task['id'])
+
+    def task_for_context(self, ctx, *, bind=False):
+        if bind:
+            ticket = self.native_db.get_job(ctx.run_id, strict=True)
+            if not ticket or any(ticket.get(key) != value for key, value in
+                    {'id': ctx.run_id, 'session_id': ctx.session_id, 'user_id': ctx.user_id}.items()):
+                raise InputCheckError('Run identity differs from its native queue task')
+            state = (ticket.get('payload') or {}).get('kwargs', {}).get('session_state') or {}
+            if isinstance(state, str):
+                state = json.loads(state)
+            envelope = state.get('factory_envelope', {})
+            task = self.task(envelope.get('task_id'), ctx.user_id)
+            if envelope != {'plan_ref': task['plan_id'], 'user_id': ctx.user_id,
+                            'task_id': task['id'], 'request_id': task['request_id']}:
+                raise InputCheckError('Native admission differs from its original task')
+        else:
+            task = self.task(ctx.run_id, ctx.user_id)
+        if (ctx.session_id != self.native_session_id(task)
+                or task['run_id'] != ctx.run_id and not (bind and task['run_id'] is None)):
+            raise InputCheckError('Run owner or session mismatch')
+        return task
+
     def bind_run(self, ctx):
-        envelope = (ctx.session_state or {}).get("factory_envelope", {})
-        task = self.task(ctx.session_id)
-        if task["owner_id"] != ctx.user_id or task["plan_id"] != envelope.get("plan_ref"):
-            raise InputCheckError("Run identity does not match trusted task binding")
+        task = self.task_for_context(ctx, bind=True)
         self.accept(task["id"], ctx.run_id)
         plan = self.resolve_run(ctx)
         self.require_plan_execution(ctx.user_id, plan, run_context=ctx)
         return plan
 
     def resolve_run(self, ctx):
-        task = self.task(ctx.run_id)
-        if task["owner_id"] != ctx.user_id or task["id"] != ctx.session_id:
-            raise InputCheckError("Run owner or session mismatch")
+        task = self.task_for_context(ctx)
         if task["admission"] == "rejected":
             raise InputCheckError("Current task admission is rejected; execution denied")
         plan = self.plan(task["plan_id"], ctx.user_id)
@@ -350,7 +374,7 @@ class Store:
 
     def require_plan_execution(self, owner, plan, *, run_context=None, tool_name=None):
         if run_context is not None:
-            task = self.task(run_context.session_id, owner)
+            task = self.task_for_context(run_context)
             if task['body'].get('stoppedStatus') is not None:
                 raise HTTPException(409, 'NATIVE_EXECUTION_STOPPED: original run cannot start new work')
         self.auth.require_member(owner)

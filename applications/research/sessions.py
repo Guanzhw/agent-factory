@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from contextlib import contextmanager
 from copy import deepcopy
 from typing import Any, cast
@@ -10,6 +9,10 @@ from uuid import uuid4
 
 from agno.exceptions import ModelProviderError, RunCancelledException, StopAgentRun
 from agno.models.message import Message
+from agno.run.agent import RunOutput
+from agno.run.base import RunStatus
+from agno.session.agent import AgentSession
+from agno.utils.tokens import count_tokens
 from fastapi import HTTPException
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, select
 
@@ -91,15 +94,44 @@ class ResearchSessions:
         return {'id': str(uuid4()), 'kind': kind, 'text': text, 'state': 'pending',
                 'createdAt': now(), 'includedAt': None}
 
-    @staticmethod
-    def _context(row, turns, instruction=None):
-        return session_context.project(row, turns, instruction)
+    def native_session_for_plan(self, plan):
+        inputs = plan.get('inputValues') or {}
+        if plan.get('mode') != MODE or plan.get('delegation') or not inputs.get('turnId'):
+            return None
+        owner = plan['ownerId']
+        with self.db.read() as conn:
+            row = self._row(conn, owner, inputs.get('sessionId'))
+            turn = conn.execute(select(self.turns).where(self.turns.c.id == inputs['turnId'],
+                self.turns.c.session_id == row['id'], self.turns.c.owner_id == owner)).mappings().one()
+            if turn['body']['startFingerprint'] != digest(self._start(row, turn).model_dump(
+                    exclude={'interfaceVersion', 'requestId'})):
+                raise PermissionError('RESEARCH_SESSION_ADMISSION_PAYLOAD_MISMATCH')
+        return row['id']
 
-    def _capacity(self, row, turns):
-        pending = turns[-1]['body'].get('compaction') if turns else None
-        if pending and pending['status'] in {'pending', 'started'}:
-            return session_context.project(row, turns, protected=True)
-        return self._context(row, turns)
+    def prepare_history(self, context, session):
+        with self.db.read() as conn:
+            row, current, task = self._execution(conn, context)
+            if task['researchChild']:
+                return
+            turns = session_context.active_turns(row, self._turns(conn, row['id']))
+            saved = session_context.checkpoint(row)
+            through = saved['throughSequence'] if saved else 0
+        native_runs = {run.run_id: run for run in session.runs or []}
+        history = []
+        for turn in turns:
+            if turn['sequence'] <= through or turn['sequence'] >= current['sequence']:
+                continue
+            run_id = turn['body'].get('runId')
+            native = native_runs.get(run_id)
+            if native is None and run_id:
+                native = self.runs.factory.bridge.native_db.get_run(run_id)
+                if native is not None:
+                    prior_task = self._task(context.user_id, turn)
+                    if (prior_task is None or native.user_id != context.user_id
+                            or native.session_id != self.store.native_session_id(prior_task)):
+                        raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
+            history.append(session_context.history_run(turn, native))
+        session_context.history_view(session, history, saved)
 
     def _sources(self, owner, identifiers):
         for identifier in identifiers:
@@ -225,9 +257,9 @@ class ResearchSessions:
             run = snapshot.get('run', snapshot)
             result = None
             ticket = snapshot.get('queue') or {}
-            native_ended = (ticket.get('id') == task['run_id'] and ticket.get('session_id') == task['id']
+            native_ended = (ticket.get('id') == task['run_id'] and ticket.get('session_id') == self.store.native_session_id(task)
                 and ticket.get('user_id') == owner and ticket.get('status') in {'completed', 'failed', 'cancelled'}
-                and run.get('run_id') == task['run_id'] and run.get('session_id') == task['id']
+                and run.get('run_id') == task['run_id'] and run.get('session_id') == self.store.native_session_id(task)
                 and run.get('user_id') == owner
                 and str(run.get('status', '')).lower() in {'completed', 'error', 'cancelled'})
             with self._write() as conn:
@@ -244,7 +276,7 @@ class ResearchSessions:
                 # Ticket fallbacks may contain error text. Only exact persisted run
                 # messages accompanying an actually completed task are an answer.
                 if (status == 'completed' and observed_terminal and run.get('run_id') == task['run_id']
-                        and run.get('session_id') == task['id'] and run.get('user_id') == owner
+                        and run.get('session_id') == self.store.native_session_id(task) and run.get('user_id') == owner
                         and str(run.get('status', '')).lower() == 'completed'
                         and isinstance(run.get('messages'), list)):
                     # Agno run.content also contains intermediate messages before tool calls.
@@ -300,7 +332,7 @@ class ResearchSessions:
             return bool(task['terminal'] and not runtime_custody_held(self.store, task['id'])
                 and not any(effect_unresolved(item, self.store) for item in self.store.effects(task['id'])))
         ticket = self.runs.factory.bridge.native_db.get_job(task['run_id'])
-        return bool(ticket and ticket.get('id') == task['run_id'] and ticket.get('session_id') == task['id']
+        return bool(ticket and ticket.get('id') == task['run_id'] and ticket.get('session_id') == self.store.native_session_id(task)
             and ticket.get('user_id') == owner and ticket.get('status') in {'completed', 'failed', 'cancelled'}
             and all(child['status'] in {'completed', 'failed', 'cancelled', 'canceled'}
                     for child in body.get('children', [])))
@@ -312,7 +344,9 @@ class ResearchSessions:
         return ApplicationStart(requestId=turn['application_request_id'],
             mode=MODE, goal=messages[0]['text'] if messages else row['body']['goal'],
             connectionRefs=configuration['connectionRefs'],
-            inputValues={'sessionId': row['id'], 'turnId': turn['id'], 'sessionContext': turn['body']['context'],
+            inputValues={'sessionId': row['id'], 'turnId': turn['id'],
+                **({'sessionContext': turn['body']['context']} if 'context' in turn['body'] else
+                   {key: row['body'][key] for key in ('goal', 'boundaries', 'projectId', 'projectGoalVersion') if key in row['body']}),
                 **({'reasoningEffort': configuration['model']['reasoningEffort']}
                    if 'reasoningEffort' in configuration['model'] else {})})
 
@@ -353,11 +387,6 @@ class ResearchSessions:
                 'lastAttempt': 0, 'dispatchStarted': False, 'events': [], 'toolResults': [], 'sharedSourceIds': []}
             if question_id is not None:
                 body['assistantReply'] = self.conversations.adopt(owner, identifier, question_id)
-            context, compaction = session_context.prepare(row, turns, prospective={
-                'id': turn_id, 'sequence': len(turns) + 1, 'body': body})
-            body['context'] = context
-            if compaction:
-                body['compaction'] = compaction
             start = self._start(row, {'id': turn_id, 'application_request_id': 'research-turn:' + turn_id, 'body': body})
             body['startFingerprint'] = digest(start.model_dump(exclude={'interfaceVersion', 'requestId'}))
             conn.execute(self.turns.insert().values(id=turn_id, session_id=identifier, owner_id=owner,
@@ -416,8 +445,6 @@ class ResearchSessions:
             turn = turns[-1]
             body = deepcopy(turn['body'])
             body['messages'].append(self._message('correction', request.text))
-            candidate = [*turns[:-1], {**turn, 'body': body}]
-            self._capacity(row, candidate)
             self._save_turn(conn, turn, body)
             self._save_session(conn, row, row['body'])
             self._command(conn, owner, request.requestId, fingerprint, 'correct', identifier, turn['id'])
@@ -467,7 +494,7 @@ class ResearchSessions:
                 pass  # Persisted cancellation remains pending; never claim stopped.
 
     def _execution(self, conn, context):
-        task = self.store.task(context.session_id, context.user_id)
+        task = self.store.task_for_context(context)
         if task['run_id'] != context.run_id:
             raise PermissionError('RESEARCH_SESSION_RUN_MISMATCH')
         plan = self.store.plan(task['plan_id'], context.user_id)
@@ -517,9 +544,6 @@ class ResearchSessions:
             turn_body = deepcopy(turn['body'])
             if identifier not in turn_body.setdefault('sharedSourceIds', deepcopy(row['body']['sharedSourceIds'])):
                 turn_body['sharedSourceIds'].append(identifier)
-            turns = [{**item, 'body': turn_body} if item['id'] == turn['id'] else item
-                     for item in self._turns(conn, row['id'])]
-            self._capacity({**row, 'body': body}, turns)
             self._save_turn(conn, turn, turn_body)
             self._save_session(conn, row, body)
 
@@ -528,7 +552,7 @@ class ResearchSessions:
         body = deepcopy(turn['body'])
         ticket = self.runs.factory.bridge.native_db.get_job(context.run_id)
         blocked = None
-        if not ticket or ticket.get('session_id') != task['id'] or ticket.get('user_id') != context.user_id:
+        if not ticket or ticket.get('session_id') != self.store.native_session_id(task) or ticket.get('user_id') != context.user_id:
             blocked = 'RESEARCH_QUEUE_IDENTITY_UNCONFIRMED'
         elif type(ticket.get('attempt')) is not int or ticket['attempt'] < 1:
             blocked = 'RESEARCH_QUEUE_ATTEMPT_UNCONFIRMED'
@@ -570,65 +594,48 @@ class ResearchSessions:
                 body['compaction'].update(status=status, code=code)
                 self._save_turn(conn, turn, body)
 
-    def _compact(self, context, auxiliary_model):
-        claim, source = None, None
+    def _compact(self, context, messages, auxiliary_model):
+        history = [item.model_copy(update={'from_history': False}) for item in messages if item.from_history]
+        if not history:
+            return
         with self._write() as conn:
             row, turn, task, ticket, blocked = self._model_boundary(conn, context)
             if not blocked:
-                body = deepcopy(turn['body'])
-                compaction = body.get('compaction')
-                if compaction and compaction['status'] == 'pending':
-                    self._capacity(row, self._turns(conn, row['id']))
-                    prior = [item for item in self._turns(conn, row['id']) if item['sequence'] < turn['sequence']]
-                    source, identity = session_context.summary_source(row, prior,
-                        version=compaction.get('projectionVersion', 1))
-                    if any(compaction[key] != value for key, value in identity.items()):
-                        raise rejected('RESEARCH_CONTEXT_CHANGED', '原历史与本轮整理来源不一致。')
-                    if task['terminal'] or ticket.get('status') != 'running':
-                        raise StopAgentRun('RESEARCH_SUMMARY_RUN_INACTIVE')
-                    claim = {**compaction, 'status': 'started', 'runId': context.run_id,
-                             'attempt': ticket['attempt'], 'startedAt': now()}
-                    body['compaction'] = claim
-                    self._save_turn(conn, turn, body)
-                elif compaction and compaction['status'] == 'started':
-                    body['compaction'] = {**compaction, 'status': 'unknown', 'code': 'RESEARCH_SUMMARY_UNKNOWN'}
-                    self._save_turn(conn, turn, body)
+                active = session_context.active_turns(row, self._turns(conn, row['id']))
+                correction = next((item['id'] for previous in reversed(active) for item in reversed(previous['body']['messages'])
+                                   if item['kind'] == 'correction'), None)
+                prior = [item for item in active
+                         if item['sequence'] < turn['sequence'] and item['body'].get('terminal')]
+                limit = session_context.compact_token_limit(turn['body'].get('configuration', row['body']['configuration'])['model'])
+                if (not prior or limit is None or turn['body'].get('compaction', {}).get('status') not in {None, 'pending'}
+                        or count_tokens(messages, model_id=row['body']['configuration']['model'].get('model', '')) < limit):
+                    return
+                claim = {'status': 'started', 'runId': context.run_id, 'attempt': ticket['attempt'],
+                         'throughSequence': prior[-1]['sequence'], 'startedAt': now()}
+                self._save_turn(conn, turn, {**turn['body'], 'compaction': claim})
+                saved = session_context.checkpoint(row)
         if blocked:
             raise StopAgentRun(blocked)
-        if claim is None:
-            return
-
-        def current_model():
-            with self.db.read() as conn:
-                _, current_turn, current_task = self._execution(conn, context)
-                if current_task['terminal'] or current_turn['body'].get('compaction') != claim:
-                    raise StopAgentRun('RESEARCH_SUMMARY_OUTCOME_UNCONFIRMED')
-            return auxiliary_model()
-
+        if saved:
+            history.insert(0, Message(role='user', content='Previous conversation summary: ' + saved['summary']['summary']))
+        source = AgentSession(session_id=context.session_id, user_id=context.user_id,
+            runs=[RunOutput(run_id=context.run_id, status=RunStatus.completed, messages=history)])
         try:
-            summary = session_context.summarize(source, context, current_model)
+            summary = session_context.summarize(source, auxiliary_model)
             with self._write() as conn:
-                current_row, current_turn, current_task, current_ticket, blocked = self._model_boundary(conn, context)
+                row, turn, task, ticket, blocked = self._model_boundary(conn, context)
                 if not blocked:
-                    if current_task['terminal'] or current_ticket['attempt'] != claim['attempt']:
+                    if task['terminal'] or ticket['attempt'] != claim['attempt']:
                         raise StopAgentRun('RESEARCH_SUMMARY_RUN_INACTIVE')
-                    if current_turn['body'].get('compaction') != claim:
-                        raise StopAgentRun('RESEARCH_SUMMARY_OUTCOME_UNCONFIRMED')
-                    prior = [item for item in self._turns(conn, current_row['id']) if item['sequence'] < current_turn['sequence']]
-                    _, identity = session_context.summary_source(current_row, prior,
-                        version=claim.get('projectionVersion', 1))
-                    if any(claim[key] != value for key, value in identity.items()):
-                        raise rejected('RESEARCH_CONTEXT_CHANGED', '原历史与整理结果不一致。')
-                    saved = {**identity, 'summary': summary, 'turnId': current_turn['id'], 'runId': context.run_id}
-                    session_body = {**current_row['body'], 'contextCheckpoint': saved}
-                    self._save_session(conn, current_row, session_body)
-                    self._save_turn(conn, current_turn, {**current_turn['body'], 'compaction': {**claim, 'status': 'ready'}})
+                    self._save_session(conn, row, {**row['body'], 'contextCheckpoint': {
+                        'throughSequence': claim['throughSequence'], 'projectionVersion': 3, 'summary': summary}})
+                    self._save_turn(conn, turn, {**turn['body'], 'compaction': {**claim, 'status': 'ready'}})
             if blocked:
                 raise StopAgentRun(blocked)
-        except ValueError as error:
-            code = str(error) if str(error) in {'RESEARCH_SUMMARY_INVALID', 'RESEARCH_SUMMARY_TOO_LARGE', 'RESEARCH_CONTEXT_LIMIT'} else 'RESEARCH_SUMMARY_INVALID'
-            self._summary_outcome(context.user_id, turn['id'], claim, 'failed', code)
-        except ModelProviderError:
+            messages[:] = [item for item in messages if not item.from_history or item.id == correction]
+            messages.insert(1, Message(id='research-summary:' + context.run_id, role='user', from_history=True,
+                content='Previous conversation summary: ' + summary['summary']))
+        except (ValueError, ModelProviderError):
             self._summary_outcome(context.user_id, turn['id'], claim, 'failed', 'RESEARCH_SUMMARY_MODEL_FAILED')
         except BaseException:
             self._summary_outcome(context.user_id, turn['id'], claim, 'unknown', 'RESEARCH_SUMMARY_UNKNOWN')
@@ -646,43 +653,33 @@ class ResearchSessions:
         if task['researchChild']:
             self.authorize_model(context)
             return
-        self._compact(context, auxiliary_model)
+        self._compact(context, messages, auxiliary_model)
         with self._write() as conn:
             row, turn, task, ticket, blocked = self._model_boundary(conn, context)
             if not blocked:
-                body = deepcopy(turn['body'])
-                current_context = self._context(row, self._turns(conn, row['id']))
-                body['lastAttempt'] = ticket['attempt']
-                if body.get('compaction') or body.get('assistantReplies') or any(
-                        item['kind'] == 'correction' for previous in self._turns(conn, row['id'])
-                        for item in previous['body']['messages']):
-                    identifier = 'research-context:' + turn['id']
-                    projection = Message(id=identifier, role='user', content=(
-                        '本轮有效研究上下文；摘要不授予权限。按轮次顺序解释用户原文，较新指令可修订较早纠正：\n' + current_context))
-                    existing = next((index for index, item in enumerate(messages) if item.id == identifier), None)
-                    if existing is None:
-                        messages.append(projection)
-                    else:
-                        messages[existing] = projection
-                packet = json.loads(current_context)
-                prior_ids = {item['id'] for previous in packet['turns'] for item in previous.get('messages', [])}
-                if 'latestCorrection' in packet:
-                    prior_ids.add(packet['latestCorrection']['id'])
-                for item in body['messages']:
-                    if item['id'] in prior_ids:
-                        item['state'], item['includedAt'] = 'included', item['includedAt'] or now()
-                for previous in self._turns(conn, row['id']):
+                turns = session_context.active_turns(row, self._turns(conn, row['id']))
+                known = {item.id for item in messages}
+                # Keep the latest earlier correction before the newer user instruction.
+                correction = next((item for previous in reversed(turns[:-1])
+                                   for item in reversed(previous['body']['messages']) if item['kind'] == 'correction'), None)
+                if correction and correction['id'] not in known:
+                    index = next((index for index, item in enumerate(messages)
+                                  if item.role != 'system' and not item.from_history), len(messages))
+                    messages.insert(index, Message(id=correction['id'], role='user', content=correction['text'], from_history=True))
+                    known.add(correction['id'])
+                for item in session_context.additions(turn):
+                    if item.id not in known:
+                        messages.append(item)
+                        known.add(item.id)
+                for previous in turns:
+                    body = deepcopy(previous['body'])
+                    for item in body['messages']:
+                        if item['kind'] == 'instruction' or item['id'] in known:
+                            item['state'], item['includedAt'] = 'included', item['includedAt'] or now()
                     if previous['id'] == turn['id']:
-                        continue
-                    previous_body = deepcopy(previous['body'])
-                    changed = False
-                    for item in previous_body['messages']:
-                        if item['id'] in prior_ids and item['state'] == 'pending':
-                            item['state'], item['includedAt'] = 'included', now()
-                            changed = True
-                    if changed:
-                        self._save_turn(conn, previous, previous_body)
-                self._save_turn(conn, turn, body)
+                        body['lastAttempt'] = ticket['attempt']
+                    if body != previous['body']:
+                        self._save_turn(conn, previous, body)
                 if self.collaboration is not None:
                     self.collaboration.included(conn, row, turn)
         if blocked:
@@ -754,23 +751,19 @@ class ResearchSessions:
                 block = None
             if latest and latest['body']['status'] == 'unknown':
                 block = block or 'RESEARCH_ORIGINAL_OUTCOME_UNCONFIRMED'
-            raw_characters = len(session_context.project(row, turns, raw=True))
+            raw_characters = sum(len(item['text']) for turn in turns for item in turn['body']['messages'])
+            raw_characters += sum(len(str(turn['body'].get('result') or '')) for turn in turns)
             context_row = self._continuation_context(row, turns) if safe else row
             context_turns = session_context.active_turns(context_row, turns)
             compaction = context_turns[-1]['body'].get('compaction') if context_turns else None
-            saved = context_row['body'].get('contextCheckpoint')
+            saved = session_context.checkpoint(context_row)
+            through = saved['throughSequence'] if saved else 0
+            characters = sum(len(item['text']) for turn in context_turns if turn['sequence'] > through
+                             for item in turn['body']['messages'])
+            characters += sum(len(str(turn['body'].get('result') or '')) for turn in context_turns if turn['sequence'] > through)
+            if saved:
+                characters += len(saved['summary']['summary'])
             compact_view: dict[str, Any] | None = None
-            try:
-                if compaction and compaction['status'] in {'pending', 'started', 'failed', 'unknown'}:
-                    characters = len(self._capacity(context_row, context_turns))
-                else:
-                    preview, needed = session_context.prepare(context_row, context_turns)
-                    characters = len(preview)
-                    if needed:
-                        compact_view = {'status': 'needed'}
-            except HTTPException as error:
-                characters = raw_characters
-                block = block or cast(dict, error.detail)['code']
             if compaction and compact_view is None:
                 compact_view = {'status': {'pending': 'needed', 'started': 'preparing'}.get(
                     compaction['status'], compaction['status'])}

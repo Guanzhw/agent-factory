@@ -37,7 +37,10 @@ class Effects:
         pass
 
     def task(self, task, owner):
-        return {'run_id': 'run'}
+        return {'id': 'task', 'run_id': 'run'}
+
+    def task_for_context(self, context):
+        return self.task(context.run_id, context.user_id)
 
     def cancellation_requested(self, run):
         return self.cancelled

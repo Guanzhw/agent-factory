@@ -64,7 +64,7 @@ class ResearchSkills(Skills):
     def _read_started(self, run_context, fc):
         event = self._read_event(fc)
         if event is not None:
-            self.tools.sessions.store.event(run_context.session_id, 'tool_started', '开始读取技能资源', event)
+            self.tools.sessions.store.event(run_context.run_id, 'tool_started', '开始读取技能资源', event)
 
     def _read_finished(self, run_context, fc):
         event = self._read_event(fc)
@@ -72,12 +72,12 @@ class ResearchSkills(Skills):
             store = self.tools.sessions.store
             if fc.result is not None or any(
                 item['data'].get('callId') == fc.call_id
-                for item in store.events(run_context.session_id)
+                for item in store.events(store.task_for_context(run_context)["id"])
                 if item['type'] in {'research_tool_started', 'research_tool_finished'}
             ):
                 return
             event = {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}}
-            store.event(run_context.session_id, 'tool_started', '技能脚本调用', event)
+            store.event(run_context.run_id, 'tool_started', '技能脚本调用', event)
         if fc.result is None:
             event['outcome'] = 'failed' if fc.error else 'unknown'
             if fc.error:
@@ -87,7 +87,7 @@ class ResearchSkills(Skills):
             event.update(outcome='failed' if 'error' in result else 'completed', output=fc.result)
             if 'error' in result:
                 event['message'] = result['error']
-        self.tools.sessions.store.event(run_context.session_id, 'tool_finished', '技能资源读取记录', event)
+        self.tools.sessions.store.event(run_context.run_id, 'tool_finished', '技能资源读取记录', event)
 
     def _get_skill_instructions(self, skill_name: str) -> str:
         """Load native skill instructions and the directory containing their resources."""

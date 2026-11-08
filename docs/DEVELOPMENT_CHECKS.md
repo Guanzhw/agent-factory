@@ -47,6 +47,8 @@ FACTORY_TEST_DATABASE_URL=postgresql+psycopg://user:password@127.0.0.1:5432/post
   uv run python -m unittest discover -s tests -v
 ```
 
+Build the current worktree before browser validation; do not reuse another worktree’s `dist`. A stale build once omitted the existing source-withdrawal notice and caused a false UI failure. Verify the served build, keeping the user-visible assertion unchanged.
+
 Use a disposable PostgreSQL instance with permission to create databases. Each suite run creates a random `factory_regression_*` database, runs the actual application and queue, and drops only that database afterwards. It uses temporary files, local TLS, synthetic accounts and a local scripted Chat Completions SSE server. No paid model or real SSH host is contacted. Chromium is the only browser dependency. A missing database URL or browser fails visibly rather than silently skipping the suite.
 
 ## Coverage

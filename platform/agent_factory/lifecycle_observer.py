@@ -67,7 +67,7 @@ class FactoryLifecycleObserver:
         from .native_component import component_identity
         kind, component_id = component_identity(plan)
         ticket = self.native_db.get_job(task["run_id"], strict=True)
-        expected = {"id": task["run_id"], "session_id": task["id"], "user_id": task["owner_id"],
+        expected = {"id": task["run_id"], "session_id": self.store.native_session_id(task), "user_id": task["owner_id"],
                     "component_type": kind, "component_id": component_id}
         if not ticket or any(ticket.get(key) != value for key, value in expected.items()) or ticket.get("job_type", "run") != "run":
             raise ValueError("Native ticket differs from the persisted Factory execution binding")
@@ -79,7 +79,7 @@ class FactoryLifecycleObserver:
         state = (ticket.get("payload") or {}).get("kwargs", {}).get("session_state")
         if isinstance(state, str):
             state = json.loads(state)
-        session = self.native_db.get_session(task["id"], session_type=SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT, user_id=task["owner_id"])
+        session = self.native_db.get_session(self.store.native_session_id(task), session_type=SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT, user_id=task["owner_id"])
         native_status = None
         requirements = []
         content = None
@@ -147,7 +147,7 @@ class FactoryLifecycleObserver:
             self.auth.require_member(task["owner_id"])
             envelope = {"plan_ref": plan["id"], "user_id": task["owner_id"],
                         "task_id": task["id"], "request_id": task["request_id"]}
-            context = SimpleNamespace(session_id=task["id"], run_id=task.get("run_id"), user_id=task["owner_id"],
+            context = SimpleNamespace(session_id=self.store.native_session_id(task), run_id=task.get("run_id"), user_id=task["owner_id"],
                                       session_state={"factory_envelope": envelope})
             if plan.get("delegation") and ticket is None:
                 # The validated tree can contain a reservation before native

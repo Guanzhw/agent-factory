@@ -103,7 +103,7 @@ class DelegationService:
             raise HTTPException(503, "Persisted native ticket is unavailable")
         from .native_component import component_identity
         kind, component_id = component_identity(self.store.plan(task["plan_id"], task["owner_id"]))
-        if (ticket.get("session_id") != task["id"] or ticket.get("user_id") != task["owner_id"]
+        if (ticket.get("session_id") != self.store.native_session_id(task) or ticket.get("user_id") != task["owner_id"]
                 or ticket.get("component_id") != component_id or ticket.get("component_type", "agent") != kind):
             raise HTTPException(403, "Native ticket identity differs from delegation binding")
         return ticket
@@ -130,9 +130,7 @@ class DelegationService:
         return root_id, plans
 
     def authorize_child(self, run_context: Any) -> None:
-        task = self.store.task(run_context.run_id, run_context.user_id)
-        if task["id"] != run_context.session_id:
-            raise PermissionError("Child session binding mismatch")
+        task = self.store.task_for_context(run_context)
         link = self._link(task["id"])
         plan = self.store.plan(task["plan_id"], run_context.user_id)
         binding = plan.get("delegation")
@@ -282,7 +280,7 @@ class DelegationService:
             task = await self.store.lifecycle_observer.recover_admission(task)
         task = self.store.task(task["id"], owner)
         if task.get("run_id") and receipt is None:
-            receipt = {"run_id": task["run_id"], "session_id": task["id"]}
+            receipt = {"run_id": task["run_id"], "session_id": self.store.native_session_id(task)}
         # A concurrent cascade may have marked this reservation while HTTP was
         # in flight. Honor it against the newly acknowledged ticket as well.
         if task["cancel_requested"] and task.get("run_id"):

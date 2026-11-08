@@ -228,7 +228,7 @@ class MCPToolsJourney(unittest.IsolatedAsyncioTestCase):
                   'baseURL': f'http://127.0.0.1:{server.server_port}/v1'}
         self.store.personal_models = SimpleNamespace(model_for=lambda *args, **kwargs:
             OwnerChatModel(config, lambda: None))
-        self.store.bind_run = lambda _: None
+        self.store.bind_run = lambda _: plan
         plan = {'normalizedGoal': 'Use the configured MCP tool', 'connectionRefs': {'model': 'fixture'}}
         self.store.resolve_run = lambda _: plan
         self.store.plan = lambda *args: plan
@@ -250,7 +250,7 @@ class MCPToolsJourney(unittest.IsolatedAsyncioTestCase):
                     return 200, reply('MCP calls finished')
                 server.answer = answer
                 run_id = 'native-' + mode
-                self.store.task = lambda task, owner: {'run_id': run_id, 'plan_id': 'plan'}
+                self.store.task = lambda task, owner: {'id': task, 'run_id': run_id, 'plan_id': 'plan'}
                 agent, _ = build_runtime(self.store, None)
                 async def run():
                     return await agent.arun('Use the tool twice', run_id=run_id,

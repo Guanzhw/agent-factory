@@ -26,10 +26,14 @@ class NativeAdmissionRejected(HTTPException):
 
 
 class NativeBridge:
-    def __init__(self, settings: Any, native_db: Any, auth: Any):
+    def __init__(self, settings: Any, native_db: Any, auth: Any, *, store: Any = None):
         self.settings, self.native_db, self.auth = settings, native_db, auth
+        self.store = store
         self._app: Any = None
         self._component_resolver: Callable[[str, str], Mapping[str, Any]] | None = None
+
+    def native_session_id(self, task_id: str, user_id: str) -> str:
+        return self.store.native_session_id(self.store.task(task_id, user_id)) if self.store is not None else task_id
 
     def configure_components(self, resolver: Callable[[str, str], Mapping[str, Any]]) -> None:
         """Install the operator's immutable task/plan resolver, never user routing."""
@@ -103,16 +107,17 @@ class NativeBridge:
         if owner != user_id or not isinstance(plan_ref, str):
             raise HTTPException(403, "Plan ownership does not match the submitting user")
         try:
-            session_id = str(UUID(str(task_id)))
+            task_id = str(UUID(str(task_id)))
         except ValueError as error:
             raise HTTPException(400, "A persisted task UUID is required") from error
-        component = self._component(session_id, user_id)
+        component = self._component(task_id, user_id)
+        session_id = self.native_session_id(task_id, user_id)
         declared = plan.get("nativeComponent")
         if ((component["kind"] == "workflow" or declared is not None)
                 and declared != (component if "revision" in component else None)):
             raise HTTPException(403, "Plan native component differs from original task binding")
-        envelope = {"plan_ref": plan_ref, "user_id": user_id, "task_id": session_id, "request_id": request_id}
-        native_key = hashlib.sha256(json.dumps({"owner": user_id, "task": session_id, "request": request_id},
+        envelope = {"plan_ref": plan_ref, "user_id": user_id, "task_id": task_id, "request_id": request_id}
+        native_key = hashlib.sha256(json.dumps({"owner": user_id, "task": task_id, "request": request_id},
                                               sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         return await self._request("POST", f"/{component['kind']}s/{quote(component['id'], safe='')}/runs", user_id,
             headers={"Idempotency-Key": native_key},
@@ -126,6 +131,7 @@ class NativeBridge:
 
     async def detail(self, run_id: str, session_id: str, user_id: str) -> dict[str, Any]:
         component = self._component(session_id, user_id)
+        session_id = self.native_session_id(session_id, user_id)
         kind, identifier = component["kind"], component["id"]
         session_type = SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT
         try:
@@ -158,6 +164,9 @@ class NativeBridge:
     async def find_original_run(self, session_id: str, user_id: str) -> dict[str, Any] | None:
         """Read original admission; callers validate the ticket before binding it."""
         component = self._component(session_id, user_id)
+        task_id = session_id
+        task = self.store.task(task_id, user_id) if self.store is not None else None
+        session_id = self.native_session_id(task_id, user_id)
         kind, identifier = component["kind"], component["id"]
         session_type = SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT
         try:
@@ -168,16 +177,24 @@ class NativeBridge:
             if inspect(engine).has_table(table_name, schema=schema):
                 table = Table(table_name, MetaData(), schema=schema, autoload_with=engine)
                 with engine.connect() as connection:
-                    tickets = [dict(row) for row in connection.execute(select(table).where(
+                    query = select(table).where(
                         table.c.session_id == session_id, table.c.user_id == user_id,
                         table.c.component_type == kind, table.c.component_id == identifier,
-                    ).limit(2)).mappings()]
+                    )
+                    if task is not None:
+                        native_key = hashlib.sha256(json.dumps({'owner': user_id, 'task': task_id,
+                            'request': task['request_id']}, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+                        query = query.where(table.c.idempotency_key == native_key)
+                    tickets = [dict(row) for row in connection.execute(query.limit(2)).mappings()]
             if len(tickets) > 1:
                 raise HTTPException(409, "NATIVE_AMBIGUOUS_ADMISSION: multiple native tickets for one task")
             if tickets:
                 ticket = tickets[0]
                 return {"run_id": ticket["id"], "session_id": session_id,
                         "status": ticket["status"], "queue": jsonable_encoder(ticket)}
+            if session_id != task_id:
+                # Other conversation turns do not prove this task was admitted.
+                return None
             session = self.native_db.get_session(session_id, session_type=session_type, user_id=user_id)
             if session is None or getattr(session, kind + "_id", None) != identifier or session.user_id != user_id:
                 return None
@@ -197,6 +214,7 @@ class NativeBridge:
         # The public native route accepts serialized ToolExecution objects, while
         # detail returns RunRequirement wrappers. Keep the original execution IDs.
         component = self._component(session_id, user_id)
+        session_id = self.native_session_id(session_id, user_id)
         if component['kind'] == 'workflow':
             steps = [item.to_dict() if hasattr(item, 'to_dict') else item for item in requirements]
             if not steps or any(not isinstance(item, dict) for item in steps):
@@ -221,5 +239,6 @@ class NativeBridge:
 
     async def cancel_run(self, run_id: str, session_id: str, user_id: str) -> dict[str, Any]:
         component = self._component(session_id, user_id)
+        session_id = self.native_session_id(session_id, user_id)
         return await self._request("POST", self._component_path(run_id, component) + "/cancel", user_id,
                                    params={"session_id": session_id})
