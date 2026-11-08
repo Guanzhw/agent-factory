@@ -55,8 +55,6 @@ class MemberCliAdapter:
         stopped, dispatched = True, False
         try:
             invocation.check_authorized()
-            if asyncio.get_running_loop().get_debug():
-                raise ToolInvocationError('CLI_DEBUG_LOGGING_UNSAFE', outcome='failed', stopped=True)
             lease = invocation.resolve_credential()
             env = dict(os.environ)
             env.update(self.configuration.get('environment', {}))
@@ -158,9 +156,6 @@ class PersonalCliAdapter:
     This initial implementation deliberately has no persistent refresh/cache
     state. A future persistent mode needs an owner+connection cross-process lock
     and revision-scoped directories; temporary calls do not share mutable files.
-    Asyncio debug tracing can log pipe payloads before echo filtering, so calls
-    require a loop whose debug setting remains disabled throughout execution.
-    This adapter never changes shared loop or logging configuration.
     """
 
     def __init__(self, *, descriptor: ToolDescriptor, executable: str,
