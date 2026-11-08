@@ -199,7 +199,7 @@ class FactoryAPI:
                 raise
             job["allowedActions"] = ["inspect"]
         return {"job": job,
-                "events": self.store.events(task["id"]), "artifacts": self.store.artifacts(task["id"]),
+                "events": events, "artifacts": self.store.artifacts(task["id"]),
                 "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope,
                     "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"),
                     "planFingerprint": plan["fingerprint"], "effects": effects,

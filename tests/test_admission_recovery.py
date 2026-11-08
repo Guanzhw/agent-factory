@@ -69,6 +69,15 @@ class AdmissionRecovery(unittest.TestCase):
                 jobs = Table(store.native_db.job_table_name, MetaData(), schema=store.native_db.db_schema, autoload_with=conn)
                 count = conn.execute(select(func.count()).select_from(jobs).where(jobs.c.session_id == task_id)).scalar()
             self.assertEqual(count, 1)
+            store.event(task_id, 'research_tool_started', 'read observation fixture', {'callId': 'read-fixture'})
+            store.effect_reserve(task['run_id'], 'read-fixture', {'fixture': 'observation'})
+            observed = read(path)['turns'][-1]
+            self.assertTrue(any(event['data'].get('callId') == 'read-fixture' for event in observed['events']))
+            self.assertEqual(observed['toolResults'][0]['status'], 'UNKNOWN')
+            store.effect_complete(task['run_id'], 'read-fixture', {'output': 'latest observation'})
+            updated = read(path)['turns'][-1]
+            self.assertEqual(updated['toolResults'][0]['status'], 'DONE')
+            self.assertEqual(updated['toolResults'][0]['result']['output'], 'latest observation')
             full_path = new_session()
             worker = self.state['http_app'].state.queue_worker
             with patch.object(worker.config, 'max_queue_depth', 1):

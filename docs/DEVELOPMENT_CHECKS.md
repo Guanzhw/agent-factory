@@ -1,5 +1,11 @@
 # Development checks
 
+## Session read measurements on 2026-11-08
+
+A disposable PostgreSQL/native-queue fixture measured SQL within each `ResearchSessions.read`, including its internal native HTTP and thread work. A completed one-turn session falls from 11 to 7 statements; a queued second turn falls from 51 to 43. The change reuses observations within one read and directly resolves the owner/request task; it adds no cross-request cache and leaves SSE polling cadence unchanged. Sample elapsed times were 15.8–359.6 ms versus 9.7–15.2 ms for completed reads and 88.7–148.3 ms versus 79.5–122.9 ms for queued reads. These small concurrent samples establish removed database work, not a throughput benchmark.
+
+The native admission journey also checks that a later read sees newly added events and an UNKNOWN effect becoming DONE, before exercising Stop and failure recovery. Ordinary first-attempt model requests no longer load effect results needed only by the existing retry check.
+
 ## Summary failure continuation validation on 2026-11-08
 
 A native-queue/HTTP/Chromium journey reproduces the old behavior: HTTP 503 from the summary provider fails the research turn. After the fix, one failed summary attempt retains all unsummarized valid history in the actual primary-model HTTP payloads, an actual file write completes, and a later Stop during a pending summary prevents the primary request. This journey passes in 19.595 seconds with a local scripted provider. A received error may leave the auxiliary summary marked failed; an interrupted result remains unknown. Neither state is treated as a successful summary. The existing valid checkpoint, if any, remains usable. No paid provider was contacted. The three source-revocation journeys also pass on this revision (30.296 seconds), along with the two source-context and four existing session recovery cases. Frontend checks, Ruff and Pyright pass, with the existing six Windows-import warnings on Linux.

@@ -46,7 +46,9 @@ class FactoryLifecycleObserver:
         self._cursor = ""
 
     async def recover_admission(self, task: dict) -> dict:
-        if not task.get('run_id') and task['admission'] != 'rejected':
+        if task.get('run_id'):
+            return task
+        if task['admission'] != 'rejected':
             receipt = await self.store.delegation.bridge.find_original_run(task['id'], task['owner_id'])
             if receipt:
                 candidate = {**task, 'run_id': receipt['run_id']}
