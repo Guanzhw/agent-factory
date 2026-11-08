@@ -562,7 +562,8 @@ class ResearchSessions:
             blocked = 'RESEARCH_QUEUE_IDENTITY_UNCONFIRMED'
         elif type(ticket.get('attempt')) is not int or ticket['attempt'] < 1:
             blocked = 'RESEARCH_QUEUE_ATTEMPT_UNCONFIRMED'
-        elif (ticket['attempt'] > 1 and (self.store.effects(task['id']) or self.store.sql(
+        elif (ticket['attempt'] > 1 and (context.metadata or {}).get('factoryNativeRetryAttempt') != ticket['attempt']
+                and (self.store.effects(task['id']) or self.store.sql(
                 'SELECT 1 FROM af_delegation_links WHERE owner_id=:owner AND parent_id=:parent LIMIT 1',
                 owner=context.user_id, parent=task['id'])) and not self.subagents.permits_continuation(task, ticket)):
             blocked = 'RESEARCH_RESTART_REQUIRES_RECONCILIATION'

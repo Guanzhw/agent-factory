@@ -91,6 +91,11 @@ class ReadOnlyQueueJourney(unittest.TestCase):
         delayed.start()
         self.addCleanup(delayed.stop)
         self.addCleanup(release.set)
+        if not read_only:
+            # No saved native messages: retain the original no-replay fallback.
+            missing_history = patch.object(Agent, 'get_run_output', return_value=None)
+            missing_history.start()
+            self.addCleanup(missing_history.stop)
         self.send('读取 Python 版本并在模型故障后继续')
         self.assertTrue(queued.wait(15), 'Provider failure did not reach native retry')
         try:
@@ -146,7 +151,7 @@ class ReadOnlyQueueJourney(unittest.TestCase):
     def test_read_only_cli_recovers_after_model_failure(self):
         self.exercise_retry(True)
 
-    def test_unmarked_cli_is_not_replayed_after_model_failure(self):
+    def test_unmarked_cli_without_saved_history_is_not_replayed(self):
         self.exercise_retry(False)
 
     def test_stop_during_read_only_native_retry(self):

@@ -29,7 +29,8 @@ class DelegatingModel(Model):
         if task['run_id'] != response.run_id:
             raise InputCheckError('Model run differs from its task')
         context = RunContext(run_id=response.run_id, session_id=response.session_id, user_id=response.user_id,
-            session_state=response.session_state or {})
+            session_state=response.session_state or {},
+            metadata={'factoryNativeRetryAttempt': getattr(response, '_factory_retry_attempt', None)})
         plan = self.store.plan(task['plan_id'], response.user_id)
         def current():
             if self.store.cancellation_requested(response.run_id):
