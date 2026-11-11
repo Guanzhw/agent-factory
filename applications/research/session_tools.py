@@ -230,13 +230,16 @@ def _open_file(parent, name):
         import pywintypes
         import win32con
         import win32file
+        import winerror
         _parts(name)
         try:
             handle = cast('pywintypes.HANDLEType', win32file.CreateFile(str(parent / name),
                 win32con.GENERIC_READ,
                 win32con.FILE_SHARE_READ, None, win32con.OPEN_EXISTING,
                 win32file.FILE_FLAG_OPEN_REPARSE_POINT, None))
-        except pywintypes.error:
+        except pywintypes.error as error:
+            if error.winerror == winerror.ERROR_FILE_NOT_FOUND:
+                raise FileNotFoundError('RESEARCH_FILE_UNAVAILABLE') from None
             raise OSError('RESEARCH_FILE_UNAVAILABLE') from None
         try:
             info = win32file.GetFileInformationByHandle(int(handle))

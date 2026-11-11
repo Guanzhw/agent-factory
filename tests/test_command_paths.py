@@ -159,6 +159,26 @@ class CommandPaths(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(read('new.txt'), 'created')
         self.assertEqual({p.name for p in root.iterdir()}, {'A.txt', 'Ａ.txt', 'Ａ.txt.tmp', 'new.txt', 'new.txt.tmp'})
 
+    @unittest.skipUnless(sys.platform == 'win32', 'Win32 missing-file and sharing errors')
+    async def test_windows_new_file_creation_preserves_locked_existing_file(self):
+        import win32con
+        import win32file
+        with _directory(self.workspace) as parent:
+            with self.assertRaises(FileNotFoundError):
+                _open_file(parent, 'new.txt')
+        result = self.tools._edit(self.workspace, {'path': 'new.txt', 'old': '', 'new': 'created'})
+        self.assertTrue(result['created'])
+        target = self.workspace / 'new.txt'
+        handle = win32file.CreateFile(str(target), win32con.GENERIC_READ, 0, None,
+            win32con.OPEN_EXISTING, win32con.FILE_ATTRIBUTE_NORMAL, None)
+        try:
+            with self.assertRaises(ToolInvocationError) as error:
+                self.tools._edit(self.workspace, {'path': 'new.txt', 'old': '', 'new': 'replacement'})
+            self.assertEqual(error.exception.code, 'RESEARCH_EDIT_TARGET_INVALID')
+        finally:
+            handle.Close()
+        self.assertEqual(target.read_text(encoding='utf-8'), 'created')
+
     @unittest.skipIf(sys.platform == 'win32', 'Symlink creation needs separately available Windows privileges')
     async def test_native_edit_does_not_follow_unrelated_temp_symlink(self):
         root = self.workspace
