@@ -1,5 +1,15 @@
 # Development checks
 
+## Windows session notification regression on 2026-11-11
+
+The deployed Windows Proactor service returned a normal session detail but HTTP 500 on its event endpoint: psycopg's async connection rejects Proactor. Threaded synchronous LISTEN waits preserve the subprocess-capable loop. Three added PostgreSQL cases cover notification delivery, repeated subscription cleanup, cancellation while connecting, and AnyIO request cancellation. All 13 streaming cases pass in 9.621 seconds against a disposable database on the default Windows loop. Independent review identified and verified the cleanup shield required by AnyIO cancellation.
+
+The command-path suite passes nine cases with two existing platform-specific skips; all six session-unknown cases pass. Frontend lint, types and build, full Python Ruff and Pyright, and whitespace checks pass. The build retains its existing bundle-size warning. An initial test run used the application database role and failed to create a disposable database; the successful run uses the existing local test administrator. No production data or permissions were changed.
+
+After verifying every turn in all ten existing sessions was terminal, the existing local service scripts restarted the application while retaining PostgreSQL. Five real HTTPS event subscriptions returned their initial snapshot in 78–219 ms, each identical to the normal detail response: 404 persisted events and the completed final reply. After every disconnect the database LISTEN connection count returned from one to zero. A final detail read remained unchanged. Historical session-level running labels were preserved; they were not treated as new active turns or repaired as part of this fix.
+
+UI acceptance remains separate: browser inspection stopped because the UI tool could not establish the current URL; it was not replaced with another automation route. The supplied screenshot could not be materialized because the current file helper uses unavailable Windows xattr APIs. Manual browser refresh, session navigation and repeated-click acceptance remain unverified. No paid provider call or research turn was made for this fix.
+
 ## Native queued streaming validation on 2026-11-08
 
 Ten PostgreSQL/native-queue/HTTPS/Chromium cases pass in 193.702 seconds on the combined native-history and streaming tree. They verify `payload.stream=true`, persisted `RunContent`, updates to an existing event row without a full session read, lost-ack recovery and duplicate-request identity, refresh, actual process Stop, file delivery, subassistant continuation, Responses, multi-turn failure/recovery, and summary/correction history. A model HTTP 400 leaves Agno's queue ticket completed but its persisted run failed; the browser shows the failure and accepts a new turn. Worker retry cases inject an iterator delivery exception after a real streamed model error, then exercise the native queue's retry and Stop paths; they do not claim that Agno retries a normally ended `RunError` stream.
