@@ -1112,6 +1112,73 @@ class ChatJourney(unittest.TestCase):
                 self.page.locator('.rs-turn').last.locator('.rs-process > summary').click()
                 expect(call.get_by_text('失败' if outcome == 'failed' else '结果未确认', exact=True)).to_be_visible()
 
+    def test_corrections_interleave_with_agent_activity(self):
+        self.send('ssh 可用了吗?')
+        snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
+        turn = snapshot['turns'][-1]
+        start = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=2)
+        def at(seconds):
+            return (start + datetime.timedelta(seconds=seconds)).isoformat()
+        def event(identifier, seconds, kind, data):
+            return {'id': identifier, 'jobId': turn['taskId'], 'type': kind,
+                    'message': 'Timeline fixture', 'createdAt': at(seconds), 'data': data}
+        turn.update(createdAt=at(0), completedAt=at(15), result='最终回答', toolResults=[], messages=[
+            {'id': 'instruction', 'kind': 'instruction', 'text': '开始研究', 'state': 'included',
+             'createdAt': at(0), 'includedAt': at(0)},
+            {'id': 'correction-one', 'kind': 'correction', 'text': '第一条补充', 'state': 'included',
+             'createdAt': at(5), 'includedAt': at(6)},
+            {'id': 'correction-two', 'kind': 'correction', 'text': '第二条补充', 'state': 'included',
+             'createdAt': at(10), 'includedAt': at(11)}], events=[
+            event(1, 1, 'model_content_delta', {'responseId': 'first', 'text': '先读取文件。'}),
+            event(2, 2, 'tool_started', {'callId': 'crossing', 'toolName': 'read_file',
+                                       'arguments': {'file_path': 'protocol.txt'}}),
+            event(3, 6, 'tool_finished', {'callId': 'crossing', 'toolName': 'read_file',
+                                        'outcome': 'completed', 'output': '读取结果'}),
+            event(4, 7, 'model_reasoning_delta', {'responseId': 'second', 'text': '根据补充调整。'}),
+            event(5, 8, 'model_content_delta', {'responseId': 'second', 'text': '已经调整。'}),
+            event(6, 12, 'tool_started', {'callId': 'last', 'toolName': 'run_shell',
+                                         'arguments': {'command': 'echo done'}}),
+            event(7, 13, 'tool_finished', {'callId': 'last', 'toolName': 'run_shell',
+                                          'outcome': 'completed', 'output': {'exitCode': 0}}),
+            event(8, 14, 'model_content_delta', {'responseId': 'last', 'text': '最终回答'})])
+        self.page.route('**/research/sessions/*/events', lambda route: route.fulfill(
+            content_type='text/event-stream', body='event: session\ndata: ' +
+            json.dumps(snapshot, ensure_ascii=False) + '\n\n'))
+        self.page.route('**/research/sessions/' + snapshot['id'], lambda route: route.fulfill(json=snapshot))
+        for _ in range(2):
+            self.page.reload()
+            expect(self.page.locator('.rs-user-message')).to_have_count(3)
+            expect(self.page.locator('.rs-tool-call')).to_have_count(2)
+            order = self.page.locator('.rs-turn').evaluate("el => Array.from(el.children).filter(n => n.matches('.rs-user-message, .rs-activity')).map(n => n.className)")
+            self.assertEqual(order, ['rs-user-message', 'rs-activity'] * 3)
+            for summary in self.page.locator('.rs-process > summary').all():
+                summary.click()
+            expect(self.page.get_by_text('先读取文件。', exact=True)).to_be_visible()
+            expect(self.page.get_by_text('已经调整。', exact=True)).to_be_visible()
+            expect(self.page.get_by_text('最终回答', exact=True)).to_have_count(1)
+            self.assertEqual(self.page.locator('.rs-activity').nth(0).locator('.rs-tool-call').count(), 1)
+            self.assertEqual(self.page.locator('.rs-activity').nth(1).locator('.rs-tool-call').count(), 0)
+        # A correction arriving during the final response must not duplicate that response.
+        turn['messages'][-1]['createdAt'] = at(15)
+        self.page.reload()
+        expect(self.page.get_by_text('最终回答', exact=True)).to_have_count(1)
+        turn['messages'][-1]['createdAt'] = at(10)
+        # A new pending correction is not falsely followed by a completed response.
+        turn['messages'].append({'id': 'pending', 'kind': 'correction', 'text': '待处理补充',
+            'state': 'pending', 'createdAt': at(16), 'includedAt': None})
+        turn.update(status='running', result=None, completedAt=None)
+        snapshot.update(state='running', allowedActions=['correct', 'stop'])
+        self.page.reload()
+        expect(self.page.get_by_text('待纳入下一次模型请求', exact=True)).to_be_visible()
+        expect(self.page.locator('.rs-activity').last.locator('.rs-process')).to_have_count(0)
+        expect(self.page.get_by_text('最终回答', exact=True)).to_have_count(1)
+        expect(self.page.locator('.rs-activity').last).not_to_contain_text('已完成')
+        turn['events'] = turn['events'][:2]
+        self.page.reload()
+        self.page.locator('.rs-process > summary').click()
+        expect(self.page.get_by_text('已开始 · 等待结果', exact=True)).to_be_visible()
+        expect(self.page.get_by_text('缺少结束记录 · 结果未知', exact=True)).to_have_count(0)
+
     def test_activity_wait_disconnect_and_reconciliation_display(self):
         # UI-only snapshots isolate transport loss and missing/late events.
         self.send('ssh 可用了吗?')
