@@ -41,3 +41,17 @@ jobs:
       - run: uv run pyright
       - run: uv run playwright install --with-deps chromium
       - run: uv run python -m unittest discover -s tests -v
+  windows-coding:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9
+        with:
+          version: '0.12.1'
+      - run: uv sync --frozen
+      - run: uv run python -m unittest discover -s tests -p test_coding_windows.py -v
+      - run: uv run python -m unittest discover -s tests -p test_command_paths.py -v
+      - run: uv run python -m unittest discover -s tests -p test_search_results.py -v

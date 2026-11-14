@@ -13,7 +13,7 @@ Agno owns model/tool execution, streaming, PostgreSQL queue tickets, cancellatio
 
 The conversation is submitted with its goal, context and model connection. It does not first create or publish materials, applications, capability manifests or budget scopes. Subassistants inherit their parent's model and tools and run through the same native queue.
 
-Files and commands use the configured workspace and existing process execution helpers. MCP uses the official SDK with Agno tool discovery. SSH uses system OpenSSH; configured remote Agno agents use AgentOSClient. Optional research records and shared answers do not impose a fixed research sequence.
+Files use Agno CodingTools. The configured session workspace is a default directory, not a file-access boundary; absolute research paths are supported. Shell execution alone uses the existing cancellable process helper. MCP uses the official SDK with Agno tool discovery. SSH uses system OpenSSH; configured remote Agno agents use AgentOSClient. Optional research records and shared answers do not impose a fixed research sequence.
 
 ## Data and maintenance
 

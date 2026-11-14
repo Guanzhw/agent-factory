@@ -4,6 +4,8 @@ import { ResearchReply } from './ResearchReply.js';
 import type { SessionEvent, SessionTurn } from './researchSessionsClient.js';
 
 const tools: Record<string, string> = {
+  read_file: '读取文件', write_file: '写入文件', edit_file: '编辑文件', run_shell: '运行命令',
+  grep: '搜索文件内容', find: '查找文件', ls: '列出目录',
   ssh_servers: '查找 SSH 服务器', ssh_run: '执行 SSH 命令',
   get_skill_instructions: '读取技能说明', get_skill_reference: '读取技能参考', get_skill_script: '读取技能脚本',
   research_project: '读取研究目标', research_experiment: '启动实验', research_record_experiment: '记录实验结果',
@@ -64,14 +66,15 @@ function ActionRecord({ event, start, active }: { event: SessionEvent; start?: S
       const finished = ['research_tool_finished', 'tool_finished'].includes(event.type);
       const outcome = event.data.outcome;
       const relativePath = event.data.relativePath;
-      const failed = outcome === 'failed' || outcome === 'completed' && typeof result.exitCode === 'number' && result.exitCode !== 0;
+      const nativeFailure = typeof event.data.output === 'string' && /^(Error[: ]|Exit code: (?!0(?:\r?\n|$))-?\d+)/.test(event.data.output);
+      const failed = nativeFailure || outcome === 'failed' || outcome === 'completed' && typeof result.exitCode === 'number' && result.exitCode !== 0;
       const unknown = outcome === 'unknown' || !finished && !active;
       const state = (!finished ? active ? '已开始 · 等待结果' : '缺少结束记录 · 结果未知' : outcome === 'unknown' ? '结果未确认' : failed ? '失败' : outcome === 'cancelled' ? '已停止' : outcome === 'completed' ? '已完成' : '需核对结果');
       const path = typeof result.path === 'string' ? result.path : typeof relativePath === 'string' ? relativePath : '';
       const Icon = failed || unknown ? IconAlertCircle : finished ? IconCircleCheck : IconClock;
       const args = event.data.arguments ?? start?.data.arguments;
       const parameters = args && typeof args === 'object' && !Array.isArray(args) ? args as Record<string, unknown> : null;
-      const preview = path || (Array.isArray(parameters?.argv) ? parameters.argv.join(' ') : typeof parameters?.skill_name === 'string' ? parameters.skill_name : '');
+      const preview = path || (typeof parameters?.file_path === 'string' ? parameters.file_path : typeof parameters?.command === 'string' ? parameters.command : '') || (Array.isArray(parameters?.argv) ? parameters.argv.join(' ') : typeof parameters?.skill_name === 'string' ? parameters.skill_name : '');
       return <li className={failed || unknown ? 'rs-action-warning' : ''}><details className="rs-tool-call">
         <summary><Icon size={16}/><strong>{activityName(event)}</strong>{preview && <code className="rs-tool-preview" title={preview}>{preview}</code>}<span>{state}</span><IconChevronRight className="rs-disclosure" size={14}/></summary>
         <small>{new Date((start ?? event).createdAt).toLocaleTimeString('zh-CN')}{finished && ` → ${new Date(event.createdAt).toLocaleTimeString('zh-CN')}`}</small>

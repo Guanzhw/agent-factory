@@ -118,7 +118,8 @@ async def _run_windows_cli_process(*, executable: str, argv: Sequence[str], env:
         cwd: str | Path, stdin: bytes, timeout_seconds: float | None, max_output_bytes: int | None,
         before_spawn: Callable[[], None | Awaitable[None]], check_authorized: Callable[[], None],
         on_output: Callable[[str, bytes], None] | None = None,
-        capture_max_bytes: int | None = None) -> CLIProcessResult:
+        capture_max_bytes: int | None = None,
+        windows_command_line: str | None = None) -> CLIProcessResult:
     process = None
     creating = rejected = dispatched = False
     code, cancelled = None, False
@@ -139,7 +140,7 @@ async def _run_windows_cli_process(*, executable: str, argv: Sequence[str], env:
         creating = True
         try:
             return await asyncio.to_thread(WindowsSSHProcess, [executable, *argv], dict(env),
-                cwd=str(cwd), capture_stderr=True)
+                cwd=str(cwd), capture_stderr=True, command_line=windows_command_line)
         except WindowsProcessCreateError:
             rejected = True
             raise
@@ -267,7 +268,8 @@ async def run_cli_process(*, executable: str, argv: Sequence[str], env: Mapping[
         cwd: str | Path, stdin: bytes, timeout_seconds: float | None, max_output_bytes: int | None,
         before_spawn: Callable[[], None | Awaitable[None]], check_authorized: Callable[[], None],
         on_output: Callable[[str, bytes], None] | None = None,
-        capture_max_bytes: int | None = None) -> CLIProcessResult:
+        capture_max_bytes: int | None = None,
+        windows_command_line: str | None = None) -> CLIProcessResult:
     """Run once; a nonzero exit is returned for the adapter to interpret.
 
     Cancellation waits for spawn custody and group cleanup before raising a
@@ -289,7 +291,8 @@ async def run_cli_process(*, executable: str, argv: Sequence[str], env: Mapping[
     if sys.platform == 'win32':
         return await _run_windows_cli_process(executable=executable, argv=argv, env=env, cwd=cwd,
             stdin=stdin, timeout_seconds=timeout_seconds, max_output_bytes=max_output_bytes,
-            before_spawn=before_spawn, check_authorized=check_authorized, on_output=on_output, capture_max_bytes=capture_max_bytes)
+            before_spawn=before_spawn, check_authorized=check_authorized, on_output=on_output, capture_max_bytes=capture_max_bytes,
+            windows_command_line=windows_command_line)
     process = None
     started = False
     spawn_rejected = False

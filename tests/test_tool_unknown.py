@@ -1,10 +1,8 @@
 """An unknown operation blocks its replay, not unrelated native tool calls."""
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any, cast
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
@@ -12,7 +10,6 @@ from agno.tools.function import FunctionCall
 
 from agent_factory.personal_tool_contract import PersonalToolAdapter, ToolDescriptor, ToolInvocationError
 from agent_factory.personal_tool_execution import personal_tool_function
-from research.session_tools import ResearchSessionTools
 
 
 class Effects:
@@ -56,34 +53,6 @@ async def call(function, context, identifier, **arguments):
 
 
 class UnknownToolOutcome(unittest.IsolatedAsyncioTestCase):
-    async def test_research_unknown_keeps_reads_available_without_replay(self):
-        store = Effects()
-        context = RunContext(run_id='run', session_id='task', user_id='owner')
-        def authorize(*_):
-            if store.cancelled:
-                raise RunCancelledException('stopped')
-            return {'ownerId': 'owner', 'id': 'session', 'turnId': 'turn'}
-        with TemporaryDirectory() as directory:
-            tools = ResearchSessionTools(workspace_root=Path(directory))
-            tools.sessions = SimpleNamespace(store=store, authorize_tool=authorize)
-            workspace = tools._workspace(authorize())
-            (workspace / 'note.txt').write_text('independent evidence')
-            command = tools._function(store, context, 'research_run')
-            with patch.object(tools, '_run', new=AsyncMock(side_effect=ToolInvocationError(
-                    'COMMAND_ACK_UNKNOWN', outcome='unknown', stopped=False))) as run:
-                first = await call(command, context, 'command', argv=['echo', 'value'])
-                self.assertEqual(first['outcome'], 'unknown')
-                self.assertFalse(first['stopped'])
-                self.assertEqual(first['effectKey'], 'run:research-session-tool:command')
-                repeated = await call(command, context, 'command', argv=['echo', 'value'])
-                self.assertEqual(repeated['outcome'], 'unknown')
-                self.assertEqual(run.await_count, 1)
-                listing = await call(tools._function(store, context, 'research_read_file'), context, 'read', path='note.txt')
-                self.assertEqual(listing['text'], 'independent evidence')
-                store.cancelled = True
-                with self.assertRaises(RunCancelledException):
-                    await call(command, context, 'after-stop', argv=['echo', 'value'])
-
     async def test_personal_unknown_keeps_other_calls_available_without_replay(self):
         store = Effects()
         context = RunContext(run_id='run', session_id='task', user_id='owner')

@@ -71,7 +71,7 @@ class WindowsProcessCreateError(OSError):
 class WindowsSSHProcess:
     """Construct suspended and job-assigned; resume only after caller authority checks."""
     def __init__(self, args: list[str], env: dict[str, str], *, cwd: str | None = None,
-                 capture_stderr: bool = False):
+                 capture_stderr: bool = False, command_line: str | None = None):
         kernel = _kernel()
         import pywintypes
         import win32api
@@ -138,7 +138,7 @@ class WindowsSSHProcess:
                 startup.StartupInfo.hStdOutput = child_output
                 startup.StartupInfo.hStdError = child_error
                 startup.lpAttributeList = ctypes.cast(attributes, wt.LPVOID)
-                command = ctypes.create_unicode_buffer(subprocess.list2cmdline(args))
+                command = ctypes.create_unicode_buffer(command_line if command_line is not None else subprocess.list2cmdline(args))
                 environment = ctypes.create_unicode_buffer('\0'.join(f'{key}={value}' for key, value in
                     sorted(env.items(), key=lambda pair: pair[0].upper())) + '\0\0')
                 info = _ProcessInfo()
