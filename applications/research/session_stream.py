@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import json
 
 from agno.os.event_streams import get_event_stream
+import anyio
 import psycopg
 from psycopg import sql
 
@@ -50,9 +51,31 @@ def install_notifications(store):
 @asynccontextmanager
 async def changes(store):
     url = store.engine.url.set(drivername='postgresql').render_as_string(hide_password=False)
-    async with await psycopg.AsyncConnection.connect(url, autocommit=True) as connection:
-        await connection.execute('LISTEN ' + CHANNEL)
-        yield connection.notifies()
+    # Windows needs Proactor for Agent subprocesses; psycopg async requires Selector.
+    connecting = asyncio.create_task(asyncio.to_thread(psycopg.Connection.connect, url, autocommit=True))
+    pending = connecting
+    try:
+        connection = await asyncio.shield(connecting)
+        pending = asyncio.create_task(asyncio.to_thread(connection.execute, 'LISTEN ' + CHANNEL))
+        await asyncio.shield(pending)
+
+        async def notifications():
+            nonlocal pending
+            while True:
+                # Bound only the blocking wait, not the subscription or Agent run.
+                pending = asyncio.create_task(asyncio.to_thread(
+                    lambda: list(connection.notifies(timeout=1, stop_after=1))))
+                for notification in await asyncio.shield(pending):
+                    yield notification
+
+        yield notifications()
+    finally:
+        with anyio.CancelScope(shield=True):
+            connection = await connecting
+            try:
+                await pending
+            finally:
+                await asyncio.to_thread(connection.close)
 
 
 def frame(kind, value):

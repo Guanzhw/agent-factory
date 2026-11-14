@@ -249,6 +249,89 @@ class StoredStreaming(unittest.TestCase):
         cls.store.sql('CREATE TABLE af_events (id BIGSERIAL PRIMARY KEY, task_id TEXT NOT NULL, '
                       'type TEXT NOT NULL, message TEXT NOT NULL, data JSONB NOT NULL, created_at TEXT NOT NULL)')
 
+    def test_notifications_deliver_reconnect_and_close_on_default_platform_loop(self):
+        from research.session_stream import CHANNEL, changes
+        import psycopg
+        connections = []
+        connect = psycopg.Connection.connect
+        def capture(*args, **kwargs):
+            connection = connect(*args, **kwargs)
+            connections.append(connection)
+            return connection
+
+        async def check():
+            for _ in range(3):
+                payload = uuid4().hex
+                async with changes(self.store) as notifications:
+                    with self.store.engine.begin() as conn:
+                        conn.execute(text('SELECT pg_notify(:channel, :payload)'),
+                                     {'channel': CHANNEL, 'payload': payload})
+                    received = await asyncio.wait_for(anext(notifications), 3)
+                    self.assertEqual(received.payload, payload)
+                    waiting = asyncio.create_task(anext(notifications))
+                    # The event loop must stay responsive during an idle database wait.
+                    await asyncio.sleep(0.05)
+                    self.assertFalse(waiting.done())
+                    waiting.cancel()
+                    with self.assertRaises(asyncio.CancelledError):
+                        await waiting
+                self.assertTrue(connections[-1].closed)
+
+        with patch('research.session_stream.psycopg.Connection.connect', side_effect=capture):
+            asyncio.run(asyncio.wait_for(check(), 8))
+
+    def test_notification_cancel_during_connect_closes_late_connection(self):
+        from research.session_stream import changes
+        import psycopg
+        entered, release = threading.Event(), threading.Event()
+        connections = []
+        connect = psycopg.Connection.connect
+        def delayed(*args, **kwargs):
+            connection = connect(*args, **kwargs)
+            connections.append(connection)
+            entered.set()
+            release.wait(3)
+            return connection
+
+        async def subscribe():
+            async with changes(self.store):
+                self.fail('Canceled subscription must not open')
+
+        async def check():
+            task = asyncio.create_task(subscribe())
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 3))
+                task.cancel()
+            finally:
+                release.set()
+            with self.assertRaises(asyncio.CancelledError):
+                await task
+            self.assertTrue(connections[0].closed)
+
+        with patch('research.session_stream.psycopg.Connection.connect', side_effect=delayed):
+            asyncio.run(check())
+
+    def test_notification_request_scope_cancellation_closes_connection(self):
+        from research.session_stream import changes
+        import anyio
+        import psycopg
+        connections = []
+        connect = psycopg.Connection.connect
+        def capture(*args, **kwargs):
+            connection = connect(*args, **kwargs)
+            connections.append(connection)
+            return connection
+
+        async def check():
+            with anyio.move_on_after(0.1) as scope:
+                async with changes(self.store) as notifications:
+                    await anext(notifications)
+            self.assertTrue(scope.cancel_called)
+            self.assertTrue(connections[0].closed)
+
+        with patch('research.session_stream.psycopg.Connection.connect', side_effect=capture):
+            asyncio.run(check())
+
     def test_adjacent_segments_merge_but_tools_and_responses_preserve_order_and_unknown(self):
         store, task = self.store, uuid4().hex
         store.model_delta(task, 'model_reasoning_delta', '思', 'response-1')
