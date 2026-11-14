@@ -118,3 +118,10 @@
 
 .rs-files { overflow-wrap: anywhere; margin-block: 16px; }
 .rs-files li { margin-block: 8px; }
+.rs-trigger-list { list-style: none; padding: 0; }
+.rs-trigger-list li { display: grid; gap: 6px; padding: 16px 0; border-bottom: 1px solid currentColor; }
+.rs-trigger-list :is(p, span, a) { margin: 0; overflow-wrap: anywhere; }
+.rs-trigger-list button { justify-self: start; }
+.rs-triggers .rw-form { margin-top: 20px; }
+.rs-triggers small { line-height: 1.6; }
+.rs-trigger-origin { margin-bottom: 12px; }

@@ -13,6 +13,7 @@ from agno.tools.function import Function, FunctionCall
 from fastapi import HTTPException
 
 from agent_factory.personal_tool_contract import ToolInvocationError, validate_tool_arguments
+from agent_factory.store import digest
 from .coding import SessionCodingTools
 from .session_memory import MEMORY_TOOLS, MEMORY_WRITES
 from .session_subagents import SPAWN, WAIT
@@ -23,6 +24,8 @@ EFFECT_PREFIX = 'research-session-tool:'
 MEMORY_ID = {'type': 'string', 'pattern': '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'}
 MEMORY_TEXT = {'type': 'string', 'minLength': 1}
 COLLABORATION_TOOLS = {'research_assistant_directory', 'research_ask_assistant'}
+TRIGGER_TOOLS = {'research_set_trigger', 'research_list_triggers', 'research_cancel_trigger'}
+TRIGGER_WRITES = TRIGGER_TOOLS - {'research_list_triggers'}
 
 
 def _schema(properties, required):
@@ -30,6 +33,26 @@ def _schema(properties, required):
 
 
 TOOLS = {
+    'research_set_trigger': ('Keep a standing instruction that wakes this chat when its event arrives. '
+        'Use cron for a recurring schedule, research for published research events, '
+        'or external for inbound events. '
+        'Set instruction to the work to do when triggered. Cron uses five-field syntax and an IANA timezone. '
+        'Returns the saved trigger; report it as set only after this call succeeds.', _schema({
+            'title': MEMORY_TEXT, 'instruction': MEMORY_TEXT,
+            'source': {'type': 'string', 'enum': ['external', 'cron', 'research']},
+            'eventType': {'type': 'string', 'minLength': 1,
+                'description': 'Required for external. For other sources, omit to receive all source events.'},
+            'cron': {'type': 'string', 'minLength': 1},
+            'timezone': {'type': 'string', 'minLength': 1,
+                'description': 'IANA timezone for cron schedules, for example Asia/Shanghai. Defaults to UTC.'},
+            'keyword': {'type': 'string', 'description': 'Optional research keyword '
+                'for a case-insensitive literal match in published content.'}},
+            ['title', 'instruction', 'source'])),
+    'research_list_triggers': ('List the current owner\'s standing triggers and deliveries for this chat. '
+        'Use the returned trigger ID to cancel a standing instruction.', _schema({}, [])),
+    'research_cancel_trigger': ('Cancel a standing trigger in this chat using its ID from research_list_triggers. '
+        'Report cancellation only after this call succeeds.',
+        _schema({'triggerId': MEMORY_ID}, ['triggerId'])),
     'research_project': ('Read the linked project agreement, or the session goal when no project is linked. '
         'This is context, not a required step or an instruction to launch work.', _schema({}, [])),
     'research_experiment': ('Start an experiment as a native child Agent when independent work is useful. '
@@ -116,7 +139,8 @@ class ResearchSessionTools:
         return [name for name in TOOLS if (getattr(self.sessions, 'memory', None) is not None
             if name in MEMORY_TOOLS else getattr(self.sessions, 'collaboration', None) is not None
             if name in COLLABORATION_TOOLS else getattr(self.sessions, 'research', None) is not None
-            if name in RESEARCH_TOOLS else getattr(self.sessions, 'subagents', None) is not None
+            if name in RESEARCH_TOOLS else getattr(self.sessions, 'triggers', None) is not None
+            if name in TRIGGER_TOOLS else getattr(self.sessions, 'subagents', None) is not None
             if name in {SPAWN, WAIT} else name == 'research_read_shared_evidence'
             or self.workspace_root is not None)] + (['read_file', 'write_file', 'edit_file', 'grep', 'find', 'ls']
                 + (['run_shell'] if self.host_commands else []) if self.workspace_root is not None else [])
@@ -191,7 +215,7 @@ class ResearchSessionTools:
                     receipt = {'outcome': 'failed', 'stopped': True, 'code': error.code}
                     store.event(task_id, 'research_tool_finished', '记忆操作未执行', {**event, **receipt})
                     return self._receipt(receipt)
-            mutating = name in MEMORY_WRITES | RESEARCH_WRITES | {'research_ask_assistant'}
+            mutating = name in MEMORY_WRITES | RESEARCH_WRITES | TRIGGER_WRITES | {'research_ask_assistant'}
             if mutating:
                 request = {'ownerId': identity[0], 'taskId': task_id, 'sessionId': execution['id'],
                     'turnId': execution['turnId'], 'toolName': name, 'callId': call_id, 'arguments': values}
@@ -203,7 +227,7 @@ class ResearchSessionTools:
                     guard()
                     return self._receipt(reservation.get('result'), **original)
                 if reservation['status'] != 'new':
-                    if name not in MEMORY_WRITES | RESEARCH_WRITES | {'research_ask_assistant'}:
+                    if name in TRIGGER_WRITES:
                         return unknown()
                     try:
                         output = (self.sessions.memory.reconcile(identity[0], call_id, memory_operation)
@@ -224,6 +248,25 @@ class ResearchSessionTools:
                 guard()
                 if name == 'research_find_memories':
                     output = self.sessions.memory.find(identity[0], values)
+                elif name in TRIGGER_TOOLS:
+                    from .session_triggers import CreateTrigger
+                    request_id = 'trigger:' + digest({'runId': identity[2], 'callId': call_id})
+                    try:
+                        if name == 'research_set_trigger':
+                            output = self.sessions.triggers.create(identity[0], execution['id'],
+                                CreateTrigger(requestId=request_id, **values))
+                        elif name == 'research_cancel_trigger':
+                            output = self.sessions.triggers.delete(identity[0], execution['id'], values['triggerId'], request_id)
+                        else:
+                            output = self.sessions.triggers.listing(identity[0], execution['id'])
+                    except HTTPException as error:
+                        detail: Any = error.detail
+                        raise ToolInvocationError(detail['code'] if isinstance(detail, dict) else str(detail),
+                            outcome='failed', stopped=True,
+                            output=detail.get('message') if isinstance(detail, dict) else str(detail)) from error
+                    except ValueError as error:
+                        raise ToolInvocationError('RESEARCH_TRIGGER_INPUT_INVALID', outcome='failed', stopped=True,
+                            output=str(error)) from error
                 elif name in RESEARCH_TOOLS:
                     output = await self.sessions.research.invoke(run_context, call_id, name, values)
                 elif name == SPAWN:
@@ -257,12 +300,12 @@ class ResearchSessionTools:
                         {**event, 'outcome': 'unknown', 'stopped': error.stopped, 'code': error.code})
                     return unknown(error.code, stopped=error.stopped)
             except (ValueError, OSError, UnicodeError, PermissionError, HTTPException):
-                # A mutation may have committed before an IO failure. Keep its
-                # effect unresolved; a new model call must not replay it.
+                # A mutation may have committed before an IO failure. Preserve
+                # its unknown outcome instead of reporting that nothing ran.
                 if mutating:
                     store.event(task_id, 'research_tool_finished', '原操作结果未确认，请先核对',
                         {**event, 'outcome': 'unknown', 'code': 'RESEARCH_TOOL_OUTCOME_UNKNOWN'
-                            if name == 'research_ask_assistant' else 'RESEARCH_MEMORY_OUTCOME_UNKNOWN'
+                            if name == 'research_ask_assistant' or name in TRIGGER_WRITES else 'RESEARCH_MEMORY_OUTCOME_UNKNOWN'
                             if name in MEMORY_WRITES else 'RESEARCH_FILE_OR_COMMAND_REJECTED'})
                     return unknown()
                 store.event(task_id, 'research_tool_finished', '研究工具未完成',

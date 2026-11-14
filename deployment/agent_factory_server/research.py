@@ -6,6 +6,7 @@ from pathlib import Path
 from agent_factory.config import Settings
 from research.public import install
 from research.session_tools import ResearchSessionTools
+from research.session_triggers import trigger_lifespan
 from .application_composition import ApplicationAssembly
 from .main import create_app as create_deployment
 
@@ -16,7 +17,7 @@ def create_app(settings=None, *, session_tools=None):
         session_tools = _session_tools_from_env(settings)
     session_tools = session_tools or ResearchSessionTools()
     return create_deployment(settings, applications=(ApplicationAssembly(
-        name='research', install=lambda state: install(state, session_tools=session_tools)),))
+        name='research', install=lambda state: install(state, session_tools=session_tools), lifespan=trigger_lifespan),))
 
 
 def _session_tools_from_env(settings=None):

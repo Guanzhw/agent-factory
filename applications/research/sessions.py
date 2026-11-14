@@ -14,7 +14,7 @@ from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 from agno.utils.tokens import count_tokens
 from fastapi import HTTPException
-from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, select
+from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, select, text
 
 from agent_factory.application_interface import ApplicationStart
 from agent_factory.application_runs import StartNotSubmitted, factory_request_id
@@ -39,6 +39,7 @@ class ResearchSessions:
         self.collaboration: Any = None
         self.projects: Any = None
         self.research: Any = None
+        self.triggers: Any = None
         self.memory = ResearchSessionMemory(self)
         self.subagents = ResearchSubagents(self)
         self.setup = ResearchSessionSetup(store, connections, models, tools)
@@ -61,6 +62,9 @@ class ResearchSessions:
     @contextmanager
     def _write(self):
         with self.store.transaction() as conn:
+            # Content publication holds admission before invoking research callbacks.
+            if self.store.engine.dialect.name == 'postgresql':
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             with self.db.write():
                 yield conn
 
@@ -372,9 +376,10 @@ class ResearchSessions:
         row = {**row, 'body': {**row['body'], 'configuration': configuration}}
         return row
 
-    def _reserve(self, owner, identifier, request):
+    def _reserve(self, owner, identifier, request, *, origin=None, source_ids=()):
         question_id = request.model_dump().get('assistantQuestionId')
         fingerprint = digest({'action': 'turn', 'sessionId': identifier, 'text': request.text,
+            **({'origin': origin} if origin is not None else {}),
             **({'assistantQuestionId': question_id} if question_id is not None else {}),
             **{key: getattr(request, key) for key in ('modelConnectionRef', 'reasoningEffort') if key in request.model_fields_set}})
         with self._write() as conn:
@@ -382,17 +387,23 @@ class ResearchSessions:
             if old is not None:
                 return old['turnId'], False
             row, turns = self._row(conn, owner, identifier), self._turns(conn, identifier)
+            if origin is not None and row['body']['stopped']:
+                raise rejected('RESEARCH_SESSION_STOPPED', '会话已停止。')
             if turns and not self._safe(owner, turns[-1]):
                 raise rejected('RESEARCH_TURN_ACTIVE_OR_UNCONFIRMED', '原轮次尚未安全结束，请先核对其状态。')
             row = self._continuation_context(row, turns)
             row = self._prepare_turn_configuration(conn, owner, row, turns, request)
             configuration = row['body']['configuration']
+            if source_ids:
+                row = {**row, 'body': {**row['body'], 'sharedSourceIds': list(dict.fromkeys(
+                    [*row['body']['sharedSourceIds'], *source_ids]))}}
             turn_id, stamp = str(uuid4()), now()
             body = {'requestId': request.requestId, 'configuration': deepcopy(configuration),
                 'taskId': None, 'runId': None, 'status': 'reserved',
                 'createdAt': stamp, 'completedAt': None, 'result': None, 'failure': None, 'terminal': False,
                 'blockReason': None, 'messages': [self._message('instruction', request.text)],
-                'lastAttempt': 0, 'dispatchStarted': False, 'events': [], 'toolResults': [], 'sharedSourceIds': []}
+                'lastAttempt': 0, 'dispatchStarted': False, 'events': [], 'toolResults': [],
+                'sharedSourceIds': list(source_ids), **({'origin': origin} if origin is not None else {})}
             if question_id is not None:
                 body['assistantReply'] = self.conversations.adopt(owner, identifier, question_id)
             start = self._start(row, {'id': turn_id, 'application_request_id': 'research-turn:' + turn_id, 'body': body})
@@ -407,6 +418,15 @@ class ResearchSessions:
         self.auth.require_member(owner)
         await self._refresh(owner, identifier)
         turn_id, fresh = await asyncio.to_thread(self._reserve, owner, identifier, request)
+        await self._dispatch(owner, identifier, turn_id, fresh)
+        return await self.read(owner, identifier)
+
+    async def _dispatch(self, owner, identifier, turn_id, fresh, *, recover=False):
+        if not fresh:
+            with self.db.read() as conn:
+                turn = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
+                fresh = not turn['body']['terminal'] and (not turn['body']['dispatchStarted'] or
+                    (recover and self._task(owner, turn) is None))
         if fresh:
             with self._write() as conn:
                 row = self._row(conn, owner, identifier)
@@ -438,7 +458,6 @@ class ResearchSessions:
                     original = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
                 if original['body'].get('stopRequestId'):
                     await self._cancel_original(owner, identifier, original['body']['stopRequestId'])
-        return await self.read(owner, identifier)
 
     def correct(self, owner, identifier, request):
         self.auth.require_member(owner)
@@ -467,6 +486,8 @@ class ResearchSessions:
                 self._save_session(conn, row, {**row['body'], 'stopped': True, 'stopRequestId': request.requestId})
                 if self.collaboration is not None:
                     self.collaboration.stop(conn, owner, identifier)
+                if getattr(self, 'triggers', None) is not None:
+                    self.triggers.stop(conn, owner, identifier)
                 turns = self._turns(conn, identifier)
                 turn_id = turns[-1]['id'] if turns else None
                 if turns:
@@ -812,6 +833,7 @@ class ResearchSessions:
                        if 'assistantReply' in item['body'] else {}),
                     **({'assistantReplies': [self._reply_projection(owner, identifier, snapshot)
                         for snapshot in item['body']['assistantReplies']]} if 'assistantReplies' in item['body'] else {}),
+                    **({'origin': deepcopy(item['body']['origin'])} if 'origin' in item['body'] else {}),
                     **({'continuation': deepcopy(item['body']['continuation'])} if 'continuation' in item['body'] else {}),
                     **{key: deepcopy(item['body'].get(key))
                     for key in ('requestId', 'taskId', 'runId', 'status', 'createdAt', 'completedAt', 'result',

@@ -1,6 +1,7 @@
 import { authEpoch, assertAuthEpoch, expireBrowserSession } from '../../browserAuth.js';
 import { ApiError, factoryRequest } from '../../api.js';
 import type { ResearchQuestion } from './live/assistantClient.js';
+import type { TriggerOrigin } from './sessionTriggersClient.js';
 
 export interface SessionOptions {
   available: boolean; unavailableCode: string | null;
@@ -24,6 +25,7 @@ export interface SessionTurn {
   assistantReply?: SessionAssistantReply;
   assistantReplies?: SessionAssistantReply[];
   continuation?: { questionIds: string[] };
+  origin?: TriggerOrigin;
   children?: SessionChild[];
 }
 export interface SessionSummary {
