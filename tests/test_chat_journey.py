@@ -320,6 +320,23 @@ class ChatJourney(unittest.TestCase):
         identifier = self.session()['id']
         self.addCleanup(lambda: self.post('/research/sessions/' + identifier + '/stop', {}))
 
+    def test_completed_session_survives_native_ticket_retention(self):
+        self.send('摘要故障前的背景')
+        first = self.wait_for(lambda value: value['state'] == 'idle')
+        native_db = self.state['bridge'].native_db
+        self.assertGreater(native_db.cleanup_jobs(older_than_seconds=0), 0)
+        self.assertIsNone(native_db.get_job(first['turns'][-1]['runId']))
+        after = self.session()
+        self.assertEqual(after['state'], 'idle')
+        self.assertIn('start', after['allowedActions'])
+        self.assertEqual(after['turns'], first['turns'])
+        self.page.reload()
+        expect(self.page.get_by_role('button', name='请求停止', exact=True)).not_to_be_visible()
+        self.post('/research/sessions/' + first['id'] + '/turns', {'text': '摘要故障前的背景'})
+        second = self.wait_for(lambda value: len(value['turns']) == 2 and value['state'] == 'idle')
+        self.assertEqual(second['turns'][-1]['status'], 'completed')
+        self.assertEqual(second['turns'][0], first['turns'][0])
+
     def test_own_source_remains_readable_and_context_survives_private_visibility(self):
         from agent_factory.application_content import ContentPublication, ContentSource
         content, sources = self.state['application_content'], self.state['research_peer_sources']

@@ -337,9 +337,11 @@ class ResearchSessions:
         if body.get('stopRequestId'):
             return bool(task['terminal'] and not runtime_custody_held(self.store, task['id'])
                 and not any(effect_unresolved(item, self.store) for item in self.store.effects(task['id'])))
-        ticket = self.runs.factory.bridge.native_db.get_job(task['run_id'])
-        return bool(ticket and ticket.get('id') == task['run_id'] and ticket.get('session_id') == self.store.native_session_id(task)
-            and ticket.get('user_id') == owner and ticket.get('status') in {'completed', 'failed', 'cancelled'}
+        ticket = self.runs.factory.bridge.native_db.get_job(task['run_id'], strict=True)
+        # Agno expires terminal queue tickets; the persisted terminal turn survives cleanup.
+        return bool((ticket is None or (ticket.get('id') == task['run_id']
+            and ticket.get('session_id') == self.store.native_session_id(task)
+            and ticket.get('user_id') == owner and ticket.get('status') in {'completed', 'failed', 'cancelled'}))
             and all(child['status'] in {'completed', 'failed', 'cancelled', 'canceled'}
                     for child in body.get('children', [])))
 

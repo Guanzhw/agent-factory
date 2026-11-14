@@ -84,6 +84,21 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
         self.turn['body']['stopRequestId'] = 'stop'
         self.assertFalse(self.session._safe('owner', self.turn))
 
+    async def test_expired_ticket_preserves_confirmed_completion(self):
+        await self.session._refresh('owner', 'session')
+        self.session.runs.factory.bridge.native_db.get_job.return_value = None
+        self.assertTrue(self.session._safe('owner', self.turn))
+        self.session.runs.factory.bridge.native_db.get_job.assert_called_with('run', strict=True)
+        self.session.runs.factory.bridge.native_db.get_job.side_effect = RuntimeError('database unavailable')
+        with self.assertRaises(RuntimeError):
+            self.session._safe('owner', self.turn)
+        self.session.runs.factory.bridge.native_db.get_job.side_effect = None
+        self.turn['body']['children'] = [{'status': 'running'}]
+        self.assertFalse(self.session._safe('owner', self.turn))
+        self.turn['body']['children'] = []
+        self.turn['body']['terminal'] = False
+        self.assertFalse(self.session._safe('owner', self.turn))
+
     async def test_unknown_does_not_block_model_but_queue_retry_still_does(self):
         row = self.session._row()
         self.session._execution = Mock(return_value=(row, self.turn, self.task))
