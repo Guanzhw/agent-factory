@@ -999,8 +999,8 @@ class ChatJourney(unittest.TestCase):
         expect(steps.get_by_text('先核对工具参数。', exact=True)).to_be_visible()
         text = steps.locator(':scope > ol').text_content()
         self.assertLess(text.index('先核对工具参数。'), text.index('即将写入顺序文件。'))
-        self.assertLess(text.index('即将写入顺序文件。'), text.index('修改文件'))
-        self.assertLess(text.index('修改文件'), text.index('收到工具结果后继续。'))
+        self.assertLess(text.index('即将写入顺序文件。'), text.index('写入文件'))
+        self.assertLess(text.index('写入文件'), text.index('收到工具结果后继续。'))
         self.assertNotIn('model_binding_selected', text)
         self.assertNotIn('native_accepted', text)
         self.assertNotIn('顺序验收', text)
@@ -1585,7 +1585,8 @@ class ChatJourney(unittest.TestCase):
                 self.assertEqual(started_events, [expected_call])
                 self.assertEqual(finished_events, [{**expected_call, 'outcome': 'completed', 'output': result}])
         executed = [event['data'] for event in events if event['type'] == 'tool_finished'
-                    and event['data'].get('toolName') == 'run_shell']
+                    and event['data'].get('toolName') == 'get_skill_script'
+                    and event['data'].get('arguments', {}).get('execute')]
         self.assertEqual([event['callId'] for event in executed], [call['id'] for call in calls[3:]])
         self.assertEqual(len([event for event in events if event['type'] in {'tool_started', 'tool_finished'}]), 12)
         from agno.exceptions import RunCancelledException
@@ -1681,15 +1682,15 @@ class ChatJourney(unittest.TestCase):
             self.assertEqual([e for e in self.state['store'].effects(original_task) if e['status'] == 'UNKNOWN'], unknown)
 
     def test_stop_skill_script(self):
-        self.stop_running('skills-stop-case', 'skills-started.txt')
+        self.stop_running('skills-stop-case', 'skills-started.txt', tool_name='get_skill_script')
 
     def test_stop_running_command(self):
         self.stop_running('stop-case', 'started.txt')
 
-    def stop_running(self, goal, marker):
+    def stop_running(self, goal, marker, tool_name='run_shell'):
         self.send(goal)
         snapshot = self.wait_for(lambda s: any(e['type'] == 'tool_started'
-            and e['data'].get('toolName') == 'run_shell' for e in s['turns'][-1]['events']))
+            and e['data'].get('toolName') == tool_name for e in s['turns'][-1]['events']))
         files = self.origin + '/api/factory/research/sessions/' + snapshot['id'] + '/files'
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
