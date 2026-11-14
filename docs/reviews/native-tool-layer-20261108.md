@@ -1,5 +1,7 @@
 # Remaining native tool layers
 
+> Historical review, superseded by the 2026-11-14 CodingTools refactor. Its decision to preserve old file/output behavior was not a project requirement. Current sessions use native CodingTools; the old wrappers and Agent directory boundary are removed. This record remains for context, not as implementation guidance.
+
 This review starts from `4c083feb57f6532fe51f4c7f2d7a08325f3d48f0` and the installed Agno 3.1.0. Defaults alone do not justify retaining a Factory implementation. The comparisons below include configurable alternatives and actual temporary-file/process probes.
 
 | Operation | Native option checked | Decision |

@@ -10,6 +10,8 @@ from pathlib import Path
 import secrets
 import re
 import socket
+import shlex
+import subprocess
 import sys
 import tempfile
 import threading
@@ -36,10 +38,15 @@ from agno.models.message import Message
 from fastapi import HTTPException
 from agent_factory_server.main import factory_state
 from agent_factory_server.research import create_app
-from research.session_tools import ResearchSessionTools, _directory, _open_file
+from research.session_files import _directory, _open_file
+from research.session_tools import ResearchSessionTools
 
 DOCUMENT = '状态：初稿\n' + '研究结果：文件内容保持完整。\n' * 2000
 PRESENTATION = "### 聊天呈现\n\n| 项目 | 状态 |\n| --- | --- |\n| Markdown | 可读 |\n\n```python\nprint('中文验收')  # " + 'long ' * 40 + '\n```\n\n```\n\n```\n\n' + '\n\n'.join(f'第 {i} 段：保留历史阅读位置，同时提供回到底部。' for i in range(60))
+
+
+def shell_command(argv):
+    return subprocess.list2cmdline(argv) if sys.platform == 'win32' else shlex.join(argv)
 
 
 class ModelEndpoint(BaseHTTPRequestHandler):
@@ -71,7 +78,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             reply = 'summary-history-answer-marker'
         elif '摘要失败后继续' in user_text:
             if not results:
-                tool, arguments = 'research_edit_file', {'path': 'summary-fallback.txt', 'old': '', 'new': 'Summary fallback works'}
+                tool, arguments = 'write_file', {'file_path': 'summary-fallback.txt', 'contents': 'Summary fallback works'}
             reply = '摘要失败后仍已完成文件写入。'
         elif request['model'] == 'summary-failure':
             reply = 'Tool output retained.'
@@ -79,7 +86,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             reply = '压缩摘要：数值42'
         elif user_text == '思考与内容顺序验收':
             if not results:
-                tool, arguments = 'research_edit_file', {'path': 'ordered.txt', 'old': '', 'new': '顺序工具结果'}
+                tool, arguments = 'write_file', {'file_path': 'ordered.txt', 'contents': '顺序工具结果'}
             reply = '顺序验收最终回答。'
         elif user_text.startswith('共享资料验收:'):
             if not results:
@@ -87,7 +94,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             reply = 'derived-source-marker: Shared evidence says source-secret-marker.'
         elif '独立文件继续' in user_text:
             if not results:
-                tool, arguments = 'research_edit_file', {'path': 'independent-source.txt', 'old': '', 'new': 'independent-source-result'}
+                tool, arguments = 'write_file', {'file_path': 'independent-source.txt', 'contents': 'independent-source-result'}
             reply = '独立文件已写入。'
         elif '切换模型后继续' in user_text:
             reply = '切换模型后完成。'
@@ -108,14 +115,14 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             reply = 'SSH 结果未确认，需要核对原命令。'
         elif '"goal": "child-only"' in system:
             if not results:
-                tool, arguments = 'research_edit_file', {'path': 'child.txt', 'old': '', 'new': '子助手已完成'}
+                tool, arguments = 'write_file', {'file_path': 'child.txt', 'contents': '子助手已完成'}
             reply = '子助手已完成'
         elif 'unknown-followup' in json.dumps(request['messages']):
             reply = '后续分析完成，原操作仍待核对。'
         elif 'unknown-journey-case' in system:
             steps = [('uncertain_cli', {'arguments': {}}),
-                     ('research_edit_file', {'path': 'independent.txt', 'old': '', 'new': '独立任务完成'}),
-                     ('research_read_file', {'path': 'independent.txt'})]
+                     ('write_file', {'file_path': 'independent.txt', 'contents': '独立任务完成'}),
+                     ('read_file', {'file_path': 'independent.txt'})]
             if len(results) < len(steps):
                 tool, arguments = steps[len(results)]
             reply = '独立工作已完成，原操作仍待核对。'
@@ -138,14 +145,26 @@ class ModelEndpoint(BaseHTTPRequestHandler):
                     'script_path': 'nested/runner.py', 'execute': True, 'args': ['resource'],
                     'cwd': json.loads(results[0][1])['source_path']}
             reply = '技能脚本完成，失败诊断已处理。'
+        elif user_text.startswith('原生文件工具验收:'):
+            paths = json.loads(user_text.split(':', 1)[1])
+            steps = [('read_file', {'file_path': paths['protocol']}),
+                     ('write_file', {'file_path': paths['output'], 'contents': 'native draft'}),
+                     ('edit_file', {'file_path': paths['output'], 'old_text': 'draft', 'new_text': 'reviewed'}),
+                     ('grep', {'path': paths['output'], 'pattern': 'reviewed'}),
+                     ('run_shell', {'command': shell_command([sys.executable, '-c',
+                         'import sys; print("native stdout"); print("native stderr", file=sys.stderr); sys.exit(7)'])}),
+                     ('read_file', {'file_path': paths['output']})]
+            if len(results) < len(steps):
+                tool, arguments = steps[len(results)]
+            reply = '外部研究文件已读取和修改，命令失败后仍能继续。'
         elif 'stop-case' in system:
             if not results:
-                tool, arguments = 'research_run', {'argv': [sys.executable, '-c',
-                    "import os,time; from pathlib import Path; Path('started.txt').write_text(str(os.getpid())); time.sleep(600)"]}
+                tool, arguments = 'run_shell', {'command': shell_command([sys.executable, '-c',
+                    "import os,time; from pathlib import Path; Path('started.txt').write_text(str(os.getpid())); time.sleep(600)"])}
         else:
             steps = [('demo_cli', {'arguments': {'mode': 'fail'}}), ('demo_cli', {'arguments': {'mode': 'ok'}}), ('ssh_servers', {}),
-                     ('research_edit_file', {'path': '结果.txt', 'old': '', 'new': DOCUMENT}),
-                     ('research_edit_file', {'path': '结果.txt', 'old': '状态：初稿', 'new': '状态：已复核'}),
+                     ('write_file', {'file_path': '结果.txt', 'contents': DOCUMENT}),
+                     ('edit_file', {'file_path': '结果.txt', 'old_text': '状态：初稿', 'new_text': '状态：已复核'}),
                      ('research_delegate', {'goal': 'child-only'})]
             if len(results) < len(steps):
                 tool, arguments = steps[len(results)]
@@ -542,8 +561,8 @@ class ChatJourney(unittest.TestCase):
                 return 200, responses_reply('文件已经生成，可以下载。')
             return 200, {'id': 'response-file', 'status': 'completed', 'output': [
                 {'type': 'function_call', 'id': 'fc_file', 'call_id': 'call_file', 'status': 'completed',
-                 'name': 'research_edit_file', 'arguments': json.dumps(
-                     {'path': 'responses.txt', 'old': '', 'new': 'Responses 文件交付'}, ensure_ascii=False)}]}
+                 'name': 'write_file', 'arguments': json.dumps(
+                     {'file_path': 'responses.txt', 'contents': 'Responses 文件交付'}, ensure_ascii=False)}]}
         server.answer = answer
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
@@ -568,6 +587,34 @@ class ChatJourney(unittest.TestCase):
         self.page.reload()
         expect(self.page.locator('.rs-turn')).to_contain_text('文件已经生成，可以下载。')
         self.assertEqual(len(server.requests), 2)
+
+    def test_native_coding_tools_use_external_research_files(self):
+        external = Path(self.folder.name) / ('external-research-' + uuid4().hex)
+        external.mkdir()
+        protocol = external / 'PROTOCOL.md'
+        protocol.write_text('External protocol marker: follow the experiment.', encoding='utf-8')
+        output = external / 'result.txt'
+        first_request = len(self.model.requests)
+        self.send('原生文件工具验收:' + json.dumps({'protocol': str(protocol), 'output': str(output)}))
+        snapshot = self.wait_for(lambda s: s['turns'][-1]['completedAt'] is not None)
+        self.assertEqual(snapshot['turns'][-1]['status'], 'completed', snapshot)
+        requests = self.model.requests[first_request:]
+        advertised = {tool['function']['name'] for tool in requests[0]['tools']}
+        self.assertTrue({'read_file', 'write_file', 'edit_file', 'grep', 'run_shell'} <= advertised)
+        self.assertFalse({'research_read_file', 'research_edit_file', 'research_search', 'research_run'} & advertised)
+        results = [message['content'] for message in requests[-1]['messages'] if message['role'] == 'tool']
+        self.assertEqual(len(results), 6)
+        self.assertIn('External protocol marker', results[0])
+        self.assertIn('native reviewed', results[3])
+        self.assertIn('Exit code: 7', results[4])
+        self.assertIn('native stdout', results[4])
+        self.assertIn('native stderr', results[4])
+        self.assertIn('native reviewed', results[5])
+        self.assertEqual(output.read_text(encoding='utf-8'), 'native reviewed')
+        expect(self.page.locator('.rs-turn')).to_contain_text('外部研究文件已读取和修改')
+        self.page.reload()
+        expect(self.page.locator('.rs-turn')).to_contain_text('外部研究文件已读取和修改')
+        self.assertEqual(len(self.model.requests), first_request + len(requests))
 
     def test_prequeue_failure_can_continue_without_duplicate_submission(self):
         sessions = self.state['research_sessions']
@@ -741,16 +788,16 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(len(turn['children']), 1)
         self.assertEqual(turn['children'][0]['status'], 'completed')
         self.assertIn('子助手已完成', turn['children'][0]['result'])
-        edits = [e for e in turn['events'] if e['type'] == 'research_tool_finished'
-                 and e['data'].get('toolName') == 'research_edit_file']
+        edits = [e for e in turn['events'] if e['type'] == 'tool_finished'
+                 and e['data'].get('toolName') in {'write_file', 'edit_file'}]
         self.assertTrue(edits, turn['events'])
         self.assertTrue(all(e['data']['outcome'] == 'completed' for e in edits), edits)
         # The next real HTTP model request must contain the tool's discovered server.
         self.assertTrue(any(server['reference'] in json.dumps(r['messages']) for r in self.model.requests))
         command = next(tool['function'] for request in reversed(self.model.requests)
-            for tool in request.get('tools', []) if tool['function']['name'] == 'research_run')
-        self.assertIn(sys.platform, command['description'])
-        self.assertIn(sys.executable, command['description'])
+            for tool in request.get('tools', []) if tool['function']['name'] == 'run_shell')
+        self.assertIn('command', command['parameters']['properties'])
+        self.assertNotIn('research_run', {tool['function']['name'] for tool in self.model.requests[-1]['tools']})
         self.assertTrue(any(e['type'] == 'model_content_delta' for e in turn['events']))
         requests_before_refresh = len(self.model.requests)
         self.page.reload()
@@ -917,9 +964,9 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(turn['result'], '顺序验收最终回答。')
         self.assertEqual(snapshot['model']['connectionRef'], model['connectionRef'])
         ordered = [event for event in turn['events'] if event['type'] in
-            {'model_reasoning_delta', 'model_content_delta', 'research_tool_started', 'research_tool_finished'}]
+            {'model_reasoning_delta', 'model_content_delta', 'tool_started', 'tool_finished'}]
         self.assertEqual([event['type'] for event in ordered], ['model_reasoning_delta', 'model_content_delta',
-            'research_tool_started', 'research_tool_finished', 'model_reasoning_delta', 'model_content_delta',
+            'tool_started', 'tool_finished', 'model_reasoning_delta', 'model_content_delta',
             'model_reasoning_delta', 'model_content_delta'])
         self.assertEqual([event['data']['text'] for event in ordered if 'text' in event['data']],
             ['先核对工具参数。', '即将写入顺序文件。', '收到工具结果后继续。', '顺序验收', '再核对最终输出。', '最终回答。'])
@@ -952,8 +999,8 @@ class ChatJourney(unittest.TestCase):
         expect(steps.get_by_text('先核对工具参数。', exact=True)).to_be_visible()
         text = steps.locator(':scope > ol').text_content()
         self.assertLess(text.index('先核对工具参数。'), text.index('即将写入顺序文件。'))
-        self.assertLess(text.index('即将写入顺序文件。'), text.index('修改文件'))
-        self.assertLess(text.index('修改文件'), text.index('收到工具结果后继续。'))
+        self.assertLess(text.index('即将写入顺序文件。'), text.index('写入文件'))
+        self.assertLess(text.index('写入文件'), text.index('收到工具结果后继续。'))
         self.assertNotIn('model_binding_selected', text)
         self.assertNotIn('native_accepted', text)
         self.assertNotIn('顺序验收', text)
@@ -1493,15 +1540,6 @@ class ChatJourney(unittest.TestCase):
             for path in ('../outside', '/etc/passwd', '.', '..'):
                 with self.subTest(path=path), self.assertRaises(ValueError):
                     _open_file(parent, path)
-        if sys.platform == 'win32':
-            root = Path(self.folder.name) / 'directory-lock'
-            root.mkdir()
-            ResearchSessionTools._edit(root, {'path': '中文.txt', 'old': '', 'new': 'before'})
-            ResearchSessionTools._edit(root, {'path': '中文.txt', 'old': 'before', 'new': 'after'})
-            self.assertEqual((root / '中文.txt').read_text(encoding='utf-8'), 'after')
-            with _directory(root), self.assertRaises(OSError) as blocked:
-                root.rename(root.with_name('directory-moved'))
-            self.assertEqual(blocked.exception.winerror, 32)
 
     def test_external_skill_resources_and_long_script(self):
         first_request = len(self.model.requests)
@@ -1519,17 +1557,19 @@ class ChatJourney(unittest.TestCase):
         self.assertIn('references/nested/guide.md', results[0])
         self.assertIn('Nested reference marker: 42.', results[1])
         self.assertIn('time.sleep(31)', results[2])
-        failed, succeeded = (ast.literal_eval(value) for value in results[3:5])
-        self.assertEqual(failed['exitCode'], 7)
-        self.assertEqual(failed['stderr'], 'skill diagnostic' + os.linesep)
+        failed, succeeded = results[3:5]
+        self.assertIn('Exit code: 7', failed)
+        self.assertIn('skill diagnostic', failed)
         workspace = self.state['store'].research_sessions.workspace(self.owner, snapshot['id'])
-        self.assertEqual(json.loads(failed['stdout']), {'args': ['argument with spaces', '中文'], 'cwd': str(workspace)})
-        self.assertEqual(succeeded['exitCode'], 0)
+        def script_result(output):
+            return json.loads(next(line for line in output.splitlines() if line.startswith('{')))
+        self.assertEqual(script_result(failed), {'args': ['argument with spaces', '中文'], 'cwd': str(workspace)})
+        self.assertIn('Exit code: 0', succeeded)
         expected = {'args': ['argument with spaces', '中文'], 'cwd': str(workspace / 'skill-work'), 'finished': True, 'optimize': 1}
-        self.assertEqual(json.loads(succeeded['stdout']), expected)
-        resource = ast.literal_eval(results[5])
-        self.assertEqual(resource['exitCode'], 0)
-        self.assertEqual(json.loads(resource['stdout']), {'asset': 'External skill asset: 73.\n',
+        self.assertEqual(script_result(succeeded), expected)
+        resource = results[5]
+        self.assertIn('Exit code: 0', resource)
+        self.assertEqual(script_result(resource), {'asset': 'External skill asset: 73.\n',
             'cwd': json.loads(results[0])['source_path']})
         calls = [call for message in final for call in message.get('tool_calls', [])]
         self.assertEqual(len(calls), 6)
@@ -1544,10 +1584,11 @@ class ChatJourney(unittest.TestCase):
                                  'arguments': json.loads(call['function']['arguments'])}
                 self.assertEqual(started_events, [expected_call])
                 self.assertEqual(finished_events, [{**expected_call, 'outcome': 'completed', 'output': result}])
-        executed = [event['data'] for event in events if event['type'] == 'research_tool_finished'
-                    and event['data'].get('toolName') == 'research_run']
+        executed = [event['data'] for event in events if event['type'] == 'tool_finished'
+                    and event['data'].get('toolName') == 'get_skill_script'
+                    and event['data'].get('arguments', {}).get('execute')]
         self.assertEqual([event['callId'] for event in executed], [call['id'] for call in calls[3:]])
-        self.assertEqual(len([event for event in events if event['type'] in {'tool_started', 'tool_finished'}]), 6)
+        self.assertEqual(len([event for event in events if event['type'] in {'tool_started', 'tool_finished'}]), 12)
         from agno.exceptions import RunCancelledException
         from agno.run import RunContext
         from agno.tools.function import FunctionCall
@@ -1641,15 +1682,15 @@ class ChatJourney(unittest.TestCase):
             self.assertEqual([e for e in self.state['store'].effects(original_task) if e['status'] == 'UNKNOWN'], unknown)
 
     def test_stop_skill_script(self):
-        self.stop_running('skills-stop-case', 'skills-started.txt')
+        self.stop_running('skills-stop-case', 'skills-started.txt', tool_name='get_skill_script')
 
     def test_stop_running_command(self):
         self.stop_running('stop-case', 'started.txt')
 
-    def stop_running(self, goal, marker):
+    def stop_running(self, goal, marker, tool_name='run_shell'):
         self.send(goal)
-        snapshot = self.wait_for(lambda s: any(e['type'] == 'research_tool_started'
-            for e in s['turns'][-1]['events']))
+        snapshot = self.wait_for(lambda s: any(e['type'] == 'tool_started'
+            and e['data'].get('toolName') == tool_name for e in s['turns'][-1]['events']))
         files = self.origin + '/api/factory/research/sessions/' + snapshot['id'] + '/files'
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:

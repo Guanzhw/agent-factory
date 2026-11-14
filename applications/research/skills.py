@@ -50,7 +50,7 @@ class ResearchSkills(Skills):
 
     def _read_event(self, fc):
         arguments = fc.arguments or {}
-        # Executed scripts already have research_run events with this call ID.
+        # Executed scripts record their own events with this call ID.
         if fc.function.name == 'get_skill_script':
             try:
                 execute = TypeAdapter(bool).validate_python(arguments.get('execute', False))
@@ -73,7 +73,7 @@ class ResearchSkills(Skills):
             if fc.result is not None or any(
                 item['data'].get('callId') == fc.call_id
                 for item in store.events(store.task_for_context(run_context)["id"])
-                if item['type'] in {'research_tool_started', 'research_tool_finished'}
+                if item['type'] in {'tool_started', 'tool_finished'}
             ):
                 return
             event = {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}}
@@ -127,8 +127,15 @@ class ResearchSkills(Skills):
             if prefix:
                 interpreter = Path(prefix[0]).name if prefix[0].startswith('/') else prefix[0]
                 prefix = [*get_interpreter_command(interpreter), *prefix[1:]]
-        command = self.tools._function(self.tools.sessions.store, run_context, 'research_run')
-        command._run_context = run_context
-        call = FunctionCall(function=command, call_id=fc.call_id)
-        return await command.entrypoint(run_context=run_context, fc=call,
-            argv=[*prefix, str(script), *(args or [])], cwd=cwd)
+        coding = self.tools.coding(run_context)
+        argv = [*prefix, str(script), *(args or [])]
+        directory = Path(cwd)
+        if not directory.is_absolute():
+            directory = coding.base_dir / directory
+        # Script args are data; never pass them through a shell parser.
+        event = {'toolName': 'get_skill_script', 'callId': fc.call_id, 'arguments': fc.arguments or {}}
+        self.tools.sessions.store.event(run_context.run_id, 'tool_started', '开始执行技能脚本', event)
+        output = await coding._run_command(argv[0], argv[1:], cwd=directory)
+        self.tools.sessions.store.event(run_context.run_id, 'tool_finished', '技能脚本返回结果',
+            {**event, 'outcome': 'completed', 'output': output})
+        return output

@@ -1,5 +1,11 @@
 # Development checks
 
+## Native coding tools refactor on 2026-11-14
+
+Sessions now register Agno 3.1 CodingTools for read/write/edit/grep/find/ls/run_shell. The old research_* basic tools, staging/hash receipts and Agent directory boundary are deleted. Existing session workspaces and authenticated file-download boundaries are unchanged. Only command cancellation/process-tree cleanup and an external-directory find bug require adaptation; skill scripts pass argv directly.
+
+The focused file/process/skill suite passes 11 tests on Linux; one real cmd.exe smoke runs in the new Windows CI job. Tests exercise external absolute research paths, useful file errors, nonzero command output, saved long output, Stop, literal script arguments and Windows command-line construction. Frontend lint/typecheck/build and Ruff pass. Cloud Chromium cannot start because this execution environment rejects its local sockets; full browser/native-queue acceptance remains required in CI. Acetamido was offline during this change, so no local deployment or user experiment was altered.
+
 ## Completed sessions after native queue retention on 2026-11-14
 
 The local database had no remaining native queue tickets, while ten historical sessions retained confirmed terminal turns. Requiring a ticket on every read incorrectly changed these conversations to running and prevented a new turn. Agno removes terminal tickets through its normal retention cleanup. Session continuation now preserves previously confirmed terminal turns when their ticket has expired; an existing active ticket, active child, unconfirmed turn or pending Stop still follows the existing checks. No stored history is rewritten.

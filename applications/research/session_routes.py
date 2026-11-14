@@ -14,7 +14,7 @@ from starlette.background import BackgroundTask
 from agent_factory.application_content import ObjectId
 from .projects import Reference, RequestId
 from .session_stream import changes, install_notifications, session_updates
-from .session_tools import _directory, _open_file, _windows_path, _workspace_parts
+from .session_files import _directory, _open_file, _windows_path, _workspace_parts
 
 
 # openai/codex 0ed34eb9: protocol/src/user_input.rs::MAX_USER_INPUT_TEXT_CHARS.

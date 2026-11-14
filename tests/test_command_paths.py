@@ -1,100 +1,100 @@
-"""Real local commands keep output and respond to Stop in long session paths."""
+"""Native coding tools read real research paths, preserve failures, and stop commands."""
 import asyncio
 import os
 from pathlib import Path
-import shutil
+import shlex
+import subprocess
 import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
 
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
 from agent_factory._personal_cli_process import run_cli_process
 from agent_factory.personal_cli import MemberCliAdapter
-from agent_factory.personal_tool_contract import ToolDescriptor, ToolInvocation, ToolInvocationError
-from test_tool_unknown import Effects, call
-from research.session_tools import ResearchSessionTools, _directory, _open_file, _windows_path
+from agent_factory.personal_tool_contract import ToolDescriptor, ToolInvocation
+from research.session_tools import ResearchSessionTools
+
+
+def shell_command(argv):
+    return subprocess.list2cmdline(argv) if sys.platform == 'win32' else shlex.join(argv)
 
 
 class CommandPaths(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        folder = tempfile.TemporaryDirectory(prefix='factory-command-path-')
+        folder = tempfile.TemporaryDirectory(prefix='factory-native-coding-')
         self.addCleanup(folder.cleanup)
-        root = Path(folder.name)
-        self.addCleanup(lambda: shutil.rmtree(_windows_path(root) if sys.platform == 'win32' else root))
-        self.workspace = root / ('x' * (240 - len(str(root)) - 1))
-        self.workspace.mkdir()
-        self.tools = ResearchSessionTools(workspace_root=self.workspace, host_commands=True)
+        self.workspace = Path(folder.name)
+        self.stopped = False
+        def authorize(*_):
+            if self.stopped:
+                raise RunCancelledException('User stopped')
+            return {'ownerId': 'owner', 'id': 'session'}
+        self.tools = ResearchSessionTools(workspace_root=self.workspace)
+        self.tools.sessions = SimpleNamespace(authorize_tool=authorize)
+        self.coding = self.tools.coding(RunContext(user_id='owner', session_id='session', run_id='run'))
 
-    async def test_long_command_output_exit7_and_native_file_read(self):
-        for code in (0, 7):
-            result = await self.tools._run(self.workspace, {'argv': [sys.executable, '-c',
-                'import sys;print("long command output");print("diagnostic",file=sys.stderr);sys.exit(int(sys.argv[1]))',
-                str(code)]}, lambda: None, {})
-            self.assertEqual((result['exitCode'], result['stdout'], result['stderr'], result['stopped']),
-                             (code, 'long command output\r\n' if sys.platform == 'win32' else 'long command output\n',
-                              'diagnostic\r\n' if sys.platform == 'win32' else 'diagnostic\n', True))
-        expected = ('x' * 50000 + ('\r\n' if sys.platform == 'win32' else '\n')).encode()
-        result = await self.tools._run(self.workspace, {'argv': [sys.executable, '-c', 'print("x"*50000)'],
-            'max_output_tokens': 10}, lambda: None, {})
-        self.assertTrue(result['truncated'])
-        relative = Path(result['stdoutPath'])
-        self.assertFalse(relative.is_absolute())
-        self.assertGreater(len(str(self.workspace / relative)), 260)
-        with _directory(self.workspace, relative.parts[:-1]) as parent:
-            with os.fdopen(_open_file(parent, relative.name), 'rb') as stream:
-                self.assertEqual(stream.read(), expected)
+    async def test_find_external_research_directory(self):
+        target = self.workspace / 'external'
+        target.mkdir()
+        (target / 'PROTOCOL.md').write_text('research protocol')
+        self.assertEqual(self.coding.find('*.md', path=str(target)), 'PROTOCOL.md')
 
-    async def test_stop_reaps_actual_long_path_command(self):
+    async def test_native_absolute_read_edit_write_and_errors(self):
+        # Outside the default session cwd, as in the user's PROTOCOL.md failure.
+        target = self.workspace / 'PROTOCOL.md'
+        self.assertIn('Wrote', self.coding.write_file(str(target), 'one one'))
+        self.assertIn('one one', self.coding.read_file(str(target)))
+        self.assertIn('Error', self.coding.edit_file(str(target), 'missing', 'two'))
+        self.assertIn('Error', self.coding.edit_file(str(target), 'one', 'two'))
+        self.assertEqual(target.read_text(), 'one one')
+        self.coding.edit_file(str(target), 'one one', 'two')
+        self.assertEqual(target.read_text(), 'two')
+        self.assertIn('Error', self.coding.read_file(str(target.with_name('missing'))))
+        self.assertTrue({'read_file', 'edit_file', 'write_file', 'grep', 'run_shell'} <= set(self.tools.available_tools))
+        self.assertNotIn('research_read_file', self.tools.available_tools)
+
+    async def test_shell_failure_preserves_output_and_full_output_is_readable(self):
+        result = await self.coding.run_shell(shell_command([sys.executable, '-c',
+            'import sys;print("output");print("diagnostic",file=sys.stderr);sys.exit(7)']))
+        self.assertIn('Exit code: 7', result)
+        self.assertIn('output', result)
+        self.assertIn('diagnostic', result)
+        self.coding.max_bytes = 100
+        result = await self.coding.run_shell(shell_command([sys.executable, '-c', 'print("x"*10000)']))
+        path = result.split('Full output saved to: ')[1].split(']')[0]
+        self.assertEqual(len(Path(path).read_text().strip()), 10000)
+        self.assertNotIn('outside', self.coding.read_file(path))
+
+    async def test_stop_reaps_actual_command(self):
         pid_file = self.workspace / 'pid.txt'
-        stopped = False
-        def guard():
-            if stopped:
-                raise RunCancelledException('synthetic user Stop')
-        task = asyncio.create_task(self.tools._run(self.workspace, {'argv': [sys.executable, '-c',
+        task = asyncio.create_task(self.coding.run_shell(shell_command([sys.executable, '-c',
             'import os,sys,time;from pathlib import Path;Path(sys.argv[1]).write_text(str(os.getpid()));time.sleep(60)',
-            str(pid_file)]}, guard, {}))
+            str(pid_file)])))
         async def cleanup():
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         self.addAsyncCleanup(cleanup)
-        async with asyncio.timeout(5):
+        async with asyncio.timeout(10):
             while not pid_file.exists():
                 await asyncio.sleep(.01)
         pid = int(pid_file.read_text())
-        handle = None
+        self.stopped = True
+        with self.assertRaises(RunCancelledException):
+            await task
         if sys.platform == 'win32':
             import win32api
             import win32con
             import win32event
-            handle = win32api.OpenProcess(win32con.SYNCHRONIZE, False, pid)
+            try:
+                handle = win32api.OpenProcess(win32con.SYNCHRONIZE, False, pid)
+            except Exception:
+                return
             self.addCleanup(handle.Close)
-        stopped = True
-        with self.assertRaises(ToolInvocationError) as error:
-            await task
-        self.assertEqual(error.exception.outcome, 'cancelled')
-        self.assertTrue(error.exception.stopped)
-        if handle is not None:
             self.assertEqual(win32event.WaitForSingleObject(handle, 5000), win32con.WAIT_OBJECT_0)
-        else:
-            with self.assertRaises(ProcessLookupError):
-                os.kill(pid, 0)
-
-    async def test_output_preparation_failure_does_not_dispatch_or_keep_directory_handles(self):
-        process = AsyncMock()
-        with (patch('research.session_tools.tempfile.mkdtemp', side_effect=OSError('synthetic storage failure')),
-                patch('research.session_tools.run_cli_process', process)):
-            with self.assertRaises(ToolInvocationError) as error:
-                await self.tools._run(self.workspace, {'argv': [sys.executable, '-c', 'print("unused")']}, lambda: None, {})
-        self.assertEqual(error.exception.code, 'RESEARCH_COMMAND_OUTPUT_UNAVAILABLE')
-        self.assertEqual(error.exception.outcome, 'failed')
-        self.assertTrue(error.exception.stopped)
-        process.assert_not_awaited()
-        renamed = self.workspace.with_name(self.workspace.name + '-renamed')
-        self.workspace.rename(renamed)
-        renamed.rename(self.workspace)
+        elif Path(f'/proc/{pid}/stat').exists():
+            self.assertEqual(Path(f'/proc/{pid}/stat').read_text().split(') ')[1][0], 'Z')
 
     async def test_personal_cli_runs_with_asyncio_debug_enabled(self):
         self.assertTrue(asyncio.get_running_loop().get_debug())
@@ -117,111 +117,3 @@ class CommandPaths(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((result.returncode, result.stdout, result.stderr), (7, b'', b''))
         self.assertEqual(chunks, {'stdout': b'x' * 100000, 'stderr': b'diagnostic'})
         self.assertTrue(result.stopped)
-
-    async def test_native_edit_diagnostic_allows_correction_and_read(self):
-        with tempfile.TemporaryDirectory() as root:
-            store = Effects()
-            context = RunContext(run_id='run', session_id='task', user_id='owner')
-            tools = ResearchSessionTools(workspace_root=Path(root))
-            tools.sessions = SimpleNamespace(store=store, authorize_tool=lambda *_:
-                {'ownerId': 'owner', 'id': 'session', 'turnId': 'turn'})
-            edit = tools._function(store, context, 'research_edit_file')
-            read = tools._function(store, context, 'research_read_file')
-            await call(edit, context, 'create', path='note.txt', old='', new='one one')
-            missing = await call(edit, context, 'missing', path='note.txt', old='missing', new='two')
-            self.assertEqual(missing['outcome'], 'failed')
-            self.assertIn('old_str not found', missing['message'])
-            ambiguous = await call(edit, context, 'ambiguous', path='note.txt', old='one', new='two')
-            self.assertEqual(ambiguous['outcome'], 'failed')
-            self.assertIn('matches 2 times', ambiguous['message'])
-            self.assertEqual((await call(read, context, 'unchanged', path='note.txt'))['text'], 'one one')
-            await call(edit, context, 'corrected', path='note.txt', old='one one', new='two')
-            self.assertEqual((await call(read, context, 'read', path='note.txt'))['text'], 'two')
-
-    async def test_native_edits_preserve_exact_names_and_unrelated_temp_files(self):
-        root = self.workspace
-        (root / 'A.txt').write_text('ASCII', encoding='utf-8')
-        (root / 'Ａ.txt').write_bytes(b'one\r\ntwo\r\n')
-        (root / 'Ａ.txt.tmp').write_text('unrelated material', encoding='utf-8')
-        def read(path):
-            return self.tools._files(root, 'research_read_file', {'path': path})['text']
-        self.assertEqual(read('Ａ.txt'), 'one\r\ntwo\r\n')
-        self.tools._edit(root, {'path': 'Ａ.txt', 'old': 'one\r\ntwo', 'new': 'edited\ntext'})
-        self.assertEqual(read('Ａ.txt'), ('edited\ntext\n').replace('\n', os.linesep))
-        self.assertEqual(read('A.txt'), 'ASCII')
-        self.assertEqual(read('Ａ.txt.tmp'), 'unrelated material')
-        (root / 'new.txt.tmp').write_text('keep me', encoding='utf-8')
-        self.tools._edit(root, {'path': 'new.txt', 'old': '', 'new': 'created'})
-        self.assertEqual(read('new.txt.tmp'), 'keep me')
-        with self.assertRaises(ToolInvocationError) as error:
-            self.tools._edit(root, {'path': 'new.txt', 'old': '', 'new': 'must not overwrite'})
-        self.assertEqual(error.exception.outcome, 'failed')
-        self.assertEqual(read('new.txt'), 'created')
-        self.assertEqual({p.name for p in root.iterdir()}, {'A.txt', 'Ａ.txt', 'Ａ.txt.tmp', 'new.txt', 'new.txt.tmp'})
-
-    @unittest.skipUnless(sys.platform == 'win32', 'Win32 missing-file and sharing errors')
-    async def test_windows_new_file_creation_preserves_locked_existing_file(self):
-        import win32con
-        import win32file
-        with _directory(self.workspace) as parent:
-            with self.assertRaises(FileNotFoundError):
-                _open_file(parent, 'new.txt')
-        result = self.tools._edit(self.workspace, {'path': 'new.txt', 'old': '', 'new': 'created'})
-        self.assertTrue(result['created'])
-        target = self.workspace / 'new.txt'
-        handle = win32file.CreateFile(str(target), win32con.GENERIC_READ, 0, None,
-            win32con.OPEN_EXISTING, win32con.FILE_ATTRIBUTE_NORMAL, None)
-        try:
-            with self.assertRaises(ToolInvocationError) as error:
-                self.tools._edit(self.workspace, {'path': 'new.txt', 'old': '', 'new': 'replacement'})
-            self.assertEqual(error.exception.code, 'RESEARCH_EDIT_TARGET_INVALID')
-        finally:
-            handle.Close()
-        self.assertEqual(target.read_text(encoding='utf-8'), 'created')
-
-    @unittest.skipIf(sys.platform == 'win32', 'Symlink creation needs separately available Windows privileges')
-    async def test_native_edit_does_not_follow_unrelated_temp_symlink(self):
-        root = self.workspace
-        outside = root.parent / 'outside.txt'
-        outside.write_text('outside material', encoding='utf-8')
-        (root / 'note.txt').write_text('before', encoding='utf-8')
-        (root / 'note.txt.tmp').symlink_to(outside)
-        self.tools._edit(root, {'path': 'note.txt', 'old': 'before', 'new': 'after'})
-        self.assertEqual((root / 'note.txt').read_text(encoding='utf-8'), 'after')
-        self.assertFalse((root / 'note.txt').is_symlink())
-        self.assertEqual(outside.read_text(encoding='utf-8'), 'outside material')
-        self.assertTrue((root / 'note.txt.tmp').is_symlink())
-
-    async def test_new_file_does_not_overwrite_a_concurrent_creation(self):
-        from agno.tools.workspace import Workspace
-        original = Workspace.write_file
-        target = self.workspace / 'concurrent.txt'
-        def concurrent_write(toolkit, *args, **kwargs):
-            result = original(toolkit, *args, **kwargs)
-            target.write_text('other writer', encoding='utf-8')
-            return result
-        with patch.object(Workspace, 'write_file', concurrent_write), self.assertRaises(ToolInvocationError) as error:
-            self.tools._edit(self.workspace, {'path': 'concurrent.txt', 'old': '', 'new': 'new content'})
-        self.assertEqual(error.exception.outcome, 'failed')
-        self.assertEqual(target.read_text(encoding='utf-8'), 'other writer')
-        self.assertEqual([p.name for p in self.workspace.iterdir()], ['concurrent.txt'])
-
-    @unittest.skipIf(sys.platform == 'win32', 'Windows directory handles already deny ancestor rename')
-    async def test_edit_keeps_held_directory_when_its_name_is_replaced(self):
-        from agno.tools.workspace import Workspace
-        root = self.workspace
-        parent = root / 'sub'
-        parent.mkdir()
-        (parent / 'note.txt').write_text('owner-content', encoding='utf-8')
-        outside = root.parent / 'outside'
-        outside.mkdir()
-        original = Workspace.edit_file
-        def renamed_parent(toolkit, *args, **kwargs):
-            parent.rename(root / 'held-sub')
-            parent.symlink_to(outside, target_is_directory=True)
-            return original(toolkit, *args, **kwargs)
-        with patch.object(Workspace, 'edit_file', renamed_parent):
-            self.tools._edit(root, {'path': 'sub/note.txt', 'old': 'owner-content', 'new': 'edited'})
-        self.assertEqual((root / 'held-sub' / 'note.txt').read_text(encoding='utf-8'), 'edited')
-        self.assertEqual(list(outside.iterdir()), [])
-        self.assertEqual([p.name for p in (root / 'held-sub').iterdir()], ['note.txt'])
