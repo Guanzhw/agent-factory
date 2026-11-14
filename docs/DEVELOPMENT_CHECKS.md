@@ -1,5 +1,11 @@
 # Development checks
 
+## Completed sessions after native queue retention on 2026-11-14
+
+The local database had no remaining native queue tickets, while ten historical sessions retained confirmed terminal turns. Requiring a ticket on every read incorrectly changed these conversations to running and prevented a new turn. Agno removes terminal tickets through its normal retention cleanup. Session continuation now preserves previously confirmed terminal turns when their ticket has expired; an existing active ticket, active child, unconfirmed turn or pending Stop still follows the existing checks. No stored history is rewritten.
+
+Seven focused session tests pass. A disposable PostgreSQL/native-queue/Chromium journey completes a turn, invokes native ticket cleanup, verifies unchanged history and idle state, refreshes without the active-run Stop button, then completes a second turn. This uses a local scripted model, not a paid provider. Ruff and whitespace checks pass.
+
 ## Windows session notification regression on 2026-11-11
 
 The deployed Windows Proactor service returned a normal session detail but HTTP 500 on its event endpoint: psycopg's async connection rejects Proactor. Threaded synchronous LISTEN waits preserve the subprocess-capable loop. Three added PostgreSQL cases cover notification delivery, repeated subscription cleanup, cancellation while connecting, and AnyIO request cancellation. All 13 streaming cases pass in 9.621 seconds against a disposable database on the default Windows loop. Independent review identified and verified the cleanup shield required by AnyIO cancellation.
