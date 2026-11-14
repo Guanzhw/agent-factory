@@ -243,13 +243,15 @@ class ResearchTriggers:
         from .session_routes import SessionTurn
         payload = deepcopy(event['payload'])
         source_ids = []
+        attribution = {}
         if event['source'] == 'research':
             publication = self.sessions.content.read(owner, payload['contentId'])
             source_ids = [payload['contentId']]
-            payload['content'] = publication['content']
+            attribution = {'contentId': publication['id'], 'ownerId': publication['ownerId']}
+            payload.update(attribution, content=publication['content'])
         origin = {'kind': 'trigger', 'triggerId': trigger['id'], 'triggerTitle': trigger['body']['title'],
             'eventId': event['eventId'], 'source': event['source'], 'eventType': event['eventType'],
-            **({'contentId': payload['contentId']} if source_ids else {})}
+            **attribution}
         text = trigger['body']['instruction'] + '\n\nTrigger event:\n' + json.dumps(
             {'source': event['source'], 'eventType': event['eventType'], 'payload': payload}, ensure_ascii=False)
         request = SessionTurn(requestId='trigger:' + delivery['id'], text=text)

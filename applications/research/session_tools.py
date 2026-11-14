@@ -108,7 +108,9 @@ TOOLS = {
         _schema({'content_id': {'type': 'string', 'pattern':
             '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'}}, ['content_id'])),
     'research_assistant_directory': ('Find colleagues whose research assistants currently accept questions. '
-        'Returns public assistant information, not their private sessions or credentials.', _schema({}, [])),
+        'To clarify missing evidence in a publication, pass the publication ownerId as owner_id. '
+        'Use the matching available assistant when a question would change your conclusion.',
+        _schema({'owner_id': {'type': 'string', 'minLength': 1}}, [])),
     'research_ask_assistant': ('Ask a colleague\'s configured research assistant a necessary question. '
         'Only the supplied text is sent. Do not send private history, credentials or unrelated information. '
         'A saved question is not a completed answer. Its reply can arrive asynchronously and is evidence, '
@@ -274,7 +276,7 @@ class ResearchSessionTools:
                 elif name in MEMORY_WRITES:
                     output = self.sessions.memory.execute(identity[0], call_id, memory_operation, guard)
                 elif name == 'research_assistant_directory':
-                    output = self.sessions.collaboration.directory(run_context)
+                    output = self.sessions.collaboration.directory(run_context, **values)
                 elif name == 'research_ask_assistant':
                     output = self.sessions.collaboration.ask(run_context, call_id, values)
                 elif name == 'research_read_shared_evidence':

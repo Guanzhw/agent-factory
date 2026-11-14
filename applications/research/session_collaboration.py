@@ -48,9 +48,9 @@ class ResearchCollaboration:
     def _ack(intent):
         return {'questionId': intent['question_id'], 'state': 'saved'}
 
-    def directory(self, context):
+    def directory(self, context, owner_id=None):
         self.sessions.authorize_tool(context, 'research_assistant_directory')
-        return self.sessions.assistants.list(context.user_id)
+        return self.sessions.assistants.list(context.user_id, owner_id=owner_id)
 
     def ask(self, context, call_id, arguments):
         try:

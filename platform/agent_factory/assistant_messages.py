@@ -22,6 +22,7 @@ class AssistantReply(BaseModel):
     model_config = ConfigDict(extra='forbid')
     text: str = Field(min_length=1)
     contentIds: list[ObjectId] = Field(default_factory=list)
+    citedContentIds: list[ObjectId] | None = None
 
 
 class AssistantMessages:
@@ -159,13 +160,14 @@ class AssistantMessages:
             for identifier in content_ids:
                 self.content.read(owner, identifier)
 
-    def reply_for_task(self, receiver, task_id, text, content_ids=()):
-        body = AssistantReply(text=text, contentIds=list(content_ids))
+    def reply_for_task(self, receiver, task_id, text, content_ids=(), *, cited_content_ids=None):
+        body = AssistantReply(text=text, contentIds=list(content_ids), citedContentIds=cited_content_ids)
         sources = sorted(set(body.contentIds))
+        cited = sorted(set(body.citedContentIds)) if body.citedContentIds is not None else None
         store = self.db.store
         with store.transaction() as conn:
             if store.engine.dialect.name == 'postgresql':
-                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
+                conn.exec_driver_sql("SELECT pg_advisory_xact_lock(hashtext('af_admission'))")
             with self.db.write() as conn:
                 original = self.message_for_task(receiver, task_id)
                 if original is None:
@@ -175,11 +177,12 @@ class AssistantMessages:
                 reply = message['reply']
                 if reply is not None:
                     if (reply['taskId'] != task_id or reply['text'] != body.text
-                            or reply['contentIds'] != sources):
+                            or reply['contentIds'] != sources or reply.get('citedContentIds') != cited):
                         raise HTTPException(409, 'ASSISTANT_REPLY_CONFLICT')
                 else:
                     conn.execute(self.messages.update().where(self.messages.c.id == message['id']).values(
-                        reply={'taskId': task_id, 'text': body.text, 'contentIds': sources, 'createdAt': now()}))
+                        reply={'taskId': task_id, 'text': body.text, 'contentIds': sources, 'createdAt': now(),
+                               **({'citedContentIds': cited} if cited is not None else {})}))
         return self.read(receiver, message['id'])
 
     def _reply_snapshot(self, message):
@@ -192,7 +195,8 @@ class AssistantMessages:
             if error.status_code not in {403, 404}:
                 raise
             return {'state': 'source_unavailable'}
-        return {'state': 'available', **{key: reply[key] for key in ('text', 'contentIds', 'createdAt')}}
+        return {'state': 'available', **{key: reply[key] for key in ('text', 'contentIds', 'createdAt')},
+                **({'citedContentIds': reply['citedContentIds']} if 'citedContentIds' in reply else {})}
 
     def _projection(self, message, reply):
         receipt = self._receipt(message)

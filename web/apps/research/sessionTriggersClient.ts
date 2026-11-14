@@ -5,7 +5,7 @@ export const triggerSourceLabels: Record<TriggerSource, string> = {
   research: '团队研究发布', external: '外部事件', cron: '定时',
 };
 export interface TriggerOrigin {
-  kind: 'trigger'; triggerId: string; triggerTitle: string; eventId: string; source: TriggerSource; eventType: string; contentId?: string;
+  kind: 'trigger'; triggerId: string; triggerTitle: string; eventId: string; source: TriggerSource; eventType: string; contentId?: string; ownerId?: string;
 }
 export interface SessionTrigger {
   id: string; sessionId: string; title: string; instruction: string; source: TriggerSource;
