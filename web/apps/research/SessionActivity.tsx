@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { IconChevronRight, IconCircleCheck, IconAlertCircle, IconClock } from '@tabler/icons-react';
+import { CopyButton } from './CopyButton.js';
 import { ResearchReply } from './ResearchReply.js';
 import type { SessionEvent, SessionTurn } from './researchSessionsClient.js';
 
@@ -116,15 +117,35 @@ function orderedSteps(events: SessionEvent[]) {
   return steps;
 }
 export function SessionActivity({ turn }: { turn: SessionTurn }) {
+  const messages = [...turn.messages].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+  const groups: ReturnType<typeof orderedSteps>[] = Array.from({ length: Math.max(1, messages.length) }, () => []);
+  const allSteps = orderedSteps([...turn.events].sort((a, b) => a.id - b.id));
+  const finalReply = allSteps.findLast(step => step.kind === 'message');
+  const finalResponseId = turn.result !== null && finalReply?.kind === 'message' ? finalReply.responseId : undefined;
+  for (const step of allSteps) {
+    // Keep a call's result with its start, even if a correction arrived while it ran.
+    const at = Date.parse(step.kind === 'tool' ? (step.start ?? step.event).createdAt : step.createdAt);
+    const index = Math.max(0, messages.findLastIndex(message => Date.parse(message.createdAt) <= at));
+    groups[index].push(step);
+  }
+  return groups.map((steps, index) => {
+    const message = messages[index];
+    return <Fragment key={message?.id ?? 'activity'}>
+      {message && <div className="rs-user-message"><div className={`rs-message rs-${message.kind}`}><span className={message.kind === 'correction' || turn.continuation ? 'rs-message-kind' : 'sr-only'}>{message.kind === 'correction' ? '你的纠正' : turn.continuation ? '自动继续指令' : '你的指令'}</span><p>{message.text}</p>{message.state === 'pending' && <small role="status">待纳入下一次模型请求</small>}</div><div className="rs-message-meta"><time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}</time><CopyButton text={message.text} label="复制用户消息"/></div></div>}
+      {(steps.length > 0 || index === groups.length - 1) && <ActivitySegment turn={turn} steps={steps} finalSegment={index === groups.length - 1} finalResponseId={finalResponseId}/>}
+    </Fragment>;
+  });
+}
+function ActivitySegment({ turn, steps, finalSegment, finalResponseId }: { turn: SessionTurn; steps: ReturnType<typeof orderedSteps>; finalSegment: boolean; finalResponseId?: string }) {
   const [now, setNow] = useState(Date.now);
-  const active = ['reserved', 'queued', 'running', 'waiting_approval', 'finalizing', 'canceling'].includes(turn.status);
+  const turnActive = ['reserved', 'queued', 'running', 'waiting_approval', 'finalizing', 'canceling'].includes(turn.status);
+  const active = finalSegment && turnActive;
   useEffect(() => {
     if (!active) return;
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [active]);
   const events = [...turn.events].sort((a, b) => a.id - b.id);
-  const steps = orderedSteps(events);
   const last = steps.at(-1);
   // DSH groups one response's reasoning separately from its accumulated answer.
   const responseId = last && last.kind !== 'tool' ? last.responseId : undefined;
@@ -138,20 +159,20 @@ export function SessionActivity({ turn }: { turn: SessionTurn }) {
   const seconds = Math.max(0, Math.floor((now - new Date(updatedAt).getTime()) / 1000));
   const elapsed = turn.completedAt ? Math.max(0, Math.round((Date.parse(turn.completedAt) - Date.parse(turn.createdAt)) / 1000)) : null;
   const duration = elapsed === null ? '' : elapsed < 60 ? `${elapsed}秒` : `${Math.floor(elapsed / 60)}分${elapsed % 60}秒`;
-  const liveText = turn.result === null ? reply.map(step => step.text).join('') : undefined;
+  const liveText = reply.filter(step => step.responseId !== finalResponseId).map(step => step.text).join('');
   const descriptions = [...new Set(process.map(step => step.kind === 'tool' ? activityName(step.event) : step.kind === 'thinking' ? '思考' : '阶段性消息'))];
   return <section className="rs-activity" aria-label={`第 ${turn.sequence} 轮行动与结果`}>
     {process.length > 0 ? <details className="rs-process" open={active}>
-    <summary><span className="rs-activity-current" role="status">{turn.status === 'completed' ? `已完成${duration ? `，用时 ${duration}` : ''}` : activitySummary(turn)}{failures > 0 && ` · ${failures} 项失败`}</span><IconChevronRight className="rs-disclosure" size={14}/></summary>
+    <summary><span className="rs-activity-current" role="status">{!finalSegment ? '执行过程' : turn.status === 'completed' ? `已完成${duration ? `，用时 ${duration}` : ''}` : activitySummary(turn)}{failures > 0 && ` · ${failures} 项失败`}</span><IconChevronRight className="rs-disclosure" size={14}/></summary>
     <details className="rs-process-steps" open><summary>{descriptions.join('、')} · {process.length} 个步骤<IconChevronRight className="rs-disclosure" size={14}/></summary>
-    <ol>{process.map(step => step.kind === 'tool' ? <ActionRecord key={step.id} event={step.event} start={step.start} active={active}/> : <li key={step.id} className={step.kind === 'thinking' ? 'rs-thinking-step' : 'rs-step-message'}>{step.kind === 'thinking' ? <details className="rs-thinking" open={active && step === last}><summary>思考<time>{new Date(step.createdAt).toLocaleTimeString('zh-CN')}</time><IconChevronRight className="rs-disclosure" size={14}/></summary><ResearchReply text={step.text}/></details> : <><small>阶段性消息 · {new Date(step.createdAt).toLocaleTimeString('zh-CN')}</small><ResearchReply text={step.text}/></>}</li>)}</ol>
+    <ol>{process.map(step => step.kind === 'tool' ? <ActionRecord key={step.id} event={step.event} start={step.start} active={turnActive}/> : <li key={step.id} className={step.kind === 'thinking' ? 'rs-thinking-step' : 'rs-step-message'}>{step.kind === 'thinking' ? <details className="rs-thinking" open={active && step === last}><summary>思考<time>{new Date(step.createdAt).toLocaleTimeString('zh-CN')}</time><IconChevronRight className="rs-disclosure" size={14}/></summary><ResearchReply text={step.text}/></details> : <><small>阶段性消息 · {new Date(step.createdAt).toLocaleTimeString('zh-CN')}</small><ResearchReply text={step.text}/></>}</li>)}</ol>
     </details></details> : active && <p className="rs-generating" role="status">{liveText ? '正在生成回答…' : activitySummary(turn)}</p>}
-    {!process.length && ['cancelled', 'canceled'].includes(turn.status) && <p role="status">{activitySummary(turn)}</p>}
-    {!process.length && (turn.status === 'unknown' || !turn.failure && ['failed', 'blocked'].includes(turn.status)) && <p role="alert">{activitySummary(turn)}</p>}
+    {finalSegment && !process.length && ['cancelled', 'canceled'].includes(turn.status) && <p role="status">{activitySummary(turn)}</p>}
+    {finalSegment && !process.length && (turn.status === 'unknown' || !turn.failure && ['failed', 'blocked'].includes(turn.status)) && <p role="alert">{activitySummary(turn)}</p>}
     {active && seconds >= 15 && <p className="rs-waiting" role="status">已有 {seconds} 秒未收到更新，正在等待执行端。</p>}
-    {liveText && <div className="rs-streaming-reply"><ResearchReply text={liveText}/><small>本次收到的部分回复</small></div>}
-    {children.some(child => ['failed', 'unknown', 'blocked'].includes(child.status)) && <p role="alert">子助手有未完成或未确认的结果，请查看子助手记录。</p>}
-    {hasUnconfirmedOperation(turn) && <p role="alert">原工具操作结果未知，需核对原任务，不要重发同一操作。</p>}
-    {turn.status === 'completed' && turn.result === null && <p className="rs-warning" role="alert">执行端已标记完成，但没有保存最终回答。</p>}
+    {liveText && <div className="rs-streaming-reply"><ResearchReply text={liveText}/>{active && <small>本次收到的部分回复</small>}</div>}
+    {finalSegment && children.some(child => ['failed', 'unknown', 'blocked'].includes(child.status)) && <p role="alert">子助手有未完成或未确认的结果，请查看子助手记录。</p>}
+    {finalSegment && hasUnconfirmedOperation(turn) && <p role="alert">原工具操作结果未知，需核对原任务，不要重发同一操作。</p>}
+    {finalSegment && turn.status === 'completed' && turn.result === null && <p className="rs-warning" role="alert">执行端已标记完成，但没有保存最终回答。</p>}
   </section>;
 }
