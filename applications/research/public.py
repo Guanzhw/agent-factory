@@ -62,3 +62,8 @@ def install(state, *, session_tools=None):
         sessions.discovery = ResearchDiscovery(sessions)
         state['research_discovery'] = sessions.discovery
         state['http_app'].include_router(discovery_router(state['auth'], sessions.discovery))
+
+        from .team_work import ResearchTeamWork, team_work_router
+        sessions.team_work = ResearchTeamWork(sessions)
+        state['research_team_work'] = sessions.team_work
+        state['http_app'].include_router(team_work_router(state['auth'], sessions.team_work))

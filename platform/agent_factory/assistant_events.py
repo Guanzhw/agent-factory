@@ -176,13 +176,14 @@ class AssistantEvents:
         self.content.read(subscription['owner_id'], value['contentId'])
         return endpoint
 
-    def emit_collaboration(self, conn, owner, message_id, origin_task_id):
+    def emit_collaboration(self, conn, owner, message_id, origin_task_id=None):
         if conn is None or conn is not self.store._connection.get():
             raise RuntimeError('Collaboration emit requires the current domain transaction')
         self.auth.require_member(owner)
         conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
         message = self.messages._row(conn, message_id)
-        self.store.task(origin_task_id, owner)
+        if origin_task_id is not None:
+            self.store.task(origin_task_id, owner)
         if message['sender_id'] != owner:
             raise HTTPException(404, 'ASSISTANT_MESSAGE_NOT_FOUND')
         value = {'kind': PRIVATE_COLLABORATION, 'messageId': message_id, 'originTaskId': origin_task_id}
@@ -204,7 +205,8 @@ class AssistantEvents:
         message = self.messages._row(conn, value['messageId'])
         if event['owner_id'] != message['sender_id']:
             raise HTTPException(409, 'ASSISTANT_COLLABORATION_BINDING_MISMATCH')
-        origin = self.store.task(value['originTaskId'], message['sender_id'])
+        origin = (self.store.task(value['originTaskId'], message['sender_id'])
+                  if value['originTaskId'] is not None else None)
         return message, origin
 
     def validate_private_admission(self, conn, owner, event_id, request_id, plan):
@@ -217,7 +219,7 @@ class AssistantEvents:
         if (owner == message['recipient_id']
                 and request_id == 'application-start:' + self.messages._request_id(message)):
             return
-        if owner != message['sender_id']:
+        if origin is None or owner != message['sender_id']:
             raise HTTPException(409, 'ASSISTANT_COLLABORATION_BINDING_MISMATCH')
         sessions = getattr(self.store, 'research_sessions', None)
         if sessions is None:
@@ -349,6 +351,9 @@ class AssistantEvents:
                 failure = error
             await asyncio.to_thread(self._finish_collaboration, event['id'], False, failure)
             if failure is not None or self.admission_stopping is not None and self.admission_stopping.is_set():
+                return
+            if origin is None:
+                await asyncio.to_thread(self._finish_collaboration, event['id'], True, None)
                 return
             sessions = getattr(self.store, 'research_sessions', None)
             if sessions is None:
