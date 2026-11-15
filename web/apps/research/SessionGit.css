@@ -1,0 +1,22 @@
+.rw-chat-shell .rs-detail-panel.rs-git-panel { width: min(1100px, calc(100vw - 32px)); max-width: none; }
+.rs-git { display: grid; gap: 16px; }
+.rs-git label { display: grid; gap: 6px; }
+.rs-git input, .rs-git textarea { width: 100%; box-sizing: border-box; }
+.rs-git-toolbar { display: flex; flex-wrap: wrap; gap: 8px; }
+.rs-git-paths { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; margin: 0; }
+.rs-git-paths dd { margin: 0; overflow-wrap: anywhere; }
+.rs-git-diff { overflow: auto; max-height: 55vh; border: 1px solid var(--border, #ddd); font: 12px/1.7 ui-monospace, monospace; }
+.rs-git-line { display: flex; width: max-content; min-width: 100%; }
+.rs-git-line code { white-space: pre; font: inherit; padding-right: 12px; }
+.rs-git-line button, .rs-git-numbers { display: inline-flex; flex: 0 0 84px; width: 84px; padding: 0 8px; margin-right: 10px; border: 0; border-radius: 0; color: inherit; background: #8881; font: inherit; }
+.rs-git-line button span { width: 50%; text-align: right; }
+.rs-git-line button:hover { background: #4477bb44; }
+.rs-git-add { background: #2c9b2820; }
+.rs-git-remove { background: #d4323220; }
+.rs-git-header { color: var(--text-muted, #777); }
+.rs-git-comment { border-left: 3px solid var(--border, #aaa); padding: 8px 12px; overflow-wrap: anywhere; }
+.rs-git-comment p { white-space: pre-wrap; }
+.rs-git-comment-form { display: grid; gap: 8px; }
+@media (max-width: 600px) { .rs-git-paths { grid-template-columns: 1fr; gap: 4px; } .rs-git-paths dd { margin-bottom: 8px; } }
+
+.rs-git-line:focus { outline: 2px solid var(--accent, #437ec5); outline-offset: -2px; }

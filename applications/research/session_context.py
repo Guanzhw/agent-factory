@@ -36,6 +36,13 @@ def additions(turn):
 
 def history_run(turn, native):
     body = turn['body']
+    if 'inheritedMessages' in body:
+        messages = [Message.model_validate(item) for item in body['inheritedMessages']]
+        known = {item.id for item in messages}
+        messages.extend(Message(id=item['id'], role='user', content=item['text'])
+            for item in body['messages'] if item['kind'] in {'correction', 'evidence'} and item['id'] not in known)
+        return RunOutput(run_id='research-turn:' + turn['id'], status=RunStatus.completed,
+            messages=messages)
     run = copy(native) if native is not None else RunOutput(run_id='research-turn:' + turn['id'],
         status=RunStatus.completed if body['status'] == 'completed' else RunStatus.error)
     run.messages = [item.model_copy(deep=True) for item in run.messages or []

@@ -36,6 +36,14 @@ def _schema(properties, required):
 
 
 TOOLS = {
+    'research_git_comment': ('Save an inline Git review finding on an actual diff line. '
+        'Use the reviewId from the reviewed patch, its repository-relative path, left for old lines '
+        'or right for new lines, and the exact line number. Findings are bound to this review turn\'s '
+        'original patch; another revision or non-diff lines are rejected.',
+        _schema({'reviewId': MEMORY_TEXT, 'path': MEMORY_TEXT,
+                 'side': {'type': 'string', 'enum': ['left', 'right']},
+                 'line': {'type': 'integer', 'minimum': 1}, 'text': MEMORY_TEXT},
+                ['reviewId', 'path', 'side', 'line', 'text'])),
     'research_route_discovery': ('Record the semantic decision for the current discovery publication. '
         'Ignore unrelated material, attach evidence to an existing session for the same question, '
         'or start new work for an independent question. The destination executes using your resources. '
@@ -172,7 +180,8 @@ class ResearchSessionTools:
             if name in RESEARCH_TOOLS else getattr(self.sessions, 'triggers', None) is not None
             if name in TRIGGER_TOOLS else getattr(self.sessions, 'team_work', None) is not None
             if name in TEAM_TOOLS else getattr(self.sessions, 'subagents', None) is not None
-            if name in {SPAWN, WAIT} else name == 'research_read_shared_evidence'
+            if name in {SPAWN, WAIT} else getattr(self.sessions, 'git_review', None) is not None
+            if name == 'research_git_comment' else name == 'research_read_shared_evidence'
             or self.workspace_root is not None)] + (['read_file', 'write_file', 'edit_file', 'grep', 'find', 'ls']
                 + (['run_shell'] if self.host_commands else []) if self.workspace_root is not None else [])
 
@@ -246,7 +255,7 @@ class ResearchSessionTools:
                     receipt = {'outcome': 'failed', 'stopped': True, 'code': error.code}
                     store.event(task_id, 'research_tool_finished', '记忆操作未执行', {**event, **receipt})
                     return self._receipt(receipt)
-            mutating = name in MEMORY_WRITES | RESEARCH_WRITES | TRIGGER_WRITES | TEAM_WRITES | {'research_ask_assistant'}
+            mutating = name in MEMORY_WRITES | RESEARCH_WRITES | TRIGGER_WRITES | TEAM_WRITES | {'research_ask_assistant', 'research_git_comment'}
             if mutating:
                 request = {'ownerId': identity[0], 'taskId': task_id, 'sessionId': execution['id'],
                     'turnId': execution['turnId'], 'toolName': name, 'callId': call_id, 'arguments': values}
@@ -258,6 +267,10 @@ class ResearchSessionTools:
                     guard()
                     return self._receipt(reservation.get('result'), **original)
                 if reservation['status'] != 'new':
+                    if name == 'research_git_comment':
+                        output = self.sessions.git_review.invoke(run_context, call_id, values)
+                        store.effect_complete(identity[2], key, {'outcome': 'completed', 'output': output})
+                        return output
                     if name == 'research_route_discovery':
                         output = self.sessions.discovery.decide(run_context, values)
                         store.effect_complete(identity[2], key, {'outcome': 'completed', 'output': output})
@@ -284,6 +297,12 @@ class ResearchSessionTools:
                 guard()
                 if name == 'research_find_memories':
                     output = self.sessions.memory.find(identity[0], values)
+                elif name == 'research_git_comment':
+                    try:
+                        output = self.sessions.git_review.invoke(run_context, call_id, values)
+                    except HTTPException as error:
+                        raise ToolInvocationError('RESEARCH_GIT_COMMENT_REJECTED', outcome='failed', stopped=True,
+                            output=str(error.detail)) from error
                 elif name in TRIGGER_TOOLS:
                     from .session_triggers import CreateTrigger
                     request_id = 'trigger:' + digest({'runId': identity[2], 'callId': call_id})
