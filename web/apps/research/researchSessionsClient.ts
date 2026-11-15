@@ -10,7 +10,7 @@ export interface SessionOptions {
   workspace: { configured: boolean; hostCommands: boolean; isolation: 'host-user-not-os-sandbox' };
   accounting: { tokenMetered: boolean; costMetered: boolean };
 }
-export interface SessionMessage { id: string; kind: 'instruction' | 'correction'; text: string; state: 'pending' | 'included'; createdAt: string; includedAt: string | null }
+export interface SessionMessage { id: string; kind: 'instruction' | 'correction' | 'evidence'; text: string; state: 'pending' | 'included'; createdAt: string; includedAt: string | null }
 export interface SessionEvent { id: number; jobId: string; type: string; message: string; data: Record<string, unknown>; createdAt: string }
 export interface SessionChild { childTaskId: string; runId: string | null; goal: string; status: string; result: string | null }
 export type SessionAssistantReply = { questionId: string; state: 'unavailable'; code: string } | {
@@ -43,7 +43,11 @@ export interface SessionSummary {
   allowedActions: ('start' | 'correct' | 'stop')[];
   blockReason: string | null; sharedSourceIds: string[];
 }
-export interface ResearchSession extends SessionSummary { turns: SessionTurn[] }
+export interface InputDelivery {
+  id: string; eventId: string; kind: 'evidence' | 'task'; state: string; createdAt: string;
+  adoptedAt?: string; turnId?: string; error?: string; provenance?: { contentId: string; ownerId: string; decisionId?: string };
+}
+export interface ResearchSession extends SessionSummary { turns: SessionTurn[]; deliveries?: InputDelivery[] }
 export type SessionAction = 'create' | 'turn' | 'correct' | 'stop';
 export interface SessionRequest {
   requestId: string; action: SessionAction; sessionId: string; turnId: string | null;

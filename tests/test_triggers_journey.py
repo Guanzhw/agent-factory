@@ -129,6 +129,53 @@ class TriggersJourney(unittest.TestCase):
         listing = self.context.request.get(self.origin + '/api/factory' + self.path).json()
         return next(item for item in listing['items'] if item['title'] == title)
 
+    def test_independent_event_waits_and_records_model_adoption(self):
+        from pathlib import Path
+        import sys
+        from test_native_model import Endpoint, chunk, reply
+
+        started, release = Path(self.folder.name) / 'evidence-started', Path(self.folder.name) / 'evidence-release'
+        original = self.model.RequestHandlerClass
+        self.model.RequestHandlerClass, self.model.hold = Endpoint, None
+        self.addCleanup(setattr, self.model, 'RequestHandlerClass', original)
+        self.addCleanup(lambda: release.touch())
+        requests = []
+        def answer(body):
+            requests.append(body)
+            current = max(i for i, message in enumerate(body['messages']) if message['role'] == 'user')
+            latest = body['messages'][current]['content']
+            results = any(message['role'] == 'tool' for message in body['messages'][current:])
+            if latest == 'Compare conditions while the tool runs' and not results:
+                code = (f"from pathlib import Path; import time; Path({str(started)!r}).touch(); "
+                        f"p=Path({str(release)!r}); exec('while not p.exists(): time.sleep(.05)'); print('ready')")
+                return 200, [chunk({'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'wait-evidence',
+                    'type': 'function', 'function': {'name': 'run_shell',
+                    'arguments': json.dumps({'command': journey.shell_command([sys.executable, '-c', code])})}}]}),
+                    chunk({}, 'tool_calls')]
+            return 200, reply('done')
+        self.model.answer = answer
+        self.post('/research/sessions/' + self.identifier + '/turns', {'text': 'Compare conditions while the tool runs'})
+        deadline = time.monotonic() + 30
+        while not started.exists() and time.monotonic() < deadline:
+            self.page.wait_for_timeout(100)
+        self.assertTrue(started.exists())
+        self.post(self.path, {'title': 'Independent', 'instruction': 'Do independent work', 'source': 'external', 'eventType': 'independent-work'})
+        self.post('/research/events', {'requestId': 'independent-work', 'eventType': 'independent-work'})
+        self.assertTrue(all(not item.get('adoptedAt') for item in self.session()['deliveries']))
+        expect(self.page.get_by_role('region', name='收到的团队事项')).to_contain_text('独立新任务')
+        release.touch()
+        completed = self.wait_turns(3)
+        task = next(item for item in completed['deliveries'] if item['kind'] == 'task')
+        self.assertEqual(task['turnId'], completed['turns'][2]['id'])
+        self.assertTrue(task['adoptedAt'])
+        self.assertEqual(len(requests), 3)
+        self.assertNotIn('independent-work', json.dumps(requests[1]['messages']))
+        self.assertIn('independent-work', json.dumps(requests[2]['messages']))
+        self.post('/research/events', {'requestId': 'independent-work', 'eventType': 'independent-work'})
+        self.page.reload()
+        self.assertEqual(len(self.session()['turns']), 3)
+        expect(self.page.get_by_role('region', name='收到的团队事项')).to_contain_text('已纳入模型请求')
+
     def test_external_event_continues_existing_chat_once_and_repeats_after_idle(self):
         trigger = self.add_trigger('external', 'Event journey', 'Continue this chat from the event.', 事件名称='qa.ready')
         body = {'requestId': str(uuid4()), 'eventType': 'qa.ready', 'payload': {'sequence': 1}}

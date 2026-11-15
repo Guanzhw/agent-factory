@@ -12,7 +12,7 @@ from psycopg import sql
 CHANNEL = 'factory_research_updates'
 TABLES = ('af_events', 'af_tasks', 'af_effects', 'research_sessions', 'research_session_turns',
     'research_collaboration_intents', 'research_question_origins', 'af_assistant_messages',
-    'af_application_content', 'af_resource_sharing')
+    'af_application_content', 'af_resource_sharing', 'research_trigger_deliveries')
 
 
 def install_notifications(store):

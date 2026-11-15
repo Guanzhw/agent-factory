@@ -168,9 +168,11 @@ class ResearchTriggers:
                 identifier = digest({'event': key, 'trigger': row['id']})
                 conn.execute(self.deliveries.insert().values(id=identifier, trigger_id=row['id'],
                     session_id=row['session_id'], owner_id=row['owner_id'], event_id=key,
-                    body={'state': 'stopped' if self.sessions._row(conn, row['owner_id'],
+                    body={**({'provenance': {'contentId': publication['id'], 'ownerId': publication['ownerId']}}
+                        if source == 'research' else {}),
+                        'kind': kind or 'task', 'state': 'stopped' if self.sessions._row(conn, row['owner_id'],
                         row['session_id'])['body']['stopped'] else 'pending',
-                        'error': None, 'turnId': None, 'createdAt': now(), **({'kind': kind} if kind else {})}))
+                        'error': None, 'turnId': None, 'createdAt': now()}))
             return {'id': key, 'eventId': event_id}
 
     def ingest(self, owner, request):
@@ -229,6 +231,8 @@ class ResearchTriggers:
                 turn = conn.execute(select(self.sessions.turns).where(
                     self.sessions.turns.c.id == turn_id)).mappings().one()
                 body = turn['body']
+                if current['body'].get('adoptedAt'):
+                    return
                 self._save_delivery(conn, current,
                     state='failed' if body['status'] == 'failed' else 'dispatched',
                     error=body.get('failure'))
@@ -236,15 +240,67 @@ class ResearchTriggers:
             code = error.detail.get('code') if isinstance(error.detail, dict) else str(error.detail)
             with self.sessions._write() as conn:
                 current = conn.execute(select(self.deliveries).where(self.deliveries.c.id == delivery['id'])).mappings().one()
-                self._save_delivery(conn, current, error=code,
+                if current['body']['state'] != 'pending':
+                    return
+                self._save_delivery(conn, current, error=None if code == 'RESEARCH_TURN_ACTIVE_OR_UNCONFIRMED' else code,
                     state='pending' if code == 'RESEARCH_TURN_ACTIVE_OR_UNCONFIRMED' else 'failed')
         except Exception as error:
             with self.sessions._write() as conn:
                 current = conn.execute(select(self.deliveries).where(self.deliveries.c.id == delivery['id'])).mappings().one()
+                if current['body']['state'] != 'pending':
+                    return
                 self._save_delivery(conn, current, error=str(error))
 
-    def _reserve_event(self, owner, session_id, delivery, trigger, event):
-        from .session_routes import SessionTurn
+    def receipts(self, conn, owner, session_id):
+        return [{'id': item['id'], 'eventId': item['event_id'], **item['body']}
+            for item in conn.execute(select(self.deliveries).where(
+                self.deliveries.c.owner_id == owner, self.deliveries.c.session_id == session_id)).mappings()
+            if item['body'].get('kind') in {'evidence', 'task'}]
+
+    def receive(self, conn, row, turn):
+        body = deepcopy(turn['body'])
+        source_ids = list(row['body']['sharedSourceIds'])
+        for delivery in conn.execute(select(self.deliveries).where(
+                self.deliveries.c.owner_id == row['owner_id'],
+                self.deliveries.c.session_id == row['id'])).mappings():
+            if delivery['body'].get('kind') != 'evidence' or delivery['body']['state'] != 'pending':
+                continue
+            # A reserved continuation owns its input even if its acknowledgement was lost.
+            if delivery['body'].get('turnId'):
+                continue
+            trigger = conn.execute(select(self.triggers).where(
+                self.triggers.c.id == delivery['trigger_id'])).mappings().one()
+            if not trigger['enabled']:
+                continue
+            event = conn.execute(select(self.events).where(
+                self.events.c.id == delivery['event_id'])).mappings().one()['body']
+            try:
+                text, origin, sources = self._event_input(row['owner_id'], delivery, trigger, event)
+            except HTTPException as error:
+                if error.status_code not in {403, 404}:
+                    raise
+                self._save_delivery(conn, delivery, state='failed', error='RESEARCH_SOURCE_UNAVAILABLE')
+                continue
+            message = self.sessions._message('evidence', text)
+            message.update(id='research-evidence:' + delivery['id'], createdAt=delivery['body']['createdAt'], origin=origin)
+            body['messages'].append(message)
+            body['sharedSourceIds'] = list(dict.fromkeys([*body.get('sharedSourceIds', []), *sources]))
+            source_ids = list(dict.fromkeys([*source_ids, *sources]))
+            self._save_delivery(conn, delivery, state='adopted', turnId=turn['id'], adoptedAt=now(), error=None)
+        if body != turn['body']:
+            self.sessions._save_turn(conn, turn, body)
+            self.sessions._save_session(conn, row, {**row['body'], 'sharedSourceIds': source_ids})
+        return {**turn, 'body': body}
+
+    def included(self, conn, turn):
+        for delivery in conn.execute(select(self.deliveries).where(
+                self.deliveries.c.session_id == turn['session_id'])).mappings():
+            if (delivery['body'].get('kind') in {'evidence', 'task'}
+                    and delivery['body'].get('turnId') == turn['id']
+                    and not delivery['body'].get('adoptedAt')):
+                self._save_delivery(conn, delivery, state='adopted', adoptedAt=now(), error=None)
+
+    def _event_input(self, owner, delivery, trigger, event):
         payload = deepcopy(event['payload'])
         source_ids = []
         attribution = {}
@@ -262,6 +318,13 @@ class ResearchTriggers:
         text = delivery['body'].get('instruction', trigger['body']['instruction']) + '\n\nTrigger event:\n' + json.dumps(
             {'eventId': event['eventId'], 'source': event['source'], 'eventType': event['eventType'],
              'payload': payload}, ensure_ascii=False)
+        if delivery['body'].get('kind') == 'evidence':
+            text = '同事提供的新证据（参考资料）：\n' + text
+        return text, origin, source_ids
+
+    def _reserve_event(self, owner, session_id, delivery, trigger, event):
+        from .session_routes import SessionTurn
+        text, origin, source_ids = self._event_input(owner, delivery, trigger, event)
         request = SessionTurn(requestId='trigger:' + delivery['id'], text=text)
         turn_id, fresh = self.sessions._reserve(owner, session_id, request, origin=origin, source_ids=source_ids)
         return turn_id, fresh
