@@ -63,7 +63,7 @@ class FactoryLifecycleObserver:
 
     def _binding(self, task: dict, *, include_content: bool = False) -> dict | None:
         """Strict native read; caller must keep missing/mismatched work held."""
-        plan = self.store.plan(task["plan_id"], task["owner_id"])
+        plan = self.store.execution(task)
         if not task.get("run_id"):
             return None
         from .native_component import component_identity
@@ -114,10 +114,12 @@ class FactoryLifecycleObserver:
             if link["child_id"] in depths:
                 raise ValueError("Persisted delegation group repeats an ancestor")
             child = self.store.task(link["child_id"], root["owner_id"])
-            plan = self.store.plan(child["plan_id"], root["owner_id"])
-            if child["plan_id"] != link["plan_id"] or plan.get("delegation") != {
-                    "rootTaskId": root["id"], "parentTaskId": link["parent_id"], "depth": link["depth"]}:
-                raise ValueError("Persisted child plan differs from its immutable ancestor binding")
+            plan = self.store.execution(child)
+            linked = link.get("execution")
+            if ((linked != plan if linked is not None else child["plan_id"] != link["plan_id"])
+                    or plan.get("delegation") != {
+                        "rootTaskId": root["id"], "parentTaskId": link["parent_id"], "depth": link["depth"]}):
+                raise ValueError("Persisted child execution differs from its ancestor binding")
             tasks.append(child)
             depths[child["id"]] = link["depth"]
         return tasks, links
@@ -144,7 +146,7 @@ class FactoryLifecycleObserver:
             # guards still validate ancestor grants before any further effect.
             # Group capacity remains held until every descendant stops.
             return None
-        plan = self.store.plan(task["plan_id"], task["owner_id"])
+        plan = self.store.execution(task)
         try:
             self.auth.require_member(task["owner_id"])
             envelope = {"plan_ref": plan["id"], "user_id": task["owner_id"],

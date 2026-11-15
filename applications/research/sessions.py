@@ -599,7 +599,7 @@ class ResearchSessions:
         task = self.store.task_for_context(context)
         if task['run_id'] != context.run_id:
             raise PermissionError('RESEARCH_SESSION_RUN_MISMATCH')
-        plan = self.store.plan(task['plan_id'], context.user_id)
+        plan = self.store.execution(task)
         original_task = self.subagents.root_task(context.user_id, task, plan)
         turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == context.user_id,
             self.turns.c.application_request_id == original_task['request_id'].removeprefix('application-start:'))).mappings().first()
@@ -612,10 +612,13 @@ class ResearchSessions:
         if ((plan.get('inputValues') or {}).get('turnId') != turn['id']
                 or (plan.get('inputValues') or {}).get('sessionId') != row['id']):
             raise PermissionError('RESEARCH_SESSION_INPUT_MISMATCH')
-        original = self.store.sql('SELECT fingerprint FROM af_plan_requests WHERE owner_id=:owner '
-            'AND request_id=:request AND plan_id=:plan', owner=context.user_id,
-            request=original_task['request_id'], plan=original_task['plan_id'])
-        if len(original) != 1 or original[0]['fingerprint'] != turn['body']['startFingerprint']:
+        fingerprint = self.store.execution(original_task).get('requestFingerprint')
+        if fingerprint is None:
+            original = self.store.sql('SELECT fingerprint FROM af_plan_requests WHERE owner_id=:owner '
+                'AND request_id=:request AND plan_id=:plan', owner=context.user_id,
+                request=original_task['request_id'], plan=original_task['plan_id'])
+            fingerprint = original[0]['fingerprint'] if len(original) == 1 else None
+        if fingerprint != turn['body']['startFingerprint']:
             raise PermissionError('RESEARCH_SESSION_ADMISSION_PAYLOAD_MISMATCH')
         latest = self._turns(conn, row['id'])[-1]
         if (latest['id'] != turn['id'] or row['body']['stopped']
@@ -804,7 +807,7 @@ class ResearchSessions:
         return await self.subagents.external_result(commands, task, requirement, requirements, decision)
 
     async def observe_waits(self, observer, task):
-        root = self.subagents.root_task(task['owner_id'], task, self.store.plan(task['plan_id'], task['owner_id']))
+        root = self.subagents.root_task(task['owner_id'], task, self.store.execution(task))
         with self.db.read() as conn:
             turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
                 self.turns.c.application_request_id == root['request_id'].removeprefix('application-start:'))).mappings().first()

@@ -20,7 +20,7 @@ A completed queue ticket can contain a failed streaming run. Factory displays it
 
 Provider text and visible reasoning keep their original response identities and order. Adjacent text of the same kind is saved as one segment, flushed at most every 200ms and at segment boundaries or completion. Running turns read these records directly instead of copying every text fragment into the conversation row. The final answer comes from the completed native run's last assistant message; Agno's aggregate run content can also contain earlier messages before tool calls. Older terminal snapshots remain intact.
 
-Chat selects an existing model connection and its verified reasoning effort for the next turn. The native plan pins that choice, including delegated work. Unknown model capabilities expose only the provider default. Auxiliary compression and summary requests do not emit chat content or reasoning.
+Chat selects an existing model connection and its verified reasoning effort for the next turn. The task stores that choice in its execution inputs, which delegated work inherits. Unknown model capabilities expose only the provider default. Auxiliary compression and summary requests do not emit chat content or reasoning.
 
 Removed governance, budget, lease and prepared-handoff services no longer gate Agent execution. Historical rows and user files are preserved. Prior platform and Windows acceptance results apply only to the revisions they exercised; current static checks and actual use are recorded separately.
 

@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Boolean, Column, Float, Integer, JSON, MetaData, String, Table, UniqueConstraint, select, text
 
 from .application_content import Label, ObjectId
+from .application_runs import factory_request_id
 from .assistant_messages import SendAssistantMessage
 from .applications import GovernedStorage
 from .store import digest
@@ -151,7 +152,7 @@ class AssistantEvents:
                 parent = self._row(conn, self.deliveries, parent_delivery_id)
                 task = self.store.task(task_id, owner) if task_id else None
                 if (parent['owner_id'] != owner or task is None
-                        or task['request_id'] != 'application-start:assistant-message:' + parent['message_id']):
+                        or task['request_id'] != factory_request_id('assistant-message:' + parent['message_id'], self.messages.runs.application)):
                     raise HTTPException(409, 'ASSISTANT_EVENT_PARENT_MISMATCH')
                 origin = self._row(conn, self.events, parent['event_id'])
                 root, depth = origin['root_id'], origin['depth'] + 1
@@ -217,7 +218,7 @@ class AssistantEvents:
         if plan['ownerId'] != owner:
             raise HTTPException(409, 'ASSISTANT_COLLABORATION_BINDING_MISMATCH')
         if (owner == message['recipient_id']
-                and request_id == 'application-start:' + self.messages._request_id(message)):
+                and request_id == factory_request_id(self.messages._request_id(message), self.messages.runs.application)):
             return
         if origin is None or owner != message['sender_id']:
             raise HTTPException(409, 'ASSISTANT_COLLABORATION_BINDING_MISMATCH')
@@ -266,7 +267,7 @@ class AssistantEvents:
         endpoint = self._current(conn, event, subscription, delivery['endpoint_id'])
         message = self.messages._row(conn, delivery['message_id'])
         expected = self.messages._start_body(message, endpoint)
-        if (request_id != 'application-start:' + expected.requestId or plan['ownerId'] != owner
+        if (request_id != factory_request_id(expected.requestId, self.messages.runs.application) or plan['ownerId'] != owner
                 or plan['mode'] != expected.mode
                 or plan['normalizedGoal'] != expected.goal):
             raise HTTPException(409, 'ASSISTANT_EVENT_ADMISSION_MISMATCH')
@@ -301,12 +302,12 @@ class AssistantEvents:
     def delivery_for_task(self, owner, task_id):
         self.auth.require_member(owner)
         task = self.store.task(task_id, owner)
-        prefix = 'application-start:assistant-message:'
-        if not task['request_id'].startswith(prefix):
+        identifier = self.messages._message_id(task['request_id'], self.store.execution(task))
+        if identifier is None:
             return None
         with self.db.read() as conn:
             delivery = conn.execute(select(self.deliveries).where(self.deliveries.c.owner_id == owner,
-                self.deliveries.c.message_id == task['request_id'][len(prefix):])).mappings().first()
+                self.deliveries.c.message_id == identifier)).mappings().first()
             if delivery is None:
                 return None
             event = self._row(conn, self.events, delivery['event_id'])
@@ -327,7 +328,7 @@ class AssistantEvents:
                 message = self.messages._row(conn, delivery['message_id'])
                 task = conn.execute(text('SELECT id FROM af_tasks WHERE owner_id=:owner AND request_id=:request'),
                     {'owner': delivery['owner_id'],
-                     'request': 'application-start:' + self.messages._request_id(message)}).first()
+                     'request': factory_request_id(self.messages._request_id(message), self.messages.runs.application)}).first()
                 if task is None:
                     state = 'rejected'
             with self.db.write():

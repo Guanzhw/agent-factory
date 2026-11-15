@@ -27,7 +27,9 @@ class ResearchSubagents:
         if len(links) != 1:
             raise PermissionError('RESEARCH_CHILD_ORIGINAL_ROOT_REQUIRED')
         link = links[0]
-        if (link['plan_id'] != task['plan_id'] or plan['delegation'] != {
+        matches = (link['execution'] == plan if link.get('execution') is not None
+                   else link['plan_id'] is not None and link['plan_id'] == task['plan_id'])
+        if (not matches or plan['delegation'] != {
                 'parentTaskId': link['parent_id'], 'rootTaskId': link['root_id'], 'depth': link['depth']}):
             raise PermissionError('RESEARCH_CHILD_ORIGINAL_ROOT_REQUIRED')
         return self.store.task(link['root_id'], owner)
@@ -56,7 +58,7 @@ class ResearchSubagents:
                   and facts.get('persistedRunStatus') == 'completed' else None)
         if result is not None and not isinstance(result, str):
             result = canonical(result)
-        plan = self.store.plan(child['plan_id'], child['owner_id'])
+        plan = self.store.execution(child)
         return {'childTaskId': child['id'], 'runId': child.get('run_id'),
                 'goal': plan['normalizedGoal'],
                 'status': status, 'result': result}

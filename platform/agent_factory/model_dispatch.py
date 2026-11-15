@@ -31,7 +31,7 @@ class DelegatingModel(Model):
         context = RunContext(run_id=response.run_id, session_id=response.session_id, user_id=response.user_id,
             session_state=response.session_state or {},
             metadata={'factoryNativeRetryAttempt': getattr(response, '_factory_retry_attempt', None)})
-        plan = self.store.plan(task['plan_id'], response.user_id)
+        plan = self.store.execution(task)
         def current():
             if self.store.cancellation_requested(response.run_id):
                 raise RunCancelledException('Factory cancellation requested')

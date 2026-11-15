@@ -231,7 +231,7 @@ class MCPToolsJourney(unittest.IsolatedAsyncioTestCase):
         self.store.bind_run = lambda _: plan
         plan = {'normalizedGoal': 'Use the configured MCP tool', 'connectionRefs': {'model': 'fixture'}}
         self.store.resolve_run = lambda _: plan
-        self.store.plan = lambda *args: plan
+        self.store.execution = lambda *args: plan
         for mode in ('complete', 'error', 'cancel'):
             with self.subTest(mode=mode):
                 server.requests.clear()

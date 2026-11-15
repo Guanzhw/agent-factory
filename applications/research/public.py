@@ -7,16 +7,21 @@ def install(state, *, session_tools=None):
     assistants = None
     if session_tools is not None:
         from .assistants import ResearchAssistants, assistants_router
-        from .qa import ResearchQA
+        from .qa import INSTRUCTIONS as QA_INSTRUCTIONS, ResearchQA
         from .peer_sources import ResearchPeerSources
         from .associations import ResearchAssociations, associations_router
+        from .session_setup import INSTRUCTIONS
         store = state['store']
+        runs = ApplicationRuns(state['factory_api'], application='research-chat',
+            instructions=[INSTRUCTIONS], tools=session_tools.available_tools)
+        state['assistant_messages'].runs = runs
+        state['assistant_messages'].question_instructions = [QA_INSTRUCTIONS]
         assistants = ResearchAssistants(store, state['auth'], state['assistant_endpoints'],
             state['assistant_messages'],
             events=state['assistant_events'])
         sources = ResearchPeerSources(store, state['application_content'])
         associations = ResearchAssociations(sources, assistants, state['assistant_events'])
-        qa = ResearchQA(store, assistants, state['assistant_messages'], ApplicationRuns(state['factory_api']),
+        qa = ResearchQA(store, assistants, state['assistant_messages'], runs,
             state['application_content'], associations=associations)
         store.research_qa = qa
         state['research_assistants'], state['research_qa'] = assistants, qa
@@ -29,7 +34,7 @@ def install(state, *, session_tools=None):
         if assistants is None:
             raise ValueError('Research sessions require the existing personal assistant identity service')
         sessions = ResearchSessions(state['store'], state['auth'], assistants,
-            ApplicationRuns(state['factory_api']), connections=state['connections'],
+            runs, connections=state['connections'],
             models=state['store'].personal_models, content=state['application_content'], tools=session_tools)
         from .conversations import ResearchConversations, conversations_router
         conversations = ResearchConversations(state['store'], state['auth'], assistants, sessions)
