@@ -61,6 +61,7 @@ class ApplicationRuns:
             return {**legacy['body'], 'requestFingerprint': fingerprint}, key
         execution = {'id': str(uuid4()), 'ownerId': owner, 'createdAt': now(), 'requestId': body.requestId,
             'application': self.application, 'mode': body.mode,
+            'applicationRuntime': self.application in store.application_runtimes,
             'normalizedGoal': body.goal, 'inputValues': body.inputValues or {},
             'connectionRefs': body.connectionRefs,
             'instructions': body.instructions if body.instructions is not None else list(self.instructions),

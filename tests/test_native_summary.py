@@ -15,6 +15,7 @@ from agno.session.agent import AgentSession
 
 from agent_factory.byok_model import OwnerChatModel
 from agent_factory.model_dispatch import DelegatingModel
+from research.runtime import ResearchRuntime
 from research.session_context import summarize
 from test_native_model import Endpoint, reply
 
@@ -44,7 +45,8 @@ class NativeSummary(unittest.TestCase):
         def authorize(_):
             if state.get('withdrawn'):
                 raise StopAgentRun('source unavailable')
-        dispatcher = DelegatingModel(SimpleNamespace(research_sessions=SimpleNamespace(authorize_model=authorize)))
+        runtime = ResearchRuntime(SimpleNamespace(authorize_model=authorize), None, None, None)
+        dispatcher = DelegatingModel(SimpleNamespace(), {'research-chat': runtime})
         def auxiliary():
             model = OwnerChatModel(configuration, lambda: None)
             dispatcher._provider_hooks(model, context, current, auxiliary,

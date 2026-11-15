@@ -24,7 +24,7 @@ from agent_factory.runtime_hooks import effect_unresolved, runtime_custody_held
 from agent_factory.store import digest, now
 from agent_factory.task_status import native_status
 from .assistants import CreateAssistant
-from .session_setup import INSTRUCTIONS, MODE, ResearchSessionSetup, rejected
+from .session_setup import MODE, ResearchSessionSetup, rejected
 from .session_memory import ResearchSessionMemory
 from .session_tools import EFFECT_PREFIX
 from . import session_context
@@ -59,9 +59,7 @@ class ResearchSessions:
             UniqueConstraint('session_id', 'sequence'))
         self.commands = self.db.command_table('research_session_commands', metadata)
         metadata.create_all(store.engine)
-        store.research_instructions = [INSTRUCTIONS]
         store.research_sessions = self
-        store.research_tools = tools
 
     @contextmanager
     def _write(self):

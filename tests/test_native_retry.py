@@ -63,7 +63,7 @@ class NativeRetryJourney(unittest.TestCase):
             missing.start()
             self.addCleanup(missing.stop)
         if native:
-            tools = self.state['store'].research_tools
+            tools = self.state['research_sessions'].tools
             functions = tools.functions
             def append_native_once():
                 with marker.open('a') as handle:

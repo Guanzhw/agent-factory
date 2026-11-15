@@ -1662,7 +1662,7 @@ class ChatJourney(unittest.TestCase):
         from agno.exceptions import RunCancelledException
         from agno.run import RunContext
         from agno.tools.function import FunctionCall
-        function = next(tool for tool in self.state['store'].research_skills.get_tools() if tool.name == 'get_skill_script')
+        function = next(tool for tool in self.state['application_runtimes']['research-chat'].skills.get_tools() if tool.name == 'get_skill_script')
         function.process_entrypoint()
         function._run_context = RunContext(user_id=self.owner, session_id=snapshot['id'],
                                           run_id=snapshot['turns'][-1]['runId'])

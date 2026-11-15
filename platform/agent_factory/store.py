@@ -66,6 +66,8 @@ class Store:
         self.personal_tools: Any = None
         self.assistant_events: Any = None
         self.assistant_messages: Any = None
+        from .application_runtime import ApplicationRuntime
+        self.application_runtimes: dict[str, ApplicationRuntime] = {}
         self.external_execution_handlers: dict[str, Any] = {}
         self.execution_guards: dict[str, Any] = {}
         self.tool_independent_execution_guards: dict[str, Any] = {}

@@ -217,6 +217,7 @@ def create_app(settings=None, *, diagnostics=None, queue_max_attempts=2,
         "credential_vault": credential_vault, "factory_api": factory_api,
         "assistant_endpoints": assistant_endpoints, "assistant_messages": assistant_messages,
         "application_content": application_content, "assistant_events": assistant_events,
+        "application_runtimes": store.application_runtimes,
         "http_app": native,
     }
     at('PREPARATION_APP_BROWSER_AUTH')

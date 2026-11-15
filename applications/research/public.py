@@ -23,7 +23,6 @@ def install(state, *, session_tools=None):
         associations = ResearchAssociations(sources, assistants, state['assistant_events'])
         qa = ResearchQA(store, assistants, state['assistant_messages'], runs,
             state['application_content'], associations=associations)
-        store.research_qa = qa
         state['research_assistants'], state['research_qa'] = assistants, qa
         state['research_peer_sources'], state['research_associations'] = sources, associations
         state['http_app'].include_router(associations_router(state['auth'], associations))
@@ -45,7 +44,10 @@ def install(state, *, session_tools=None):
         state['http_app'].include_router(conversations_router(state['auth'], conversations))
         session_tools.bind(sessions, state['application_content'])
         from .skills import ResearchSkills
-        state['store'].research_skills = ResearchSkills(session_tools)
+        skills = ResearchSkills(session_tools)
+        from .runtime import ResearchRuntime
+        state['application_runtimes']['research-chat'] = ResearchRuntime(
+            sessions, session_tools, qa, skills)
         state['research_sessions'] = sessions
         state['store'].research_sessions = sessions
         state['http_app'].include_router(session_router(state['auth'], sessions))
