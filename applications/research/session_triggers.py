@@ -96,7 +96,7 @@ class ResearchTriggers:
                 self.triggers.c.session_id == session_id)).mappings()
             deliveries = conn.execute(select(self.deliveries).where(self.deliveries.c.owner_id == owner,
                 self.deliveries.c.session_id == session_id)).mappings()
-            return {'items': [self._view(row) for row in items], 'deliveries': [
+            return {'items': [self._view(row) for row in items if not row['body'].get('discoveryDestination')], 'deliveries': [
                 {'id': row['id'], 'triggerId': row['trigger_id'], 'eventId': row['event_id'], **row['body']}
                 for row in sorted(deliveries, key=lambda item: item['body']['createdAt'], reverse=True)]}
 
@@ -145,6 +145,10 @@ class ResearchTriggers:
             rows = conn.execute(select(self.triggers).where(self.triggers.c.enabled.is_(True))).mappings()
             for row in rows:
                 body = row['body']
+                discovery = getattr(self.sessions, 'discovery', None)
+                kind = discovery.publication_kind(conn, row['owner_id'], row, owner) if discovery else None
+                if kind == 'skip':
+                    continue
                 if body['source'] != source or (body['eventType'] and body['eventType'] != event_type):
                     continue
                 if trigger_id is not None and row['id'] != trigger_id:
@@ -166,7 +170,7 @@ class ResearchTriggers:
                     session_id=row['session_id'], owner_id=row['owner_id'], event_id=key,
                     body={'state': 'stopped' if self.sessions._row(conn, row['owner_id'],
                         row['session_id'])['body']['stopped'] else 'pending',
-                        'error': None, 'turnId': None, 'createdAt': now()}))
+                        'error': None, 'turnId': None, 'createdAt': now(), **({'kind': kind} if kind else {})}))
             return {'id': key, 'eventId': event_id}
 
     def ingest(self, owner, request):
@@ -183,7 +187,7 @@ class ResearchTriggers:
             rows = conn.execute(select(self.triggers).where(self.triggers.c.enabled.is_(True))).mappings()
             for row in rows:
                 body = row['body']
-                if body['source'] != 'cron' or body['nextRunAt'] > time.time():
+                if body.get('source') != 'cron' or body['nextRunAt'] > time.time():
                     continue
                 self.emit(conn, row['owner_id'], row['id'] + ':' + str(body['nextRunAt']),
                     'cron', 'tick', {'scheduledAt': body['nextRunAt']}, trigger_id=row['id'])
@@ -249,11 +253,15 @@ class ResearchTriggers:
             source_ids = [payload['contentId']]
             attribution = {'contentId': publication['id'], 'ownerId': publication['ownerId']}
             payload.update(attribution, content=publication['content'])
+        if delivery['body'].get('kind') == 'discovery':
+            payload['routingContext'] = self.sessions.discovery.context(owner)
+            source_ids = sorted(set(source_ids) | set(payload['routingContext'].pop('sourceIds')))
         origin = {'kind': 'trigger', 'triggerId': trigger['id'], 'triggerTitle': trigger['body']['title'],
             'eventId': event['eventId'], 'source': event['source'], 'eventType': event['eventType'],
             **attribution}
-        text = trigger['body']['instruction'] + '\n\nTrigger event:\n' + json.dumps(
-            {'source': event['source'], 'eventType': event['eventType'], 'payload': payload}, ensure_ascii=False)
+        text = delivery['body'].get('instruction', trigger['body']['instruction']) + '\n\nTrigger event:\n' + json.dumps(
+            {'eventId': event['eventId'], 'source': event['source'], 'eventType': event['eventType'],
+             'payload': payload}, ensure_ascii=False)
         request = SessionTurn(requestId='trigger:' + delivery['id'], text=text)
         turn_id, fresh = self.sessions._reserve(owner, session_id, request, origin=origin, source_ids=source_ids)
         return turn_id, fresh

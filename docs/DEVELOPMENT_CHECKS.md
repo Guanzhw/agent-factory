@@ -1,5 +1,13 @@
 # Development checks
 
+## Member discovery on 2026-11-15
+
+Members can enable discovery in existing Settings, choose an existing model and state their focus. New shared research records enter a normal native discovery chat with the member's project objectives and current work. The Agent records an ignore, attach or new-work decision with its reason and source. Attach/new decisions use the existing durable trigger delivery and native session admission; the discovery chat remains the trace rather than the destination.
+
+The PostgreSQL/native-queue/Chromium journey uses a scripted local HTTP model. It attaches English generation-cap evidence to an existing Chinese truncation investigation, ignores an exact-title match about theatre sales, and creates independent culture research. Both destinations actually read the source and write files; Chromium downloads and verifies the new-work output. Repeated sharing leaves one decision and one original delivery per member/event. Settings save, decision reasons, destination and trace links are exercised through the browser. Withdrawing a source, independently continuing its former destination, and publishing fresh evidence omits the old source-derived work summary from the next actual model request. Disabling discovery accepts an unset model and prevents another publication from starting a discovery turn.
+
+The existing trigger journeys continue to pass. Ruff, Pyright and frontend lint/types/build pass. Build output retains existing empty-selector CSS warnings and the bundle-size warning; Windows fixture cleanup retains transport-reset warnings. This fixture verifies execution and routing contracts, not semantic judgment from a real provider; real-model acceptance is recorded separately.
+
 ## Native coding tools refactor on 2026-11-14
 
 Sessions now register Agno 3.1 CodingTools for read/write/edit/grep/find/ls/run_shell. The old research_* basic tools, staging/hash receipts and Agent directory boundary are deleted. Existing session workspaces and authenticated file-download boundaries are unchanged. Only command cancellation/process-tree cleanup and an external-directory find bug require adaptation; skill scripts pass argv directly.

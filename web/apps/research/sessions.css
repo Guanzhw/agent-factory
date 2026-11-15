@@ -125,3 +125,7 @@
 .rs-triggers .rw-form { margin-top: 20px; }
 .rs-triggers small { line-height: 1.6; }
 .rs-trigger-origin { margin-bottom: 12px; }
+.rs-discovery { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
+.rs-discovery .rw-form { max-width: 680px; }
+.rs-discovery .rs-discovery-toggle { display: flex; flex-direction: row; align-items: center; }
+.rs-discovery-toggle input { width: auto; }
