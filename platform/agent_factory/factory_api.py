@@ -150,7 +150,6 @@ class FactoryAPI:
             "status": status, "createdAt": task["body"]["createdAt"], "updatedAt": task["body"]["updatedAt"],
             "runtime": "live", "attempt": (snapshot.get("queue") or {}).get("attempt", 0),
             "allowedActions": actions, "validationStatus": "执行与结论需按产物证据分别验证",
-            "deploymentMode": "production",
             "executionKind": execution_classification(execution)["executionKind"],
             "verificationStatus": "unverified", "evidenceKind": "unverified"}
         if stopped_status:

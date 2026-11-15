@@ -36,14 +36,6 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
-def require_production_database(engine):
-    with engine.connect() as conn:
-        if conn.execute(text("SELECT to_regclass('af_bootstrap')")).scalar_one() is not None:
-            mode = conn.execute(text("SELECT mode FROM af_bootstrap WHERE id='mode'")).scalar_one_or_none()
-            if mode is not None and mode != 'production':
-                raise ValueError('Existing demo database cannot be used in production; retained data requires separate review')
-
-
 # Compatibility exports: custody/evidence semantics belong to trusted adapters.
 from .runtime_hooks import effect_unresolved, runtime_custody_held
 from .task_status import finalized_status
@@ -128,7 +120,6 @@ class Store:
             return [dict(row) for row in result.mappings()] if result.returns_rows else []
 
     def initialize(self):
-        require_production_database(self.engine)
         statements = [
             "CREATE TABLE IF NOT EXISTS af_browser_auth (id TEXT PRIMARY KEY,kind TEXT NOT NULL,body JSONB NOT NULL)",
             "CREATE INDEX IF NOT EXISTS af_browser_auth_expiry ON af_browser_auth ((CAST(body->>'expires' AS DOUBLE PRECISION)))",
@@ -144,11 +135,9 @@ class Store:
             "CREATE TABLE IF NOT EXISTS af_effects (effect_key TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), run_id TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, result JSONB)",
             "CREATE TABLE IF NOT EXISTS af_artifacts (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), body JSONB NOT NULL, content BYTEA NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_audit (id BIGSERIAL PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT NOT NULL, body JSONB NOT NULL, created_at TEXT NOT NULL)",
-            "CREATE TABLE IF NOT EXISTS af_bootstrap (id TEXT PRIMARY KEY, mode TEXT NOT NULL)",
         ]
         for statement in statements:
             self.sql(statement)
-        self.sql("INSERT INTO af_bootstrap VALUES('mode','production') ON CONFLICT DO NOTHING")
 
     def audit(self, actor, action, target, body):
         self.sql("INSERT INTO af_audit(actor_id,action,target_id,body,created_at) VALUES(:actor,:action,:target,CAST(:body AS JSONB),:at)",

@@ -521,8 +521,6 @@ class RevokeConnectionRequest(BaseModel):
 
 
 def connection_router(auth, service):
-    # Root may alias/migrate the old demo-only GET /connections product route.
-    # This independent namespace avoids silently shadowing existing routes.
     router = APIRouter(prefix="/api/factory/user-connections", tags=["user-connections"])
 
     def owner(request):

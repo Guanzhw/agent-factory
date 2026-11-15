@@ -79,10 +79,8 @@ def main(argv=None):
         from agno.db.postgres import PostgresDb
         from agno.os.authz import UserDirectory
         from .config import Settings
-        from .store import require_production_database
         settings = Settings.from_env()
         engine = create_engine(settings.db_url)
-        require_production_database(engine)
         database = PostgresDb(db_engine=engine, id='factory-native-postgres')
         directory = UserDirectory(db=database, fail_closed=True, auto_provision=False)
         LocalPasswords(database.db_engine, directory).create(args.username, password)

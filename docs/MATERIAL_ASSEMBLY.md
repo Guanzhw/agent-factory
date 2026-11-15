@@ -1,5 +1,7 @@
 # Material assembly and execution bindings
 
+This document records the retired plan-based assembly. See the [current runtime](RUNTIME_DESIGN.md) for task admission and execution.
+
 The platform uses immutable published application configurations and bounded
 material proposals with Agno 3.1 and PostgreSQL. The existing native executor and
 persistent queue own task execution.
