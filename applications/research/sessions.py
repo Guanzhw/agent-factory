@@ -264,10 +264,6 @@ class ResearchSessions:
             saved = session_context.checkpoint(row)
             if saved and saved['throughSequence'] <= point['sequence']:
                 body['contextCheckpoint'] = deepcopy(saved)
-            if self.git is not None:
-                workspace = self.git.fork_workspace(owner, identifier, fork_id, conn)
-                if workspace is not None:
-                    body['gitWorkspace'] = workspace
             # Agno 3.1 has no session fork API; snapshot only history, never old executions or tools.
             conn.execute(self.sessions.insert().values(id=fork_id, owner_id=owner,
                 assistant_id=assistant['id'], body=body))
@@ -287,6 +283,11 @@ class ResearchSessions:
                         for message in history.messages or []])
                 conn.execute(self.turns.insert().values(id=turn_id, session_id=fork_id, owner_id=owner,
                     sequence=turn['sequence'], application_request_id='research-inherited:' + turn_id, body=inherited))
+            if self.git is not None:
+                workspace = self.git.fork_workspace(owner, identifier, fork_id, conn)
+                if workspace is not None:
+                    body['gitWorkspace'] = workspace
+                    self._save_session(conn, {'id': fork_id}, body)
             self._command(conn, owner, request.requestId, fingerprint, 'fork', fork_id)
             return fork_id
 

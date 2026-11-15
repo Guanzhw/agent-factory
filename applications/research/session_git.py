@@ -125,18 +125,26 @@ class ResearchSessionGit:
             if metadata:
                 if Path(metadata['repositoryPath']) != source:
                     raise rejected('RESEARCH_GIT_ALREADY_ATTACHED', '此会话已连接另一个仓库。')
-                return self._view(owner, row)
-            self._idle(conn, owner, identifier)
-            workspace = self._workspace(owner, identifier)
-            if any(workspace.iterdir()):
-                raise rejected('RESEARCH_GIT_WORKSPACE_NOT_EMPTY', '此会话已有文件，请在新会话中连接仓库。')
-            commit = git(source, 'rev-parse', 'HEAD').decode().strip()
-            git(source, 'worktree', 'add', '--detach', str(workspace), commit)
-            self._retain_tree(workspace, owner, identifier, commit)
-            metadata = {'repositoryPath': str(source), 'baseCommit': commit, 'baselineTree': commit}
-            body = {**row['body'], 'gitWorkspace': metadata}
-            self.sessions._save_session(conn, row, body)
-            return self._view(owner, {**row, 'body': body})
+            else:
+                self._idle(conn, owner, identifier)
+                workspace = self._workspace(owner, identifier)
+                if any(workspace.iterdir()):
+                    if not (workspace / '.git').is_file():
+                        raise rejected('RESEARCH_GIT_WORKSPACE_NOT_EMPTY', '此会话已有文件，请在新会话中连接仓库。')
+                    self._source(workspace, source)
+                    root = git(workspace, 'rev-parse', '--show-toplevel').decode('utf-8').strip()
+                    if Path(root).resolve() != workspace.resolve():
+                        raise rejected('RESEARCH_GIT_WORKSPACE_NOT_EMPTY', '此会话已有文件，请在新会话中连接仓库。')
+                    # Only our retained session ref proves this is an interrupted attachment.
+                    reference = self._tree_ref(owner, identifier, 'baseline')
+                    commit = git(workspace, 'rev-parse', '--verify', reference + '^{commit}').decode().strip()
+                else:
+                    commit = git(source, 'rev-parse', 'HEAD').decode().strip()
+                    git(source, 'worktree', 'add', '--detach', str(workspace), commit)
+                    self._retain_tree(workspace, owner, identifier, commit)
+                metadata = {'repositoryPath': str(source), 'baseCommit': commit, 'baselineTree': commit}
+                self.sessions._save_session(conn, row, {**row['body'], 'gitWorkspace': metadata})
+        return self.read(owner, identifier)
 
     def apply(self, owner, identifier, review_id):
         self.sessions.auth.require_member(owner)

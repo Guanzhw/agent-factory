@@ -179,6 +179,31 @@ class SessionGit(unittest.TestCase):
         self.assertEqual(self.service.read('owner', 'one')['applicationState'], 'ready')
         self.assertEqual((self.source / 'code.txt').read_text(), 'one\ntwo\nthree\n')
 
+    def test_interrupted_attach_recovers_owned_worktree_without_overwriting_files(self):
+        with patch.object(self.sessions, '_save_session', side_effect=RuntimeError('metadata write failed')):
+            with self.assertRaises(RuntimeError):
+                self.attach()
+        self.assertNotIn('gitWorkspace', self.sessions.rows['one']['body'])
+        workspace = self.service._workspace('owner', 'one')
+        (workspace / 'new.txt').write_text('preserved after interruption', encoding='utf-8')
+        original = (workspace / 'code.txt').read_bytes()
+        self.assertEqual(self.attach(), workspace)
+        self.assertEqual((workspace / 'new.txt').read_text(), 'preserved after interruption')
+        self.assertEqual((workspace / 'code.txt').read_bytes(), original)
+        self.assertIn({'status': 'A', 'path': 'new.txt'}, self.service.read('owner', 'one')['files'])
+        other = self.service._workspace('owner', 'two')
+        (other / 'existing.txt').write_text('user file', encoding='utf-8')
+        with self.assertRaises(HTTPException):
+            self.attach('two')
+        self.assertEqual((other / 'existing.txt').read_text(), 'user file')
+
+    def test_attach_snapshot_failure_keeps_committed_binding(self):
+        with patch.object(self.service, '_view', side_effect=RuntimeError('snapshot failed')):
+            with self.assertRaises(RuntimeError):
+                self.attach()
+        self.assertIn('gitWorkspace', self.sessions.rows['one']['body'])
+        self.assertEqual(self.attach(), self.service._workspace('owner', 'one'))
+
 
 if __name__ == '__main__':
     unittest.main()
