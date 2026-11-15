@@ -56,6 +56,11 @@ class SessionCommand(BaseModel):
     requestId: RequestId
 
 
+class ForkSession(SessionCommand):
+    turnId: ObjectId | None = None
+    title: str | None = Field(default=None, min_length=1)
+
+
 def session_router(auth, service):
     router = APIRouter(prefix='/api/factory/research/sessions')
     initialized = False
@@ -82,6 +87,12 @@ def session_router(auth, service):
     @router.get('/{identifier}')
     async def read(request: Request, identifier: str):
         return await service.read(auth.user(request)['id'], identifier)
+
+    @router.post('/{identifier}/fork')
+    async def fork(request: Request, identifier: str, body: ForkSession):
+        owner = auth.user(request)['id']
+        fork_id = await asyncio.to_thread(service.fork, owner, identifier, body)
+        return await service.read(owner, fork_id)
 
     @router.get('/{identifier}/events')
     async def events(request: Request, identifier: str):

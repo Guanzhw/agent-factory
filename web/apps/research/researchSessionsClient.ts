@@ -47,7 +47,7 @@ export interface InputDelivery {
   id: string; eventId: string; kind: 'evidence' | 'task'; state: string; createdAt: string;
   adoptedAt?: string; turnId?: string; error?: string; provenance?: { contentId: string; ownerId: string; decisionId?: string };
 }
-export interface ResearchSession extends SessionSummary { turns: SessionTurn[]; deliveries?: InputDelivery[] }
+export interface ResearchSession extends SessionSummary { fork?: { sessionId: string; turnId: string; sequence: number }; turns: SessionTurn[]; deliveries?: InputDelivery[] }
 export type SessionAction = 'create' | 'turn' | 'correct' | 'stop';
 export interface SessionRequest {
   requestId: string; action: SessionAction; sessionId: string; turnId: string | null;

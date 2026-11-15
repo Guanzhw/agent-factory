@@ -44,6 +44,15 @@ def install(state, *, session_tools=None):
         state['research_sessions'] = sessions
         state['store'].research_sessions = sessions
         state['http_app'].include_router(session_router(state['auth'], sessions))
+        from .session_git import ResearchSessionGit, git_router
+        session_git = ResearchSessionGit(sessions)
+        sessions.git = session_git
+        state['research_session_git'] = session_git
+        state['http_app'].include_router(git_router(state['auth'], session_git))
+        from .git_review import ResearchGitReview, git_review_router
+        sessions.git_review = review = ResearchGitReview(sessions, session_git)
+        state['research_git_review'] = review
+        state['http_app'].include_router(git_review_router(state['auth'], review))
     projects = ResearchProjects(state['store'], state['auth'], state['assistant_endpoints'], assistants=assistants)
     state['http_app'].include_router(projects_router(state['auth'], projects))
     state['research_projects'] = projects

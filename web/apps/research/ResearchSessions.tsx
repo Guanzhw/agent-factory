@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { IconArrowDown, IconArrowUp, IconPlus, IconRefresh, IconSearch, IconSquare, IconFolder, IconLayoutSidebar, IconUsers, IconInfoCircle, IconX, IconBolt } from '@tabler/icons-react';
+import { IconArrowDown, IconArrowUp, IconPlus, IconRefresh, IconSearch, IconSquare, IconFolder, IconLayoutSidebar, IconUsers, IconInfoCircle, IconX, IconBolt, IconGitBranch } from '@tabler/icons-react';
 import { ApiError } from '../../api.js';
 import { assistantApi, type ResearchSource } from './live/assistantClient.js';
 import { researchSessionsApi as api, type CreateSession, type ResearchSession, type SessionAction, type SessionOptions, type SessionPage, type SessionTurn } from './researchSessionsClient.js';
@@ -9,6 +9,8 @@ import { SessionActivity, hasUnconfirmedOperation, isInFlightOperation } from '.
 import { ResearchReply } from './ResearchReply.js';
 import { CopyButton } from './CopyButton.js';
 import { SessionFiles } from './SessionFiles.js';
+import { SessionGit } from './SessionGit.js';
+import { sessionGitApi } from './sessionGitClient.js';
 import { ChatModelPicker } from './ChatModelPicker.js';
 import { SessionTriggers } from './SessionTriggers.js';
 import { TeamWork } from './TeamWork.js';
@@ -38,6 +40,7 @@ const time = (value: string) => new Date(value).toLocaleString('zh-CN', { month:
 const unresolved = (error: unknown) => !(error instanceof ApiError) || ![400, 401, 403, 404, 422].includes(error.status) || error.code === 'INVALID_RESPONSE';
 const defaultBoundaries = '';
 const initialDraft: SessionDraft = { title: '', goal: '', boundaries: '', modelConnectionRef: '' };
+type NewSession = Omit<CreateSession, 'requestId'> & { repositoryPath?: string };
 type ModelChoice = { modelConnectionRef: string; reasoningEffort?: string };
 const memoryTools: Record<string, { operation: string; title: string; completed: string }> = {
   research_find_memories: { operation: 'find', title: '查找个人记忆', completed: '查找完成' },
@@ -88,7 +91,7 @@ function useDraft<T>(key: string, fallback: T) {
   return { value, change, saved };
 }
 
-function CreateSessionForm({ ownerId, options, busy, blocked, onModels, onCreate }: { ownerId: string; options: SessionOptions | null; busy: boolean; blocked: boolean; onModels: () => void; onCreate: (value: Omit<CreateSession, 'requestId'>) => void }) {
+function CreateSessionForm({ ownerId, options, busy, blocked, onModels, onCreate }: { ownerId: string; options: SessionOptions | null; busy: boolean; blocked: boolean; onModels: () => void; onCreate: (value: NewSession) => void }) {
   const draft = useDraft(draftKey(ownerId), initialDraft);
   const initialized = useRef(readStored(draftKey(ownerId), null) !== null);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -118,7 +121,7 @@ function CreateSessionForm({ ownerId, options, busy, blocked, onModels, onCreate
     if (!value.goal.trim()) problems.goal = '请输入消息。';
     if (!options?.models.some(model => model.available && model.connectionRef === value.modelConnectionRef)) problems.model = '请选择当前可用的模型连接。';
     setErrors(problems);
-    if (!Object.keys(problems).length) onCreate({ ...(value.projectId ? { projectId: value.projectId } : {}), modelConnectionRef: value.modelConnectionRef, ...(value.reasoningEffort ? { reasoningEffort: value.reasoningEffort } : {}), title: value.title.trim() || value.goal.trim().slice(0, 60), goal: value.goal.trim(), boundaries: value.boundaries.trim() || defaultBoundaries });
+    if (!Object.keys(problems).length) onCreate({ ...(value.repositoryPath?.trim() ? { repositoryPath: value.repositoryPath.trim() } : {}), ...(value.projectId ? { projectId: value.projectId } : {}), modelConnectionRef: value.modelConnectionRef, ...(value.reasoningEffort ? { reasoningEffort: value.reasoningEffort } : {}), title: value.title.trim() || value.goal.trim().slice(0, 60), goal: value.goal.trim(), boundaries: value.boundaries.trim() || defaultBoundaries });
   }
   return <section className="rs-create"><div className="rs-welcome"><span>Agent Factory</span><h1>今天想一起完成什么？</h1><p>从一个问题、想法或研究目标开始。</p></div>
 
@@ -130,6 +133,7 @@ function CreateSessionForm({ ownerId, options, busy, blocked, onModels, onCreate
 <button className="rw-primary rs-send" aria-label="发送消息" disabled={!options?.available || !value.goal.trim()}>{busy ? '正在发送…' : <IconArrowUp size={20}/>}</button></div>
       <details className="rs-preferences"><summary>会话设置</summary>{options?.collaboration?.available && <p className="rs-collaboration-note">助手可按研究目标自主询问已开放的同事助手，只发送所需的问题文本。你可以随时请求停止。</p>}      <label>会话名称<input value={value.title} onChange={event => draft.change({ ...value, title: event.target.value })} aria-invalid={!!errors.title}/>{errors.title && <span role="alert">{errors.title}</span>}</label>
       <label>补充要求（可选）<textarea rows={2} placeholder="偏好、背景或希望助手遵循的要求…" value={value.boundaries} onChange={event => draft.change({ ...value, boundaries: event.target.value })} aria-invalid={!!errors.boundaries}/><small>可以留空，也可以直接写在消息中。</small>{errors.boundaries && <span role="alert">{errors.boundaries}</span>}</label>
+      <label>Git 仓库路径（可选）<input aria-label="Git 仓库路径（可选）" placeholder="代码任务可填写本机仓库绝对路径" value={value.repositoryPath ?? ''} onChange={event => draft.change({ ...value, repositoryPath: event.target.value })}/><small>发送前创建独立会话工作树。</small></label>
       <details><summary>引用已有项目（可选）</summary><label>项目标识<input value={value.projectId ?? ''} onChange={event => draft.change({ ...value, projectId: event.target.value.trim() || undefined })}/></label><p>填写已确认项目的标识，助手可读取约定并按目标委派实验。留空可直接开始独立工作。</p></details>
       {options && <p className="rw-muted">{options.workspace.configured ? '文件与命令工具可供助手按需使用。' : '当前未配置本地工作目录。'}</p>}</details>
 
@@ -166,7 +170,7 @@ function ToolRecord({ item, active }: { item: SessionTurn['toolResults'][number]
   </details>;
 }
 
-function TurnRecord({ turn, onQuestion }: { turn: SessionTurn; onQuestion: (id: string) => void }) {
+function TurnRecord({ turn, onQuestion, onFork, forkBusy }: { turn: SessionTurn; onQuestion: (id: string) => void; onFork: (id: string) => void; forkBusy: boolean }) {
   const replies = [...(turn.assistantReply ? [turn.assistantReply] : []), ...(turn.assistantReplies ?? [])];
   const children = turn.children ?? [];
   const legacyResults = turn.toolResults.filter(item => {
@@ -186,7 +190,7 @@ function TurnRecord({ turn, onQuestion }: { turn: SessionTurn; onQuestion: (id: 
       {child.status === 'completed' && (child.result !== null ? <details className="rs-child-result"><summary>查看子助手结果</summary><ResearchReply text={child.result}/></details> : <p className="rw-muted">尚无已确认的结果正文。</p>)}
     </div>)}</section>}
     {!!legacyResults.length && <section className="rs-tool-results" aria-label={`第 ${turn.sequence} 轮工具结果`}><h4>工具与文件记录</h4>{legacyResults.map(item => <ToolRecord key={item.effectKey} item={item} active={!hasUnconfirmedOperation(turn) && ['queued', 'running', 'waiting_approval', 'finalizing'].includes(turn.status)}/>)}</section>}
-    {turn.result !== null && <div className="rs-message rs-reply"><span className="sr-only">助手回复</span><ResearchReply text={turn.result}/><div className="rs-message-actions"><CopyButton text={turn.result} label="复制助手回复"/></div></div>}
+    {turn.result !== null && <div className="rs-message rs-reply"><span className="sr-only">助手回复</span><ResearchReply text={turn.result}/><div className="rs-message-actions"><CopyButton text={turn.result} label="复制助手回复"/>{turn.status === 'completed' && <button type="button" title="复制截至此轮的对话，并独立复制当前文件" disabled={forkBusy} onClick={() => onFork(turn.id)}>从此轮分叉</button>}</div></div>}
     {!!replies.length && <section className="rs-adopted-reply" aria-label={`第 ${turn.sequence} 轮引用的同事回复`}><h4>本轮引用的同事回复</h4>{replies.map(reply => <div key={reply.questionId}><button className="rs-text-button" onClick={() => onQuestion(reply.questionId)}>核对原问题 {reply.questionId}</button>{reply.state === 'available' ? <><p>{reply.questionText}</p><p>{reply.reply.text}</p>{reply.reply.citedContentIds && <p>回答引用：{reply.reply.citedContentIds.join('、') || '未引用资料'}</p>}<p className="rw-muted">输入依据：{reply.reply.contentIds.length ? reply.reply.contentIds.join('、') : '无可用团队依据'}</p></> : <p role="status">引用的回复当前不可用，正文与来源已隐藏；后续研究需先核对权限。</p>}</div>)}</section>}
     {turn.failure && <p className="rw-error" role="alert">本轮未完成：{turn.failure}</p>}
 
@@ -230,7 +234,7 @@ function ContextStatus({ value, blocked }: { value: ResearchSession; blocked: bo
   </section>;
 }
 
-function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQuestion, onSend, onStop, onModels, notices, connectionStatus, onSession }: { onSession: (id: string) => void; ownerId: string; value: ResearchSession; options: SessionOptions | null; busy: boolean; blocked: boolean; questionId: string; onQuestion: (id: string) => void; onSend: (text: string, correction: boolean, model: ModelChoice, assistantQuestionId?: string) => Promise<boolean>; onStop: () => void; onModels: () => void; notices: ReactNode; connectionStatus: string }) {
+function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQuestion, onSend, onStop, onModels, notices, connectionStatus, onSession, onUpdated }: { onUpdated: () => void; onSession: (id: string) => void; ownerId: string; value: ResearchSession; options: SessionOptions | null; busy: boolean; blocked: boolean; questionId: string; onQuestion: (id: string) => void; onSend: (text: string, correction: boolean, model: ModelChoice, assistantQuestionId?: string) => Promise<boolean>; onStop: () => void; onModels: () => void; notices: ReactNode; connectionStatus: string }) {
   const draft = useDraft(draftKey(ownerId, value.id), ''); const [error, setError] = useState('');
   const model = useDraft<ModelChoice>(`${draftKey(ownerId, value.id)}:model`, { modelConnectionRef: value.model.connectionRef, reasoningEffort: value.model.reasoningEffort });
   const selectedReply = useDraft(`${draftKey(ownerId, value.id)}:reply`, '');
@@ -242,6 +246,19 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
   const [questionAttention, setQuestionAttention] = useState(false);
   const [triggersOpen, setTriggersOpen] = useState(false);
   const [teamOpen, setTeamOpen] = useState(false);
+  const [gitOpen, setGitOpen] = useState(false);
+  const [forkBusy, setForkBusy] = useState(false); const forkLock = useRef(false);
+  const forkRequests = useRef(new Map<string, string>());
+  async function fork(turnId: string) {
+    if (forkLock.current) return;
+    forkLock.current = true; setForkBusy(true); setError('');
+    try {
+      if (!forkRequests.current.has(turnId)) forkRequests.current.set(turnId, crypto.randomUUID());
+      const created = await sessionGitApi.fork(ownerId, value.id, turnId, forkRequests.current.get(turnId)!);
+      forkRequests.current.delete(turnId); onSession(created.id); onUpdated();
+    } catch (reason) { setError(describe(reason)); }
+    finally { forkLock.current = false; setForkBusy(false); }
+  }
   useEffect(() => { if (questionId) questions.current?.showPopover(); }, [questionId]);
   function openQuestion(id: string) { questions.current?.showPopover(); onQuestion(id); }
   useLayoutEffect(() => {
@@ -267,6 +284,7 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
   }
   return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading">
     <div className="rs-header-row"><h2>{value.title}</h2><div className="rs-header-actions">
+      <button type="button" popoverTarget="rs-git-panel" aria-label="Git 变更" title="Git 变更"><IconGitBranch size={18}/></button>
       <button type="button" popoverTarget="rs-team-panel" aria-label="团队协作" title="团队协作"><IconUsers size={18}/></button>
       <button type="button" popoverTarget="rs-trigger-panel" aria-label="自动触发" title="自动触发"><IconBolt size={18}/></button>
       <button type="button" popoverTarget="rs-question-panel" aria-label="同事问答" title="同事问答"><IconUsers size={18}/>{questionAttention && <span className="rs-attention-dot"/>}</button>
@@ -276,6 +294,8 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
     </header>
     <div className="rs-content"><div className="rs-detail-body" onClick={event => { if ((event.target as Element).closest('summary')) following.current = false; }}>
     {notices}
+    {value.fork && <p className="rs-continuation">从原会话第 {value.fork.sequence} 轮分叉 · <button type="button" onClick={() => onSession(value.fork!.sessionId)}>打开原会话</button> · 文件从分叉时的当前工作树独立复制。</p>}
+    {error && <p className="rw-error" role="alert">{error}</p>}
     {fileAttention && <p className="rs-panel-warning" role="alert">部分会话文件无法读取。<button type="button" popoverTarget="rs-file-panel">查看文件问题</button></p>}
     {questionAttention && <p className="rs-panel-warning" role="status">同事问答有待核对的请求或读取问题。<button type="button" popoverTarget="rs-question-panel">查看同事问答</button></p>}
     {value.state === 'stopping' && <p className="rs-warning" role="status">正在停止，等待当前操作结束…</p>}
@@ -286,7 +306,7 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
       {delivery.provenance && <p>发布成员：{delivery.provenance.ownerId} · 来源资料：<code>{delivery.provenance.contentId}</code></p>}
       <small>事件：{delivery.eventId}{delivery.turnId && ` · 轮次：${delivery.turnId}`}</small>{delivery.error && <p role="alert">{delivery.error}</p>}
     </div>)}</details></section>}
-    <div className="rs-conversation">{value.turns.length ? value.turns.map(turn => <TurnRecord key={turn.id} turn={turn} onQuestion={openQuestion}/>) : <div className="rs-empty"><h3>会话已创建，尚无执行轮次</h3><p>写下第一轮指令后明确开始。打开或刷新不会自动执行。</p></div>}</div>
+    <div className="rs-conversation">{value.turns.length ? value.turns.map(turn => <TurnRecord key={turn.id} turn={turn} onQuestion={openQuestion} onFork={id => void fork(id)} forkBusy={busy || forkBusy || blocked}/>) : <div className="rs-empty"><h3>会话已创建，尚无执行轮次</h3><p>写下第一轮指令后明确开始。打开或刷新不会自动执行。</p></div>}</div>
     {!!value.sharedSourceIds.length && <SharedSources key={`${value.id}:${value.blockReason ?? ''}:${value.sharedSourceIds.join(',')}`} ownerId={ownerId} ids={value.sharedSourceIds}/>}
     {value.context.notice && <p className="rs-warning" role="status">{value.context.notice}</p>}
     <ContextStatus value={value} blocked={blocked}/>
@@ -311,10 +331,11 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
     {value.allowedActions.includes('stop') && value.state !== 'running' && value.state !== 'stopping' && <button type="button" disabled={busy} onClick={onStop}>停止会话</button>}
 </aside>
     <aside ref={questions} id="rs-question-panel" popover="auto" className="rs-detail-panel" aria-label="同事问答"><header><h3>同事问答</h3><button type="button" popoverTarget="rs-question-panel" popoverTargetAction="hide" aria-label="关闭同事问答"><IconX size={18}/></button></header><SessionQuestions key={`${ownerId}:${value.id}:${value.blockReason ?? ''}`} ownerId={ownerId} sessionId={value.id} onAttention={setQuestionAttention} collaborationEnabled={value.collaboration?.enabled} questionId={questionId} onQuestion={onQuestion} onUse={value.allowedActions.includes('start') && !blocked && !busy ? id => { selectedReply.change(id); onQuestion(''); questions.current?.hidePopover(); composer.current?.focus(); composer.current?.scrollIntoView?.({ block: 'center' }); } : undefined}/></aside>
+    <aside id="rs-git-panel" popover="auto" className="rs-detail-panel rs-git-panel" aria-label="Git 工作区与审查" onToggle={event => setGitOpen(event.newState === 'open')}><header><h3>Git 变更与审查</h3><button type="button" popoverTarget="rs-git-panel" popoverTargetAction="hide" aria-label="关闭 Git 变更"><IconX size={18}/></button></header><SessionGit key={`${ownerId}:${value.id}`} ownerId={ownerId} sessionId={value.id} open={gitOpen} revision={`${latest?.id}:${latest?.status}`} running={busy || blocked || value.state === 'running' || value.state === 'stopping'} model={model.value} onUpdated={onUpdated} onSend={text => onSend(text, false, model.value)}/></aside>
     <aside id="rs-file-panel" popover="auto" className="rs-detail-panel" aria-label="会话文件"><header><h3>会话文件</h3><button type="button" popoverTarget="rs-file-panel" popoverTargetAction="hide" aria-label="关闭会话文件"><IconX size={18}/></button></header><SessionFiles onAttention={setFileAttention} key={value.id} ownerId={ownerId} sessionId={value.id} revision={`${latest?.id}:${latest?.status}`}/></aside>
     <aside id="rs-trigger-panel" popover="auto" className="rs-detail-panel" aria-label="自动触发" onToggle={event => setTriggersOpen(event.newState === 'open')}><header><h3>自动触发</h3><button type="button" popoverTarget="rs-trigger-panel" popoverTargetAction="hide" aria-label="关闭自动触发"><IconX size={18}/></button></header><SessionTriggers key={`${ownerId}:${value.id}`} ownerId={ownerId} sessionId={value.id} stopped={value.state === 'stopped'} open={triggersOpen}/></aside>
     <aside id="rs-team-panel" popover="auto" className="rs-detail-panel" aria-label="团队协作" onToggle={event => setTeamOpen(event.newState === 'open')}><header><h3>团队协作</h3><button type="button" popoverTarget="rs-team-panel" popoverTargetAction="hide" aria-label="关闭团队协作"><IconX size={18}/></button></header><TeamWork key={`${ownerId}:${value.id}`} ownerId={ownerId} sessionId={value.id} open={teamOpen} onSession={onSession}/></aside>
-    <div id="rs-compose-menu" popover="auto" className="rs-compose-menu"><button type="button" popoverTarget="rs-team-panel"><IconUsers size={16}/>团队协作</button><button type="button" popoverTarget="rs-file-panel"><IconFolder size={16}/>会话文件</button><button type="button" popoverTarget="rs-question-panel"><IconUsers size={16}/>同事问答</button><button type="button" popoverTarget="rs-trigger-panel"><IconBolt size={16}/>自动触发</button><button type="button" popoverTarget="rs-info-panel"><IconInfoCircle size={16}/>会话信息</button></div>
+    <div id="rs-compose-menu" popover="auto" className="rs-compose-menu"><button type="button" popoverTarget="rs-git-panel"><IconGitBranch size={16}/>Git 变更</button><button type="button" popoverTarget="rs-team-panel"><IconUsers size={16}/>团队协作</button><button type="button" popoverTarget="rs-file-panel"><IconFolder size={16}/>会话文件</button><button type="button" popoverTarget="rs-question-panel"><IconUsers size={16}/>同事问答</button><button type="button" popoverTarget="rs-trigger-panel"><IconBolt size={16}/>自动触发</button><button type="button" popoverTarget="rs-info-panel"><IconInfoCircle size={16}/>会话信息</button></div>
   </section>;
 }
 
@@ -415,10 +436,16 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
     catch (reason) { if (active.current) setActionError(describe(reason)); return false; }
     finally { lock.current = false; if (active.current) setBusy(false); }
   }
-  function create(value: Omit<CreateSession, 'requestId'>) {
+  function create(value: NewSession) {
     void run(async () => {
-      const created = await post('create', null, requestId => api.create(ownerId, { ...value, requestId }));
+      const { repositoryPath, ...sessionInput } = value;
+      const created = await post('create', null, requestId => api.create(ownerId, { ...sessionInput, requestId }));
+      if (repositoryPath) {
+        try { await sessionGitApi.attach(ownerId, created.id, repositoryPath); }
+        catch (reason) { writeStored(draftKey(ownerId, created.id), value.goal); if (active.current) { setDetail(created); onSelect(created.id); } setNotice('会话已保存，Git 工作树尚未确认。请在 Git 变更中核对或连接仓库，再发送第一条消息。'); throw reason; }
+      }
       removeStored(draftKey(ownerId));
+      removeStored(draftKey(ownerId, created.id));
       if (!active.current) return;
       onSelect(created.id); setNotice('会话已创建，正在提交第一轮。');
       try { await post('turn', created.id, requestId => api.turn(ownerId, created.id, { requestId, text: value.goal })); }
@@ -442,7 +469,7 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
 </>;
   return <div className="research-sessions">    <div className="rs-layout"><aside className="rs-session-list" aria-label="我的研究会话"><details className="rs-navigation" open={navigationOpen} onToggle={event => setNavigationOpen(event.currentTarget.open)}><summary aria-label={navigationOpen ? '收起侧边栏' : '展开侧边栏'}><IconLayoutSidebar size={18}/><span>会话与导航</span></summary><div className="rs-navigation-body">{navigation}<div className="rs-toolbar"><button onClick={() => onSelect('')} aria-current={!selectedId ? 'page' : undefined}><IconPlus size={16}/>新建会话</button><button aria-label="刷新会话" title="刷新会话" disabled={busy} onClick={refreshPage}><IconRefresh size={16}/></button></div><label className="rs-session-search"><IconSearch size={15}/><input aria-label="搜索本页会话" placeholder="搜索会话" value={query} onChange={event => setQuery(event.target.value)}/></label><h2>工作区</h2>{readError ? <p className="rw-error" role="alert">{readError}</p> : !page ? <p role="status">正在读取会话…</p> : page.items.length ? page.items.filter(item => item.title.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map(item => <button key={item.id} aria-current={item.id === selectedId ? 'page' : undefined} onClick={() => { onSelect(item.id); if (window.matchMedia('(max-width:767px)').matches) setNavigationOpen(false); }}><strong>{item.title}</strong><span>{states[item.state]} · {time(item.updatedAt)}</span></button>) : <p className="rw-muted">{after ? '本页没有会话。' : '还没有会话。提交第一个目标后，记录会保存在这里。'}</p>}<div className="rs-pagination">{after && <button onClick={() => setAfter('')}>第一页</button>}{page?.nextCursor && <button onClick={() => setAfter(page.nextCursor!)}>下一页会话</button>}</div></div></details></aside>
       <main className={detail && showingConversation ? 'rs-main' : `rs-content${workspaceContent !== undefined ? ' rs-settings-content' : ''}`}>{!(detail && showingConversation) && notices}
-{workspaceContent !== undefined ? workspaceContent : selectedId ? detailError ? <p className="rw-error" role="alert">{detailError}</p> : detail ? <SessionDetail onSession={onSelect} options={options} onModels={onModels} notices={notices} connectionStatus={connectionStatus} key={detail.id} ownerId={ownerId} value={detail} busy={busy} blocked={currentPending} questionId={questionId} onQuestion={onQuestion} onStop={() => void run(async () => { await post('stop', detail.id, requestId => api.stop(ownerId, detail.id, { requestId })); })} onSend={(text, correction, model, assistantQuestionId) => run(async () => { await post(correction ? 'correct' : 'turn', detail.id, requestId => correction ? api.correct(ownerId, detail.id, { requestId, text }) : api.turn(ownerId, detail.id, { requestId, text, modelConnectionRef: model.modelConnectionRef, reasoningEffort: model.reasoningEffort ?? null, ...(assistantQuestionId ? { assistantQuestionId } : {}) })); setNotice(correction ? '补充消息已保存。' : ''); })}/> : <p role="status">正在读取会话详情…</p> : <CreateSessionForm ownerId={ownerId} options={options} busy={busy} blocked={currentPending} onModels={onModels} onCreate={create}/>}</main>
+{workspaceContent !== undefined ? workspaceContent : selectedId ? detailError ? <p className="rw-error" role="alert">{detailError}</p> : detail ? <SessionDetail onUpdated={refreshPage} onSession={onSelect} options={options} onModels={onModels} notices={notices} connectionStatus={connectionStatus} key={detail.id} ownerId={ownerId} value={detail} busy={busy} blocked={currentPending} questionId={questionId} onQuestion={onQuestion} onStop={() => void run(async () => { await post('stop', detail.id, requestId => api.stop(ownerId, detail.id, { requestId })); })} onSend={(text, correction, model, assistantQuestionId) => run(async () => { await post(correction ? 'correct' : 'turn', detail.id, requestId => correction ? api.correct(ownerId, detail.id, { requestId, text }) : api.turn(ownerId, detail.id, { requestId, text, modelConnectionRef: model.modelConnectionRef, reasoningEffort: model.reasoningEffort ?? null, ...(assistantQuestionId ? { assistantQuestionId } : {}) })); setNotice(correction ? '补充消息已保存。' : ''); })}/> : <p role="status">正在读取会话详情…</p> : <CreateSessionForm ownerId={ownerId} options={options} busy={busy} blocked={currentPending} onModels={onModels} onCreate={create}/>}</main>
     </div>
   </div>;
 }

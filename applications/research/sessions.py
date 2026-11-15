@@ -42,6 +42,8 @@ class ResearchSessions:
         self.triggers: Any = None
         self.discovery: Any = None
         self.team_work: Any = None
+        self.git: Any = None
+        self.git_review: Any = None
         self.memory = ResearchSessionMemory(self)
         self.subagents = ResearchSubagents(self)
         self.setup = ResearchSessionSetup(store, connections, models, tools)
@@ -131,14 +133,19 @@ class ResearchSessions:
             run_id = turn['body'].get('runId')
             native = native_runs.get(run_id)
             if native is None and run_id:
-                native = self.runs.factory.bridge.native_db.get_run(run_id)
-                if native is not None:
-                    prior_task = self._task(context.user_id, turn)
-                    if (prior_task is None or native.user_id != context.user_id
-                            or native.session_id != self.store.native_session_id(prior_task)):
-                        raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
+                native = self._history_native(context.user_id, turn)
             history.append(session_context.history_run(turn, native))
         session_context.history_view(session, history, saved)
+
+    def _history_native(self, owner, turn):
+        run_id = turn['body'].get('runId')
+        native = self.runs.factory.bridge.native_db.get_run(run_id) if run_id else None
+        if native is not None:
+            prior_task = self._task(owner, turn)
+            if (prior_task is None or native.user_id != owner
+                    or native.session_id != self.store.native_session_id(prior_task)):
+                raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
+        return native
 
     def _sources(self, owner, identifiers):
         for identifier in identifiers:
@@ -160,10 +167,11 @@ class ResearchSessions:
 
     def _replies(self, owner, identifier, turns):
         for turn in turns:
+            source_session = turn['body'].get('inheritedFrom', {}).get('sessionId', identifier)
             if 'assistantReply' in turn['body']:
-                self._reply(owner, identifier, turn['body']['assistantReply'])
+                self._reply(owner, source_session, turn['body']['assistantReply'])
             for snapshot in turn['body'].get('assistantReplies', []):
-                self._reply(owner, identifier, snapshot)
+                self._reply(owner, source_session, snapshot)
 
     def _context_sources(self, owner, row, turns):
         self._sources(owner, row['body']['sharedSourceIds'])
@@ -219,6 +227,68 @@ class ResearchSessions:
             conn.execute(self.sessions.insert().values(id=identifier, owner_id=owner, assistant_id=assistant['id'], body=body))
             self._command(conn, owner, request.requestId, fingerprint, 'create', identifier)
             return identifier
+
+    def fork(self, owner, identifier, request):
+        self.auth.require_member(owner)
+        fingerprint = digest({'action': 'fork', 'sessionId': identifier,
+            **request.model_dump(exclude={'requestId'}, exclude_none=True)})
+        with self._write() as conn:
+            old = self.db.old(conn, self.commands, owner, request.requestId, fingerprint)
+            if old is not None:
+                return old['sessionId']
+            row, turns = self._row(conn, owner, identifier), self._turns(conn, identifier)
+            candidates = [turn for turn in turns if turn['body'].get('terminal')
+                          and turn['body']['status'] == 'completed'
+                          and (request.turnId is None or turn['id'] == request.turnId)]
+            if not candidates:
+                raise rejected('RESEARCH_FORK_POINT_UNAVAILABLE', '请选择一个已完成的轮次作为分支起点。')
+            point = candidates[-1]
+            selected = [turn for turn in turns if turn['sequence'] <= point['sequence']]
+            fork_id, stamp = str(uuid4()), now()
+            assistant = self.assistants.create(owner, CreateAssistant(
+                requestId='session-fork:' + digest({'owner': owner, 'request': request.requestId})[:32]))
+            body = {key: deepcopy(row['body'][key]) for key in ('title', 'goal', 'boundaries', 'configuration')}
+            body.update(title=request.title or body['title'] + ' · 分支', createdAt=stamp, updatedAt=stamp,
+                stopped=False, stopRequestId=None,
+                fork={'sessionId': identifier, 'turnId': point['id'], 'sequence': point['sequence']})
+            for key in ('projectId', 'projectGoalVersion'):
+                if key in row['body']:
+                    body[key] = deepcopy(row['body'][key])
+            if row['body'].get('contextAfterSequence', 0) <= point['sequence']:
+                for key in ('contextAfterSequence', 'contextNotice'):
+                    if key in row['body']:
+                        body[key] = deepcopy(row['body'][key])
+            body['sharedSourceIds'] = list(dict.fromkeys(source
+                for turn in session_context.active_turns({'body': body}, selected)
+                for source in turn['body'].get('sharedSourceIds', [])))
+            saved = session_context.checkpoint(row)
+            if saved and saved['throughSequence'] <= point['sequence']:
+                body['contextCheckpoint'] = deepcopy(saved)
+            if self.git is not None:
+                workspace = self.git.fork_workspace(owner, identifier, fork_id, conn)
+                if workspace is not None:
+                    body['gitWorkspace'] = workspace
+            # Agno 3.1 has no session fork API; snapshot only history, never old executions or tools.
+            conn.execute(self.sessions.insert().values(id=fork_id, owner_id=owner,
+                assistant_id=assistant['id'], body=body))
+            for turn in selected:
+                prior = turn['body']
+                history = session_context.history_run(turn, self._history_native(owner, turn))
+                turn_id = str(uuid4())
+                inherited = {key: deepcopy(prior[key]) for key in (
+                    'status', 'createdAt', 'completedAt', 'result', 'failure', 'messages',
+                    'assistantReply', 'assistantReplies', 'sharedSourceIds') if key in prior}
+                inherited.update(requestId='research-inherited:' + turn_id,
+                    terminal=True, neverDispatched=True, dispatchStarted=False, taskId=None, runId=None,
+                    events=[], toolResults=[], children=[],
+                    inheritedFrom=deepcopy(prior.get('inheritedFrom') or
+                        {'sessionId': identifier, 'turnId': turn['id'], 'sequence': turn['sequence']}),
+                    inheritedMessages=[message.model_dump(mode='json', exclude_none=True)
+                        for message in history.messages or []])
+                conn.execute(self.turns.insert().values(id=turn_id, session_id=fork_id, owner_id=owner,
+                    sequence=turn['sequence'], application_request_id='research-inherited:' + turn_id, body=inherited))
+            self._command(conn, owner, request.requestId, fingerprint, 'fork', fork_id)
+            return fork_id
 
     def _task(self, owner, turn):
         try:
@@ -495,7 +565,7 @@ class ResearchSessions:
                 if turns:
                     turn = turns[-1]
                     body = {**turn['body'], 'stopRequestId': request.requestId}
-                    if not body['dispatchStarted']:
+                    if not body['terminal'] and not body['dispatchStarted']:
                         body.update(status='canceled', terminal=True, completedAt=now(), neverDispatched=True)
                     self._save_turn(conn, turn, body)
                 self._command(conn, owner, request.requestId, fingerprint, 'stop', identifier, turn_id)
@@ -828,6 +898,7 @@ class ResearchSessions:
                 actions.append('stop')
             return {'id': row['id'], 'assistantId': row['assistant_id'],
                 'projectId': body.get('projectId'),
+                **({'fork': deepcopy(body['fork'])} if 'fork' in body else {}),
                 **{key: deepcopy(body[key]) for key in ('title', 'goal', 'boundaries', 'createdAt', 'updatedAt', 'sharedSourceIds')},
                 'model': deepcopy(body['configuration']['model']), 'state': state, 'allowedActions': actions,
                 'capabilities': {'memory': body['configuration'].get('personalMemory') is True},
@@ -836,9 +907,12 @@ class ResearchSessions:
                     'rawCharacters': raw_characters, 'notice': context_row['body'].get('contextNotice'), **({'compaction': compact_view} if compact_view else {})},
                 'deliveries': self.triggers.receipts(conn, owner, identifier) if self.triggers is not None else [],
                 'turns': [{'id': item['id'], 'sequence': item['sequence'],
-                    **({'assistantReply': self._reply_projection(owner, identifier, item['body']['assistantReply'])}
+                    **({'inheritedFrom': deepcopy(item['body']['inheritedFrom'])} if 'inheritedFrom' in item['body'] else {}),
+                    **({'assistantReply': self._reply_projection(owner,
+                        item['body'].get('inheritedFrom', {}).get('sessionId', identifier), item['body']['assistantReply'])}
                        if 'assistantReply' in item['body'] else {}),
-                    **({'assistantReplies': [self._reply_projection(owner, identifier, snapshot)
+                    **({'assistantReplies': [self._reply_projection(owner,
+                        item['body'].get('inheritedFrom', {}).get('sessionId', identifier), snapshot)
                         for snapshot in item['body']['assistantReplies']]} if 'assistantReplies' in item['body'] else {}),
                     **({'origin': deepcopy(item['body']['origin'])} if 'origin' in item['body'] else {}),
                     **({'continuation': deepcopy(item['body']['continuation'])} if 'continuation' in item['body'] else {}),
