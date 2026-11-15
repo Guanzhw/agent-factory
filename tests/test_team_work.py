@@ -22,16 +22,32 @@ class TeamModel(TriggerModel):
         messages = request['messages']
         current = max(i for i, value in enumerate(messages) if value['role'] == 'user')
         instruction = messages[current]['content']
-        if not instruction.startswith('native-team-review:'):
+        resumed = instruction.startswith('同事提供的参考回答：') and 'autonomous-team-context:' in instruction
+        if not instruction.startswith(('native-team-review:', 'autonomous-team-lead:')) and not resumed:
             self.rfile = BytesIO(raw)
             return super().do_POST()
         self.server.requests.append(request)
-        payload = json.loads(instruction.split(':', 1)[1])
+        if resumed:
+            answer = json.loads(instruction.split('\n', 1)[1])
+            payload = json.loads(answer['questionText'].split('autonomous-team-context:', 1)[1])
+            assert answer['reply']['citedContentIds'] == [payload['evidenceIds'][1]]
+        else:
+            payload = json.loads(instruction.split(':', 1)[1])
         results = [value for value in messages[current:] if value['role'] == 'tool']
         steps = [('research_team_work', {'work_id': payload['workId']}),
                  ('research_contribute', {'work_id': payload['workId'],
                      'text': 'Native review: compare the 4096 protocol with the required 2048 budget.',
-                     'evidence_ids': [payload['evidenceId']]})]
+                     'evidence_ids': [payload['evidenceId']]})] if instruction.startswith('native-team-review:') else []
+        if instruction.startswith('autonomous-team-lead:'):
+            steps = [('research_request_contribution', {'work_id': payload['workId'],
+                'assistant_id': payload['assistantId'], 'text':
+                    'Review peer-research-observation against required budget 2048; cite protocol. '
+                    'autonomous-team-context:' + json.dumps(payload)})]
+        elif resumed:
+            steps = [('research_synthesize_team_work', {'work_id': payload['workId'],
+                'text': 'Autonomous synthesis: ' + payload['peerOwner'] +
+                        ' reviewed the 4096 protocol; the requested 2048 comparison remains unconfirmed.',
+                'evidence_ids': payload['evidenceIds']})]
         if len(results) < len(steps):
             name, arguments = steps[len(results)]
             assert name in {tool['function']['name'] for tool in request['tools']}
@@ -39,7 +55,8 @@ class TeamModel(TriggerModel):
                 'id': 'team_' + str(len(results)), 'type': 'function',
                 'function': {'name': name, 'arguments': json.dumps(arguments)}}]}), chunk({}, 'tool_calls')]
         else:
-            changes = reply('Native team review saved with protocol evidence.')
+            changes = reply('Autonomous synthesis saved.' if resumed else
+                            'Native team review saved with protocol evidence.')
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
         self.end_headers()
@@ -218,6 +235,42 @@ class TeamWorkJourney(unittest.TestCase):
             reopened.get_by_role('button', name='Matched-budget team review', exact=True).click()
             expect(reopened.get_by_role('region', name='当前综合结论', exact=True)).to_contain_text(conclusion)
             self.assertEqual(member.context.request.get(self.origin + '/api/factory' + path).json(), final)
+
+        autonomous = self.post('/research/team-work', {'title': 'Autonomous lead review',
+            'goal': 'Ask the protocol author and synthesize the matched-budget evidence.', 'sessionId': self.session_id})
+        self.post('/research/sessions/' + self.session_id + '/turns', {'text': 'autonomous-team-lead:' + json.dumps({
+            'workId': autonomous['id'], 'assistantId': peer.assistant['id'], 'peerOwner': peer.owner,
+            'evidenceIds': [self.evidence_id, peer.evidence_id]})})
+        autonomous_session = self.wait_for(lambda value: len(value['turns']) == 4 and value['state'] == 'idle')
+        requested, synthesized = autonomous_session['turns'][-2:]
+        self.assertEqual([requested['status'], synthesized['status']], ['completed', 'completed'])
+        autonomous = self.context.request.get(self.origin + '/api/factory/research/team-work/' + autonomous['id']).json()
+        self.assertEqual([entry['kind'] for entry in autonomous['entries']], ['request', 'synthesis'])
+        asked, synthesis = autonomous['entries']
+        self.assertEqual(asked['memberId'], self.owner)
+        self.assertEqual(asked['recipientId'], peer.owner)
+        self.assertEqual(asked['reply']['citedContentIds'], [peer.evidence_id])
+        self.assertEqual(synthesized['continuation']['questionIds'], [asked['questionId']])
+        self.assertEqual(synthesized['assistantReplies'][0]['questionId'], asked['questionId'])
+        self.assertEqual(synthesis['origin'], {'sessionId': self.session_id, 'turnId': synthesized['id'],
+            'taskId': synthesized['taskId'], 'runId': synthesized['runId']})
+        self.assertEqual(synthesis['evidenceIds'], [self.evidence_id, peer.evidence_id])
+        self.assertIn(peer.owner, synthesis['text'])
+        self.assertIn('unconfirmed', synthesis['text'])
+        for turn, tool in ((requested, 'research_request_contribution'), (synthesized, 'research_synthesize_team_work')):
+            receipts = [event['data'] for event in turn['events'] if event['type'] == 'research_tool_finished'
+                        and event['data'].get('toolName') == tool]
+            self.assertEqual(len(receipts), 1)
+            self.assertEqual(receipts[0]['outcome'], 'completed')
+        peer_task = store.task(asked['delivery']['taskId'], peer.owner)
+        self.assertEqual(store.plan(peer_task['plan_id'], peer.owner)['connectionRefs']['model'], peer.model_ref)
+        self.assertIsNotNone(store.native_db.get_job(peer_task['run_id']))
+        self.page.get_by_role('button', name='关闭团队协作', exact=True).click()
+        self.page.get_by_role('button', name='团队协作', exact=True).click()
+        panel = self.page.get_by_role('region', name='团队协作记录', exact=True)
+        panel.get_by_role('button', name='全部团队记录', exact=True).click()
+        panel.get_by_role('button', name='Autonomous lead review', exact=True).click()
+        expect(panel.get_by_role('region', name='当前综合结论', exact=True)).to_contain_text('Autonomous synthesis:')
 
 
 if __name__ == '__main__':

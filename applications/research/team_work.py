@@ -64,7 +64,7 @@ class ResearchTeamWork:
     def _sources(self, context, result):
         records = result.get('items', []) if 'items' in result else [result]
         for record in records:
-            for entry in record['entries']:
+            for entry in record.get('entries', []):
                 reply = entry.get('reply')
                 if reply is not None and reply['state'] == 'available':
                     for source in reply['contentIds']:
@@ -81,8 +81,7 @@ class ResearchTeamWork:
             return self.create(owner, CreateWork(requestId=request, sessionId=execution['id'], **values))
         identifier = values['work_id']
         if name == 'research_request_contribution':
-            return await self.request(owner, identifier, ContributionRequest(requestId=request,
-                sessionId=execution['id'], assistantId=values['assistant_id'], text=values['text']))
+            return await self.request_native(context, call_id, values, execution, request)
         return self.contribute(owner, identifier, Contribution(requestId=request, sessionId=execution['id'],
             text=values['text'], evidenceIds=values.get('evidence_ids', [])),
             kind='synthesis' if name == 'research_synthesize_team_work' else 'contribution',
@@ -98,12 +97,12 @@ class ResearchTeamWork:
 
     async def reconcile(self, context, call_id):
         result = self._receipt(context, call_id)
-        if result is not None and result['action'] == 'request':
-            request = 'team-work:' + digest({'run': context.run_id, 'call': call_id})
-            question = 'team-work:' + digest({'owner': context.user_id, 'request': request})
+        if result is not None and result['action'] in {'request', 'native_request'}:
             messages = self.sessions.conversations.messages
-            original = messages.request(context.user_id, question)
+            original = messages.read(context.user_id, result['questionId'])
             await messages.recover(original['recipientId'], original['id'], private_event_id=result['eventId'])
+        if result is not None and result['action'] == 'native_request':
+            return {'questionId': result['questionId'], 'state': 'saved'}
         return self._sources(context, self.read(context.user_id, result['id'])) if result is not None else None
 
     def _row(self, conn, identifier):
@@ -194,6 +193,31 @@ class ResearchTeamWork:
                 self.db.record(conn, self.commands, owner, body.requestId, fingerprint, kind, {'id': identifier})
         return self.read(owner, identifier)
 
+    async def request_native(self, context, call_id, values, execution, request_id):
+        owner, identifier = context.user_id, values['work_id']
+        body = ContributionRequest(requestId=request_id, assistantId=values['assistant_id'],
+            text=values['text'], sessionId=execution['id'])
+        fingerprint = digest({'action': 'request', 'id': identifier, **body.model_dump(exclude={'requestId'})})
+        collaboration = self.sessions.collaboration
+        with self.sessions._write() as conn, self.db.write():
+            old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
+            if old is None:
+                self._row(conn, identifier)
+                ack = collaboration.ask(context, call_id, values, tool_name='research_request_contribution')
+                question = self.sessions.conversations.messages.read(owner, ack['questionId'])
+                intent = conn.execute(select(collaboration.intents).where(
+                    collaboration.intents.c.question_id == question['id'])).mappings().one()
+                self._append(conn, owner, identifier, body, 'request', questionId=question['id'],
+                    recipientId=question['recipientId'], eventId=intent['body']['eventId'],
+                    origin={'sessionId': execution['id'], 'turnId': execution['turnId'],
+                            'taskId': self.sessions.store.task_for_context(context)['id'], 'runId': context.run_id})
+                old = self.db.record(conn, self.commands, owner, request_id, fingerprint, 'native_request',
+                    {'id': identifier, 'eventId': intent['body']['eventId'], 'questionId': question['id']})
+        message = self.sessions.conversations.messages.read(owner, old['questionId'])
+        await self.sessions.conversations.messages.recover(message['recipientId'], message['id'],
+            private_event_id=old['eventId'])
+        return {'questionId': message['id'], 'state': 'saved'}
+
     async def request(self, owner, identifier, body):
         self.auth.require_member(owner)
         fingerprint = digest({'action': 'request', 'id': identifier, **body.model_dump(exclude={'requestId'})})
@@ -211,7 +235,7 @@ class ResearchTeamWork:
                     self._append(conn, owner, identifier, body, 'request',
                         questionId=message['id'], recipientId=message['recipient_id'], eventId=event['id'])
                     old = self.db.record(conn, self.commands, owner, body.requestId, fingerprint, 'request',
-                        {'id': identifier, 'eventId': event['id']})
+                        {'id': identifier, 'eventId': event['id'], 'questionId': message['id']})
         message = conversations.messages.request(owner, question.requestId)
         await conversations.messages.recover(message['recipientId'], message['id'], private_event_id=old['eventId'])
         return self.read(owner, identifier)
