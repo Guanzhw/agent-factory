@@ -2,9 +2,10 @@
 import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-from threading import Event, Thread
+from threading import Barrier, Event, Thread
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock
 
 from agno.agent import Agent
 from agno.exceptions import ModelProviderError
@@ -124,6 +125,91 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
         user = next(message for message in request['messages'] if message['role'] == 'user')
         self.assertEqual({part['type'] for part in user['content']}, {'text', 'image_url'})
 
+    async def test_runtime_keeps_application_tools_history_and_skills_separate(self):
+        def research_tool() -> str:
+            """A research tool."""
+            return 'research'
+        def research_qa_tool() -> str:
+            """A research question tool."""
+            return 'qa'
+        def research_skill() -> str:
+            """A research skill."""
+            return 'skill'
+        research = SimpleNamespace(functions=Mock(side_effect=lambda _: [Function.from_callable(research_tool)]))
+        qa = SimpleNamespace(functions=Mock(side_effect=lambda _: [Function.from_callable(research_qa_tool)]))
+        sessions = SimpleNamespace(prepare_history=Mock(), before_model=Mock(), authorize_model=Mock())
+        skills = SimpleNamespace(get_tools=lambda: [Function.from_callable(research_skill)],
+            get_system_prompt_snippet=lambda: 'research skill instructions')
+        cases = [('chat', 'qa', False, set()), ('chat', 'qa', True, set()),
+                 ('chat', 'autonomous', True, set()),
+                 ('research-chat', 'qa', True, {'research_qa_tool', 'research_skill'}),
+                 ('research-chat', 'autonomous', True, {'research_tool', 'research_skill'})]
+        for application, mode, installed, expected in cases:
+            with self.subTest(application=application, mode=mode, installed=installed):
+                self.server.requests.clear()
+                research.functions.reset_mock()
+                qa.functions.reset_mock()
+                sessions.prepare_history.reset_mock()
+                sessions.before_model.reset_mock()
+                legacy = '{"goal":"legacy research goal"}' if application == 'research-chat' else 'ordinary input'
+                execution = {'application': application, 'mode': mode, 'normalizedGoal': 'answer',
+                    'connectionRefs': {'model': 'fixture'},
+                    'inputValues': {'sessionId': 'session', 'turnId': 'turn', 'sessionContext': legacy}}
+                bound = {}
+                def bind(context):
+                    bound['run_id'] = context.run_id
+                    return execution
+                store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: execution,
+                    task_for_context=lambda _: bound, execution=lambda _: execution,
+                    cancellation_requested=lambda _: False,
+                    personal_models=SimpleNamespace(model_for=lambda *args, **kwargs: OwnerChatModel(self.config, lambda: None)))
+                if installed:
+                    store.research_tools, store.research_qa = research, qa
+                    store.research_sessions, store.research_skills = sessions, skills
+                agent, _ = build_runtime(store, None)
+                result = await agent.arun('answer', session_id='task', user_id='owner')
+                self.assertEqual(result.status, RunStatus.completed)
+                request = self.server.requests[-1][0]
+                self.assertEqual({tool['function']['name'] for tool in request.get('tools', [])}, expected)
+                system = next(message['content'] for message in request['messages'] if message['role'] == 'system')
+                is_research = application == 'research-chat'
+                self.assertEqual('research skill instructions' in system, is_research)
+                if not is_research:
+                    self.assertIn('ordinary input', system)
+                self.assertEqual(sessions.prepare_history.call_count, int(is_research and mode == 'autonomous'))
+                self.assertEqual(sessions.before_model.call_count, int(is_research and mode == 'autonomous'))
+                if installed and not is_research and mode == 'qa':
+                    result.status = RunStatus.error
+                    continued = await agent.acontinue_run(run_response=result, user_id='owner')
+                    self.assertEqual(continued.status, RunStatus.completed)
+                    self.assertEqual({tool['function']['name'] for tool in self.server.requests[-1][0].get('tools', [])}, expected)
+        executions = {'generic': {**execution, 'application': 'chat'}, 'research': execution}
+        bound_by_run = {}
+        def bind_concurrent(context):
+            bound_by_run[context.run_id] = {'run_id': context.run_id, 'session_id': context.session_id}
+            return executions[context.session_id]
+        store.bind_run = bind_concurrent
+        store.resolve_run = lambda context: executions[context.session_id]
+        store.task_for_context = lambda context: bound_by_run[context.run_id]
+        store.execution = lambda task: executions[task['session_id']]
+        barrier = Barrier(2)
+        def concurrent_answer(_):
+            barrier.wait(10)
+            return 200, reply('done')
+        self.server.answer = concurrent_answer
+        self.server.requests.clear()
+        agent, _ = build_runtime(store, None)
+        results = await asyncio.gather(*(agent.arun(name, session_id=name, user_id='owner')
+                                        for name in executions))
+        self.assertTrue(all(result.status == RunStatus.completed for result in results))
+        for request, _ in self.server.requests:
+            user = next(message['content'] for message in request['messages'] if message['role'] == 'user')
+            expected = {'research_tool', 'research_skill'} if user == 'research' else set()
+            self.assertEqual({tool['function']['name'] for tool in request.get('tools', [])}, expected)
+            system = next(message['content'] for message in request['messages'] if message['role'] == 'system')
+            self.assertEqual('research skill instructions' in system, user == 'research')
+        self.assertIsNone(agent.skills)
+
     async def test_native_tool_loop_preserves_reasoning_and_order_without_private_replay_record(self):
         events = []
         async def text(value, response_id): events.append(('text', value, response_id))
@@ -236,7 +322,7 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
 
     async def test_responses_runtime_keeps_media_nullable_tools_and_exact_continuation(self):
         bound, called = {}, []
-        plan = {'connectionRefs': {'model': 'responses-model'}, 'normalizedGoal': 'inspect'}
+        plan = {'application': 'research-chat', 'connectionRefs': {'model': 'responses-model'}, 'normalizedGoal': 'inspect'}
         def inspect_result(value: str | None = None) -> str:
             """Inspect a nullable value."""
             called.append(value)

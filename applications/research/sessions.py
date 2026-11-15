@@ -105,7 +105,8 @@ class ResearchSessions:
 
     def native_session_for_plan(self, plan):
         inputs = plan.get('inputValues') or {}
-        if plan.get('mode') != MODE or plan.get('delegation') or not inputs.get('turnId'):
+        if (plan.get('application') != 'research-chat' or plan.get('mode') != MODE
+                or plan.get('delegation') or not inputs.get('turnId')):
             return None
         owner = plan['ownerId']
         with self.db.read() as conn:
@@ -607,7 +608,8 @@ class ResearchSessions:
             raise PermissionError('RESEARCH_SESSION_ORIGINAL_TURN_REQUIRED')
         row = self._row(conn, context.user_id, turn['session_id'])
         expected = turn['body'].get('configuration', row['body']['configuration'])
-        if plan.get('connectionRefs', {}).get('model') != expected['connectionRefs']['model'] or plan.get('mode') != MODE:
+        if (plan.get('application') != 'research-chat' or plan.get('mode') != MODE
+                or plan.get('connectionRefs', {}).get('model') != expected['connectionRefs']['model']):
             raise PermissionError('RESEARCH_SESSION_PLAN_MISMATCH')
         if ((plan.get('inputValues') or {}).get('turnId') != turn['id']
                 or (plan.get('inputValues') or {}).get('sessionId') != row['id']):
@@ -807,7 +809,10 @@ class ResearchSessions:
         return await self.subagents.external_result(commands, task, requirement, requirements, decision)
 
     async def observe_waits(self, observer, task):
-        root = self.subagents.root_task(task['owner_id'], task, self.store.execution(task))
+        execution = self.store.execution(task)
+        if execution.get('application') != 'research-chat':
+            return
+        root = self.subagents.root_task(task['owner_id'], task, execution)
         with self.db.read() as conn:
             turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
                 self.turns.c.application_request_id == root['request_id'].removeprefix('application-start:'))).mappings().first()
@@ -821,6 +826,8 @@ class ResearchSessions:
 
     def mark_cancel(self, store, task_id, *, reason: str):
         task = store.task(task_id)
+        if store.execution(task).get('application') != 'research-chat':
+            return
         with self._write() as conn:
             turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
                 self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).mappings().first()
@@ -845,6 +852,8 @@ class ResearchSessions:
         self.collaboration.validate_admission(origin_task, event_id, request_id, plan)
 
     def task_held(self, store, task):
+        if store.execution(task).get('application') != 'research-chat':
+            return False
         with self.db.read() as conn:
             turn = conn.execute(select(self.turns.c.body).where(self.turns.c.owner_id == task['owner_id'],
                 self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).scalar_one_or_none()

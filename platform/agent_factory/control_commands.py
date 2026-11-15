@@ -83,7 +83,9 @@ class ControlCommands:
         requirement = next((r for r in requirements if r.get("id") == decision["requirementId"]), None)
         if requirement is None or requirement_version(requirement) != decision["version"]:
             raise HTTPException(409, "STALE_REQUIREMENT: original requirement differs")
-        result = await self.store.research_sessions.external_result(self, task, requirement, requirements, decision)
+        sessions = getattr(self.store, 'research_sessions', None)
+        result = (await sessions.external_result(self, task, requirement, requirements, decision)
+                  if sessions is not None and self.store.execution(task).get('application') == 'research-chat' else None)
         if result is None:
             raise HTTPException(409, "Unsupported continuation requirement")
         return result

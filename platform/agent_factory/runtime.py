@@ -26,7 +26,8 @@ def build_runtime(store, native_db):
                 raise RunCancelledException('User stopped this task')
             inputs = plan.get('inputValues') or {}
             sessions = getattr(store, 'research_sessions', None)
-            if sessions is not None and plan.get('mode') == 'autonomous' and inputs.get('sessionId') and inputs.get('turnId'):
+            if (sessions is not None and plan.get('application') == 'research-chat'
+                    and plan.get('mode') == 'autonomous' and inputs.get('sessionId') and inputs.get('turnId')):
                 sessions.prepare_history(run_context, session)
         except (InputCheckError, RunCancelledException):
             raise
@@ -39,21 +40,28 @@ def build_runtime(store, native_db):
         if isinstance(text, str):
             text = [text]
         inputs = dict(plan.get('inputValues') or {})
-        if plan.get('mode') == 'autonomous' and inputs.get('turnId') and not plan.get('delegation'):
+        if (plan.get('application') == 'research-chat' and plan.get('mode') == 'autonomous'
+                and inputs.get('turnId') and not plan.get('delegation')):
             legacy = inputs.pop('sessionContext', None)
             if legacy:
                 previous = json.loads(legacy)
                 for key in ('goal', 'boundaries'):
                     if key in previous:
                         inputs.setdefault(key, previous[key])
-        return [*text, json.dumps({'goal': plan['normalizedGoal'], **inputs}, ensure_ascii=False)]
+        skills = getattr(store, 'research_skills', None) if plan.get('application') == 'research-chat' else None
+        snippet = skills.get_system_prompt_snippet() if skills is not None else None
+        return [*text, json.dumps({'goal': plan['normalizedGoal'], **inputs}, ensure_ascii=False),
+                *([snippet] if snippet else [])]
 
     def selected_tools(run_context: RunContext, agent):
         plan = store.resolve_run(run_context)
-        if plan.get("mode") == "qa":
-            return store.research_qa.functions(run_context)
-        research = getattr(store, 'research_tools', None)
+        skills = getattr(store, 'research_skills', None) if plan.get('application') == 'research-chat' else None
+        skill_tools = skills.get_tools() if skills is not None else []
+        if plan.get('application') == 'research-chat' and plan.get("mode") == "qa":
+            return [*store.research_qa.functions(run_context), *skill_tools]
+        research = getattr(store, 'research_tools', None) if plan.get('application') == 'research-chat' else None
         functions = research.functions(run_context) if research is not None else []
+        functions.extend(skill_tools)
         ssh = getattr(store, 'personal_ssh', None)
         if ssh is not None:
             ssh_functions = ssh.functions(run_context.user_id)
@@ -68,7 +76,7 @@ def build_runtime(store, native_db):
             agent._mcp_tools_initialized_on_run.append(connections)
             functions.extend(personal.functions(run_context.user_id, run_context, mcp_connections=connections,
                 reserved_names={function.name for function in functions} |
-                    ({function.name for function in executor.skills.get_tools()} if executor.skills else set())))
+                    ({function.name for function in agent.skills.get_tools()} if agent.skills else set())))
         return functions
 
     def ssh_started(run_context, fc):
@@ -121,6 +129,7 @@ def build_runtime(store, native_db):
 
     executor = RetryAgent(id='factory-executor', name='Factory', model=model, db=native_db,
         instructions=instructions, tools=selected_tools, pre_hooks=[bind_run],
+        cache_callables=False,  # Agno's owner cache would reuse another run's tools and closed MCP handles.
         store_events=True, events_to_skip=[],
         add_history_to_context=True, add_session_summary_to_context=True, telemetry=False)
     return executor, Registry(models=[model], dbs=[native_db])

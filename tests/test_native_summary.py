@@ -48,7 +48,8 @@ class NativeSummary(unittest.TestCase):
         def auxiliary():
             model = OwnerChatModel(configuration, lambda: None)
             dispatcher._provider_hooks(model, context, current, auxiliary,
-                {'inputValues': {'sessionId': 'conversation', 'turnId': 'turn'}}, auxiliary_request=True)
+                {'application': 'research-chat', 'inputValues': {'sessionId': 'conversation', 'turnId': 'turn'}},
+                auxiliary_request=True)
             selected.append(model)
             return model
         main = OwnerChatModel(configuration, lambda: None)

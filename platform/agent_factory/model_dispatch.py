@@ -64,7 +64,8 @@ class DelegatingModel(Model):
         sessions = getattr(self.store, 'research_sessions', None)
         inputs = plan.get('inputValues') or {}
         callback = None
-        if sessions is not None and plan.get('mode') != 'qa' and inputs.get('sessionId') and inputs.get('turnId'):
+        if (sessions is not None and plan.get('application') == 'research-chat' and plan.get('mode') != 'qa'
+                and inputs.get('sessionId') and inputs.get('turnId')):
             callback = sessions.authorize_model if auxiliary_request else sessions.before_model
         def before(args, kwargs):
             current()
