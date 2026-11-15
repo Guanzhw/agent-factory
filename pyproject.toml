@@ -30,7 +30,7 @@ dependencies = [
 
 [project.scripts]
 agent-factory-local-user = "agent_factory.local_login:main"
-agent-factory = "agent_factory_server.research:main"
+agent-factory = "agent_factory_server.cli:main"
 agent-factory-research = "agent_factory_server.research:main"
 
 [tool.hatch.build.targets.wheel]

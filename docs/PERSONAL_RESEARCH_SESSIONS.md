@@ -32,6 +32,26 @@ OpenCode Go 的当前预设及字段见 [OpenCode 模型配置](OPENCODE_GO.md)�
 
 这只是一次试用任务，不是平台强制的研究流程。助手自行决定读文件、编写代码、运行命令和分析结果的顺序。引用已有项目是可选项。
 
+## 并行修改和审查 Git 仓库
+
+在新会话中填写**服务主机上**的 Git 仓库绝对路径，再发送第一条任务；已有的空工作目录也可以从 **Git 变更** 连接仓库。每个会话从仓库的当前提交建立一个独立 worktree。原目录中未提交的修改留在原处。可以让两个会话同时尝试不同实现，分别运行测试。
+
+打开 **Git 变更** 检查已有文件和新增文件的差异。点击行号可以留下审查意见；点击 **模型审查** 会让当前会话的模型读取该版本的补丁和已有意见。模型的发现可以定位到原文件或新文件的具体行。点击 **应用到原仓库** 将当前审阅版本的补丁写回原工作目录，暂存和提交仍由你决定。版本已变化或补丁与原目录冲突时，请查看错误并重新核对差异。
+
+在已完成的轮次上分叉，可以从当时的对话继续另一种方案。Git 会话的分支获得独立工作树，文件取自分叉时父工作树的当前 Git 内容。选择较早的对话轮次并不会把文件回滚到当时的版本。
+
+终端也能访问运行中的服务。从网页地址栏的 `researchSession` 参数取得会话 ID：
+
+```sh
+agent-factory --user alice worktree SESSION /path/to/repository
+agent-factory --user alice diff SESSION
+agent-factory --user alice review SESSION
+agent-factory --user alice apply SESSION REVIEW_ID
+agent-factory --user alice fork SESSION --turn TURN_ID
+```
+
+`diff` 输出补丁和 `REVIEW_ID`，`review` 等待该轮完成并输出结果。省略 `--turn` 时从最后一条已完成的轮次分叉。`--user` 使用本地账号并交互输入密码；配置了外部 OIDC 访问令牌的部署可用 `FACTORY_ACCESS_TOKEN`。使用其他服务地址时，在子命令前传入 `--url https://host:port`。私有 CA 可通过 `SSL_CERT_FILE` 指向受信任证书。直接运行 `agent-factory` 仍会启动服务。
+
 ## 让助手等到事件后继续工作
 
 在现有会话中告诉助手：“团队发布的研究记录里出现‘答案截断’时，读一下记录，告诉我是否需要重跑当前实验。”也可以打开 **自动触发**，选择 **团队研究发布**，填写关键词和触发后执行的指令。留空关键词会关注所有可读的团队研究发布。
