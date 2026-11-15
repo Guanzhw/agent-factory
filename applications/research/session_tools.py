@@ -24,7 +24,7 @@ EFFECT_PREFIX = 'research-session-tool:'
 MEMORY_ID = {'type': 'string', 'pattern': '^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$'}
 MEMORY_TEXT = {'type': 'string', 'minLength': 1}
 COLLABORATION_TOOLS = {'research_assistant_directory', 'research_ask_assistant'}
-TRIGGER_TOOLS = {'research_set_trigger', 'research_list_triggers', 'research_cancel_trigger'}
+TRIGGER_TOOLS = {'research_set_trigger', 'research_list_triggers', 'research_cancel_trigger', 'research_route_discovery'}
 TRIGGER_WRITES = TRIGGER_TOOLS - {'research_list_triggers'}
 
 
@@ -33,6 +33,13 @@ def _schema(properties, required):
 
 
 TOOLS = {
+    'research_route_discovery': ('Record the semantic decision for the current discovery publication. '
+        'Ignore unrelated material, attach evidence to an existing session for the same question, '
+        'or start new work for an independent question. The destination executes using your resources. '
+        'Requires the original native discovery turn. Returns the durable decision and destination.', _schema({
+            'decision': {'type': 'string', 'enum': ['ignore', 'attach', 'new']},
+            'reason': MEMORY_TEXT, 'sessionId': MEMORY_TEXT, 'title': MEMORY_TEXT,
+            'instruction': MEMORY_TEXT, 'projectId': MEMORY_TEXT}, ['decision', 'reason'])),
     'research_set_trigger': ('Keep a standing instruction that wakes this chat when its event arrives. '
         'Use cron for a recurring schedule, research for published research events, '
         'or external for inbound events. '
@@ -229,6 +236,10 @@ class ResearchSessionTools:
                     guard()
                     return self._receipt(reservation.get('result'), **original)
                 if reservation['status'] != 'new':
+                    if name == 'research_route_discovery':
+                        output = self.sessions.discovery.decide(run_context, values)
+                        store.effect_complete(identity[2], key, {'outcome': 'completed', 'output': output})
+                        return output
                     if name in TRIGGER_WRITES:
                         return unknown()
                     try:
@@ -254,7 +265,9 @@ class ResearchSessionTools:
                     from .session_triggers import CreateTrigger
                     request_id = 'trigger:' + digest({'runId': identity[2], 'callId': call_id})
                     try:
-                        if name == 'research_set_trigger':
+                        if name == 'research_route_discovery':
+                            output = self.sessions.discovery.decide(run_context, values)
+                        elif name == 'research_set_trigger':
                             output = self.sessions.triggers.create(identity[0], execution['id'],
                                 CreateTrigger(requestId=request_id, **values))
                         elif name == 'research_cancel_trigger':

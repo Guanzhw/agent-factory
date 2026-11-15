@@ -3,6 +3,7 @@ import App, { Workspace, type WorkspaceSessionProps } from './App.js';
 import { Pages } from './composition.js';
 import { ResearchWorkbench } from './apps/research/ResearchWorkspace.js';
 import { clearSessionDrafts } from './apps/research/researchSessionStorage.js';
+import { DiscoverySettings } from './apps/research/DiscoverySettings.js';
 import { authEpoch } from './browserAuth.js';
 import { routePointer, workspaceTabs, type WorkspaceNavigation } from './workspaceNavigation.js';
 
@@ -23,7 +24,7 @@ function ResearchSession(props: WorkspaceSessionProps) {
     <ResearchWorkbench key={context.user.id} user={context.user} route={context.route} navigate={context.navigate} onTab={context.selectTab}
       onLogout={props.logout} sessionBusy={props.sessionBusy} sessionError={props.sessionError}
       workspaceContent={context.route.tab === 'research' ? undefined : <>{context.feedback}<Pages context={context}
-        resourceReturn={{ label: '对话', onBack: () => context.navigate({ tab: 'research' }) }}/></>}/>
+        resourceReturn={{ label: '对话', onBack: () => context.navigate({ tab: 'research' }) }}/>{context.route.tab === 'resources' && <DiscoverySettings key={context.user.id} ownerId={context.user.id} onModels={() => context.navigate({ tab: 'models' })}/>}</>}/>
   }/>;
 }
 export default function ResearchApp() { return <App workspace={ResearchSession}/>; }

@@ -40,6 +40,7 @@ class ResearchSessions:
         self.projects: Any = None
         self.research: Any = None
         self.triggers: Any = None
+        self.discovery: Any = None
         self.memory = ResearchSessionMemory(self)
         self.subagents = ResearchSubagents(self)
         self.setup = ResearchSessionSetup(store, connections, models, tools)

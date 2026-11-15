@@ -58,3 +58,7 @@ def install(state, *, session_tools=None):
         state['research_triggers'] = sessions.triggers
         state['application_content'].on_shared = sessions.triggers.published
         state['http_app'].include_router(event_router(state['auth'], sessions.triggers))
+        from .session_discovery import ResearchDiscovery, discovery_router
+        sessions.discovery = ResearchDiscovery(sessions)
+        state['research_discovery'] = sessions.discovery
+        state['http_app'].include_router(discovery_router(state['auth'], sessions.discovery))
