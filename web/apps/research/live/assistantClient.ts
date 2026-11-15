@@ -10,7 +10,7 @@ export interface ResearchPeer { id: string; ownerId: string; displayName: string
 export interface ResearchQuestion {
   id: string; senderId: string; recipientId: string; endpointId: string; text: string; createdAt: string;
   delivery: { state: string; taskId: string | null; runId: string | null };
-  reply: null | { state: 'source_unavailable' } | { state: 'available'; text: string; contentIds: string[]; createdAt: string };
+  reply: null | { state: 'source_unavailable' } | { state: 'available'; text: string; contentIds: string[]; citedContentIds?: string[]; createdAt: string };
   allowedActions?: 'recover'[]; recoveryCode?: string | null;
   sessionId?: string; requestId?: string; assistantId?: string;
   origin?: 'manual' | 'agent';

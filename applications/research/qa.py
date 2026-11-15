@@ -126,7 +126,7 @@ class ResearchQA:
                 if saved['state'] != 'available':
                     raise HTTPException(403, 'RESEARCH_QA_REPLY_SOURCE_UNAVAILABLE')
                 return {'savedReply': self.messages.reply_for_task(ctx.user_id, ctx.session_id,
-                    saved['text'], content_ids=row['content_ids'])}
+                    saved['text'], content_ids=row['content_ids'], cited_content_ids=saved.get('citedContentIds'))}
             if row is None:
                 sources = self._select(message)
                 conn.execute(self.inputs.insert().values(task_id=ctx.session_id, owner_id=ctx.user_id,
@@ -159,4 +159,5 @@ class ResearchQA:
             dependencies = list(row['content_ids'])
         if not set(answer.citations) <= set(dependencies):
             raise HTTPException(422, 'RESEARCH_QA_UNKNOWN_CITATION')
-        return self.messages.reply_for_task(ctx.user_id, ctx.session_id, answer.answer, content_ids=dependencies)
+        return self.messages.reply_for_task(ctx.user_id, ctx.session_id, answer.answer,
+            content_ids=dependencies, cited_content_ids=answer.citations)

@@ -1,6 +1,6 @@
 """Standing tasks through authenticated HTTP, PostgreSQL, native queue and Chromium."""
+import ast
 import json
-import re
 import time
 from http.server import BaseHTTPRequestHandler
 from types import MethodType, SimpleNamespace
@@ -20,18 +20,64 @@ class TriggerModel(BaseHTTPRequestHandler):
         request = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         self.server.requests.append(request)
         messages = request['messages']
+        names = {call['id']: call['function']['name'] for message in messages
+                 for call in message.get('tool_calls', [])}
         current = max(i for i, value in enumerate(messages) if value['role'] == 'user')
         instruction = messages[current]['content']
         results = [value['content'] for value in messages[current:] if value['role'] == 'tool']
+        outputs = {names[value['tool_call_id']]: ast.literal_eval(value['content'])
+                   for value in messages[current:] if value['role'] == 'tool'}
+        advertised = {item['function']['name'] for item in request.get('tools', [])}
         tool, arguments = None, {}
-        if not results and instruction == 'publish-team-research':
+        reply = 'trigger-result ' + '\n'.join(map(str, results))
+        if 'research_qa_context' in advertised:
+            if not results:
+                tool = 'research_qa_context'
+            elif 'research_qa_record' not in outputs:
+                context = outputs['research_qa_context']
+                protocol = next(source for source in context['sources']
+                                if 'protocol-budget-4096' in json.dumps(source['content']))
+                assert 'peer-research-observation' in context['question']
+                tool, arguments = 'research_qa_record', {
+                    'answer': 'The result used output budget 4096, as the shared protocol records. '
+                              'Conditions differ from the requested 2048; a matched-budget improvement is unconfirmed.',
+                    'citations': [protocol['id']]}
+            else:
+                reply = 'Saved the answer with the shared protocol citation.'
+        elif instruction == 'publish-peer-protocol' and not results:
             tool = 'research_record_experiment'
-            arguments = {'observations': ['peer-research-observation'], 'evidenceIds': ['synthetic.csv']}
-        elif not results and 'read-trigger-source' in instruction:
-            source = re.search(r'"contentId"\s*:\s*"([a-f0-9-]+)"', instruction)
-            if source:
-                tool, arguments = 'research_read_shared_evidence', {'content_id': source[1]}
-        delta = {'role': 'assistant', 'content': 'trigger-result ' + '\n'.join(map(str, results))}
+            arguments = {'conditions': 'protocol-budget-4096: output budget 4096, same model and benchmark.',
+                         'observations': ['Protocol fixes the output budget at 4096.'],
+                         'evidenceIds': ['protocol.json']}
+        elif instruction == 'publish-team-research' and not results:
+            tool = 'research_record_experiment'
+            arguments = {'observations': ['peer-research-observation: score improved from 40 to 60; '
+                                          'output budget is missing from this result.'],
+                         'evidenceIds': ['result.csv']}
+        elif 'read-trigger-source' in instruction:
+            payload = json.loads(instruction[instruction.index('{'):])['payload']
+            if not results:
+                tool, arguments = 'research_read_shared_evidence', {'content_id': payload['contentId']}
+            elif 'research_assistant_directory' not in outputs:
+                assert 'output budget is missing' in json.dumps(outputs['research_read_shared_evidence'])
+                tool, arguments = 'research_assistant_directory', {'owner_id': payload['ownerId']}
+            elif 'research_ask_assistant' not in outputs:
+                assistant = next(item for item in outputs['research_assistant_directory']['items']
+                                 if item['ownerId'] == payload['ownerId'] and item['qaAvailable'])
+                tool, arguments = 'research_ask_assistant', {'assistant_id': assistant['id'],
+                    'text': 'For peer-research-observation ' + payload['contentId'] +
+                            ', what was the output budget? My original comparison requires 2048. '
+                            'Please cite a shared protocol record.'}
+            else:
+                reply = 'The result omits output budget. I asked its publishing colleague; conclusion pending.'
+        elif instruction.startswith('同事提供的参考回答：'):
+            answer = json.loads(instruction.split('\n', 1)[1])
+            assert answer['reply']['citedContentIds']
+            assert '4096' in answer['reply']['text']
+            reply = ('Revised conclusion: conditions differ (4096 versus required 2048); '
+                     'the matched-budget improvement is unconfirmed. Publisher: ' + answer['recipientId'] +
+                     '. Shared protocol: ' + answer['reply']['citedContentIds'][0])
+        delta = {'role': 'assistant', 'content': reply}
         if tool:
             delta['tool_calls'] = [{'index': 0, 'id': 'call_' + uuid4().hex, 'type': 'function',
                 'function': {'name': tool, 'arguments': json.dumps(arguments)}}]
@@ -106,33 +152,75 @@ class TriggersJourney(unittest.TestCase):
         self.assertFalse(any(item['enabled'] for item in items))
 
     def test_peer_chat_research_publication_triggers_readable_source_once(self):
-        trigger = self.add_trigger('research', 'Peer research', 'read-trigger-source', **{'关键词（可选）': 'peer-research-observation'})
+        trigger = self.add_trigger('research', 'Peer research',
+            'read-trigger-source: compare with my original required output budget 2048',
+            **{'关键词（可选）': 'peer-research-observation'})
         peer = SimpleNamespace(browser=self.browser, state=self.state, origin=self.origin, model=self.model,
                                addCleanup=self.addCleanup, assertTrue=self.assertTrue)
         for method in ('post', 'session', 'send'):
             setattr(peer, method, MethodType(getattr(journey.ChatJourney, method), peer))
         journey.ChatJourney.setUp(peer)
-        peer.send('publish-team-research')
-        result = self.wait_turns(2)
-        turn = result['turns'][-1]
+        for member in (self, peer):
+            assistant = member.post('/research/assistants', {})
+            options = member.context.request.get(self.origin + '/api/factory/research/sessions/options').json()
+            member.assistant = member.post('/research/assistants/me/configurations', {
+                'expectedRevision': assistant['configurationRevision'],
+                'connectionRefs': {'model': next(item['connectionRef'] for item in options['models']
+                                                 if item['available'])}})
+        peer.send('publish-peer-protocol')
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:
+            protocol_session = peer.session()
+            if protocol_session['state'] == 'idle':
+                break
+            self.page.wait_for_timeout(100)
+        self.assertEqual(protocol_session['turns'][-1]['status'], 'completed')
+        protocol_id = next(event['data']['output']['terminalRecordId']
+            for event in protocol_session['turns'][-1]['events']
+            if event['type'] == 'research_tool_finished'
+            and event['data'].get('toolName') == 'research_record_experiment')
+        self.assertEqual(len(self.session()['turns']), 1)
+        peer.post('/research/sessions/' + protocol_session['id'] + '/turns', {'text': 'publish-team-research'})
+        result = journey.ChatJourney.wait_for(self, lambda value: value['state'] == 'idle'
+            and 'Revised conclusion:' in (value['turns'][-1]['result'] or ''))
+        turn, resumed = result['turns'][1], result['turns'][-1]
         self.assertEqual(turn['origin']['triggerId'], trigger['id'])
         self.assertEqual(turn['origin']['source'], 'research')
+        self.assertEqual(turn['origin']['ownerId'], peer.owner)
         source_id = turn['origin']['contentId']
         source = self.context.request.get(self.origin + '/api/factory/application-content/' + source_id).json()
         self.assertEqual(source['ownerId'], peer.owner)
         self.assertEqual(source['visibility'], 'team')
-        self.assertIn('peer-research-observation', turn['result'])
         reads = [event for event in turn['events'] if event['type'] == 'research_tool_finished'
                  and event['data'].get('toolName') == 'research_read_shared_evidence']
         self.assertEqual(len(reads), 1)
         self.assertIn('peer-research-observation', json.dumps(reads[0], ensure_ascii=False))
+        questions = self.context.request.get(self.origin + '/api/factory/research/sessions/' +
+                                            self.identifier + '/questions').json()['items']
+        self.assertEqual(len(questions), 1)
+        question = questions[0]
+        self.assertEqual(question['senderId'], self.owner)
+        self.assertEqual(question['recipientId'], peer.owner)
+        self.assertEqual(question['endpointId'], peer.assistant['qa']['endpointId'])
+        self.assertEqual(question['reply']['state'], 'available')
+        self.assertEqual(set(question['reply']['contentIds']), {protocol_id, source_id})
+        self.assertEqual(question['reply']['citedContentIds'], [protocol_id])
+        self.assertEqual(resumed['assistantReplies'][0]['recipientId'], peer.owner)
+        self.assertEqual(resumed['assistantReplies'][0]['reply']['citedContentIds'], [protocol_id])
+        self.assertEqual(result['id'], self.identifier)
+        for text in ('conditions differ', '4096', '2048', 'unconfirmed', peer.owner, protocol_id):
+            self.assertIn(text, resumed['result'])
         share = {'requestId': str(uuid4()), 'visibility': 'team'}
         peer.post('/application-content/' + source_id + '/sharing', share)
         peer.post('/application-content/' + source_id + '/sharing', share)
         self.page.wait_for_timeout(1200)
         self.page.reload()
         expect(self.page.get_by_text('自动触发：Peer research', exact=False)).to_be_visible()
-        self.assertEqual(len(self.session()['turns']), 2)
+        expect(self.page.get_by_text('发布成员：' + peer.owner, exact=True)).to_be_visible()
+        expect(self.page.get_by_text('回答引用：' + protocol_id, exact=True)).to_be_visible()
+        self.assertEqual(len(self.session()['turns']), len(result['turns']))
+        self.assertEqual(len(self.context.request.get(self.origin + '/api/factory/research/sessions/' +
+            self.identifier + '/questions').json()['items']), 1)
 
 if __name__ == '__main__':
     unittest.main()

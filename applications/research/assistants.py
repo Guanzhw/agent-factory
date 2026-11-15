@@ -175,11 +175,13 @@ class ResearchAssistants:
                 code = 'RESEARCH_QA_UNAVAILABLE'
             return {'available': False, 'unavailableCode': code}
 
-    def list(self, actor, *, after='', limit=50):
+    def list(self, actor, *, after='', limit=50, owner_id=None):
         self.auth.require_member(actor)
         with self.db.read() as conn:
-            rows = conn.execute(select(self.identities).where(self.identities.c.id > after)
-                .order_by(self.identities.c.id).limit(limit + 1)).mappings().all()
+            query = select(self.identities).where(self.identities.c.id > after)
+            if owner_id is not None:
+                query = query.where(self.identities.c.owner_id == owner_id)
+            rows = conn.execute(query.order_by(self.identities.c.id).limit(limit + 1)).mappings().all()
             items = []
             for row in rows[:limit]:
                 try:
