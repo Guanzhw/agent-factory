@@ -2,20 +2,25 @@
 import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
-from threading import Event, Thread
+from threading import Barrier, Event, Thread
 from types import SimpleNamespace
 import unittest
+from unittest.mock import Mock, patch
 
 from agno.agent import Agent
-from agno.exceptions import ModelProviderError
+from agno.db.postgres import PostgresDb
+from agno.exceptions import InputCheckError, ModelProviderError
 from agno.media import Image, File
 from agno.models.message import Message
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.tools.function import Function
 from pydantic import BaseModel
 
+from agent_factory.application_runtime import ApplicationRuntime, ApplicationTools
 from agent_factory.byok_model import OwnerChatModel
 from agent_factory.runtime import build_runtime
+from research.runtime import ResearchRuntime
 
 
 def chunk(delta, finish=None):
@@ -111,7 +116,7 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
             selections.append((owner, reference, context.session_id))
             return OwnerChatModel(self.config, lambda: SimpleNamespace(password='owner-one'))
         store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: plan,
-            task=lambda *_: bound, task_for_context=lambda _: bound, plan=lambda *_: plan, cancellation_requested=lambda _: False,
+            task=lambda *_: bound, task_for_context=lambda _: bound, execution=lambda *_: plan, cancellation_requested=lambda _: False,
             personal_models=SimpleNamespace(model_for=select))
         executor, _ = build_runtime(store, None)
         result = await executor.arun('read input', session_id='task-one', user_id='owner-one',
@@ -123,6 +128,224 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(selections, [('owner-one', 'configured-owner-model', 'task-one')])
         user = next(message for message in request['messages'] if message['role'] == 'user')
         self.assertEqual({part['type'] for part in user['content']}, {'text', 'image_url'})
+
+    async def test_application_supplies_native_tools_instructions_history_and_model_hooks(self):
+        called, prepared, checked = [], [], []
+        def second_app_tool() -> str:
+            """Return this application's result."""
+            called.append('second')
+            return 'second application result'
+        def prepare(context, plan, session, agent):
+            prepared.append(context.session_id)
+            session.runs = [RunOutput(run_id='prior', status=RunStatus.completed,
+                messages=[Message(role='user', content='second application history'),
+                          Message(role='assistant', content='prior answer')])]
+        def before(context, plan, messages, auxiliary, *, auxiliary_request=False):
+            checked.append((context.session_id, auxiliary_request))
+            messages.append(Message(role='system', content='second application model hook'))
+        applications = {'second-app': ApplicationRuntime(
+            instructions=lambda context, plan: ['second application instructions'],
+            tools=lambda context, plan, agent: ApplicationTools([Function.from_callable(second_app_tool)]),
+            prepare_history=prepare, before_model=before)}
+        executions = {
+            'generic': {'application': 'second-app', 'normalizedGoal': 'generic'},
+            'second': {'application': 'second-app', 'applicationRuntime': True, 'normalizedGoal': 'second'},
+        }
+        for plan in executions.values():
+            plan.update(connectionRefs={'model': 'fixture'})
+        bound = {}
+        def bind(context):
+            bound[context.run_id] = {'run_id': context.run_id, 'session_id': context.session_id}
+            return executions[context.session_id]
+        store = SimpleNamespace(bind_run=bind, resolve_run=lambda context: executions[context.session_id],
+            task_for_context=lambda context: bound[context.run_id],
+            execution=lambda task: executions[task['session_id']], cancellation_requested=lambda _: False,
+            personal_models=SimpleNamespace(model_for=lambda *args, **kwargs: OwnerChatModel(self.config, lambda: None)))
+        def answer(body):
+            if body.get('tools') and not any(message['role'] == 'tool' for message in body['messages']):
+                return 200, [chunk({'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'call_second',
+                    'type': 'function', 'function': {'name': 'second_app_tool', 'arguments': '{}'}}]}),
+                    chunk({}, 'tool_calls')]
+            return 200, reply('done')
+        self.server.answer = answer
+        agent, _ = build_runtime(store, None, application_runtimes=applications)
+        generic = await agent.arun('generic', session_id='generic', user_id='owner')
+        result = await agent.arun('second', session_id='second', user_id='owner')
+        self.assertEqual((generic.status, result.status), (RunStatus.completed, RunStatus.completed))
+        self.assertEqual(called, ['second'])
+        generic_request, app_request = self.server.requests[0][0], self.server.requests[-1][0]
+        self.assertNotIn('tools', generic_request)
+        self.assertNotIn('second application', json.dumps(generic_request))
+        self.assertEqual({tool['function']['name'] for tool in app_request['tools']}, {'second_app_tool'})
+        for content in ('second application instructions', 'second application history',
+                        'second application model hook', 'second application result'):
+            self.assertIn(content, json.dumps(app_request))
+        self.assertEqual(prepared, ['second'])
+        self.assertEqual(checked, [('second', False), ('second', False)])
+        self.server.answer = lambda _: (200, reply('continued'))
+        result.status = RunStatus.error
+        continued = await agent.acontinue_run(run_response=result, user_id='owner')
+        self.assertEqual(continued.status, RunStatus.completed)
+        self.assertEqual({tool['function']['name'] for tool in self.server.requests[-1][0]['tools']},
+                         {'second_app_tool'})
+        self.assertIn('second application instructions', json.dumps(self.server.requests[-1][0]))
+        barrier = Barrier(2)
+        def concurrent_answer(_):
+            barrier.wait(10)
+            return 200, reply('done')
+        self.server.answer = concurrent_answer
+        self.server.requests.clear()
+        results = await asyncio.gather(*(agent.arun(name, session_id=name, user_id='owner')
+                                        for name in executions))
+        self.assertTrue(all(result.status == RunStatus.completed for result in results))
+        for request, _ in self.server.requests:
+            is_app = any(message.get('content') == 'second' for message in request['messages'])
+            self.assertEqual({tool['function']['name'] for tool in request.get('tools', [])},
+                             {'second_app_tool'} if is_app else set())
+            self.assertEqual('second application instructions' in json.dumps(request), is_app)
+            self.assertEqual('second application model hook' in json.dumps(request), is_app)
+        self.assertIsNone(agent.skills)
+
+    async def test_research_adapter_keeps_qa_autonomous_skills_and_history(self):
+        def research_tool() -> str:
+            """A research tool."""
+            return 'research'
+        def research_qa_tool() -> str:
+            """A research question tool."""
+            return 'qa'
+        def research_skill() -> str:
+            """A research skill."""
+            return 'skill'
+        research = SimpleNamespace(functions=lambda _: [Function.from_callable(research_tool)])
+        qa = SimpleNamespace(functions=lambda _: [Function.from_callable(research_qa_tool)])
+        sessions = SimpleNamespace(prepare_history=Mock(), before_model=Mock(), authorize_model=Mock())
+        skills = SimpleNamespace(get_tools=lambda: [Function.from_callable(research_skill)],
+            get_system_prompt_snippet=lambda: 'research skill instructions')
+        for mode, expected in [('qa', {'research_qa_tool', 'research_skill'}),
+                               ('autonomous', {'research_tool', 'research_skill'})]:
+            with self.subTest(mode=mode):
+                sessions.prepare_history.reset_mock()
+                sessions.before_model.reset_mock()
+                self.server.requests.clear()
+                plan = {'application': 'research-chat', 'mode': mode, 'normalizedGoal': 'answer',
+                    'connectionRefs': {'model': 'fixture'}, 'inputValues': {'sessionId': 'session',
+                    'turnId': 'turn', 'sessionContext': '{"goal":"legacy research goal"}'}}
+                bound = {}
+                def bind(context):
+                    bound['run_id'] = context.run_id
+                    return plan
+                store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: plan,
+                    task_for_context=lambda _: bound, execution=lambda _: plan,
+                    cancellation_requested=lambda _: False,
+                    personal_models=SimpleNamespace(model_for=lambda *args, **kwargs: OwnerChatModel(self.config, lambda: None)),
+                    personal_tools=SimpleNamespace(functions=Mock(return_value=[])))
+                agent, _ = build_runtime(store, None,
+                    application_runtimes={'research-chat': ResearchRuntime(sessions, research, qa, skills)})
+                result = await agent.arun('answer', session_id='task', user_id='owner')
+                self.assertEqual(result.status, RunStatus.completed)
+                request = self.server.requests[-1][0]
+                self.assertEqual({tool['function']['name'] for tool in request['tools']}, expected)
+                system = next(message['content'] for message in request['messages'] if message['role'] == 'system')
+                self.assertIn('research skill instructions', system)
+                if mode == 'autonomous':
+                    self.assertIn('"goal": "legacy research goal"', system)
+                    self.assertNotIn('sessionContext', system)
+                self.assertEqual(sessions.prepare_history.call_count, int(mode == 'autonomous'))
+                self.assertEqual(sessions.before_model.call_count, int(mode == 'autonomous'))
+                self.assertEqual(store.personal_tools.functions.call_count, int(mode == 'autonomous'))
+
+    async def test_reused_application_tools_do_not_accumulate_personal_tools(self):
+        def application_tool() -> str:
+            """Application tool."""
+            return 'application'
+        def alice_tool() -> str:
+            """Alice tool."""
+            return 'alice'
+        def bob_tool() -> str:
+            """Bob tool."""
+            return 'bob'
+        bundle = ApplicationTools([Function.from_callable(application_tool)])
+        runtime = ApplicationRuntime(tools=lambda context, plan, agent: bundle)
+        plan = {'application': 'second-app', 'applicationRuntime': True, 'normalizedGoal': 'answer', 'connectionRefs': {'model': 'fixture'}}
+        bound = {}
+        def bind(context):
+            bound[context.run_id] = {'run_id': context.run_id}
+            return plan
+        store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: plan,
+            task_for_context=lambda context: bound[context.run_id], execution=lambda _: plan,
+            cancellation_requested=lambda _: False,
+            personal_models=SimpleNamespace(model_for=lambda *args, **kwargs: OwnerChatModel(self.config, lambda: None)),
+            personal_tools=SimpleNamespace(functions=lambda owner, *args, **kwargs:
+                [Function.from_callable(alice_tool if owner == 'alice' else bob_tool)]))
+        agent, _ = build_runtime(store, None, application_runtimes={'second-app': runtime})
+        for owner in ('alice', 'bob'):
+            result = await agent.arun('answer', session_id=owner, user_id=owner)
+            self.assertEqual(result.status, RunStatus.completed)
+            names = {tool['function']['name'] for tool in self.server.requests[-1][0]['tools']}
+            self.assertEqual(names, {'application_tool', f'{owner}_tool'})
+        self.assertEqual([function.name for function in bundle.functions], ['application_tool'])
+
+    async def test_stop_during_application_model_hook_prevents_provider_request(self):
+        stopped = False
+        def before(context, plan, messages, auxiliary, *, auxiliary_request=False):
+            nonlocal stopped
+            stopped = True
+        plan = {'application': 'second-app', 'applicationRuntime': True, 'normalizedGoal': 'answer', 'connectionRefs': {'model': 'fixture'}}
+        bound = {}
+        def bind(context):
+            bound['run_id'] = context.run_id
+            return plan
+        store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: plan,
+            task_for_context=lambda _: bound, execution=lambda _: plan,
+            cancellation_requested=lambda _: stopped,
+            personal_models=SimpleNamespace(model_for=lambda *args, **kwargs: OwnerChatModel(self.config, lambda: None)))
+        agent, _ = build_runtime(store, None,
+            application_runtimes={'second-app': ApplicationRuntime(before_model=before)})
+        result = await agent.arun('answer', session_id='task', user_id='owner')
+        self.assertEqual(result.status, RunStatus.cancelled)
+        self.assertEqual(self.server.requests, [])
+
+    async def test_missing_required_application_runtime_fails_before_provider_request(self):
+        plan = {'application': 'second-app', 'applicationRuntime': True,
+                'normalizedGoal': 'answer', 'connectionRefs': {'model': 'fixture'}}
+        bound = {}
+        def bind(context):
+            bound['run_id'] = context.run_id
+            return plan
+        store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: plan,
+            task_for_context=lambda _: bound, execution=lambda _: plan,
+            cancellation_requested=lambda _: False,
+            personal_models=SimpleNamespace(model_for=lambda *args, **kwargs: OwnerChatModel(self.config, lambda: None)))
+        agent, _ = build_runtime(store, None)
+        result = await agent.arun('answer', session_id='task', user_id='owner')
+        self.assertEqual(result.status, RunStatus.error)
+        self.assertIn('APPLICATION_RUNTIME_UNAVAILABLE', str(result.content))
+        self.assertEqual(self.server.requests, [])
+        plan['application'] = 'research-chat'
+        plan.pop('applicationRuntime')
+        result = await agent.arun('historical research', session_id='task', user_id='owner')
+        self.assertEqual(result.status, RunStatus.error)
+        self.assertIn('APPLICATION_RUNTIME_UNAVAILABLE: research-chat', str(result.content))
+        self.assertEqual(self.server.requests, [])
+
+    def test_retry_after_application_effect_prefix_change_does_not_restart_input(self):
+        plan = {'application': 'second-app', 'applicationRuntime': True, 'normalizedGoal': 'append once'}
+        effects = [{'effect_key': 'run:second-app-v1:call-one', 'status': 'UNKNOWN'}]
+        store = SimpleNamespace(task=lambda _: {'id': 'task'}, effects=lambda _: effects, execution=lambda _: plan)
+        db = Mock(spec=PostgresDb)
+        db.id = 'retry-fixture'
+        db.get_job.return_value = {'status': 'running', 'attempt': 2, 'payload': {}}
+        agent, _ = build_runtime(store, db, application_runtimes={
+            'second-app': ApplicationRuntime(effect_prefixes=('second-app-v2:',))})
+        previous = RunOutput(run_id='run', session_id='session', user_id='owner', messages=[
+            Message(role='assistant', tool_calls=[{'id': 'call-one', 'type': 'function',
+                'function': {'name': 'append_note', 'arguments': '{}'}}]),
+            Message(role='tool', tool_call_id='call-one', content='outcome unknown')])
+        with (patch.object(agent, 'get_run_output', return_value=previous),
+              patch.object(Agent, 'arun') as fresh_run):
+            with self.assertRaisesRegex(InputCheckError, 'NATIVE_RETRY_EFFECT_UNMATCHED'):
+                agent.arun('append once', run_id='run', session_id='session', user_id='owner')
+            fresh_run.assert_not_called()
 
     async def test_native_tool_loop_preserves_reasoning_and_order_without_private_replay_record(self):
         events = []
@@ -236,7 +459,7 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
 
     async def test_responses_runtime_keeps_media_nullable_tools_and_exact_continuation(self):
         bound, called = {}, []
-        plan = {'connectionRefs': {'model': 'responses-model'}, 'normalizedGoal': 'inspect'}
+        plan = {'application': 'research-chat', 'connectionRefs': {'model': 'responses-model'}, 'normalizedGoal': 'inspect'}
         def inspect_result(value: str | None = None) -> str:
             """Inspect a nullable value."""
             called.append(value)
@@ -265,9 +488,10 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
             return OwnerChatModel({**self.config, 'protocol': 'responses'},
                 lambda: SimpleNamespace(password='responses-owner'))
         store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: plan,
-            task=lambda *_: bound, task_for_context=lambda _: bound, plan=lambda *_: plan, cancellation_requested=lambda _: False,
-            personal_models=SimpleNamespace(model_for=select), research_tools=SimpleNamespace(functions=lambda _: [tool]))
-        executor, _ = build_runtime(store, None)
+            task=lambda *_: bound, task_for_context=lambda _: bound, execution=lambda *_: plan, cancellation_requested=lambda _: False,
+            personal_models=SimpleNamespace(model_for=select))
+        application = ApplicationRuntime(tools=lambda context, plan, agent: ApplicationTools([tool]))
+        executor, _ = build_runtime(store, None, application_runtimes={'research-chat': application})
         class Answer(BaseModel):
             count: int
         result = await executor.arun('inspect', session_id='responses-task', user_id='responses-owner',

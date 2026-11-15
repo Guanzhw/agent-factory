@@ -1,5 +1,7 @@
 # Remove demo modes: deployment update
 
+The following is the historical rollout record. Current startup and local account creation use the configured PostgreSQL database directly. Older databases can keep their original mode marker. New databases have no mode table. See the [current setup instructions](../README.md).
+
 The product has no persona login, demo cookie, built-in mock OIDC, automatic synthetic seeds or downloadable runnable prototype. `FACTORY_MODE=demo` and retired development options fail closed. No compatibility switch re-enables them. Test-only local identity/model fixtures remain solely for deterministic acceptance.
 
 ## Existing local installation

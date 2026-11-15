@@ -250,7 +250,7 @@ class ConnectionService:
         task = self.store.task(task_id, owner)
         if task["terminal"] or task["cancel_requested"]:
             raise HTTPException(409, "CONNECTION_TASK_ENDED: task is canceled or terminal")
-        self.store.plan(task["plan_id"], owner)  # Integrity/owner only; no recursive execution guard.
+        self.store.execution(task)
         return task["id"]
 
     def _current(self, conn, owner, row, *, task_id=None):
@@ -521,8 +521,6 @@ class RevokeConnectionRequest(BaseModel):
 
 
 def connection_router(auth, service):
-    # Root may alias/migrate the old demo-only GET /connections product route.
-    # This independent namespace avoids silently shadowing existing routes.
     router = APIRouter(prefix="/api/factory/user-connections", tags=["user-connections"])
 
     def owner(request):

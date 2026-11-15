@@ -24,7 +24,7 @@ from agent_factory.runtime_hooks import effect_unresolved, runtime_custody_held
 from agent_factory.store import digest, now
 from agent_factory.task_status import native_status
 from .assistants import CreateAssistant
-from .session_setup import INSTRUCTIONS, MODE, ResearchSessionSetup, rejected
+from .session_setup import MODE, ResearchSessionSetup, rejected
 from .session_memory import ResearchSessionMemory
 from .session_tools import EFFECT_PREFIX
 from . import session_context
@@ -59,9 +59,7 @@ class ResearchSessions:
             UniqueConstraint('session_id', 'sequence'))
         self.commands = self.db.command_table('research_session_commands', metadata)
         metadata.create_all(store.engine)
-        store.research_instructions = [INSTRUCTIONS]
         store.research_sessions = self
-        store.research_tools = tools
 
     @contextmanager
     def _write(self):
@@ -105,7 +103,8 @@ class ResearchSessions:
 
     def native_session_for_plan(self, plan):
         inputs = plan.get('inputValues') or {}
-        if plan.get('mode') != MODE or plan.get('delegation') or not inputs.get('turnId'):
+        if (plan.get('application') != 'research-chat' or plan.get('mode') != MODE
+                or plan.get('delegation') or not inputs.get('turnId')):
             return None
         owner = plan['ownerId']
         with self.db.read() as conn:
@@ -599,7 +598,7 @@ class ResearchSessions:
         task = self.store.task_for_context(context)
         if task['run_id'] != context.run_id:
             raise PermissionError('RESEARCH_SESSION_RUN_MISMATCH')
-        plan = self.store.plan(task['plan_id'], context.user_id)
+        plan = self.store.execution(task)
         original_task = self.subagents.root_task(context.user_id, task, plan)
         turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == context.user_id,
             self.turns.c.application_request_id == original_task['request_id'].removeprefix('application-start:'))).mappings().first()
@@ -607,15 +606,19 @@ class ResearchSessions:
             raise PermissionError('RESEARCH_SESSION_ORIGINAL_TURN_REQUIRED')
         row = self._row(conn, context.user_id, turn['session_id'])
         expected = turn['body'].get('configuration', row['body']['configuration'])
-        if plan.get('connectionRefs', {}).get('model') != expected['connectionRefs']['model'] or plan.get('mode') != MODE:
+        if (plan.get('application') != 'research-chat' or plan.get('mode') != MODE
+                or plan.get('connectionRefs', {}).get('model') != expected['connectionRefs']['model']):
             raise PermissionError('RESEARCH_SESSION_PLAN_MISMATCH')
         if ((plan.get('inputValues') or {}).get('turnId') != turn['id']
                 or (plan.get('inputValues') or {}).get('sessionId') != row['id']):
             raise PermissionError('RESEARCH_SESSION_INPUT_MISMATCH')
-        original = self.store.sql('SELECT fingerprint FROM af_plan_requests WHERE owner_id=:owner '
-            'AND request_id=:request AND plan_id=:plan', owner=context.user_id,
-            request=original_task['request_id'], plan=original_task['plan_id'])
-        if len(original) != 1 or original[0]['fingerprint'] != turn['body']['startFingerprint']:
+        fingerprint = self.store.execution(original_task).get('requestFingerprint')
+        if fingerprint is None:
+            original = self.store.sql('SELECT fingerprint FROM af_plan_requests WHERE owner_id=:owner '
+                'AND request_id=:request AND plan_id=:plan', owner=context.user_id,
+                request=original_task['request_id'], plan=original_task['plan_id'])
+            fingerprint = original[0]['fingerprint'] if len(original) == 1 else None
+        if fingerprint != turn['body']['startFingerprint']:
             raise PermissionError('RESEARCH_SESSION_ADMISSION_PAYLOAD_MISMATCH')
         latest = self._turns(conn, row['id'])[-1]
         if (latest['id'] != turn['id'] or row['body']['stopped']
@@ -674,9 +677,7 @@ class ResearchSessions:
         if blocked:
             if task['researchChild']:
                 raise StopAgentRun(blocked)
-            body['blockReason'] = blocked
-            self.store.event(task['id'], 'research_reconciliation_required', '原执行需要核对，已阻止新的模型调用。', {'code': blocked})
-            self._save_turn(conn, turn, body)
+            self._block_turn_for_reconciliation(conn, task, turn, blocked)
         else:
             if body.get('blockReason') == 'RESEARCH_EFFECT_UNCONFIRMED':
                 body['blockReason'] = None
@@ -804,7 +805,10 @@ class ResearchSessions:
         return await self.subagents.external_result(commands, task, requirement, requirements, decision)
 
     async def observe_waits(self, observer, task):
-        root = self.subagents.root_task(task['owner_id'], task, self.store.plan(task['plan_id'], task['owner_id']))
+        execution = self.store.execution(task)
+        if execution.get('application') != 'research-chat':
+            return
+        root = self.subagents.root_task(task['owner_id'], task, execution)
         with self.db.read() as conn:
             turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
                 self.turns.c.application_request_id == root['request_id'].removeprefix('application-start:'))).mappings().first()
@@ -816,8 +820,21 @@ class ResearchSessions:
         if self.research is not None:
             await self.research.observe(task)
 
+    def record_blocked_retry(self, task):
+        with self._write() as conn:
+            turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
+                self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).mappings().first()
+            if turn is not None:
+                self._block_turn_for_reconciliation(conn, task, turn, 'RESEARCH_RESTART_REQUIRES_RECONCILIATION')
+
+    def _block_turn_for_reconciliation(self, conn, task, turn, code):
+        self.store.event(task['id'], 'research_reconciliation_required', '原执行需要核对，已阻止新的模型调用。', {'code': code})
+        self._save_turn(conn, turn, {**turn['body'], 'blockReason': code})
+
     def mark_cancel(self, store, task_id, *, reason: str):
         task = store.task(task_id)
+        if store.execution(task).get('application') != 'research-chat':
+            return
         with self._write() as conn:
             turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
                 self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).mappings().first()
@@ -842,6 +859,8 @@ class ResearchSessions:
         self.collaboration.validate_admission(origin_task, event_id, request_id, plan)
 
     def task_held(self, store, task):
+        if store.execution(task).get('application') != 'research-chat':
+            return False
         with self.db.read() as conn:
             turn = conn.execute(select(self.turns.c.body).where(self.turns.c.owner_id == task['owner_id'],
                 self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).scalar_one_or_none()

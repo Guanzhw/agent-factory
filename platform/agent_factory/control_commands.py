@@ -52,7 +52,7 @@ class ControlCommands:
         return rows[0]
 
     def _binding(self, task):
-        return {"ownerId": task["owner_id"], "taskId": task["id"], "planId": task["plan_id"],
+        return {"ownerId": task["owner_id"], "taskId": task["id"], "planId": self.store.execution(task)['id'],
                 "runId": task.get("run_id"), "kind": "native"}
 
     @staticmethod
@@ -70,10 +70,10 @@ class ControlCommands:
             return {"alreadyStopped": group["allStopped"]}
         from .factory_api import native_requirements, requirement_version
         context = SimpleNamespace(session_id=self.store.native_session_id(task), run_id=task.get("run_id"), user_id=task["owner_id"],
-            session_state={"factory_envelope": {"plan_ref": task["plan_id"], "task_id": task["id"],
+            session_state={"factory_envelope": {"plan_ref": self.store.execution(task)['id'], "task_id": task["id"],
                 "user_id": task["owner_id"], "request_id": task["request_id"]}})
         try:
-            self.store.require_plan_execution(task["owner_id"], self.store.plan(task["plan_id"], task["owner_id"]), run_context=context)
+            self.store.require_plan_execution(task["owner_id"], self.store.execution(task), run_context=context)
         except RunCancelledException as error:
             raise HTTPException(409, "Task is no longer waiting for this action") from error
         snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
@@ -83,7 +83,9 @@ class ControlCommands:
         requirement = next((r for r in requirements if r.get("id") == decision["requirementId"]), None)
         if requirement is None or requirement_version(requirement) != decision["version"]:
             raise HTTPException(409, "STALE_REQUIREMENT: original requirement differs")
-        result = await self.store.research_sessions.external_result(self, task, requirement, requirements, decision)
+        sessions = getattr(self.store, 'research_sessions', None)
+        result = (await sessions.external_result(self, task, requirement, requirements, decision)
+                  if sessions is not None and self.store.execution(task).get('application') == 'research-chat' else None)
         if result is None:
             raise HTTPException(409, "Unsupported continuation requirement")
         return result

@@ -9,11 +9,15 @@ from agno.models.base import Model
 from agno.run import RunContext
 from agno.run.agent import RunOutput
 
+from .application_runtime import resolve_application_runtime
+
 
 class DelegatingModel(Model):
-    def __init__(self, store):
+    def __init__(self, store, application_runtimes=None):
         super().__init__(id='factory-owner-model', provider='factory')
         self.store = store
+        self.application_runtimes = (getattr(store, 'application_runtimes', {})
+                                    if application_runtimes is None else application_runtimes)
 
     def __deepcopy__(self, memo):
         return self
@@ -31,7 +35,7 @@ class DelegatingModel(Model):
         context = RunContext(run_id=response.run_id, session_id=response.session_id, user_id=response.user_id,
             session_state=response.session_state or {},
             metadata={'factoryNativeRetryAttempt': getattr(response, '_factory_retry_attempt', None)})
-        plan = self.store.plan(task['plan_id'], response.user_id)
+        plan = self.store.execution(task)
         def current():
             if self.store.cancellation_requested(response.run_id):
                 raise RunCancelledException('Factory cancellation requested')
@@ -61,19 +65,14 @@ class DelegatingModel(Model):
         return model
 
     def _provider_hooks(self, model, context, current, auxiliary, plan, *, auxiliary_request=False):
-        sessions = getattr(self.store, 'research_sessions', None)
-        inputs = plan.get('inputValues') or {}
-        callback = None
-        if sessions is not None and plan.get('mode') != 'qa' and inputs.get('sessionId') and inputs.get('turnId'):
-            callback = sessions.authorize_model if auxiliary_request else sessions.before_model
+        application = resolve_application_runtime(self.application_runtimes, plan)
+        callback = application.before_model if application is not None else None
         def before(args, kwargs):
             current()
             if callback is not None:
-                if auxiliary_request:
-                    callback(context)
-                else:
-                    messages = kwargs.get('messages', args[0] if args else None)
-                    callback(context, messages, auxiliary)
+                messages = kwargs.get('messages', args[0] if args else None)
+                callback(context, plan, messages, auxiliary, auxiliary_request=auxiliary_request)
+                current()
         invoke, ainvoke = model.invoke, model.ainvoke
         invoke_stream, ainvoke_stream = model.invoke_stream, model.ainvoke_stream
         def sync(*args, **kwargs):

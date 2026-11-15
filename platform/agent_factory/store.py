@@ -1,6 +1,6 @@
 """Factory metadata only. Agno owns runs, sessions, queue tickets and tool loops.
 
-Immutable snapshots and admission fingerprints close native assembly gaps. This
+Task execution context and admission fingerprints close native assembly gaps. This
 store is not a second job scheduler. Uncertain admissions/effects retain capacity.
 """
 import base64
@@ -27,16 +27,13 @@ def digest(value):
     return hashlib.sha256(canonical(value).encode()).hexdigest()
 
 
+def execution_fingerprint(context):
+    return context.get('requestFingerprint') or digest({key: value for key, value in context.items()
+        if key not in {'id', 'createdAt', 'fingerprint'}})
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
-
-
-def require_production_database(engine):
-    with engine.connect() as conn:
-        if conn.execute(text("SELECT to_regclass('af_bootstrap')")).scalar_one() is not None:
-            mode = conn.execute(text("SELECT mode FROM af_bootstrap WHERE id='mode'")).scalar_one_or_none()
-            if mode is not None and mode != 'production':
-                raise ValueError('Existing demo database cannot be used in production; retained data requires separate review')
 
 
 # Compatibility exports: custody/evidence semantics belong to trusted adapters.
@@ -61,6 +58,8 @@ class Store:
         self.personal_tools: Any = None
         self.assistant_events: Any = None
         self.assistant_messages: Any = None
+        from .application_runtime import ApplicationRuntime
+        self.application_runtimes: dict[str, ApplicationRuntime] = {}
         self.external_execution_handlers: dict[str, Any] = {}
         self.execution_guards: dict[str, Any] = {}
         self.tool_independent_execution_guards: dict[str, Any] = {}
@@ -121,14 +120,14 @@ class Store:
             return [dict(row) for row in result.mappings()] if result.returns_rows else []
 
     def initialize(self):
-        require_production_database(self.engine)
         statements = [
             "CREATE TABLE IF NOT EXISTS af_browser_auth (id TEXT PRIMARY KEY,kind TEXT NOT NULL,body JSONB NOT NULL)",
             "CREATE INDEX IF NOT EXISTS af_browser_auth_expiry ON af_browser_auth ((CAST(body->>'expires' AS DOUBLE PRECISION)))",
             "CREATE INDEX IF NOT EXISTS af_browser_auth_binding ON af_browser_auth ((body->>'binding')) WHERE kind='flow'",
             "CREATE TABLE IF NOT EXISTS af_plans (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, body JSONB NOT NULL, hash TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_plan_requests (owner_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id), PRIMARY KEY(owner_id,request_id))",
-            "CREATE TABLE IF NOT EXISTS af_tasks (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id), request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, run_id TEXT UNIQUE, admission TEXT NOT NULL DEFAULT 'reserved', terminal BOOLEAN NOT NULL DEFAULT FALSE, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, body JSONB NOT NULL, UNIQUE(owner_id,request_id))",
+            "CREATE TABLE IF NOT EXISTS af_tasks (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, plan_id TEXT REFERENCES af_plans(id), request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, run_id TEXT UNIQUE, admission TEXT NOT NULL DEFAULT 'reserved', terminal BOOLEAN NOT NULL DEFAULT FALSE, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, body JSONB NOT NULL, UNIQUE(owner_id,request_id))",
+            "ALTER TABLE af_tasks ALTER COLUMN plan_id DROP NOT NULL",
             "CREATE INDEX IF NOT EXISTS af_tasks_owner_history ON af_tasks(owner_id,(body->>'createdAt') DESC,id DESC)",
             "CREATE TABLE IF NOT EXISTS af_events (id BIGSERIAL PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), type TEXT NOT NULL, message TEXT NOT NULL, data JSONB NOT NULL, created_at TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_control_commands (owner_id TEXT NOT NULL, command_id TEXT NOT NULL, task_ref TEXT NOT NULL, root_task_id TEXT NOT NULL REFERENCES af_tasks(id), action TEXT NOT NULL, fingerprint TEXT NOT NULL, requirement_slot TEXT, state TEXT NOT NULL, body JSONB NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(owner_id,command_id), UNIQUE(owner_id,requirement_slot))",
@@ -136,92 +135,62 @@ class Store:
             "CREATE TABLE IF NOT EXISTS af_effects (effect_key TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), run_id TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, result JSONB)",
             "CREATE TABLE IF NOT EXISTS af_artifacts (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), body JSONB NOT NULL, content BYTEA NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_audit (id BIGSERIAL PRIMARY KEY, actor_id TEXT NOT NULL, action TEXT NOT NULL, target_id TEXT NOT NULL, body JSONB NOT NULL, created_at TEXT NOT NULL)",
-            "CREATE TABLE IF NOT EXISTS af_bootstrap (id TEXT PRIMARY KEY, mode TEXT NOT NULL)",
         ]
         for statement in statements:
             self.sql(statement)
-        self.sql("INSERT INTO af_bootstrap VALUES('mode','production') ON CONFLICT DO NOTHING")
 
     def audit(self, actor, action, target, body):
         self.sql("INSERT INTO af_audit(actor_id,action,target_id,body,created_at) VALUES(:actor,:action,:target,CAST(:body AS JSONB),:at)",
                  actor=actor, action=action, target=target, body=canonical(body), at=now())
 
-    def save_plan(self, body):
-        self.sql("INSERT INTO af_plans VALUES(:id,:owner,CAST(:body AS JSONB),:hash)",
-                 id=body["id"], owner=body["ownerId"], body=canonical(body), hash=digest(body))
-        return body
+    def execution(self, task):
+        context = task['body'].get('execution')
+        if context is None:
+            rows = self.sql('SELECT body,hash FROM af_plans WHERE id=:id AND owner_id=:owner',
+                            id=task['plan_id'], owner=task['owner_id'])
+            if not rows:
+                raise HTTPException(404, 'Execution context not found')
+            context = rows[0]['body']
+            if digest(context) != rows[0]['hash']:
+                raise InputCheckError('Legacy execution integrity mismatch')
+        if context['ownerId'] != task['owner_id']:
+            raise InputCheckError('Execution context owner mismatch')
+        return context
 
-    def admit_plan(self, owner, request_id, request, builder):
-        fp = digest(request)
-        with self.transaction() as conn:
-            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext(:key))"), {"key": "plan:" + owner + ":" + request_id})
-            row = conn.execute(text("SELECT * FROM af_plan_requests WHERE owner_id=:owner AND request_id=:key"), {"owner": owner, "key": request_id}).mappings().first()
-            if row:
-                if row["fingerprint"] != fp:
-                    raise HTTPException(409, "IDEMPOTENCY_CONFLICT: plan request changed")
-                return self.plan(row["plan_id"], owner)
-            token = self._connection.set(conn)
-            try:
-                plan = builder()
-            finally:
-                self._connection.reset(token)
-            conn.execute(text("INSERT INTO af_plan_requests VALUES(:owner,:key,:fp,:plan)"), {"owner": owner, "key": request_id, "fp": fp, "plan": plan["id"]})
-        return plan
-
-    def plan(self, plan_id, owner=None):
-        rows = self.sql("SELECT * FROM af_plans WHERE id=:id", id=plan_id)
-        if not rows or owner is not None and rows[0]["owner_id"] != owner:
-            raise HTTPException(404, "Plan not found")
-        row = rows[0]
-        if digest(row["body"]) != row["hash"]:
-            raise InputCheckError("Immutable plan integrity mismatch")
-        return row["body"]
-
-    def latest_personal_task(self, owner, session_id, project_id, native_session_id):
-        """Read durable Factory admission even before a native command exists."""
-        rows = self.sql("""SELECT t.id,t.plan_id,t.run_id FROM af_tasks t JOIN af_plans p ON p.id=t.plan_id
-            WHERE t.owner_id=:owner AND p.owner_id=:owner
-            AND t.request_id='personal:' || p.id
-            AND p.body->>'application'='personal-agent-command-v1'
-            AND p.body->'inputValues'->>'factorySessionId'=:session
-            AND p.body->'inputValues'->>'nativeProjectId'=:project
-            AND p.body->'inputValues'->>'nativeSessionId'=:native
-            AND p.body->'inputValues'->>'action' IN ('prompt','interrupt')
-            ORDER BY t.body->>'createdAt' DESC,t.id DESC LIMIT 1""",
-            owner=owner, session=session_id, project=project_id, native=native_session_id)
-        if not rows: return None
-        row = rows[0]
-        self.plan(row['plan_id'], owner)  # Check the immutable plan hash before returning its identity.
-        return {'planId': row['plan_id'], 'taskId': row['id'], 'nativeRunId': row['run_id'],
-                'executionContract': 'personal-external-v1'}
-
-    def reserve_task(self, plan, request_id, *, allocation_id=None, delivery_id=None, private_event_id=None, remote_target=False):
-        owner, fp = plan["ownerId"], digest({"planId": plan["id"], "planHash": digest(plan)})
+    def reserve_task(self, context, request_id, *, allocation_id=None, delivery_id=None, private_event_id=None, remote_target=False):
+        owner, fp = context['ownerId'], execution_fingerprint(context)
         with self.transaction() as conn:
             # Coordinate original admissions with application completion transactions.
             conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
             old = conn.execute(text("SELECT * FROM af_tasks WHERE owner_id=:owner AND request_id=:request"), {"owner": owner, "request": request_id}).mappings().first()
             if old:
-                if old["fingerprint"] != fp:
-                    raise HTTPException(409, "IDEMPOTENCY_CONFLICT: request ID belongs to a different immutable plan")
+                old_fp = old['fingerprint']
+                if 'execution' not in old['body']:
+                    prepared = self.sql('SELECT fingerprint FROM af_plan_requests '
+                        'WHERE owner_id=:owner AND request_id=:request AND plan_id=:plan',
+                        owner=owner, request=request_id, plan=old['plan_id']) if context.get('requestFingerprint') else []
+                    old_fp = prepared[0]['fingerprint'] if prepared else execution_fingerprint(self.execution(old))
+                if old_fp != fp:
+                    raise HTTPException(409, 'IDEMPOTENCY_CONFLICT: request input changed')
                 return dict(old), False
             if delivery_id is not None:
-                self.assistant_events.validate_admission(conn, owner, delivery_id, request_id, plan)
+                self.assistant_events.validate_admission(conn, owner, delivery_id, request_id, context)
             if private_event_id is not None:
-                self.assistant_events.validate_private_admission(conn, owner, private_event_id, request_id, plan)
+                self.assistant_events.validate_private_admission(conn, owner, private_event_id, request_id, context)
             if self.assistant_messages is not None:
-                self.assistant_messages.validate_admission(conn, owner, request_id, plan)
+                self.assistant_messages.validate_admission(conn, owner, request_id, context)
             task_id = str(uuid4())
-            body = {"createdAt": now(), "updatedAt": now(), "lastStatus": "queued", "requestId": request_id}
+            body = {"createdAt": now(), "updatedAt": now(), "lastStatus": "queued", "requestId": request_id,
+                    'execution': context}
             sessions = getattr(self, 'research_sessions', None)
-            native_session = sessions.native_session_for_plan(plan) if sessions is not None else None
+            native_session = sessions.native_session_for_plan(context) if sessions is not None else None
             if native_session is not None:
                 body['nativeSessionId'] = native_session
-            row = conn.execute(text("INSERT INTO af_tasks(id,owner_id,plan_id,request_id,fingerprint,body) VALUES(:id,:owner,:plan,:request,:fp,CAST(:body AS JSONB)) RETURNING *"),
-                               {"id": task_id, "owner": owner, "plan": plan["id"], "request": request_id, "fp": fp, "body": canonical(body)}).mappings().first()
+            row = conn.execute(text("INSERT INTO af_tasks(id,owner_id,plan_id,request_id,fingerprint,body) VALUES(:id,:owner,NULL,:request,:fp,CAST(:body AS JSONB)) RETURNING *"),
+                               {"id": task_id, "owner": owner, "request": request_id, "fp": fp, "body": canonical(body)}).mappings().first()
             if row is None:
                 raise RuntimeError("Task reservation did not persist")
-        self.event(task_id, "admission_reserved", "Scoped task reserved; native queue acceptance pending", {"planId": plan["id"]})
+        self.event(task_id, "admission_reserved", "Task reserved; native queue acceptance pending", {})
         return dict(row), True
 
     def task(self, identifier, owner=None):
@@ -264,12 +233,15 @@ class Store:
             except (ValueError, TypeError, UnicodeError, binascii.Error, RecursionError):
                 raise HTTPException(400, "Invalid owner-scoped history cursor") from None
         where = "AND (t.body->>'createdAt',t.id)<(:created,:after)" if boundary else ""
-        rows = self.sql(f"""SELECT t.id,t.owner_id,t.plan_id,t.admission,t.terminal,t.body->>'createdAt' AS created,
+        rows = self.sql(f"""SELECT t.id,t.owner_id,t.admission,t.terminal,t.body->>'createdAt' AS created,
             t.body->>'updatedAt' AS updated,t.body->>'observedAt' AS observed,t.body->>'lastStatus' AS status,
             t.body->>'stoppedStatus' AS stopped_status,
-            p.body->>'application' AS application,p.body->'applicationRef' AS application_ref,
-            p.body->>'normalizedGoal' AS topic,p.body->>'mode' AS mode
-            FROM af_tasks t JOIN af_plans p ON p.id=t.plan_id AND p.owner_id=t.owner_id
+            COALESCE(t.body->'execution',p.body)->>'id' AS execution_id,
+            COALESCE(t.body->'execution',p.body)->>'application' AS application,
+            COALESCE(t.body->'execution',p.body)->'applicationRef' AS application_ref,
+            COALESCE(t.body->'execution',p.body)->>'normalizedGoal' AS topic,
+            COALESCE(t.body->'execution',p.body)->>'mode' AS mode
+            FROM af_tasks t LEFT JOIN af_plans p ON p.id=t.plan_id AND p.owner_id=t.owner_id
             WHERE t.owner_id=:owner {where} ORDER BY t.body->>'createdAt' DESC,t.id DESC LIMIT :count""",
             owner=owner, count=limit + 1, created=boundary["createdAt"] if boundary else None,
             after=boundary["id"] if boundary else None)
@@ -282,7 +254,8 @@ class Store:
             elif row["admission"] in {"reserved", "unknown"}:
                 status = "unknown"
             status = (row["stopped_status"] if row["terminal"] else "finalizing") if row["stopped_status"] else finalized_status(status, row["terminal"])
-            items.append({"id": row["id"], "ownerId": row["owner_id"], "planId": row["plan_id"],
+            items.append({"id": row["id"], "ownerId": row["owner_id"],
+                'executionId': row['execution_id'], 'planId': row['execution_id'],
                 "definitionId": ref["id"], "definitionVersion": ref["version"],
                 "input": {"topic": row["topic"], "mode": row["mode"], "scenario": "normal"},
                 "status": status, "createdAt": row["created"], "updatedAt": row["updated"], "observedAt": row["observed"]})
@@ -331,7 +304,7 @@ class Store:
                 state = json.loads(state)
             envelope = state.get('factory_envelope', {})
             task = self.task(envelope.get('task_id'), ctx.user_id)
-            if envelope != {'plan_ref': task['plan_id'], 'user_id': ctx.user_id,
+            if envelope != {'plan_ref': self.execution(task)['id'], 'user_id': ctx.user_id,
                             'task_id': task['id'], 'request_id': task['request_id']}:
                 raise InputCheckError('Native admission differs from its original task')
         else:
@@ -352,7 +325,7 @@ class Store:
         task = self.task_for_context(ctx)
         if task["admission"] == "rejected":
             raise InputCheckError("Current task admission is rejected; execution denied")
-        plan = self.plan(task["plan_id"], ctx.user_id)
+        plan = self.execution(task)
         return {**plan, "taskId": task["id"], "runId": ctx.run_id}
 
     def authorize_tool(self, ctx, name):
@@ -378,7 +351,8 @@ class Store:
             if task['body'].get('stoppedStatus') is not None:
                 raise HTTPException(409, 'NATIVE_EXECUTION_STOPPED: original run cannot start new work')
         self.auth.require_member(owner)
-        self.plan(plan['id'], owner)
+        if plan['ownerId'] != owner:
+            raise HTTPException(404, 'Execution context not found')
         checked = {}
         for name, guard in self.execution_guards.items():
             guard(owner, plan, run_context, tool_name)

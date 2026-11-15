@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from sqlalchemy import text
 
 from .native_bridge import NativeAdmissionRejected
-from .store import effect_unresolved, digest, now, runtime_custody_held
+from .store import canonical, effect_unresolved, digest, now, runtime_custody_held
 
 ACTIVE = {"queued", "pending", "running", "paused"}
 TERMINAL = {"completed", "failed", "cancelled", "canceled", "error"}
@@ -50,9 +50,12 @@ class DelegationService:
         self.store.sql("""CREATE TABLE IF NOT EXISTS af_delegation_links (
             owner_id TEXT NOT NULL, parent_id TEXT NOT NULL REFERENCES af_tasks(id), request_id TEXT NOT NULL,
             root_id TEXT NOT NULL REFERENCES af_tasks(id), depth INTEGER NOT NULL CHECK(depth >= 1),
-            fingerprint TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id),
+            fingerprint TEXT NOT NULL, plan_id TEXT REFERENCES af_plans(id),
             child_id TEXT UNIQUE REFERENCES af_tasks(id), created_at TEXT NOT NULL,
             PRIMARY KEY(owner_id,parent_id,request_id))""")
+        self.store.sql("""ALTER TABLE af_delegation_links
+            ALTER COLUMN plan_id DROP NOT NULL,
+            ADD COLUMN IF NOT EXISTS execution JSONB""")
         # Widen the original constraint atomically; existing links remain valid.
         self.store.sql("""ALTER TABLE af_delegation_links
             DROP CONSTRAINT IF EXISTS af_delegation_links_depth_check,
@@ -102,7 +105,7 @@ class DelegationService:
         if not ticket:
             raise HTTPException(503, "Persisted native ticket is unavailable")
         from .native_component import component_identity
-        kind, component_id = component_identity(self.store.plan(task["plan_id"], task["owner_id"]))
+        kind, component_id = component_identity(self.store.execution(task))
         if (ticket.get("session_id") != self.store.native_session_id(task) or ticket.get("user_id") != task["owner_id"]
                 or ticket.get("component_id") != component_id or ticket.get("component_type", "agent") != kind):
             raise HTTPException(403, "Native ticket identity differs from delegation binding")
@@ -126,13 +129,13 @@ class DelegationService:
                 raise HTTPException(409, "Ancestor native mandate is unavailable")
             if current["id"] == task["id"] and raw not in ACTIVE:
                 raise HTTPException(409, "Parent must have an active or paused native ticket" if creating else "Child native ticket is no longer active")
-            plans.append(self.store.plan(current["plan_id"], owner))
+            plans.append(self.store.execution(current))
         return root_id, plans
 
     def authorize_child(self, run_context: Any) -> None:
         task = self.store.task_for_context(run_context)
         link = self._link(task["id"])
-        plan = self.store.plan(task["plan_id"], run_context.user_id)
+        plan = self.store.execution(task)
         binding = plan.get("delegation")
         if link is None:
             # A persisted intent cannot become an unguarded standalone task after
@@ -141,8 +144,10 @@ class DelegationService:
                 raise PermissionError("Delegation metadata binding is incomplete")
             return
         expected = {"parentTaskId": link["parent_id"], "rootTaskId": link["root_id"], "depth": link["depth"]}
-        if binding != expected or link["plan_id"] != task["plan_id"] or link["owner_id"] != run_context.user_id:
-            raise PermissionError("Immutable child plan differs from its persisted delegation binding")
+        linked = link.get("execution")
+        if (binding != expected or link["owner_id"] != run_context.user_id
+                or (linked != plan if linked is not None else link["plan_id"] != task["plan_id"])):
+            raise PermissionError("Child execution differs from its persisted delegation binding")
         try:
             self._mandate(run_context.user_id, task)
         except HTTPException as error:
@@ -172,8 +177,7 @@ class DelegationService:
         parent = self.store.task(parentTaskId, owner)
         root_id, ancestors = self._ancestry(parent)
         return {"allowed": not parent["cancel_requested"], "parentTaskId": parent["id"],
-                "rootTaskId": root_id, "depth": len(ancestors) + 1,
-                "modes": ["autonomous"], "defaultMode": "autonomous"}
+                "rootTaskId": root_id, "depth": len(ancestors) + 1}
 
     def _creation_request(self, owner: str, parent: dict[str, Any], goal: str, mode: str,
                           placement: dict | None) -> dict[str, Any]:
@@ -213,34 +217,37 @@ class DelegationService:
                     # No submit was possible without a persisted child binding.
                     # Recover the native Store reservation exactly once, rather
                     # than guessing whether a native acknowledgement was lost.
-                    plan = self.store.plan(link["plan_id"], owner)
+                    plan = link.get("execution")
+                    if plan is None:
+                        plan = self.store.execution({"plan_id": link["plan_id"], "owner_id": owner, "body": {}})
                     task, fresh = self.store.reserve_task(plan, native_request)
+                    plan = self.store.execution(task)
                     with conn.begin():
-                        conn.execute(text("UPDATE af_delegation_links SET child_id=:child WHERE owner_id=:owner AND parent_id=:parent AND request_id=:request"), {"child": task["id"], "owner": owner, "parent": parent["id"], "request": requestId})
-                    link = {**link, "child_id": task["id"]}
+                        conn.execute(text("UPDATE af_delegation_links SET child_id=:child,execution=CAST(:execution AS JSONB) WHERE owner_id=:owner AND parent_id=:parent AND request_id=:request"), {"child": task["id"], "execution": canonical(plan), "owner": owner, "parent": parent["id"], "request": requestId})
+                    link = {**link, "child_id": task["id"], "execution": plan}
                 task = self.store.task(link["child_id"], owner)
+                plan = self.store.execution(task)
             else:
                 parent = self.store.task(parent["id"], owner)
                 _, plans = self._mandate(owner, parent, creating=True)
                 depth = len(plans)
                 binding = {"parentTaskId": parent["id"], "rootTaskId": root_id, "depth": depth}
-                def child_plan():
-                    plan = deepcopy(plans[0])
-                    plan.update(id=str(uuid4()), createdAt=now(), normalizedGoal=goal.strip(),
-                                mode=mode, delegation=binding)
-                    if input_values is not None:
-                        plan['inputValues'] = input_values
-                    plan['fingerprint'] = digest({key: value for key, value in plan.items()
-                                                  if key not in {'id', 'createdAt', 'fingerprint'}})
-                    return self.store.save_plan(plan)
-                plan = self.store.admit_plan(owner, native_request, request, child_plan)
+                plan = deepcopy(plans[0])
+                plan.update(id=str(uuid4()), createdAt=now(), normalizedGoal=goal.strip(),
+                            mode=mode, delegation=binding, requestFingerprint=fp)
+                plan.pop('fingerprint', None)
+                if input_values is not None:
+                    plan['inputValues'] = input_values
                 link = {"owner_id": owner, "parent_id": parent["id"], "request_id": requestId, "root_id": root_id,
-                        "depth": depth, "fingerprint": fp, "plan_id": plan["id"], "child_id": None, "created_at": now()}
+                        "depth": depth, "fingerprint": fp, "plan_id": None, "child_id": None, "created_at": now(), "execution": plan}
                 # Persist the original child intent before native reservation,
                 # so recovery never creates a replacement child.
                 with conn.begin():
                     conn.execute(text("INSERT INTO af_delegation_roots(root_id,owner_id) VALUES(:root,:owner) ON CONFLICT DO NOTHING"), {"root": root_id, "owner": owner})
-                    conn.execute(text("INSERT INTO af_delegation_links VALUES(:owner_id,:parent_id,:request_id,:root_id,:depth,:fingerprint,:plan_id,:child_id,:created_at)"), link)
+                    conn.execute(text("""INSERT INTO af_delegation_links
+                        (owner_id,parent_id,request_id,root_id,depth,fingerprint,plan_id,child_id,created_at,execution)
+                        VALUES(:owner_id,:parent_id,:request_id,:root_id,:depth,:fingerprint,:plan_id,:child_id,:created_at,CAST(:execution AS JSONB))"""),
+                                 {**link, "execution": canonical(plan)})
                 try:
                     task, fresh = self.store.reserve_task(plan, native_request)
                 except HTTPException:
@@ -251,9 +258,10 @@ class DelegationService:
                 with conn.begin():
                     conn.execute(text("UPDATE af_delegation_links SET child_id=:child WHERE owner_id=:owner AND parent_id=:parent AND request_id=:request"), {"child": task["id"], "owner": owner, "parent": parent["id"], "request": requestId})
                 link["child_id"] = task["id"]
-                self.store.event(task["id"], "delegation_bound", "Immutable child bound before native submission", binding)
+                plan = self.store.execution(task)
+                self.store.event(task["id"], "delegation_bound", "Child execution bound before native submission", binding)
         if placement is not None:
-            plan = self.store.plan(task['plan_id'], owner)
+            plan = self.store.execution(task)
             receipt = await self._dispatch_placement(owner, parent, task, plan, placement, native_request)
             return {'childTask': self.store.task(task['id'], owner), 'receipt': receipt,
                     'link': link, 'duplicate': duplicate}

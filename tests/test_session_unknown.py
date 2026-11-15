@@ -49,6 +49,16 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
             detail=AsyncMock(return_value={'job': {'status': 'finalizing'}, 'events': [],
                 'snapshot': {'queue': self.ticket, 'run': run, 'effects': [self.effect]}})))
 
+    async def test_other_applications_do_not_enter_research_session_callbacks(self):
+        execution = {'application': 'chat', 'mode': 'autonomous',
+            'inputValues': {'sessionId': 'session', 'turnId': 'turn'}}
+        self.session.store.execution = Mock(return_value=execution)
+        self.assertIsNone(self.session.native_session_for_plan(execution))
+        self.assertFalse(self.session.task_held(self.session.store, self.task))
+        self.session.mark_cancel(self.session.store, 'task', reason='cancel-requested')
+        await self.session.observe_waits(None, self.task)
+        self.conn.execute.assert_not_called()
+
     def test_submission_classification_preserves_public_http_error(self):
         original = HTTPException(403, {'code': 'RESOURCE_UNAVAILABLE', 'message': 'Unavailable'},
                                  {'X-Request-Id': 'original'})

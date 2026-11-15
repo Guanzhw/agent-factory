@@ -339,9 +339,12 @@ class ResearchCollaboration:
                     or plan.get('connectionRefs') != turn['body'].get('configuration', row['body']['configuration'])['connectionRefs']
                     or plan.get('inputValues') != service._start(row, turn).inputValues):
                 raise rejected('RESEARCH_COLLABORATION_BINDING_MISMATCH', '原协作继续请求绑定不一致。')
-            original = self.store.sql('SELECT fingerprint FROM af_plan_requests WHERE owner_id=:owner '
-                'AND request_id=:request AND plan_id=:plan', owner=intent['owner_id'], request=request_id, plan=plan['id'])
-            if len(original) != 1 or original[0]['fingerprint'] != turn['body']['startFingerprint']:
+            fingerprint = plan.get('requestFingerprint')
+            if fingerprint is None:
+                original = self.store.sql('SELECT fingerprint FROM af_plan_requests WHERE owner_id=:owner '
+                    'AND request_id=:request AND plan_id=:plan', owner=intent['owner_id'], request=request_id, plan=plan['id'])
+                fingerprint = original[0]['fingerprint'] if len(original) == 1 else None
+            if fingerprint != turn['body']['startFingerprint']:
                 raise rejected('RESEARCH_COLLABORATION_BINDING_MISMATCH', '原协作继续准入内容不一致。')
             service._context_sources(intent['owner_id'], row, turns)
 

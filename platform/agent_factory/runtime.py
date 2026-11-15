@@ -1,6 +1,4 @@
 """Native chat Agent with owner-selected models and tools."""
-import json
-
 from agno.agent import Agent
 from agno.agent._messages import get_continue_run_messages
 from agno.exceptions import InputCheckError, RunCancelledException
@@ -8,13 +6,16 @@ from agno.registry import Registry
 from agno.run import RunContext
 from agno.session.agent import AgentSession
 
+from .application_runtime import ApplicationTools, execution_instructions, resolve_application_runtime
 from .model_dispatch import DelegatingModel
 from .native_messages import pair_tool_results
 from .personal_mcp import MCPRunConnections
 
 
-def build_runtime(store, native_db):
-    model = DelegatingModel(store)
+def build_runtime(store, native_db, *, application_runtimes=None):
+    runtimes = (getattr(store, 'application_runtimes', {})
+                if application_runtimes is None else application_runtimes)
+    model = DelegatingModel(store, runtimes)
 
     def bind_run(run_context: RunContext, session, agent):
         try:
@@ -24,10 +25,9 @@ def build_runtime(store, native_db):
             plan = store.bind_run(run_context)
             if store.cancellation_requested(run_context.run_id):
                 raise RunCancelledException('User stopped this task')
-            inputs = plan.get('inputValues') or {}
-            sessions = getattr(store, 'research_sessions', None)
-            if sessions is not None and plan.get('mode') == 'autonomous' and inputs.get('sessionId') and inputs.get('turnId'):
-                sessions.prepare_history(run_context, session)
+            application = resolve_application_runtime(runtimes, plan)
+            if application is not None and application.prepare_history is not None:
+                application.prepare_history(run_context, plan, session, agent)
         except (InputCheckError, RunCancelledException):
             raise
         except Exception as error:
@@ -35,25 +35,19 @@ def build_runtime(store, native_db):
 
     def instructions(run_context: RunContext):
         plan = store.resolve_run(run_context)
-        text = plan.get('instructions', [])
-        if isinstance(text, str):
-            text = [text]
-        inputs = dict(plan.get('inputValues') or {})
-        if plan.get('mode') == 'autonomous' and inputs.get('turnId') and not plan.get('delegation'):
-            legacy = inputs.pop('sessionContext', None)
-            if legacy:
-                previous = json.loads(legacy)
-                for key in ('goal', 'boundaries'):
-                    if key in previous:
-                        inputs.setdefault(key, previous[key])
-        return [*text, json.dumps({'goal': plan['normalizedGoal'], **inputs}, ensure_ascii=False)]
+        application = resolve_application_runtime(runtimes, plan)
+        if application is not None and application.instructions is not None:
+            return application.instructions(run_context, plan)
+        return execution_instructions(plan, plan.get('inputValues') or {})
 
     def selected_tools(run_context: RunContext, agent):
         plan = store.resolve_run(run_context)
-        if plan.get("mode") == "qa":
-            return store.research_qa.functions(run_context)
-        research = getattr(store, 'research_tools', None)
-        functions = research.functions(run_context) if research is not None else []
+        application = resolve_application_runtime(runtimes, plan)
+        selected = (application.tools(run_context, plan, agent)
+                    if application is not None and application.tools is not None else ApplicationTools())
+        if not selected.include_personal:
+            return selected.functions
+        functions = list(selected.functions)
         ssh = getattr(store, 'personal_ssh', None)
         if ssh is not None:
             ssh_functions = ssh.functions(run_context.user_id)
@@ -68,7 +62,7 @@ def build_runtime(store, native_db):
             agent._mcp_tools_initialized_on_run.append(connections)
             functions.extend(personal.functions(run_context.user_id, run_context, mcp_connections=connections,
                 reserved_names={function.name for function in functions} |
-                    ({function.name for function in executor.skills.get_tools()} if executor.skills else set())))
+                    ({function.name for function in agent.skills.get_tools()} if agent.skills else set())))
         return functions
 
     def ssh_started(run_context, fc):
@@ -97,12 +91,15 @@ def build_runtime(store, native_db):
             ticket = native_db.get_job(run_id) if native_db is not None and run_id else None
             if run_id and ticket and ticket['status'] == 'running' and ticket['attempt'] > 1 and not ticket['payload'].get('continue'):
                 previous = self.get_run_output(run_id, session_id=kwargs.get('session_id'), user_id=kwargs.get('user_id'))
-                effects = store.effects(store.task(run_id)['id'])
+                task = store.task(run_id)
+                effects = store.effects(task['id'])
+                application = resolve_application_runtime(runtimes, store.execution(task))
                 if previous and previous.messages and previous.session_id and previous.user_id:
+                    prefixes = ('personal-tool:', *(application.effect_prefixes if application is not None else ()))
                     current = [message for message in previous.messages if not message.from_history]
                     calls = {call['id'] for message in current for call in message.tool_calls or []}
                     recorded = {run_id + ':' + prefix + call for call in calls
-                                for prefix in ('personal-tool:', 'research-session-tool:')}
+                                for prefix in prefixes}
                     if calls and all(item['effect_key'] in recorded for item in effects):
                         session = self.get_session(session_id=previous.session_id, user_id=previous.user_id)
                         if not isinstance(session, AgentSession):
@@ -117,10 +114,15 @@ def build_runtime(store, native_db):
                         # This in-memory RunOutput belongs only to this claim; the marker is not persisted.
                         setattr(previous, '_factory_retry_attempt', ticket['attempt'])
                         return self.acontinue_run(run_response=previous, **kwargs)
+                if effects:
+                    if application is not None and application.on_retry_blocked is not None:
+                        application.on_retry_blocked(task)
+                    raise InputCheckError('NATIVE_RETRY_EFFECT_UNMATCHED: cannot resume from the saved tool observations')
             return super().arun(input, **kwargs)
 
     executor = RetryAgent(id='factory-executor', name='Factory', model=model, db=native_db,
         instructions=instructions, tools=selected_tools, pre_hooks=[bind_run],
+        cache_callables=False,  # Agno's owner cache would reuse another run's tools and closed MCP handles.
         store_events=True, events_to_skip=[],
         add_history_to_context=True, add_session_summary_to_context=True, telemetry=False)
     return executor, Registry(models=[model], dbs=[native_db])

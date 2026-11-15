@@ -2,7 +2,6 @@ import asyncio
 import hashlib
 
 from fastapi import APIRouter, HTTPException, Request, Response
-from pydantic import BaseModel, ConfigDict, Field
 from .control_commands import ControlCommands
 from .application_runs import StartNotSubmitted
 from .native_bridge import NativeAdmissionRejected
@@ -11,16 +10,6 @@ from fastapi.routing import APIRoute as FactoryPublicRoute
 from .store import effect_unresolved, canonical
 from .runtime_hooks import execution_classification
 from .task_status import finalized_status, native_status
-
-
-class Body(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class InstanceRequest(Body):
-    planId: str = Field(max_length=100)
-    requestId: str = Field(min_length=8, max_length=100, pattern=r"^[a-zA-Z0-9_.:-]+$")
-    executionTargetRef: str | None = Field(default=None, min_length=1, max_length=100)
 
 
 def requirement_version(requirement):
@@ -72,35 +61,32 @@ class FactoryAPI:
         self.router = APIRouter(prefix="/api/factory", route_class=FactoryPublicRoute)
         self.routes()
 
-    def _instantiate_preflight(self, owner, body: InstanceRequest):
+    def _instantiate_preflight(self, owner, execution):
         self.auth.require_member(owner)
-        plan = self.store.plan(body.planId, owner)
-        if plan.get("delegation") or plan.get("remoteHandoff"):
-            raise HTTPException(403, "Delegated plans require their persisted ancestor mandate; use the child admission API")
-        if plan["status"] != "ready":
-            raise HTTPException(409, "Plan preflight is blocked: " + "; ".join(plan["missing"]))
-        self.store.require_plan_execution(owner, plan)
-        return plan
+        if execution.get("delegation") or execution.get("remoteHandoff"):
+            raise HTTPException(403, "Delegated tasks require their persisted ancestor context; use the child admission API")
+        self.store.require_plan_execution(owner, execution)
 
-    async def instantiate(self, owner, body: InstanceRequest, *, allocation_id=None, delivery_id=None, private_event_id=None):
+    async def instantiate(self, owner, execution, request_id, *, delivery_id=None, private_event_id=None):
         """Shared governed admission, including durable unknown-ack handling."""
         if self.store._connection.get() is not None:
             raise RuntimeError('Native admission requires a committed metadata boundary')
         # Trusted owner resources can require a synchronous remote health
         # check. Preserve fresh checks without blocking other ASGI requests.
-        try:
-            plan = await asyncio.to_thread(self._instantiate_preflight, owner, body)
-        except Exception as error:
-            raise StartNotSubmitted(error) from error
         options = {}
         if delivery_id is not None:
             options['delivery_id'] = delivery_id
         if private_event_id is not None:
             options['private_event_id'] = private_event_id
-        task, fresh = self.store.reserve_task(plan, body.requestId, **options)
+        try:
+            await asyncio.to_thread(self._instantiate_preflight, owner, execution)
+            task, fresh = await asyncio.to_thread(self.store.reserve_task, execution, request_id, **options)
+        except Exception as error:
+            raise StartNotSubmitted(error) from error
+        execution = self.store.execution(task)
         if fresh:
             try:
-                receipt = await self.bridge.submit({**plan, "task_id": task["id"]}, owner, body.requestId)
+                receipt = await self.bridge.submit({**execution, "task_id": task["id"]}, owner, request_id)
                 self.store.accept(task["id"], receipt["run_id"])
                 self.store.event(task["id"], "native_accepted", "Native durable queue accepted the task", {"runId": receipt["run_id"]})
             except NativeAdmissionRejected:
@@ -148,7 +134,7 @@ class FactoryAPI:
                 status = "unknown" if group["unknown"] else "canceling"
             elif task["cancel_requested"] and group["allStopped"]:
                 status = "failed" if self.store.failure_cleanup_requested(task["id"]) else "canceled"
-        plan = self.store.plan(task["plan_id"], task["owner_id"])
+        execution = self.store.execution(task)
         stopped_status = task["body"].get("stoppedStatus")
         status = (stopped_status if task["terminal"] else "finalizing") if stopped_status else finalized_status(status, task["terminal"])
         delegation_scope = await asyncio.to_thread(self.delegation.delegation_scope, task["owner_id"], task["id"]) if self.delegation else None
@@ -159,13 +145,12 @@ class FactoryAPI:
             actions.append("cancel")
         if status in {"unknown", "finalizing"}:
             actions.append("reconcile")
-        job = {"id": task["id"], "ownerId": task["owner_id"], "planId": plan["id"],
-            "input": {"topic": plan["normalizedGoal"], "mode": plan["mode"], "scenario": "normal"},
+        job = {"id": task["id"], "ownerId": task["owner_id"], "executionId": execution["id"], "planId": execution["id"],
+            "input": {"topic": execution["normalizedGoal"], "mode": execution["mode"], "scenario": "normal"},
             "status": status, "createdAt": task["body"]["createdAt"], "updatedAt": task["body"]["updatedAt"],
             "runtime": "live", "attempt": (snapshot.get("queue") or {}).get("attempt", 0),
             "allowedActions": actions, "validationStatus": "执行与结论需按产物证据分别验证",
-            "deploymentMode": "production",
-            "executionKind": execution_classification(plan)["executionKind"],
+            "executionKind": execution_classification(execution)["executionKind"],
             "verificationStatus": "unverified", "evidenceKind": "unverified"}
         if stopped_status:
             job.update(executionStatus=stopped_status, finalizationPending=not task["terminal"])
@@ -188,8 +173,8 @@ class FactoryAPI:
                 if status == "waiting_input":
                     actions.append("answer")
             elif tool.get("requires_confirmation") and tool.get("confirmed") is None:
-                approval = {"id": requirement["id"], "version": version, "scope": f"批准本任务已绑定的工具 {tool.get('tool_name')}，参数与权限以已批准计划为准。", "toolName": tool.get("tool_name"), "arguments": tool.get("tool_args", {})}
-                job.update(approvalDetail=approval, approval={"scope": approval["scope"], "requestedAt": requirement.get("created_at", plan["createdAt"])})
+                approval = {"id": requirement["id"], "version": version, "scope": f"批准本任务已绑定的工具 {tool.get('tool_name')}，参数与权限以当前任务上下文为准。", "toolName": tool.get("tool_name"), "arguments": tool.get("tool_args", {})}
+                job.update(approvalDetail=approval, approval={"scope": approval["scope"], "requestedAt": requirement.get("created_at", execution["createdAt"])})
                 if status == "waiting_approval":
                     actions.append("approve")
         if delegation_scope and delegation_scope.get("executionUnavailable"):
@@ -204,8 +189,8 @@ class FactoryAPI:
                 "events": events, "artifacts": self.store.artifacts(task["id"]),
                 "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope,
                     "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"),
-                    "planFingerprint": plan["fingerprint"], "effects": effects,
-                    "syntheticFixture": execution_classification(plan)["syntheticFixture"]}}
+                    "executionFingerprint": task["fingerprint"], "planFingerprint": task["fingerprint"], "effects": effects,
+                    "syntheticFixture": execution_classification(execution)["syntheticFixture"]}}
 
     def routes(self):
         router = self.router

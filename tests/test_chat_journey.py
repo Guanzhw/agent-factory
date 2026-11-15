@@ -651,6 +651,9 @@ class ChatJourney(unittest.TestCase):
             self.send('切换模型后继续')
         first = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
         turn = first['turns'][-1]
+        task = self.state['store'].task(turn['taskId'])
+        self.assertIsNone(task['plan_id'])
+        self.assertEqual(task['body']['execution']['normalizedGoal'], '切换模型后继续')
         self.assertIs(self.state['store'].native_db.get_job(turn['runId'])['payload']['stream'], True)
         before = len(self.model.requests)
         self.post('/research/sessions/' + first['id'] + '/turns',
@@ -1659,7 +1662,7 @@ class ChatJourney(unittest.TestCase):
         from agno.exceptions import RunCancelledException
         from agno.run import RunContext
         from agno.tools.function import FunctionCall
-        function = next(tool for tool in self.state['executor'].skills.get_tools() if tool.name == 'get_skill_script')
+        function = next(tool for tool in self.state['application_runtimes']['research-chat'].skills.get_tools() if tool.name == 'get_skill_script')
         function.process_entrypoint()
         function._run_context = RunContext(user_id=self.owner, session_id=snapshot['id'],
                                           run_id=snapshot['turns'][-1]['runId'])

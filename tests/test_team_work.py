@@ -154,7 +154,7 @@ class TeamWorkJourney(unittest.TestCase):
         store = self.state['store']
         task = store.task(question['delivery']['taskId'], peer.owner)
         self.assertEqual(task['owner_id'], peer.owner)
-        self.assertEqual(store.plan(task['plan_id'], peer.owner)['connectionRefs']['model'], peer.model_ref)
+        self.assertEqual(store.execution(task)['connectionRefs']['model'], peer.model_ref)
         self.assertIsNotNone(store.native_db.get_job(task['run_id']))
         self.assertEqual(len([item for item in store.tasks(peer.owner)
                               if item['request_id'] == task['request_id']]), 1)
@@ -263,7 +263,7 @@ class TeamWorkJourney(unittest.TestCase):
             self.assertEqual(len(receipts), 1)
             self.assertEqual(receipts[0]['outcome'], 'completed')
         peer_task = store.task(asked['delivery']['taskId'], peer.owner)
-        self.assertEqual(store.plan(peer_task['plan_id'], peer.owner)['connectionRefs']['model'], peer.model_ref)
+        self.assertEqual(store.execution(peer_task)['connectionRefs']['model'], peer.model_ref)
         self.assertIsNotNone(store.native_db.get_job(peer_task['run_id']))
         self.page.get_by_role('button', name='关闭团队协作', exact=True).click()
         self.page.get_by_role('button', name='团队协作', exact=True).click()
