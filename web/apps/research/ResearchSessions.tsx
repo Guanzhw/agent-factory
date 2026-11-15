@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
-import { IconArrowDown, IconArrowUp, IconPlus, IconRefresh, IconSearch, IconSquare, IconFolder, IconLayoutSidebar, IconUsers, IconInfoCircle, IconX } from '@tabler/icons-react';
+import { IconArrowDown, IconArrowUp, IconPlus, IconRefresh, IconSearch, IconSquare, IconFolder, IconLayoutSidebar, IconUsers, IconInfoCircle, IconX, IconBolt } from '@tabler/icons-react';
 import { ApiError } from '../../api.js';
 import { assistantApi, type ResearchSource } from './live/assistantClient.js';
 import { researchSessionsApi as api, type CreateSession, type ResearchSession, type SessionAction, type SessionOptions, type SessionPage, type SessionTurn } from './researchSessionsClient.js';
@@ -10,6 +10,8 @@ import { ResearchReply } from './ResearchReply.js';
 import { CopyButton } from './CopyButton.js';
 import { SessionFiles } from './SessionFiles.js';
 import { ChatModelPicker } from './ChatModelPicker.js';
+import { SessionTriggers } from './SessionTriggers.js';
+import { triggerSourceLabels } from './sessionTriggersClient.js';
 import './sessions.css';
 
 type Props = { ownerId: string; selectedId?: string; questionId?: string; onSelect: (id: string) => void; onQuestion: (id: string) => void; onModels: () => void; navigation?: ReactNode; workspaceContent?: ReactNode; sessionError?: string };
@@ -174,6 +176,7 @@ function TurnRecord({ turn, onQuestion }: { turn: SessionTurn; onQuestion: (id: 
       || !Object.entries(item.result).every(([key, value]) => JSON.stringify(event.data[key]) === JSON.stringify(value));
   });
   return <article className="rs-turn"><header className="sr-only"><h3>第 {turn.sequence} 轮</h3><span>{turn.children?.length && turn.status === 'waiting_approval' ? (children.length ? '等待子助手结果' : '等待命令结果') : turnStates[turn.status] ?? turn.status}</span><time>{time(turn.createdAt)}</time></header>
+    {turn.origin?.kind === 'trigger' && <div className="rs-continuation rs-trigger-origin"><p>自动触发：{turn.origin.triggerTitle} · {triggerSourceLabels[turn.origin.source]} · {turn.origin.eventType}</p>{turn.origin.contentId && <p>来源资料：<code>{turn.origin.contentId}</code></p>}</div>}
     {turn.continuation && <div className="rs-continuation"><p>由同事回复自动发起本轮。创建轮次不代表回复已纳入模型请求，请核对下方引用与原问题状态。</p>{turn.continuation.questionIds.map(id => <button key={id} className="rs-text-button" onClick={() => onQuestion(id)}>自动继续的原问题 {id}</button>)}</div>}
     <SessionActivity turn={turn}/>
     {!!children.length && <section aria-label={`第 ${turn.sequence} 轮临时子助手`}><h4>临时子助手</h4><p className="rw-muted">本轮临时分工，使用你的工作区与授权。停止本会话也会请求停止子任务。</p>{children.map(child => <div className="rs-message rs-reply" key={child.childTaskId}>
@@ -236,6 +239,7 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
   const questions = useRef<HTMLElement | null>(null);
   const [fileAttention, setFileAttention] = useState(false);
   const [questionAttention, setQuestionAttention] = useState(false);
+  const [triggersOpen, setTriggersOpen] = useState(false);
   useEffect(() => { if (questionId) questions.current?.showPopover(); }, [questionId]);
   function openQuestion(id: string) { questions.current?.showPopover(); onQuestion(id); }
   useLayoutEffect(() => {
@@ -261,6 +265,7 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
   }
   return <section className="rs-detail" aria-label="研究会话详情"><header className="rs-detail-heading">
     <div className="rs-header-row"><h2>{value.title}</h2><div className="rs-header-actions">
+      <button type="button" popoverTarget="rs-trigger-panel" aria-label="自动触发" title="自动触发"><IconBolt size={18}/></button>
       <button type="button" popoverTarget="rs-question-panel" aria-label="同事问答" title="同事问答"><IconUsers size={18}/>{questionAttention && <span className="rs-attention-dot"/>}</button>
       <button type="button" popoverTarget="rs-file-panel" aria-label="会话文件" title="会话文件"><IconFolder size={18}/>{fileAttention && <span className="rs-attention-dot"/>}</button>
       <button type="button" popoverTarget="rs-info-panel" aria-label="会话信息" title="会话信息"><IconInfoCircle size={18}/></button>
@@ -298,7 +303,8 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
 </aside>
     <aside ref={questions} id="rs-question-panel" popover="auto" className="rs-detail-panel" aria-label="同事问答"><header><h3>同事问答</h3><button type="button" popoverTarget="rs-question-panel" popoverTargetAction="hide" aria-label="关闭同事问答"><IconX size={18}/></button></header><SessionQuestions key={`${ownerId}:${value.id}:${value.blockReason ?? ''}`} ownerId={ownerId} sessionId={value.id} onAttention={setQuestionAttention} collaborationEnabled={value.collaboration?.enabled} questionId={questionId} onQuestion={onQuestion} onUse={value.allowedActions.includes('start') && !blocked && !busy ? id => { selectedReply.change(id); onQuestion(''); questions.current?.hidePopover(); composer.current?.focus(); composer.current?.scrollIntoView?.({ block: 'center' }); } : undefined}/></aside>
     <aside id="rs-file-panel" popover="auto" className="rs-detail-panel" aria-label="会话文件"><header><h3>会话文件</h3><button type="button" popoverTarget="rs-file-panel" popoverTargetAction="hide" aria-label="关闭会话文件"><IconX size={18}/></button></header><SessionFiles onAttention={setFileAttention} key={value.id} ownerId={ownerId} sessionId={value.id} revision={`${latest?.id}:${latest?.status}`}/></aside>
-    <div id="rs-compose-menu" popover="auto" className="rs-compose-menu"><button type="button" popoverTarget="rs-file-panel"><IconFolder size={16}/>会话文件</button><button type="button" popoverTarget="rs-question-panel"><IconUsers size={16}/>同事问答</button><button type="button" popoverTarget="rs-info-panel"><IconInfoCircle size={16}/>会话信息</button></div>
+    <aside id="rs-trigger-panel" popover="auto" className="rs-detail-panel" aria-label="自动触发" onToggle={event => setTriggersOpen(event.newState === 'open')}><header><h3>自动触发</h3><button type="button" popoverTarget="rs-trigger-panel" popoverTargetAction="hide" aria-label="关闭自动触发"><IconX size={18}/></button></header><SessionTriggers key={`${ownerId}:${value.id}`} ownerId={ownerId} sessionId={value.id} stopped={value.state === 'stopped'} open={triggersOpen}/></aside>
+    <div id="rs-compose-menu" popover="auto" className="rs-compose-menu"><button type="button" popoverTarget="rs-file-panel"><IconFolder size={16}/>会话文件</button><button type="button" popoverTarget="rs-question-panel"><IconUsers size={16}/>同事问答</button><button type="button" popoverTarget="rs-trigger-panel"><IconBolt size={16}/>自动触发</button><button type="button" popoverTarget="rs-info-panel"><IconInfoCircle size={16}/>会话信息</button></div>
   </section>;
 }
 

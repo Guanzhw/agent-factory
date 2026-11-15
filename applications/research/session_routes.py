@@ -13,6 +13,7 @@ from starlette.background import BackgroundTask
 
 from agent_factory.application_content import ObjectId
 from .projects import Reference, RequestId
+from .session_triggers import CreateTrigger
 from .session_stream import changes, install_notifications, session_updates
 from .session_files import _directory, _open_file, _windows_path, _workspace_parts
 
@@ -146,6 +147,18 @@ def session_router(auth, service):
         return StreamingResponse(iter(lambda: stream.read(65536), b''), media_type='application/octet-stream',
             headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(parts[-1], safe=''),
                      'Cache-Control': 'no-store'}, background=BackgroundTask(stream.close))
+
+    @router.get('/{identifier}/triggers')
+    def triggers(request: Request, identifier: str):
+        return service.triggers.listing(auth.user(request)['id'], identifier)
+
+    @router.post('/{identifier}/triggers')
+    async def create_trigger(request: Request, identifier: str, body: CreateTrigger):
+        return await asyncio.to_thread(service.triggers.create, auth.user(request)['id'], identifier, body)
+
+    @router.delete('/{identifier}/triggers/{trigger_id}')
+    async def delete_trigger(request: Request, identifier: str, trigger_id: str, requestId: RequestId):
+        return await asyncio.to_thread(service.triggers.delete, auth.user(request)['id'], identifier, trigger_id, requestId)
 
     @router.post('/{identifier}/turns')
     async def turn(request: Request, identifier: str, body: SessionTurn):

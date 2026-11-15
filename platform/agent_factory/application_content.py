@@ -2,7 +2,7 @@
 from copy import deepcopy
 from contextlib import contextmanager
 import json
-from typing import Annotated, Literal
+from typing import Annotated, Callable, Literal
 from urllib.parse import quote
 from uuid import uuid4
 
@@ -57,6 +57,7 @@ class PublishContent(ContentPublication):
 class ApplicationContent:
     def __init__(self, store, auth, sharing):
         self.store, self.auth, self.sharing = store, auth, sharing
+        self.on_shared: Callable | None = None
         self.db = GovernedStorage(store, 'af_application_content_v1')
         metadata = MetaData()
         self.contents = Table('af_application_content', metadata,
@@ -180,6 +181,8 @@ class ApplicationContent:
             self.sharing.register(conn, owner, reference)
             self.sharing.set(conn, owner, reference, visibility)
             self.db.record(conn, self.commands, owner, request_id, fingerprint, 'content.publish', {'id': identifier})
+            if visibility == 'team' and self.on_shared is not None:
+                self.on_shared(conn, owner, {'id': identifier, 'source': value['source']})
             return self._project(conn, owner, self._row(conn, identifier))
 
     def read(self, actor, identifier):
@@ -219,8 +222,11 @@ class ApplicationContent:
                     raise HTTPException(404, 'APPLICATION_CONTENT_NOT_FOUND')
                 old = self.db.old(conn, self.commands, owner, request_id, fingerprint)
                 if old is None:
+                    previous = self.sharing.visibility(conn, row['reference'])
                     self.sharing.set(conn, owner, row['reference'], visibility)
                     self.db.record(conn, self.commands, owner, request_id, fingerprint, 'content.sharing', {'id': identifier})
+                    if visibility == 'team' and previous != 'team' and self.on_shared is not None:
+                        self.on_shared(conn, owner, {'id': identifier, 'source': row['body']['source']})
                 return self._sharing_receipt(conn, owner, row)
 
     def artifact(self, actor, identifier, artifact_id):
