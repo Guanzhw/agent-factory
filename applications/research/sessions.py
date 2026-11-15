@@ -696,6 +696,8 @@ class ResearchSessions:
         with self._write() as conn:
             row, turn, task, ticket, blocked = self._model_boundary(conn, context)
             if not blocked:
+                if self.triggers is not None:
+                    turn = self.triggers.receive(conn, row, turn)
                 turns = session_context.active_turns(row, self._turns(conn, row['id']))
                 known = {item.id for item in messages}
                 # Keep the latest earlier correction before the newer user instruction.
@@ -721,6 +723,8 @@ class ResearchSessions:
                         self._save_turn(conn, previous, body)
                 if self.collaboration is not None:
                     self.collaboration.included(conn, row, turn)
+                if self.triggers is not None:
+                    self.triggers.included(conn, turn)
         if blocked:
             raise StopAgentRun(blocked)
 
@@ -829,6 +833,7 @@ class ResearchSessions:
                 'collaboration': {'enabled': body['configuration'].get('autonomousCollaboration') is True},
                 'blockReason': block, 'context': {'characters': characters, 'maximumCharacters': None,
                     'rawCharacters': raw_characters, 'notice': context_row['body'].get('contextNotice'), **({'compaction': compact_view} if compact_view else {})},
+                'deliveries': self.triggers.receipts(conn, owner, identifier) if self.triggers is not None else [],
                 'turns': [{'id': item['id'], 'sequence': item['sequence'],
                     **({'assistantReply': self._reply_projection(owner, identifier, item['body']['assistantReply'])}
                        if 'assistantReply' in item['body'] else {}),

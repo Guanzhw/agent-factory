@@ -26,7 +26,7 @@ def checkpoint(row):
 def additions(turn):
     body = turn['body']
     messages = [Message(id=item['id'], role='user', content=item['text'])
-                for item in body['messages'] if item['kind'] == 'correction']
+                for item in body['messages'] if item['kind'] in {'correction', 'evidence'}]
     replies = [*([body['assistantReply']] if 'assistantReply' in body else []), *body.get('assistantReplies', [])]
     for reply in replies:
         messages.append(Message(id='research-reply:' + turn['id'] + ':' + str(reply.get('questionId', '')),

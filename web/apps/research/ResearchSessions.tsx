@@ -277,6 +277,12 @@ function SessionDetail({ ownerId, value, options, busy, blocked, questionId, onQ
     {questionAttention && <p className="rs-panel-warning" role="status">同事问答有待核对的请求或读取问题。<button type="button" popoverTarget="rs-question-panel">查看同事问答</button></p>}
     {value.state === 'stopping' && <p className="rs-warning" role="status">正在停止，等待当前操作结束…</p>}
     {value.state === 'blocked' && <p className="rw-error" role="alert">本会话不能开始新一轮：{reasons[value.blockReason ?? ''] ?? '原操作需要核对。'} 历史和原任务记录仍可查看，不会自动重放。<code>{value.blockReason}</code></p>}
+    {!!value.deliveries?.length && <section aria-label="收到的团队事项"><details open><summary>收到的团队事项 · {value.deliveries.length}</summary>{value.deliveries.map(delivery => <div className="rs-continuation" key={delivery.id}>
+      <p>{delivery.kind === 'evidence' ? '同事提供的新证据' : '独立新任务'} · 收到于 {new Date(delivery.createdAt).toLocaleString('zh-CN')}</p>
+      <p role="status">{delivery.adoptedAt ? `已纳入模型请求 · ${new Date(delivery.adoptedAt).toLocaleString('zh-CN')}` : delivery.state === 'stopped' ? '已停止，未采用' : delivery.state === 'failed' ? '处理失败，未采用' : delivery.kind === 'evidence' ? '等待下一次模型请求；本轮结束后将继续处理' : '排队等待单独处理'}</p>
+      {delivery.provenance && <p>发布成员：{delivery.provenance.ownerId} · 来源资料：<code>{delivery.provenance.contentId}</code></p>}
+      <small>事件：{delivery.eventId}{delivery.turnId && ` · 轮次：${delivery.turnId}`}</small>{delivery.error && <p role="alert">{delivery.error}</p>}
+    </div>)}</details></section>}
     <div className="rs-conversation">{value.turns.length ? value.turns.map(turn => <TurnRecord key={turn.id} turn={turn} onQuestion={openQuestion}/>) : <div className="rs-empty"><h3>会话已创建，尚无执行轮次</h3><p>写下第一轮指令后明确开始。打开或刷新不会自动执行。</p></div>}</div>
     {!!value.sharedSourceIds.length && <SharedSources key={`${value.id}:${value.blockReason ?? ''}:${value.sharedSourceIds.join(',')}`} ownerId={ownerId} ids={value.sharedSourceIds}/>}
     {value.context.notice && <p className="rs-warning" role="status">{value.context.notice}</p>}
