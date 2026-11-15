@@ -177,8 +177,7 @@ class DelegationService:
         parent = self.store.task(parentTaskId, owner)
         root_id, ancestors = self._ancestry(parent)
         return {"allowed": not parent["cancel_requested"], "parentTaskId": parent["id"],
-                "rootTaskId": root_id, "depth": len(ancestors) + 1,
-                "modes": ["autonomous"], "defaultMode": "autonomous"}
+                "rootTaskId": root_id, "depth": len(ancestors) + 1}
 
     def _creation_request(self, owner: str, parent: dict[str, Any], goal: str, mode: str,
                           placement: dict | None) -> dict[str, Any]:

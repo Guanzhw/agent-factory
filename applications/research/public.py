@@ -13,7 +13,7 @@ def install(state, *, session_tools=None):
         from .session_setup import INSTRUCTIONS
         store = state['store']
         runs = ApplicationRuns(state['factory_api'], application='research-chat',
-            instructions=[INSTRUCTIONS], tools=session_tools.available_tools)
+            instructions=[INSTRUCTIONS])
         state['assistant_messages'].runs = runs
         state['assistant_messages'].question_instructions = [QA_INSTRUCTIONS]
         assistants = ResearchAssistants(store, state['auth'], state['assistant_endpoints'],

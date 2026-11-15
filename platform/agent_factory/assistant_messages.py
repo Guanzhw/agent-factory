@@ -114,8 +114,12 @@ class AssistantMessages:
     def _message_id(self, request_id, execution):
         if execution['application'] != self.runs.application:
             return None
-        raw_id = (request_id.removeprefix('application-start:') if self.runs.application == 'research-chat'
-                  else execution.get('requestId', ''))
+        if request_id.startswith('application-start:'):
+            raw_id = request_id.removeprefix('application-start:')
+        elif request_id.startswith('application-run:'):
+            raw_id = execution.get('requestId', '')
+        else:
+            return None
         if not raw_id.startswith('assistant-message:'):
             return None
         if request_id != factory_request_id(raw_id, self.runs.application):

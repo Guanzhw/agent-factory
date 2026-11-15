@@ -8,8 +8,10 @@ from .store import digest, now
 
 
 def factory_request_id(request_id, application='research-chat'):
-    return ('application-start:' + request_id if application == 'research-chat'
-            else 'application-run:' + digest([application, request_id]))
+    legacy_key = 'application-start:' + request_id
+    if application == 'research-chat' and len(legacy_key) <= 200:
+        return legacy_key
+    return 'application-run:' + digest([application, request_id])
 
 
 class StartNotSubmitted(HTTPException):
@@ -24,9 +26,9 @@ class StartNotSubmitted(HTTPException):
 
 
 class ApplicationRuns:
-    def __init__(self, factory, *, application='chat', instructions=(), tools=()):
+    def __init__(self, factory, *, application='chat', instructions=()):
         self.factory = factory
-        self.application, self.instructions, self.tools = application, instructions, tools
+        self.application, self.instructions = application, instructions
 
     def _prepare(self, owner, body):
         store = self.factory.store
@@ -62,7 +64,6 @@ class ApplicationRuns:
             'normalizedGoal': body.goal, 'inputValues': body.inputValues or {},
             'connectionRefs': body.connectionRefs,
             'instructions': body.instructions if body.instructions is not None else list(self.instructions),
-            'tools': list(self.tools),
             'requestFingerprint': fingerprint}
         return execution, key
 
