@@ -8,7 +8,7 @@ interface DiscoveryState extends DiscoverySettingsValue {
   decisions: { id: string; eventId: string; contentId: string; ownerId: string; decision: 'ignore' | 'attach' | 'new'; reason: string; sessionId: string | null; discoverySessionId: string | null; createdAt: string; deliveryId: string | null; delivery: { state: string; error: string | null; turnId: string | null } | null; sourceUnavailable: boolean }[];
 }
 const labels = { ignore: '忽略', attach: '接入已有对话', new: '新建对话' };
-const deliveryLabels: Record<string, string> = { pending: '等待执行', dispatched: '已发起', failed: '投递失败', stopped: '已停止触发' };
+const deliveryLabels: Record<string, string> = { pending: '等待执行', dispatched: '已发起', adopted: '已纳入模型请求', failed: '投递失败', stopped: '已停止触发' };
 const describe = (error: unknown) => error instanceof Error ? error.message : '团队资料发现操作失败，请重试。';
 const chatUrl = (sessionId: string) => `?${new URLSearchParams({ tab: 'research', researchSession: sessionId })}`;
 
