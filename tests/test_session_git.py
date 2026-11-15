@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
+from research.git_review import diff_anchors
 from research.session_git import ResearchSessionGit, git
 from research.session_tools import ResearchSessionTools
 
@@ -73,6 +74,25 @@ class SessionGit(unittest.TestCase):
 
     def review(self, name='one'):
         return self.service.read('owner', name)['reviewId']
+
+    def test_repository_diff_preferences_preserve_reviewed_paths_and_lines(self):
+        (self.source / 'nested').mkdir()
+        (self.source / 'nested' / 'code.txt').write_bytes(b'one\n\ntwo\n')
+        (self.source / 'code.txt').write_bytes(b'one\n\ntwo\n')
+        git(self.source, 'add', '.')
+        git(self.source, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
+            'commit', '-m', 'nested fixture')
+        workspace = self.attach()
+        (workspace / 'nested' / 'code.txt').write_bytes(b'one\n\nagent\n')
+        git(self.source, 'config', 'diff.noprefix', 'true')
+        git(self.source, 'config', 'diff.suppressBlankEmpty', 'true')
+        state = self.service.read('owner', 'one')
+        self.assertIn(('nested/code.txt', 'right', 3), diff_anchors(state['diff'], state['files']))
+        original = (self.source / 'code.txt').read_bytes()
+        self.service.apply('owner', 'one', state['reviewId'])
+        self.assertEqual((self.source / 'code.txt').read_bytes(), original)
+        self.assertEqual((self.source / 'nested' / 'code.txt').read_bytes(),
+            (workspace / 'nested' / 'code.txt').read_bytes())
 
     def test_concurrent_worktrees_new_files_stale_apply_and_incremental_gc(self):
         (self.source / 'user.txt').write_text('user staged\n', encoding='utf-8')

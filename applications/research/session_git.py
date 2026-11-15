@@ -25,6 +25,7 @@ class ApplyChanges(BaseModel):
 def git(directory, *arguments, data=None, env=None):
     try:
         result = subprocess.run(['git', '-c', 'core.quotePath=false', '-c', 'color.ui=false',
+            '-c', 'diff.suppressBlankEmpty=false',
             '-C', str(directory), *arguments], input=data,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, check=False)
     except OSError as error:
@@ -42,7 +43,8 @@ def snapshot(workspace, baseline_tree):
         git(workspace, 'read-tree', indexed_tree, env=environment)
         git(workspace, 'add', '-A', '--', '.', env=environment)
         tree = git(workspace, 'write-tree', env=environment).decode().strip()
-    arguments = ('--full-index', '--no-ext-diff', '--no-textconv', '--no-renames', baseline_tree, tree, '--')
+    arguments = ('--full-index', '--no-ext-diff', '--no-textconv', '--no-renames',
+        '--src-prefix=a/', '--dst-prefix=b/', baseline_tree, tree, '--')
     patch = git(workspace, 'diff', '--binary', *arguments)
     display = git(workspace, 'diff', *arguments)
     raw = git(workspace, 'diff', '--name-status', '-z', '--no-renames', baseline_tree, tree, '--')
