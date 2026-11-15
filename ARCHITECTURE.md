@@ -34,6 +34,7 @@ Here `lookup_note` is an Agno Function supplied by the app. Each callback is opt
 - `instructions(context, execution)` returns the full list of instruction strings. Call `execution_instructions(execution, inputs)` to include the saved instructions, goal and input values.
 - `prepare_history(context, execution, session, agent)` prepares history at run start and during recovery of a queue attempt with saved observations. Ordinary native continuation uses its saved messages.
 - `before_model(context, execution, messages, auxiliary, *, auxiliary_request=False)` can modify messages or raise an error before a provider call. This includes auxiliary calls for summaries or compression. `auxiliary()` creates an owner-bound model with chat emission disabled. An asynchronous provider call runs this callback in a worker thread.
+- `on_retry_blocked(task)` lets an application tell the user which task needs review when the queue cannot match a recorded effect to a saved tool call.
 
 `execution` contains saved task inputs. Agno supplies the `RunContext`, `AgentSession` and `Agent`. An application that already records external tool effects can supply its `effect_prefixes` so queue recovery recognizes `run_id + ':' + prefix + tool_call_id`. If a retry cannot match recorded effects to saved tool calls, it reports an error before starting a new attempt. The research application shows the full implementation in [its runtime module](applications/research/runtime.py).
 

@@ -677,9 +677,7 @@ class ResearchSessions:
         if blocked:
             if task['researchChild']:
                 raise StopAgentRun(blocked)
-            body['blockReason'] = blocked
-            self.store.event(task['id'], 'research_reconciliation_required', '原执行需要核对，已阻止新的模型调用。', {'code': blocked})
-            self._save_turn(conn, turn, body)
+            self._block_turn_for_reconciliation(conn, task, turn, blocked)
         else:
             if body.get('blockReason') == 'RESEARCH_EFFECT_UNCONFIRMED':
                 body['blockReason'] = None
@@ -821,6 +819,17 @@ class ResearchSessions:
         await self.subagents.observe_waits(observer, task)
         if self.research is not None:
             await self.research.observe(task)
+
+    def record_blocked_retry(self, task):
+        with self._write() as conn:
+            turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
+                self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).mappings().first()
+            if turn is not None:
+                self._block_turn_for_reconciliation(conn, task, turn, 'RESEARCH_RESTART_REQUIRES_RECONCILIATION')
+
+    def _block_turn_for_reconciliation(self, conn, task, turn, code):
+        self.store.event(task['id'], 'research_reconciliation_required', '原执行需要核对，已阻止新的模型调用。', {'code': code})
+        self._save_turn(conn, turn, {**turn['body'], 'blockReason': code})
 
     def mark_cancel(self, store, task_id, *, reason: str):
         task = store.task(task_id)

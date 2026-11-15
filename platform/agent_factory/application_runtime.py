@@ -25,6 +25,7 @@ class ApplicationRuntime:
     prepare_history: Callable[[RunContext, dict, AgentSession, Agent], None] | None = None
     before_model: 'BeforeModel | None' = None
     effect_prefixes: tuple[str, ...] = ()
+    on_retry_blocked: Callable[[dict], None] | None = None
 
 
 class BeforeModel(Protocol):

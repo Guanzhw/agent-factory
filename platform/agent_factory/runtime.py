@@ -93,9 +93,8 @@ def build_runtime(store, native_db, *, application_runtimes=None):
                 previous = self.get_run_output(run_id, session_id=kwargs.get('session_id'), user_id=kwargs.get('user_id'))
                 task = store.task(run_id)
                 effects = store.effects(task['id'])
+                application = resolve_application_runtime(runtimes, store.execution(task))
                 if previous and previous.messages and previous.session_id and previous.user_id:
-                    plan = store.execution(task)
-                    application = resolve_application_runtime(runtimes, plan)
                     prefixes = ('personal-tool:', *(application.effect_prefixes if application is not None else ()))
                     current = [message for message in previous.messages if not message.from_history]
                     calls = {call['id'] for message in current for call in message.tool_calls or []}
@@ -116,6 +115,8 @@ def build_runtime(store, native_db, *, application_runtimes=None):
                         setattr(previous, '_factory_retry_attempt', ticket['attempt'])
                         return self.acontinue_run(run_response=previous, **kwargs)
                 if effects:
+                    if application is not None and application.on_retry_blocked is not None:
+                        application.on_retry_blocked(task)
                     raise InputCheckError('NATIVE_RETRY_EFFECT_UNMATCHED: cannot resume from the saved tool observations')
             return super().arun(input, **kwargs)
 
