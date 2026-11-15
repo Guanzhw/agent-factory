@@ -26,6 +26,9 @@ MEMORY_TEXT = {'type': 'string', 'minLength': 1}
 COLLABORATION_TOOLS = {'research_assistant_directory', 'research_ask_assistant'}
 TRIGGER_TOOLS = {'research_set_trigger', 'research_list_triggers', 'research_cancel_trigger', 'research_route_discovery'}
 TRIGGER_WRITES = TRIGGER_TOOLS - {'research_list_triggers'}
+TEAM_TOOLS = {'research_team_work', 'research_create_team_work', 'research_request_contribution',
+              'research_contribute', 'research_synthesize_team_work'}
+TEAM_WRITES = TEAM_TOOLS - {'research_team_work'}
 
 
 def _schema(properties, required):
@@ -40,6 +43,24 @@ TOOLS = {
             'decision': {'type': 'string', 'enum': ['ignore', 'attach', 'new']},
             'reason': MEMORY_TEXT, 'sessionId': MEMORY_TEXT, 'title': MEMORY_TEXT,
             'instruction': MEMORY_TEXT, 'projectId': MEMORY_TEXT}, ['decision', 'reason'])),
+    'research_team_work': ('Read a team work record, or list shared goals when work_id is omitted. '
+        'Contains selected contributions and assistant replies.', _schema({'work_id': MEMORY_ID}, [])),
+    'research_create_team_work': ('Create a shared goal led by this member and linked to this chat. '
+        'Only supplied goal and title are shared.',
+        _schema({'title': MEMORY_TEXT, 'goal': MEMORY_TEXT}, ['title', 'goal'])),
+    'research_request_contribution': ('Ask a colleague assistant to contribute to a shared work record. '
+        'The selected question and returned answer are team-visible. The colleague uses its own identity '
+        'and configured resources. Read the work later for the actual reply and evidence.',
+        _schema({'work_id': MEMORY_ID, 'assistant_id': MEMORY_ID, 'text': MEMORY_TEXT},
+                ['work_id', 'assistant_id', 'text'])),
+    'research_contribute': ('Publish your selected result or review on a shared work record. '
+        'Supply source references in evidence_ids; only the supplied content is shared.',
+        _schema({'work_id': MEMORY_ID, 'text': MEMORY_TEXT,
+                 'evidence_ids': {'type': 'array', 'items': {'type': 'string'}}}, ['work_id', 'text'])),
+    'research_synthesize_team_work': ('As the lead, publish a synthesis of shared contributions. '
+        'Include contributor, contribution and source references in text and evidence_ids.',
+        _schema({'work_id': MEMORY_ID, 'text': MEMORY_TEXT,
+                 'evidence_ids': {'type': 'array', 'items': {'type': 'string'}}}, ['work_id', 'text'])),
     'research_set_trigger': ('Keep a standing instruction that wakes this chat when its event arrives. '
         'Use cron for a recurring schedule, research for published research events, '
         'or external for inbound events. '
@@ -149,7 +170,8 @@ class ResearchSessionTools:
             if name in MEMORY_TOOLS else getattr(self.sessions, 'collaboration', None) is not None
             if name in COLLABORATION_TOOLS else getattr(self.sessions, 'research', None) is not None
             if name in RESEARCH_TOOLS else getattr(self.sessions, 'triggers', None) is not None
-            if name in TRIGGER_TOOLS else getattr(self.sessions, 'subagents', None) is not None
+            if name in TRIGGER_TOOLS else getattr(self.sessions, 'team_work', None) is not None
+            if name in TEAM_TOOLS else getattr(self.sessions, 'subagents', None) is not None
             if name in {SPAWN, WAIT} else name == 'research_read_shared_evidence'
             or self.workspace_root is not None)] + (['read_file', 'write_file', 'edit_file', 'grep', 'find', 'ls']
                 + (['run_shell'] if self.host_commands else []) if self.workspace_root is not None else [])
@@ -224,7 +246,7 @@ class ResearchSessionTools:
                     receipt = {'outcome': 'failed', 'stopped': True, 'code': error.code}
                     store.event(task_id, 'research_tool_finished', '记忆操作未执行', {**event, **receipt})
                     return self._receipt(receipt)
-            mutating = name in MEMORY_WRITES | RESEARCH_WRITES | TRIGGER_WRITES | {'research_ask_assistant'}
+            mutating = name in MEMORY_WRITES | RESEARCH_WRITES | TRIGGER_WRITES | TEAM_WRITES | {'research_ask_assistant'}
             if mutating:
                 request = {'ownerId': identity[0], 'taskId': task_id, 'sessionId': execution['id'],
                     'turnId': execution['turnId'], 'toolName': name, 'callId': call_id, 'arguments': values}
@@ -244,7 +266,8 @@ class ResearchSessionTools:
                         return unknown()
                     try:
                         output = (self.sessions.memory.reconcile(identity[0], call_id, memory_operation)
-                            if name in MEMORY_WRITES else self.sessions.research.reconcile(run_context, call_id, name, values)
+                            if name in MEMORY_WRITES else await self.sessions.team_work.reconcile(run_context, call_id)
+                            if name in TEAM_WRITES else self.sessions.research.reconcile(run_context, call_id, name, values)
                             if name in RESEARCH_WRITES else self.sessions.collaboration.reconcile(run_context, call_id, values))
                         if output is None:
                             raise ValueError('Original question is unconfirmed')
@@ -282,6 +305,8 @@ class ResearchSessionTools:
                     except ValueError as error:
                         raise ToolInvocationError('RESEARCH_TRIGGER_INPUT_INVALID', outcome='failed', stopped=True,
                             output=str(error)) from error
+                elif name in TEAM_TOOLS:
+                    output = await self.sessions.team_work.invoke(run_context, call_id, name, values)
                 elif name in RESEARCH_TOOLS:
                     output = await self.sessions.research.invoke(run_context, call_id, name, values)
                 elif name == SPAWN:

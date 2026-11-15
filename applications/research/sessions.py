@@ -41,6 +41,7 @@ class ResearchSessions:
         self.research: Any = None
         self.triggers: Any = None
         self.discovery: Any = None
+        self.team_work: Any = None
         self.memory = ResearchSessionMemory(self)
         self.subagents = ResearchSubagents(self)
         self.setup = ResearchSessionSetup(store, connections, models, tools)

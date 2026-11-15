@@ -120,7 +120,7 @@ class TriggersJourney(unittest.TestCase):
     def add_trigger(self, source, title, instruction, **fields):
         self.page.get_by_role('button', name='自动触发', exact=True).click()
         self.page.get_by_role('combobox', name='触发来源', exact=True).select_option(source)
-        self.page.get_by_label('名称（可选）', exact=True).fill(title)
+        self.page.get_by_role('textbox', name='名称（可选）', exact=True).fill(title)
         self.page.get_by_label('触发后执行的指令', exact=True).fill(instruction)
         for label, value in fields.items():
             self.page.get_by_label(label, exact=True).fill(value)

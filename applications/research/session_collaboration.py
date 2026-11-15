@@ -52,19 +52,19 @@ class ResearchCollaboration:
         self.sessions.authorize_tool(context, 'research_assistant_directory')
         return self.sessions.assistants.list(context.user_id, owner_id=owner_id)
 
-    def ask(self, context, call_id, arguments):
+    def ask(self, context, call_id, arguments, *, tool_name='research_ask_assistant'):
         try:
-            return self._ask(context, call_id, arguments)
+            return self._ask(context, call_id, arguments, tool_name)
         except HTTPException as error:
             detail = error.detail
             code = str(cast(dict, detail)['code'] if isinstance(detail, dict) else detail)
             raise ToolInvocationError(code, outcome='failed', stopped=True) from error
 
-    def _ask(self, context, call_id, arguments):
+    def _ask(self, context, call_id, arguments, tool_name):
         service = self.sessions
         with service._write() as conn:
             row, turn, task = service._execution(conn, context)
-            service.authorize_tool(context, 'research_ask_assistant')
+            service.authorize_tool(context, tool_name)
             if row['body']['configuration'].get('autonomousCollaboration') is not True:
                 raise rejected('RESEARCH_COLLABORATION_UNAVAILABLE', '原会话未配置自主协作工具。')
             request_id = self._request(context, call_id)
@@ -75,7 +75,7 @@ class ResearchCollaboration:
                     raise rejected('RESEARCH_QUESTION_REQUEST_CONFLICT', '原工具请求已绑定其他问题。')
                 return self._ack(old)
             effect_request = {'ownerId': context.user_id, 'taskId': task['id'], 'sessionId': row['id'],
-                'turnId': turn['id'], 'toolName': 'research_ask_assistant', 'callId': call_id,
+                'turnId': turn['id'], 'toolName': tool_name, 'callId': call_id,
                 'arguments': arguments}
             effect_key = context.run_id + ':research-session-tool:' + call_id
             effect = self.store.sql('SELECT fingerprint FROM af_effects WHERE effect_key=:key', key=effect_key)
@@ -85,7 +85,7 @@ class ResearchCollaboration:
             message, _ = self.conversations._reserve(context.user_id, row['id'], question)
             event = self.events.emit_collaboration(conn, context.user_id, message['id'], task['id'])
             body = {'originTurnId': turn['id'], 'originTaskId': task['id'], 'runId': context.run_id,
-                'callId': call_id, 'arguments': deepcopy(arguments), 'eventId': event['id'],
+                'callId': call_id, 'toolName': tool_name, 'arguments': deepcopy(arguments), 'eventId': event['id'],
                 'effectKey': effect_key, 'effectFingerprint': digest(effect_request), 'state': 'waiting'}
             conn.execute(self.intents.insert().values(question_id=message['id'], owner_id=context.user_id,
                 session_id=row['id'], request_id=request_id, created_at=now(), body=body))
@@ -94,7 +94,7 @@ class ResearchCollaboration:
     def _proof(self, intent):
         body = intent['body']
         expected = {'ownerId': intent['owner_id'], 'taskId': body['originTaskId'], 'sessionId': intent['session_id'],
-            'turnId': body['originTurnId'], 'toolName': 'research_ask_assistant', 'callId': body['callId'],
+            'turnId': body['originTurnId'], 'toolName': body.get('toolName', 'research_ask_assistant'), 'callId': body['callId'],
             'arguments': body['arguments']}
         task = self.store.task(body['originTaskId'], intent['owner_id'])
         if (task['run_id'] != body['runId'] or body['effectFingerprint'] != digest(expected)
