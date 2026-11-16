@@ -1,4 +1,5 @@
 """Native chat Agent with owner-selected models and tools."""
+from collections import Counter
 from agno.agent import Agent
 from agno.agent._messages import get_continue_run_messages
 from agno.exceptions import InputCheckError, RunCancelledException
@@ -22,6 +23,8 @@ def build_runtime(store, native_db, *, application_runtimes=None):
             # Queue deserialization reapplies Agno's omitted-None defaults.
             agent.num_history_runs = None
             agent.max_tool_calls_from_history = None
+            # Agno 3.1 omits checkpoint from serialized configurations.
+            agent.checkpoint = 'tool-batch'
             plan = store.bind_run(run_context)
             if store.cancellation_requested(run_context.run_id):
                 raise RunCancelledException('User stopped this task')
@@ -94,13 +97,18 @@ def build_runtime(store, native_db, *, application_runtimes=None):
                 task = store.task(run_id)
                 effects = store.effects(task['id'])
                 application = resolve_application_runtime(runtimes, store.execution(task))
+                started = (application.retry_calls(store.events(task['id']))
+                           if application is not None and application.retry_calls is not None else [])
                 if previous and previous.messages and previous.session_id and previous.user_id:
                     prefixes = ('personal-tool:', *(application.effect_prefixes if application is not None else ()))
                     current = [message for message in previous.messages if not message.from_history]
-                    calls = {call['id'] for message in current for call in message.tool_calls or []}
+                    calls = [call['id'] for message in current for call in message.tool_calls or []]
+                    observed = Counter((call['function']['name'], call['id'])
+                        for message in current for call in message.tool_calls or [])
                     recorded = {run_id + ':' + prefix + call for call in calls
                                 for prefix in prefixes}
-                    if calls and all(item['effect_key'] in recorded for item in effects):
+                    if (calls and all(item['effect_key'] in recorded for item in effects)
+                            and Counter((name, call) for name, call, _ in started) <= observed):
                         session = self.get_session(session_id=previous.session_id, user_id=previous.user_id)
                         if not isinstance(session, AgentSession):
                             raise InputCheckError('Native retry session is unavailable')
@@ -114,7 +122,7 @@ def build_runtime(store, native_db, *, application_runtimes=None):
                         # This in-memory RunOutput belongs only to this claim; the marker is not persisted.
                         setattr(previous, '_factory_retry_attempt', ticket['attempt'])
                         return self.acontinue_run(run_response=previous, **kwargs)
-                if effects:
+                if effects or any(required for _, _, required in started):
                     if application is not None and application.on_retry_blocked is not None:
                         application.on_retry_blocked(task)
                     raise InputCheckError('NATIVE_RETRY_EFFECT_UNMATCHED: cannot resume from the saved tool observations')
@@ -123,6 +131,6 @@ def build_runtime(store, native_db, *, application_runtimes=None):
     executor = RetryAgent(id='factory-executor', name='Factory', model=model, db=native_db,
         instructions=instructions, tools=selected_tools, pre_hooks=[bind_run],
         cache_callables=False,  # Agno's owner cache would reuse another run's tools and closed MCP handles.
-        store_events=True, events_to_skip=[],
+        store_events=True, events_to_skip=[], checkpoint='tool-batch',
         add_history_to_context=True, add_session_summary_to_context=True, telemetry=False)
     return executor, Registry(models=[model], dbs=[native_db])

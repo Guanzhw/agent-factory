@@ -116,6 +116,13 @@ class DelegatingModel(Model):
     async def aresponse_stream(self, *args, **kwargs):
         model = await self._aselect(args, kwargs, streaming=True)
         kwargs['compression_manager'] = getattr(model, '_factory_compression_manager', None)
+        callback = kwargs.get('after_tool_results')
+        if callback is not None:
+            async def checkpoint(model_response):
+                # Agno 3.1's empty streamed batch must preserve tools accumulated on the run.
+                model_response.tool_executions = None
+                await callback(model_response)
+            kwargs['after_tool_results'] = checkpoint
         async for value in model.aresponse_stream(*args, **kwargs):
             yield value
 

@@ -2,6 +2,8 @@
 import asyncio
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from threading import Barrier, Event, Thread
 from types import SimpleNamespace
 import unittest
@@ -9,11 +11,13 @@ from unittest.mock import Mock, patch
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
+from agno.db.sqlite import SqliteDb
 from agno.exceptions import InputCheckError, ModelProviderError
 from agno.media import Image, File
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.session.agent import AgentSession
 from agno.tools.function import Function
 from pydantic import BaseModel
 
@@ -21,6 +25,7 @@ from agent_factory.application_runtime import ApplicationRuntime, ApplicationToo
 from agent_factory.byok_model import OwnerChatModel
 from agent_factory.runtime import build_runtime
 from research.runtime import ResearchRuntime
+from research.sessions import ResearchSessions
 
 
 def chunk(delta, finish=None):
@@ -331,7 +336,8 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
     def test_retry_after_application_effect_prefix_change_does_not_restart_input(self):
         plan = {'application': 'second-app', 'applicationRuntime': True, 'normalizedGoal': 'append once'}
         effects = [{'effect_key': 'run:second-app-v1:call-one', 'status': 'UNKNOWN'}]
-        store = SimpleNamespace(task=lambda _: {'id': 'task'}, effects=lambda _: effects, execution=lambda _: plan)
+        store = SimpleNamespace(task=lambda _: {'id': 'task'}, effects=lambda _: effects, events=lambda _: [],
+            execution=lambda _: plan)
         db = Mock(spec=PostgresDb)
         db.id = 'retry-fixture'
         db.get_job.return_value = {'status': 'running', 'attempt': 2, 'payload': {}}
@@ -346,6 +352,133 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
             with self.assertRaisesRegex(InputCheckError, 'NATIVE_RETRY_EFFECT_UNMATCHED'):
                 agent.arun('append once', run_id='run', session_id='session', user_id='owner')
             fresh_run.assert_not_called()
+
+    async def test_native_tool_batch_checkpoint_is_readable_before_the_next_model_reply(self):
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        db = SqliteDb(db_file=str(Path(directory.name) / 'checkpoint.db'))
+        self.addCleanup(db.db_engine.dispose)
+        bound, checkpoints = {}, []
+        def write_file() -> str:
+            """Save the requested result."""
+            return 'original write completed'
+        def external_wait() -> str:
+            """Wait for the external result."""
+            raise AssertionError('External wait must not execute locally')
+        wait = Function.from_callable(external_wait)
+        wait.external_execution = True
+        plan = {'normalizedGoal': 'write once', 'connectionRefs': {'model': 'fixture'}}
+        def bind(context):
+            bound['run_id'] = context.run_id
+            return plan
+        store = SimpleNamespace(bind_run=bind, resolve_run=lambda _: plan,
+            task_for_context=lambda _: bound, execution=lambda _: plan,
+            cancellation_requested=lambda _: False,
+            personal_models=SimpleNamespace(model_for=lambda *args, **kwargs: OwnerChatModel(self.config, lambda: None)),
+            personal_tools=SimpleNamespace(functions=lambda *args, **kwargs: [Function.from_callable(write_file), wait]))
+        agent, _ = build_runtime(store, db)
+        def answer(body):
+            if not any(message['role'] == 'tool' for message in body['messages']):
+                return 200, [chunk({'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'write-once',
+                    'type': 'function', 'function': {'name': 'write_file', 'arguments': '{}'}}]}),
+                    chunk({}, 'tool_calls')]
+            if not any(call['function']['name'] == 'external_wait' for message in body['messages']
+                       for call in message.get('tool_calls', [])):
+                checkpoints.append(db.get_run(bound['run_id']))
+                return 200, [chunk({'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'external-wait',
+                    'type': 'function', 'function': {'name': 'external_wait', 'arguments': '{}'}}]}),
+                    chunk({}, 'tool_calls')]
+            return 200, reply('done')
+        self.server.answer = answer
+        with patch.object(db, 'get_job', return_value=None, create=True):
+            events = [event async for event in agent.deep_copy().arun('write once',
+                session_id='checkpoint-session', user_id='owner', stream=True, yield_run_output=True)]
+        self.assertTrue(events)
+        self.assertEqual(len(checkpoints), 1)
+        saved = checkpoints[0]
+        self.assertEqual(saved.status, RunStatus.running)
+        self.assertTrue(any(message.tool_call_id == 'write-once' and message.content == 'original write completed'
+                            for message in saved.messages))
+        self.assertEqual([tool.tool_call_id for tool in saved.tools or []], ['write-once'])
+        paused = next(event for event in events if isinstance(event, RunOutput))
+        self.assertEqual(paused.status, RunStatus.paused)
+        persisted = db.get_run(paused.run_id)
+        self.assertTrue(any(tool.tool_call_id == 'external-wait' and tool.is_paused for tool in persisted.tools))
+        requirement = paused.requirements[0]
+        requirement.set_external_execution_result('original external result')
+        continued = [event async for event in agent.acontinue_run(run_id=paused.run_id,
+            session_id='checkpoint-session', user_id='owner', requirements=[requirement],
+            stream=True, yield_run_output=True)]
+        result = next(event for event in continued if isinstance(event, RunOutput))
+        self.assertEqual(result.run_id, paused.run_id)
+        self.assertEqual(result.status, RunStatus.completed)
+        self.assertEqual(result.messages[-1].content, 'done')
+        self.assertEqual(db.get_run(result.run_id).messages[-1].content, 'done')
+        self.assertTrue(any(message.get('content') == 'original external result'
+                            for message in self.server.requests[-1][0]['messages']))
+
+    async def test_native_retry_uses_original_checkpoint_and_blocks_newer_unrecorded_writes(self):
+        for newer, tool_name, arguments, repeated_id in [
+                (False, 'run_shell', {'command': 'append once'}, False),
+                (True, 'run_shell', {'command': 'append twice'}, False),
+                (False, 'run_shell', {'command': 'append twice'}, True),
+                (False, 'ssh_run', {}, True),
+                (False, 'edit_file', {}, False),
+                (True, 'write_file', {'file_path': 'result', 'contents': 'once'}, False),
+                (True, 'edit_file', {'file_path': 'result', 'old_text': 'a', 'new_text': 'b'}, False),
+                (True, 'get_skill_script', {'execute': 'true'}, False),
+                (True, 'read_file', {'file_path': 'result'}, False),
+                (True, 'get_skill_script', {'execute': 'false'}, False)]:
+            with self.subTest(newer=newer, tool=tool_name, arguments=arguments, repeated_id=repeated_id):
+                self.server.requests.clear()
+                directory = TemporaryDirectory()
+                self.addCleanup(directory.cleanup)
+                db = SqliteDb(db_file=str(Path(directory.name) / 'retry.db'))
+                self.addCleanup(db.db_engine.dispose)
+                original = RunOutput(run_id='run', session_id='session', user_id='owner', agent_id='factory-executor', messages=[
+                    Message(role='user', content='original request'),
+                    Message(role='assistant', tool_calls=[{'id': 'saved-write', 'type': 'function',
+                        'function': {'name': 'ssh_run' if tool_name == 'ssh_run' else 'run_shell',
+                            'arguments': '{"command":"append once"}'}}]),
+                    Message(role='tool', tool_call_id='saved-write', content='original marker written')])
+                db.upsert_session(AgentSession(session_id='session', user_id='owner', agent_id='factory-executor'))
+                db.upsert_run(original, session_id='session', user_id='owner')
+                event = {'type': 'tool_started', 'data': {'callId': 'new-call' if newer else 'saved-write',
+                    'toolName': tool_name, 'arguments': arguments},
+                    'message': '开始执行技能脚本' if arguments.get('execute') == 'true' else '开始执行工具'}
+                blocked = []
+                tool_events = [event, event] if repeated_id else [event]
+                if tool_name == 'ssh_run':
+                    tool_events = [event, {'type': 'tool_finished', 'data': {
+                        **event['data'], 'outcome': 'failed', 'output': {'stopped': True}}}, event]
+                plan = {'application': 'test-app', 'applicationRuntime': True, 'normalizedGoal': 'write once',
+                    'connectionRefs': {'model': 'fixture'}}
+                task = {'id': 'task', 'run_id': 'run'}
+                store = SimpleNamespace(task=lambda _: task, effects=lambda _: [],
+                    events=lambda _: tool_events, execution=lambda _: plan,
+                    bind_run=lambda _: plan, task_for_context=lambda _: task, resolve_run=lambda _: plan,
+                    cancellation_requested=lambda _: False,
+                    personal_models=SimpleNamespace(model_for=lambda *args, **kwargs: OwnerChatModel(self.config, lambda: None)))
+                agent, _ = build_runtime(store, db, application_runtimes={
+                    'test-app': ApplicationRuntime(retry_calls=ResearchSessions.retry_calls,
+                        on_retry_blocked=lambda task: blocked.append(task))})
+                should_block = (repeated_id or not newer and tool_name != 'run_shell'
+                    or newer and tool_name != 'read_file' and arguments.get('execute') != 'false')
+                with patch.object(db, 'get_job', return_value={'status': 'running', 'attempt': 2, 'payload': {}}, create=True):
+                    if should_block:
+                        with self.assertRaisesRegex(InputCheckError, 'NATIVE_RETRY_EFFECT_UNMATCHED'):
+                            agent.arun('fresh input must not replay', run_id='run', session_id='session', user_id='owner')
+                        self.assertEqual(self.server.requests, [])
+                        self.assertEqual(len(blocked), 1)
+                    else:
+                        events = [event async for event in agent.arun('fresh input must not replay', run_id='run',
+                            session_id='session', user_id='owner', stream=True, yield_run_output=True)]
+                        result = next(event for event in events if isinstance(event, RunOutput))
+                        self.assertEqual(result.run_id, 'run')
+                        self.assertEqual(result.status, RunStatus.completed)
+                        messages = self.server.requests[-1][0]['messages']
+                        self.assertTrue(any(message.get('content') == 'original marker written' for message in messages))
+                        self.assertNotIn('fresh input must not replay', json.dumps(messages))
 
     async def test_native_tool_loop_preserves_reasoning_and_order_without_private_replay_record(self):
         events = []

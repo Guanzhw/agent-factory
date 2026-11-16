@@ -29,10 +29,17 @@ class SessionCodingTools(CodingTools):
             {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {}})
 
     def _finished(self, run_context, fc):
-        self.research.sessions.store.event(run_context.run_id, 'tool_finished', '工具返回结果',
+        outcome = 'failed' if fc.error else 'completed'
+        message = fc.error
+        if fc.result is None and not fc.error:
+            # Agno's cancellation finally-hook runs before fc.error/result is set.
+            error = sys.exception()
+            outcome = 'cancelled' if isinstance(error, RunCancelledException) else 'unknown'
+            message = str(error) if error else None
+        self.research.sessions.store.event(run_context.run_id, 'tool_finished', '工具执行记录',
             {'toolName': fc.function.name, 'callId': fc.call_id, 'arguments': fc.arguments or {},
-             'outcome': 'failed' if fc.error else 'completed', 'output': fc.result,
-             **({'message': fc.error} if fc.error else {})})
+             'outcome': outcome, **({'output': fc.result} if fc.result is not None else {}),
+             **({'message': message} if message else {})})
 
     def find(self, pattern: str, path: str | None = None, limit: int = 500) -> str:
         """Find files by glob, returning paths relative to the search directory.
