@@ -25,6 +25,8 @@ class ApplicationRuntime:
     prepare_history: Callable[[RunContext, dict, AgentSession, Agent], None] | None = None
     before_model: 'BeforeModel | None' = None
     effect_prefixes: tuple[str, ...] = ()
+    # Tool name, call ID and whether replay requires the original observation.
+    retry_calls: Callable[[list[dict]], list[tuple[str, str, bool]]] | None = None
     on_retry_blocked: Callable[[dict], None] | None = None
 
 

@@ -364,7 +364,10 @@ class ResearchSessions:
                         result = answer['content']
                 if native_ended and observed_terminal and not body.get('stopRequestId'):
                     if body.get('blockReason') == 'RESEARCH_RESTART_REQUIRES_RECONCILIATION':
-                        status, result = 'failed', None
+                        unknown = any(finished is None or finished.get('outcome') == 'unknown'
+                            for _, finished in self.retry_operations(detail['events'])) or any(
+                            effect_unresolved(item, self.store) for item in snapshot.get('effects', []))
+                        status, result = ('unknown' if unknown else 'failed'), None
                         body['failure'] = '原任务自动重试已停止，以免重复执行结果未知的操作。可以开始独立的新一轮。'
                         body['blockReason'] = None
                     elif body.get('blockReason') == 'RESEARCH_EFFECT_UNCONFIRMED':
@@ -820,6 +823,31 @@ class ResearchSessions:
         if self.research is not None:
             await self.research.observe(task)
 
+    @staticmethod
+    def retry_operations(events):
+        operations = []
+        for event in events:
+            data = event['data']
+            if event['type'] == 'tool_started' and (
+                    data.get('toolName') in {'write_file', 'edit_file', 'run_shell', 'ssh_run'}
+                    or data.get('toolName') == 'get_skill_script' and event['message'] == '开始执行技能脚本'):
+                operations.append((data, None))
+            elif event['type'] == 'tool_finished':
+                for index in range(len(operations) - 1, -1, -1):
+                    started, finished = operations[index]
+                    if (finished is None and started['callId'] == data.get('callId')
+                            and started['toolName'] == data.get('toolName')):
+                        operations[index] = (started, data)
+                        break
+        return operations
+
+    @classmethod
+    def retry_calls(cls, events):
+        return [(started['toolName'], started['callId'], not (
+            started['toolName'] == 'ssh_run' and finished is not None and finished.get('outcome') == 'failed'
+            and finished.get('output', {}).get('stopped') is True))
+            for started, finished in cls.retry_operations(events)]
+
     def record_blocked_retry(self, task):
         with self._write() as conn:
             turn = conn.execute(select(self.turns).where(self.turns.c.owner_id == task['owner_id'],
@@ -883,7 +911,7 @@ class ResearchSessions:
             block = latest['body'].get('blockReason') if latest else None
             if block == 'RESEARCH_EFFECT_UNCONFIRMED':
                 block = None
-            if latest and latest['body']['status'] == 'unknown':
+            if latest and latest['body']['status'] == 'unknown' and not safe:
                 block = block or 'RESEARCH_ORIGINAL_OUTCOME_UNCONFIRMED'
             raw_characters = sum(len(item['text']) for turn in turns for item in turn['body']['messages'])
             raw_characters += sum(len(str(turn['body'].get('result') or '')) for turn in turns)

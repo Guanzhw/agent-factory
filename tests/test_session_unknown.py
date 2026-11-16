@@ -137,9 +137,28 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(self.session._safe('owner', self.turn))
         self.ticket['status'] = 'completed'
         await self.session._refresh('owner', 'session')
-        self.assertEqual(self.turn['body']['status'], 'failed')
+        self.assertEqual(self.turn['body']['status'], 'unknown')
         self.assertIsNone(self.turn['body']['result'])
         self.assertIn('自动重试已停止', self.turn['body']['failure'])
         self.assertIsNone(self.turn['body']['blockReason'])
         self.assertTrue(self.session._safe('owner', self.turn))
         self.assertEqual(self.effect['status'], 'UNKNOWN')
+        await self.session._refresh('owner', 'session')
+        self.assertEqual(self.turn['body']['status'], 'unknown')
+
+    async def test_earlier_ssh_finish_does_not_resolve_a_reused_call_id(self):
+        start = {'type': 'tool_started', 'data': {'toolName': 'ssh_run', 'callId': 'reused'}}
+        for earlier in ('completed', 'failed'):
+            with self.subTest(earlier=earlier):
+                finish = {'type': 'tool_finished', 'data': {'toolName': 'ssh_run', 'callId': 'reused',
+                    'outcome': earlier, 'output': {'stopped': True}}}
+                events = [start, finish, start]
+                required = ResearchSessions.retry_calls(events)
+                self.assertEqual(len(required), 2)
+                self.assertEqual([item[2] for item in required], [earlier != 'failed', True])
+                self.assertEqual(ResearchSessions.retry_operations([finish, start]), [(start['data'], None)])
+                self.turn['body'].update(terminal=False, blockReason='RESEARCH_RESTART_REQUIRES_RECONCILIATION')
+                self.session.runs.factory.detail.return_value['events'] = events
+                self.session.runs.factory.detail.return_value['snapshot']['effects'] = []
+                await self.session._refresh('owner', 'session')
+                self.assertEqual(self.turn['body']['status'], 'unknown')

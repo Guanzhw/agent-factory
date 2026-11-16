@@ -192,7 +192,7 @@ class NativeRetryJourney(unittest.TestCase):
                 self.post('/research/sessions/' + current['id'] + '/stop', {})
                 release.set()
             final = self.wait_for(lambda value: value['turns'][-1]['completedAt'] is not None)
-            self.assertEqual(final['turns'][-1]['status'], 'canceled' if stop else 'failed' if ssh_missing and not ssh_not_started else 'completed', final)
+            self.assertEqual(final['turns'][-1]['status'], 'canceled' if stop else 'unknown' if ssh_missing and not ssh_not_started else 'completed', final)
             self.assertEqual(final['turns'][-1]['taskId'], task['id'])
             self.assertEqual(db.get_job(task['run_id'])['attempt'], 2)
             self.assertEqual(marker.read_text(), 'once\n')

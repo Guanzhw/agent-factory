@@ -1755,7 +1755,16 @@ class ChatJourney(unittest.TestCase):
         self.stop_running('skills-stop-case', 'skills-started.txt', tool_name='get_skill_script')
 
     def test_stop_running_command(self):
-        self.stop_running('stop-case', 'started.txt')
+        snapshot = self.stop_running('stop-case', 'started.txt')
+        finished = [event for event in snapshot['turns'][-1]['events']
+                    if event['type'] == 'tool_finished' and event['data'].get('toolName') == 'run_shell']
+        self.assertEqual(len(finished), 1)
+        self.assertEqual(finished[0]['data']['outcome'], 'cancelled')
+        self.assertNotIn('output', finished[0]['data'])
+        self.page.locator('.rs-process > summary').click()
+        row = self.page.locator('.rs-tool-call').filter(has=self.page.get_by_text('运行命令', exact=True))
+        expect(row).to_have_count(1)
+        expect(row.get_by_text('已停止', exact=True)).to_be_visible()
 
     def stop_running(self, goal, marker, tool_name='run_shell'):
         self.send(goal)
@@ -1789,6 +1798,7 @@ class ChatJourney(unittest.TestCase):
                 os.kill(pid, 0)
         self.page.reload()
         self.assertEqual(len(self.session()['turns']), 1)
+        return snapshot
 
 
 if __name__ == '__main__':

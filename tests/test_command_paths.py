@@ -8,9 +8,11 @@ import sys
 import tempfile
 import unittest
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 from agno.exceptions import RunCancelledException
 from agno.run import RunContext
+from agno.tools.function import FunctionCall
 from agent_factory._personal_cli_process import run_cli_process
 from agent_factory.personal_cli import MemberCliAdapter
 from agent_factory.personal_tool_contract import ToolDescriptor, ToolInvocation
@@ -95,6 +97,29 @@ class CommandPaths(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(win32event.WaitForSingleObject(handle, 5000), win32con.WAIT_OBJECT_0)
         elif Path(f'/proc/{pid}/stat').exists():
             self.assertEqual(Path(f'/proc/{pid}/stat').read_text().split(') ')[1][0], 'Z')
+
+    async def test_native_command_events_preserve_results_failures_and_missing_results(self):
+        events = []
+        self.tools.sessions.store = SimpleNamespace(event=lambda *args: events.append(args))
+        function = self.coding.get_async_functions()['run_shell']
+        function._run_context = RunContext(user_id='owner', session_id='session', run_id='run')
+        for result, error, outcome in (('Exit code: 0\noutput', None, 'completed'),
+                                       (None, RuntimeError('native tool failed'), 'failed'),
+                                       (None, None, 'unknown')):
+            with self.subTest(outcome=outcome), patch.object(function, 'entrypoint',
+                    AsyncMock(return_value=result, side_effect=error)):
+                call = FunctionCall(function=function, call_id=outcome, arguments={'command': 'fixture'})
+                await call.aexecute()
+                observed = [event for event in events if event[3]['callId'] == outcome]
+                self.assertEqual([event[1] for event in observed], ['tool_started', 'tool_finished'])
+                data = observed[-1][3]
+                self.assertEqual(data['outcome'], outcome)
+                if result is None:
+                    self.assertNotIn('output', data)
+                else:
+                    self.assertEqual(data['output'], result)
+                if error:
+                    self.assertEqual(data['message'], str(error))
 
     async def test_personal_cli_runs_with_asyncio_debug_enabled(self):
         self.assertTrue(asyncio.get_running_loop().get_debug())

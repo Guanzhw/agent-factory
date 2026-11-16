@@ -10,7 +10,10 @@ class ResearchRuntime(ApplicationRuntime):
         self.sessions, self.session_tools, self.qa, self.skills = sessions, tools, qa, skills
         super().__init__(instructions=self._instructions, tools=self._tools,
             prepare_history=self._prepare_history, before_model=self._before_model,
-            effect_prefixes=(EFFECT_PREFIX,), on_retry_blocked=self._retry_blocked)
+            effect_prefixes=(EFFECT_PREFIX,), retry_calls=self._retry_calls, on_retry_blocked=self._retry_blocked)
+
+    def _retry_calls(self, events):
+        return self.sessions.retry_calls(events)
 
     def _retry_blocked(self, task):
         self.sessions.record_blocked_retry(task)
