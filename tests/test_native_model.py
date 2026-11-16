@@ -362,6 +362,11 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
         def write_file() -> str:
             """Save the requested result."""
             return 'original write completed'
+        def external_wait() -> str:
+            """Wait for the external result."""
+            raise AssertionError('External wait must not execute locally')
+        wait = Function.from_callable(external_wait)
+        wait.external_execution = True
         plan = {'normalizedGoal': 'write once', 'connectionRefs': {'model': 'fixture'}}
         def bind(context):
             bound['run_id'] = context.run_id
@@ -370,14 +375,19 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
             task_for_context=lambda _: bound, execution=lambda _: plan,
             cancellation_requested=lambda _: False,
             personal_models=SimpleNamespace(model_for=lambda *args, **kwargs: OwnerChatModel(self.config, lambda: None)),
-            personal_tools=SimpleNamespace(functions=lambda *args, **kwargs: [Function.from_callable(write_file)]))
+            personal_tools=SimpleNamespace(functions=lambda *args, **kwargs: [Function.from_callable(write_file), wait]))
         agent, _ = build_runtime(store, db)
         def answer(body):
             if not any(message['role'] == 'tool' for message in body['messages']):
                 return 200, [chunk({'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'write-once',
                     'type': 'function', 'function': {'name': 'write_file', 'arguments': '{}'}}]}),
                     chunk({}, 'tool_calls')]
-            checkpoints.append(db.get_run(bound['run_id']))
+            if not any(call['function']['name'] == 'external_wait' for message in body['messages']
+                       for call in message.get('tool_calls', [])):
+                checkpoints.append(db.get_run(bound['run_id']))
+                return 200, [chunk({'role': 'assistant', 'tool_calls': [{'index': 0, 'id': 'external-wait',
+                    'type': 'function', 'function': {'name': 'external_wait', 'arguments': '{}'}}]}),
+                    chunk({}, 'tool_calls')]
             return 200, reply('done')
         self.server.answer = answer
         with patch.object(db, 'get_job', return_value=None, create=True):
@@ -389,6 +399,23 @@ class NativeOwnerModel(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(saved.status, RunStatus.running)
         self.assertTrue(any(message.tool_call_id == 'write-once' and message.content == 'original write completed'
                             for message in saved.messages))
+        self.assertEqual([tool.tool_call_id for tool in saved.tools or []], ['write-once'])
+        paused = next(event for event in events if isinstance(event, RunOutput))
+        self.assertEqual(paused.status, RunStatus.paused)
+        persisted = db.get_run(paused.run_id)
+        self.assertTrue(any(tool.tool_call_id == 'external-wait' and tool.is_paused for tool in persisted.tools))
+        requirement = paused.requirements[0]
+        requirement.set_external_execution_result('original external result')
+        continued = [event async for event in agent.acontinue_run(run_id=paused.run_id,
+            session_id='checkpoint-session', user_id='owner', requirements=[requirement],
+            stream=True, yield_run_output=True)]
+        result = next(event for event in continued if isinstance(event, RunOutput))
+        self.assertEqual(result.run_id, paused.run_id)
+        self.assertEqual(result.status, RunStatus.completed)
+        self.assertEqual(result.messages[-1].content, 'done')
+        self.assertEqual(db.get_run(result.run_id).messages[-1].content, 'done')
+        self.assertTrue(any(message.get('content') == 'original external result'
+                            for message in self.server.requests[-1][0]['messages']))
 
     async def test_native_retry_uses_original_checkpoint_and_blocks_newer_unrecorded_writes(self):
         for newer, tool_name, arguments, repeated_id in [
