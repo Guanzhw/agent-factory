@@ -111,7 +111,7 @@ class ResearchQA:
             if hits:
                 # Show the passage around the longest matching term, even in a long report.
                 _, position = max(hits, key=lambda hit: (hit[0], -hit[1]))
-                start = max(0, position - 120)
+                start = max(0, min(position - 120, len(content) - 500))
                 ranked.append((-len(hits), source['id'], {**source, 'excerpt': content[start:start + 500]}))
         return [source for _, _, source in sorted(ranked)]
 

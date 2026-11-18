@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 import unittest
 
@@ -14,6 +15,7 @@ class SharedSearch(unittest.TestCase):
                     'verificationStatus': 'unverified', 'content': {'note': '该模型采用小样本学习，准确率为92%。' * 100}}
                    for i in range(151)]
         records[-1]['visibility'] = 'personal'
+        records[0]['content'] = {'conditions': 'protocol-budget-4096', 'note': '甲' * 280 + '小样本'}
         def read(owner, key):
             if key == '149' and owner == 'alice':
                 raise HTTPException(403)
@@ -34,6 +36,8 @@ class SharedSearch(unittest.TestCase):
         while True:
             for source in result['sources']:
                 self.assertLessEqual(len(source['excerpt']), 500)
+                if source['id'] == '0':
+                    self.assertEqual(json.loads(source['excerpt']), records[0]['content'])
                 self.assertNotIn(source['id'], seen)
                 seen.add(source['id'])
             next_offset = result['search']['nextOffset']
