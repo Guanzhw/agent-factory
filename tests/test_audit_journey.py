@@ -30,6 +30,30 @@ class AuditJourney(ChatJourney):
         files = self.context.request.get(self.origin + '/api/factory/research/sessions/' + fork['id'] + '/files')
         self.assertEqual(files.json()['files'], [])
 
+    def test_large_preview_reads_each_range_once_and_detects_file_replacement(self):
+        self.send('独立文件继续')
+        session = self.wait_for(lambda row: row['turns'][-1]['status'] == 'completed')
+        workspace = self.state['research_sessions'].workspace(self.owner, session['id'])
+        log = workspace / 'large.log'
+        contents = 'x' * 65535 + '界' + 'y' * 65533 + '末尾'
+        log.write_text(contents, encoding='utf-8')
+        self.page.get_by_role('button', name='会话文件', exact=True).click()
+        self.page.get_by_role('button', name='刷新文件列表').click()
+        row = self.page.locator('.rs-files li').filter(has=self.page.get_by_role('link', name='large.log'))
+        ranges = []
+        self.page.on('request', lambda r: ranges.append(r.headers.get('range')) if 'download?path=large.log' in r.url else None)
+        row.get_by_role('button', name='预览', exact=True).click()
+        row.get_by_role('button', name='继续读取').click()
+        row.get_by_role('button', name='继续读取').click()
+        expect(row.locator('pre')).to_have_text(contents)
+        self.assertEqual(ranges, ['bytes=0-65535', 'bytes=65536-131071', 'bytes=131072-196607'])
+        row.get_by_role('button', name='关闭预览').click()
+        row.get_by_role('button', name='预览', exact=True).click()
+        expect(row.get_by_role('button', name='继续读取')).to_be_visible()
+        log.write_text('new' * 30000, encoding='utf-8')
+        row.get_by_role('button', name='继续读取').click()
+        expect(row.get_by_role('alert')).to_contain_text('文件已变化')
+
     def test_unsent_and_explicit_refusal_keep_editable_text(self):
         path = '**/research/sessions/*/turns'
         self.page.route(path, lambda route: route.abort())
@@ -52,6 +76,13 @@ class AuditJourney(ChatJourney):
         self.assertEqual(self.session()['turns'], [])
 
     def test_lost_turn_reply_recovers_once(self):
+        self.page.evaluate("""() => {
+            const save = Storage.prototype.setItem;
+            Storage.prototype.setItem = function(key, value) {
+                if (key.startsWith('factory:research-sessions:')) throw new Error('Storage disabled');
+                return save.call(this, key, value);
+            };
+        }""")
         def lose_reply(route):
             self.assertTrue(route.fetch().ok)
             route.abort()

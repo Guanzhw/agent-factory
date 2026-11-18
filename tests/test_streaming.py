@@ -61,7 +61,11 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.05)
                 self.assertEqual(attempts, [True])
                 service.read.assert_not_called()
-                await queue.put(SimpleNamespace(payload=json.dumps({'table': 'research_sessions', 'owner': 'owner'})))
+                await queue.put(SimpleNamespace(payload=json.dumps({'table': 'af_resource_sharing'})))
+                await queue.put(SimpleNamespace(payload=json.dumps({'table': 'research_sessions', 'id': 'other', 'owner': 'owner'})))
+                await asyncio.sleep(0.05)
+                service.read.assert_not_called()
+                await queue.put(SimpleNamespace(payload=json.dumps({'table': 'research_sessions', 'id': 'session', 'owner': 'owner'})))
                 self.assertIn('stopped', await asyncio.wait_for(next_frame, timeout=1))
                 service.read.assert_awaited_once()
             finally:
@@ -279,6 +283,26 @@ class StoredStreaming(unittest.TestCase):
 
         with patch('research.session_stream.psycopg.Connection.connect', side_effect=capture):
             asyncio.run(asyncio.wait_for(check(), 8))
+
+    def test_two_tabs_share_one_listener_and_survive_the_first_tab_closing(self):
+        from research.session_stream import CHANNEL, SessionNotifications
+        import psycopg
+        hub = SessionNotifications(self.store)
+        def notify(message):
+            with self.store.engine.begin() as conn:
+                conn.execute(text('SELECT pg_notify(:channel, :payload)'), {'channel': CHANNEL, 'payload': message})
+        async def check():
+            async with hub.subscribe() as first:
+                async with hub.subscribe() as second:
+                    notify('both')
+                    received = await asyncio.wait_for(asyncio.gather(anext(first), anext(second)), 3)
+                    self.assertEqual([n.payload for n in received], ['both', 'both'])
+                notify('remaining')
+                self.assertEqual((await asyncio.wait_for(anext(first), 3)).payload, 'remaining')
+        with patch.object(psycopg.Connection, 'connect', wraps=psycopg.Connection.connect) as connect:
+            asyncio.run(check())
+            self.assertEqual(connect.call_count, 1)
+        self.assertIsNone(hub.listener)
 
     def test_notification_cancel_during_connect_closes_late_connection(self):
         from research.session_stream import changes

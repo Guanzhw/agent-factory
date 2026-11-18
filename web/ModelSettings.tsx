@@ -365,7 +365,15 @@ export function ModelSettings({ ownerId, focusConnection, onBack, onCredentials,
       const result = await ownerModelApi.probe(ownerId, record.reference);
       if (!alive.current) return;
       if (result.status === 'verified') { setNotice(`${record.model} 已通过文本响应验证。`); setRefresh(n => n + 1); }
-      else setError(`${record.model} 验证未完成${result.httpStatus ? `（HTTP ${result.httpStatus}）` : ''}。请检查端点、模型名称和凭据。`);
+      else {
+        const status = result.httpStatus;
+        const hint = status === 401 || status === 403 ? '请检查所选凭据及模型访问权限。'
+          : status === 404 ? '请检查 API 端点、接口协议和模型名称。'
+          : status === 429 || (status && status >= 500) ? '服务暂时不可用，可稍后重试。'
+          : result.status === 'empty' ? '服务已响应但未返回文本，请检查模型和接口协议。'
+          : '请检查端点、模型名称和网络连接后重试。';
+        setError(`${record.model} 验证未完成${status ? `（HTTP ${status}）` : ''}。${hint}`);
+      }
     })}>验证连接（发送一次文本请求，可能计费）</button>{!record.isDefault && <button disabled={busy || !!pending || !record.available} onClick={() => command(record, 'default')}>设为默认</button>}{record.isOwner && currentCredential(record) && <button disabled={busy || !!pending} onClick={() => rebind(record)}>绑定更新后的凭据</button>}{record.isOwner && <><button disabled={busy || !!pending || !capability?.enabled || !record.available} onClick={() => editOutput(record)}>模型参数</button><button disabled={busy || !!pending || !capability?.enabled || !record.credentialRef || !!currentCredential(record)} onClick={() => rotate(record)}>更新密钥</button><button className="text-button danger" disabled={busy || !!pending} onClick={() => setConfirmRevoke(record.reference)}>撤销模型</button><button disabled={busy || !!pending || !!pendingSharing} onClick={() => void sharing(record)}>{record.visibility === 'team' ? '改为个人使用' : '共享给团队'}</button></>}</div>}{confirmRevoke === record.reference && <div className="state-note"><p>确认撤销 {record.model}？它将不能用于新任务，原任务会继续接受权限检查。</p><button className="secondary danger" disabled={busy} onClick={() => command(record, 'revoke')}>确认撤销</button><button disabled={busy} onClick={() => setConfirmRevoke('')}>保留模型</button></div>}</article>)}</div>}
     {ready && capability?.enabled && !pending && outputEditing && <form className="model-form" onSubmit={event => { event.preventDefault(); saveOutput(); }}>
       <h2>调整 {outputEditing.model} 的模型参数</h2>

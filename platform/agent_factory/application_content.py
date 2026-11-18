@@ -192,12 +192,14 @@ class ApplicationContent:
             self._readable(conn, actor, row)
             return self._project(conn, actor, row)
 
-    def list(self, actor, *, after='', limit=50):
+    def list(self, actor, *, after='', limit=50, team_application=None):
         self.auth.require_member(actor)
         with self._access() as conn:
-            rows = conn.execute(select(self.contents).where(self.contents.c.id > after,
-                or_(self.contents.c.owner_id == actor,
-                    self.contents.c.reference.in_(self.sharing.visible_refs(conn, actor))))
+            resources = self.sharing.resources.c
+            team = self.contents.c.reference.in_(select(resources.reference).where(resources.visibility == 'team'))
+            visible = or_(self.contents.c.owner_id == actor, team) if team_application is None else (
+                team & (self.contents.c.body['source']['application'].as_string() == team_application))
+            rows = conn.execute(select(self.contents).where(self.contents.c.id > after, visible)
                 .order_by(self.contents.c.id).limit(limit + 1)).mappings().all()
             items = []
             for row in rows[:limit]:

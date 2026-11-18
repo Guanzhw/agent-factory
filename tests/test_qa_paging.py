@@ -20,9 +20,12 @@ class SharedSearch(unittest.TestCase):
             if key == '149' and owner == 'alice':
                 raise HTTPException(403)
             return records[int(key)]
-        def listing(owner, after, limit):
+        scans = []
+        def listing(owner, after, limit, team_application):
+            scans.append(after)
+            self.assertEqual(team_application, "research")
             start = int(after or 0)
-            return {'items': records[start:start + limit], 'nextCursor': str(start + limit)
+            return {'items': [r for r in records[start:start + limit] if r['visibility'] == 'team'], 'nextCursor': str(start + limit)
                     if start + limit < len(records) else None}
         qa = ResearchQA(SimpleNamespace(engine=engine), None, SimpleNamespace(
             read=lambda *args: {'reply': None}), None, SimpleNamespace(read=read, list=listing))
@@ -45,6 +48,9 @@ class SharedSearch(unittest.TestCase):
                 break
             result = qa.context(ctx, next_offset)
         self.assertEqual(len(seen), 149)
+        self.assertEqual(scans, ['', '50', '100', '150'])
+        revised = qa.context(ctx, query='实验输出 protocol-budget-4096')
+        self.assertEqual([item['id'] for item in revised['sources']], ['0'])
         selected = next(iter(seen))
         self.assertEqual(qa.context(ctx, source_id=selected)['source']['content'], records[int(selected)]['content'])
         with self.assertRaises(HTTPException):

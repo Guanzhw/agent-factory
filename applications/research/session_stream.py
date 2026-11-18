@@ -78,6 +78,55 @@ async def changes(store):
                 await asyncio.to_thread(connection.close)
 
 
+class SessionNotifications:
+    """One PostgreSQL LISTEN per running app, while any browser is subscribed."""
+
+    def __init__(self, store):
+        self.store = store
+        self.listener = None
+        self.queues = set()
+
+    async def _listen(self, ready, queues):
+        try:
+            async with changes(self.store) as notifications:
+                ready.set_result(None)
+                async for notice in notifications:
+                    for queue in queues:
+                        queue.put_nowait(notice)
+        except Exception as error:
+            if not ready.done():
+                ready.set_exception(error)
+        finally:
+            if not ready.done():
+                ready.cancel()
+            for queue in queues:
+                queue.put_nowait(None)
+
+    @asynccontextmanager
+    async def subscribe(self):
+        if self.listener is None or self.listener.done():
+            self.queues = set()
+            self.ready = asyncio.get_running_loop().create_future()
+            self.listener = asyncio.create_task(self._listen(self.ready, self.queues))
+        queues, listener = self.queues, self.listener
+        queue = asyncio.Queue()
+        queues.add(queue)
+        try:
+            await asyncio.shield(self.ready)
+            async def notifications():
+                while (notice := await queue.get()) is not None:
+                    yield notice
+            yield notifications()
+        finally:
+            queues.discard(queue)
+            if not queues:
+                if self.listener is listener:
+                    self.listener = None
+                listener.cancel()
+                with anyio.CancelScope(shield=True):
+                    await asyncio.gather(listener, return_exceptions=True)
+
+
 def frame(kind, value):
     return 'event: ' + kind + '\ndata: ' + json.dumps(value, ensure_ascii=False, separators=(',', ':')) + '\n\n'
 
@@ -117,11 +166,11 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
         yield frame('session', snapshot)
         watch()
         while not await request.is_disconnected():
-            if auth.user(request)['id'] != owner:
-                return
             try:
                 notice = await asyncio.wait_for(pending.get(), timeout=15)
             except TimeoutError:
+                if auth.user(request)['id'] != owner:
+                    return
                 yield ': connected\n\n'
                 if listener.done():
                     listener.result()
@@ -146,11 +195,21 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
                         changed.add(notice['task'])
                         refresh |= notice['type'] not in {'model_content_delta', 'model_reasoning_delta'}
                 elif notice['table'] in {'af_application_content', 'af_resource_sharing'}:
-                    refresh = True
-                elif notice.get('session') == identifier or owner in {notice.get('owner'), notice.get('recipient')}:
+                    # Replies may depend on a source transitively. Refresh those views on any sharing change.
+                    refresh |= bool(snapshot.get('sharedSourceIds') or any(
+                        turn.get('assistantReply') or turn.get('assistantReplies') for turn in snapshot['turns']))
+                elif notice.get('session'):
+                    refresh |= notice['session'] == identifier
+                elif notice['table'] == 'research_sessions':
+                    refresh |= notice.get('id') == identifier
+                elif owner in {notice.get('owner'), notice.get('recipient')}:
                     refresh = True
                 elif notice.get('task') in turns:
                     refresh = True
+            if not refresh and not changed:
+                continue
+            if auth.user(request)['id'] != owner:
+                return
             if refresh:
                 current = await service.read(owner, identifier)
                 if current != snapshot:

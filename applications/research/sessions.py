@@ -59,6 +59,10 @@ class ResearchSessions:
             UniqueConstraint('session_id', 'sequence'))
         self.commands = self.db.command_table('research_session_commands', metadata)
         metadata.create_all(store.engine)
+        if store.engine.dialect.name == 'postgresql':
+            with store.engine.begin() as conn:
+                conn.exec_driver_sql("""CREATE INDEX IF NOT EXISTS research_sessions_owner_recent
+                    ON research_sessions (owner_id, (body->>'updatedAt') DESC, id DESC)""")
         store.research_sessions = self
 
     @contextmanager
@@ -331,10 +335,10 @@ class ResearchSessions:
         observations = {}
         with self.db.read() as conn:
             self._row(conn, owner, identifier)
-            turns = self._turns(conn, identifier)
+            turns = conn.execute(select(self.turns).where(self.turns.c.session_id == identifier,
+                self.turns.c.body['terminal'].as_boolean().is_not(True))
+                .order_by(self.turns.c.sequence)).mappings().all()
         for turn in turns:
-            if turn['body'].get('terminal'):
-                continue
             task = await asyncio.to_thread(self._task, owner, turn)
             if task is None:
                 continue

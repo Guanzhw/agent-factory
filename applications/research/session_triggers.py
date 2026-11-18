@@ -63,6 +63,14 @@ class ResearchTriggers:
             Column('event_id', String, nullable=False), Column('body', JSON, nullable=False))
         self.commands = self.db.command_table('research_trigger_commands', metadata)
         metadata.create_all(self.store.engine)
+        if self.store.engine.dialect.name == 'postgresql':
+            with self.store.engine.begin() as conn:
+                conn.exec_driver_sql("""CREATE INDEX IF NOT EXISTS research_trigger_due
+                    ON research_session_triggers (((body->>'nextRunAt')::double precision))
+                    WHERE enabled IS TRUE AND body->>'source' = 'cron'""")
+                conn.exec_driver_sql("""CREATE INDEX IF NOT EXISTS research_delivery_state_created
+                    ON research_trigger_deliveries ((body->>'state'), (body->>'createdAt'), id)""")
+
 
     @staticmethod
     def _view(row):
@@ -142,16 +150,17 @@ class ResearchTriggers:
                     raise HTTPException(409, 'RESEARCH_TRIGGER_EVENT_CONFLICT')
                 return {'id': key, 'eventId': event_id}
             conn.execute(self.events.insert().values(id=key, body=value))
-            rows = conn.execute(select(self.triggers).where(self.triggers.c.enabled.is_(True))).mappings()
-            for row in rows:
+            candidates = select(self.triggers).where(self.triggers.c.enabled.is_(True),
+                self.triggers.c.body['source'].as_string() == source)
+            if trigger_id is not None:
+                candidates = candidates.where(self.triggers.c.id == trigger_id)
+            for row in conn.execute(candidates).mappings():
                 body = row['body']
+                if body['eventType'] and body['eventType'] != event_type:
+                    continue
                 discovery = getattr(self.sessions, 'discovery', None)
                 kind = discovery.publication_kind(conn, row['owner_id'], row, owner) if discovery else None
                 if kind == 'skip':
-                    continue
-                if body['source'] != source or (body['eventType'] and body['eventType'] != event_type):
-                    continue
-                if trigger_id is not None and row['id'] != trigger_id:
                     continue
                 if source != 'research' and row['owner_id'] != owner:
                     continue
@@ -185,12 +194,16 @@ class ResearchTriggers:
             body={**row['body'], **changes}))
 
     def poll_sources(self):
+        due = select(self.triggers).where(self.triggers.c.enabled.is_(True),
+            self.triggers.c.body['source'].as_string() == 'cron',
+            self.triggers.c.body['nextRunAt'].as_float() <= time.time())
+        with self.db.read() as conn:
+            if conn.execute(due.with_only_columns(self.triggers.c.id).limit(1)).first() is None:
+                return
+        # Recheck after admission so two workers cannot advance the same schedule twice.
         with self.sessions._write() as conn:
-            rows = conn.execute(select(self.triggers).where(self.triggers.c.enabled.is_(True))).mappings()
-            for row in rows:
+            for row in conn.execute(due).mappings():
                 body = row['body']
-                if body.get('source') != 'cron' or body['nextRunAt'] > time.time():
-                    continue
                 self.emit(conn, row['owner_id'], row['id'] + ':' + str(body['nextRunAt']),
                     'cron', 'tick', {'scheduledAt': body['nextRunAt']}, trigger_id=row['id'])
                 conn.execute(self.triggers.update().where(self.triggers.c.id == row['id']).values(

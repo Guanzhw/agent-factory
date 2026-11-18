@@ -180,7 +180,8 @@ class AuthService:
             raise HTTPException(403, "User is unavailable or disabled")
         return user
 
-    def user(self, request: Request) -> dict[str, Any]:
+    def request_owner(self, request: Request) -> str:
+        """Verified request subject for services that check current membership themselves."""
         if not getattr(request.state, "authenticated", False) or not getattr(request.state, "_agno_auth_complete", False):
             raise HTTPException(401, "Authentication required")
         user_id = getattr(request.state, "user_id", None)
@@ -191,7 +192,10 @@ class AuthService:
         expected = request.headers.get("x-factory-expected-owner")
         if expected is not None and expected != user_id:
             raise HTTPException(403, {"code": "EXPECTED_OWNER_MISMATCH", "message": "Account changed"})
-        return self.identity(user_id)
+        return user_id
+
+    def user(self, request: Request) -> dict[str, Any]:
+        return self.identity(self.request_owner(request))
 
     def identity(self, user_id: str) -> dict[str, Any]:
         """Project current membership and the account-admin flag."""

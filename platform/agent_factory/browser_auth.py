@@ -231,7 +231,7 @@ class BrowserSessionService:
 
     def session(self, token):
         _check(_valid(token))
-        with self._transaction() as conn:
+        with self.store.engine.connect() as conn:
             row = self._get(conn, _hash(token), "session")
             _check(row and not row["revoked"] and (row["expires"] is None or row["expires"] > self.clock())
                    and row["config"] == self.fingerprint)

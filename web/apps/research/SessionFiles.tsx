@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { authEpoch, assertAuthEpoch, expireBrowserSession } from '../../browserAuth.js';
 import { factoryRequest } from '../../api.js';
 import './SessionFiles.css';
@@ -19,7 +19,8 @@ export function SessionFiles({ ownerId, sessionId, revision, onAttention }: { ow
   const [loading, setLoading] = useState(true);
   const [directory, setDirectory] = useState('.');
   const [directories, setDirectories] = useState<string[]>([]);
-  const [limit, setLimit] = useState(65536);
+  const [offset, setOffset] = useState(0);
+  const passage = useRef({ decoder: new TextDecoder('utf-8', { fatal: true }), text: '', end: 0, tag: '' });
   const [refresh, setRefresh] = useState(0);
   const [previewPath, setPreviewPath] = useState('');
   const [preview, setPreview] = useState<{ key: string; text?: string; more?: boolean; error?: string; loading?: boolean }>({ key: '' });
@@ -53,27 +54,33 @@ export function SessionFiles({ ownerId, sessionId, revision, onAttention }: { ow
     const abort = new AbortController();
     const epoch = authEpoch();
     const url = `/api/factory${base}/download?path=${encodeURIComponent(previewPath)}`;
-    setPreview({ key: previewKey, loading: true });
+    if (offset === 0) passage.current = { decoder: new TextDecoder('utf-8', { fatal: true }), text: '', end: 0, tag: '' };
+    const current = passage.current;
+    setPreview({ key: previewKey, loading: true, text: current.text });
     void (async () => {
       try {
         const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: abort.signal,
-          headers: { 'X-Factory-Expected-Owner': ownerId, ...(size ? { Range: `bytes=0-${limit - 1}` } : {}) } });
+          headers: { 'X-Factory-Expected-Owner': ownerId, ...(size ? { Range: `bytes=${offset}-${offset + 65535}`, ...(offset && current.tag ? { 'If-Match': current.tag } : {}) } : {}) } });
         assertAuthEpoch(epoch);
         if (response.status === 401) expireBrowserSession();
+        if (response.status === 412) throw new Error('文件已变化，请刷新后重新读取。');
         if (!response.ok) throw new Error(`文件读取失败（${response.status}），请刷新文件列表后重试。`);
         const total = Number(response.headers.get('Content-Range')?.split('/')[1]);
-        const more = response.status === 206 && total > limit;
-        let text: string;
-        try { text = new TextDecoder('utf-8', { fatal: true }).decode(await response.arrayBuffer(), { stream: more }); }
+        const bytes = await response.arrayBuffer();
+        if (abort.signal.aborted) return;
+        current.end = offset + bytes.byteLength;
+        current.tag = response.headers.get('ETag') ?? '';
+        const more = response.status === 206 && total > current.end;
+        try { current.text += current.decoder.decode(bytes, { stream: more }); }
         catch { throw new Error('该文件不是有效的 UTF-8 文本，无法预览。'); }
         assertAuthEpoch(epoch);
-        if (!abort.signal.aborted) setPreview({ key: previewKey, text, more });
+        if (!abort.signal.aborted) setPreview({ key: previewKey, text: current.text, more });
       } catch (reason) {
         if (!abort.signal.aborted) setPreview({ key: previewKey, error: reason instanceof Error ? reason.message : '文件预览暂时不可用。' });
       }
     })();
     return () => abort.abort();
-  }, [base, ownerId, previewKey, previewPath, limit, files]);
+  }, [base, ownerId, previewKey, previewPath, offset, files]);
   return <section className="rs-files" aria-label="会话文件">
     <p>会话文件（{files.length}）</p>
     <p>下载工作目录中的当前文件。<button type="button" onClick={() => setRefresh(value => value + 1)}>刷新文件列表</button></p>
@@ -87,11 +94,11 @@ export function SessionFiles({ ownerId, sessionId, revision, onAttention }: { ow
     {!loading && !error && errors.length === 0 && directories.length === 0 && files.length === 0 && <p>还没有生成文件。</p>}
     <ul>{files.map(file => <li key={file.path}>
       <a href={`/api/factory${base}/download?path=${encodeURIComponent(file.path)}`} download>{file.path}</a> <small>（{file.size.toLocaleString()} 字节）</small>
-      {textFile.test(file.path) && <button type="button" aria-expanded={previewPath === file.path} onClick={() => { setLimit(65536); setPreviewPath(previewPath === file.path ? '' : file.path); }}>{previewPath === file.path ? '关闭预览' : '预览'}</button>}
+      {textFile.test(file.path) && <button type="button" aria-expanded={previewPath === file.path} onClick={() => { setOffset(0); setPreviewPath(previewPath === file.path ? '' : file.path); }}>{previewPath === file.path ? '关闭预览' : '预览'}</button>}
       {previewPath === file.path && preview.key === previewKey && <div className="rs-file-preview" aria-label={`${file.path}预览`}>
         {preview.loading && <p role="status">正在读取预览…</p>}
         {preview.error && <p role="alert">{preview.error}</p>}
-        {preview.text !== undefined && <pre>{preview.text}</pre>}{preview.more && <button type="button" onClick={() => setLimit(value => value + 65536)}>继续读取</button>}
+        {preview.text !== undefined && <pre>{preview.text}</pre>}{preview.more && <button type="button" onClick={() => setOffset(passage.current.end)}>继续读取</button>}
       </div>}
     </li>)}</ul>
   </section>;

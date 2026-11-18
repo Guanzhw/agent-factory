@@ -15,7 +15,7 @@ from starlette.background import BackgroundTask
 from agent_factory.application_content import ObjectId
 from .projects import Reference, RequestId
 from .session_triggers import CreateTrigger
-from .session_stream import changes, install_notifications, session_updates
+from .session_stream import SessionNotifications, install_notifications, session_updates
 from .session_files import _directory, _open_file, _windows_path, _workspace_parts, receive_file
 
 
@@ -66,46 +66,47 @@ def session_router(auth, service):
     router = APIRouter(prefix='/api/factory/research/sessions')
     initialized = False
     initialize_lock = asyncio.Lock()
+    subscriptions = SessionNotifications(service.store)
 
     @router.get('/options')
     def options(request: Request):
-        return service.options(auth.user(request)['id'])
+        return service.options(auth.request_owner(request))
 
     @router.get('')
     def listing(request: Request, after: str = Query(default='', max_length=200), q: str = ''):
-        return service.listing(auth.user(request)['id'], after, q)
+        return service.listing(auth.request_owner(request), after, q)
 
     @router.post('')
     async def create(request: Request, body: CreateSession):
-        owner = auth.user(request)['id']
+        owner = auth.request_owner(request)
         identifier = await asyncio.to_thread(service.create, owner, body)
         return await service.read(owner, identifier)
 
     @router.get('/requests/{request_id}')
     async def original(request: Request, request_id: str):
-        return await service.request(auth.user(request)['id'], request_id)
+        return await service.request(auth.request_owner(request), request_id)
 
     @router.get('/{identifier}')
     async def read(request: Request, identifier: str):
-        return await service.read(auth.user(request)['id'], identifier)
+        return await service.read(auth.request_owner(request), identifier)
 
     @router.post('/{identifier}/fork')
     async def fork(request: Request, identifier: str, body: ForkSession):
-        owner = auth.user(request)['id']
+        owner = auth.request_owner(request)
         fork_id = await asyncio.to_thread(service.fork, owner, identifier, body)
         return await service.read(owner, fork_id)
 
     @router.get('/{identifier}/events')
     async def events(request: Request, identifier: str):
         nonlocal initialized
-        owner = auth.user(request)['id']
+        owner = auth.request_owner(request)
         async with initialize_lock:
             if not initialized:
                 await asyncio.to_thread(install_notifications, service.store)
                 initialized = True
         resources = AsyncExitStack()
         try:
-            notifications = await resources.enter_async_context(changes(service.store))
+            notifications = await resources.enter_async_context(subscriptions.subscribe())
             initial = await service.read(owner, identifier)
         except BaseException:
             await resources.aclose()
@@ -124,7 +125,7 @@ def session_router(auth, service):
 
     @router.post('/{identifier}/files', status_code=201)
     def upload(request: Request, identifier: str, file: UploadFile):
-        workspace = service.workspace(auth.user(request)['id'], identifier)
+        workspace = service.workspace(auth.request_owner(request), identifier)
         try:
             receive_file(workspace, file.filename or '', file.file)
         except FileExistsError:
@@ -135,7 +136,7 @@ def session_router(auth, service):
 
     @router.get('/{identifier}/files')
     def files(request: Request, identifier: str, directory: str | None = None):
-        workspace = service.workspace(auth.user(request)['id'], identifier)
+        workspace = service.workspace(auth.request_owner(request), identifier)
         workspace = _windows_path(workspace) if os.name == 'nt' else workspace
         result = []
         errors = []
@@ -175,7 +176,7 @@ def session_router(auth, service):
 
     @router.get('/{identifier}/files/download')
     def download(request: Request, identifier: str, path: str):
-        workspace = service.workspace(auth.user(request)['id'], identifier)
+        workspace = service.workspace(auth.request_owner(request), identifier)
         try:
             parts = _workspace_parts(workspace, path)
             with _directory(workspace, parts[:-1]) as parent:
@@ -188,7 +189,12 @@ def session_router(auth, service):
         byte_range = request.headers.get('range')
         if byte_range:
             match = re.fullmatch(r'bytes=(\d{1,20})-(\d{1,20})', byte_range)
-            size = os.fstat(stream.fileno()).st_size
+            info = os.fstat(stream.fileno())
+            size = info.st_size
+            version = f'"{info.st_dev:x}-{info.st_ino:x}-{size:x}-{info.st_mtime_ns:x}-{info.st_ctime_ns:x}"'
+            if request.headers.get('if-match') not in {None, version}:
+                stream.close()
+                raise HTTPException(412, '文件已变化，请刷新后重新读取。')
             if not match or int(match[1]) >= size or int(match[1]) > int(match[2]):
                 stream.close()
                 raise HTTPException(416, headers={'Content-Range': f'bytes */{size}'})
@@ -203,7 +209,7 @@ def session_router(auth, service):
                     remaining -= len(block)
                     yield block
             return StreamingResponse(chunks(), status_code=206, media_type='application/octet-stream',
-                headers={'Content-Range': f'bytes {start}-{end}/{size}', 'Cache-Control': 'no-store',
+                headers={'Content-Range': f'bytes {start}-{end}/{size}', 'ETag': version, 'Cache-Control': 'no-store',
                          'Content-Disposition': 'attachment', 'X-Content-Type-Options': 'nosniff'},
                 background=BackgroundTask(stream.close))
         return StreamingResponse(iter(lambda: stream.read(65536), b''), media_type='application/octet-stream',
@@ -212,28 +218,28 @@ def session_router(auth, service):
 
     @router.get('/{identifier}/triggers')
     def triggers(request: Request, identifier: str):
-        return service.triggers.listing(auth.user(request)['id'], identifier)
+        return service.triggers.listing(auth.request_owner(request), identifier)
 
     @router.post('/{identifier}/triggers')
     async def create_trigger(request: Request, identifier: str, body: CreateTrigger):
-        return await asyncio.to_thread(service.triggers.create, auth.user(request)['id'], identifier, body)
+        return await asyncio.to_thread(service.triggers.create, auth.request_owner(request), identifier, body)
 
     @router.delete('/{identifier}/triggers/{trigger_id}')
     async def delete_trigger(request: Request, identifier: str, trigger_id: str, requestId: RequestId):
-        return await asyncio.to_thread(service.triggers.delete, auth.user(request)['id'], identifier, trigger_id, requestId)
+        return await asyncio.to_thread(service.triggers.delete, auth.request_owner(request), identifier, trigger_id, requestId)
 
     @router.post('/{identifier}/turns')
     async def turn(request: Request, identifier: str, body: SessionTurn):
-        return await service.turn(auth.user(request)['id'], identifier, body)
+        return await service.turn(auth.request_owner(request), identifier, body)
 
     @router.post('/{identifier}/corrections')
     async def correct(request: Request, identifier: str, body: SessionText):
-        owner = auth.user(request)['id']
+        owner = auth.request_owner(request)
         await asyncio.to_thread(service.correct, owner, identifier, body)
         return await service.read(owner, identifier)
 
     @router.post('/{identifier}/stop')
     async def stop(request: Request, identifier: str, body: SessionCommand):
-        return await service.stop(auth.user(request)['id'], identifier, body)
+        return await service.stop(auth.request_owner(request), identifier, body)
 
     return router

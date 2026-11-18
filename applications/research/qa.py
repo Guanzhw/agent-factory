@@ -44,13 +44,16 @@ class ResearchQA:
             Column('task_id', String, primary_key=True), Column('owner_id', String, nullable=False),
             Column('run_id', String, nullable=False), Column('message_id', String, nullable=False),
             Column('configuration', JSON, nullable=False), Column('content_ids', JSON, nullable=False))
+        self.searches = Table('research_qa_searches', metadata,
+            Column('task_id', String, primary_key=True), Column('query', String, nullable=False),
+            Column('source_ids', JSON, nullable=False))
         metadata.create_all(store.engine)
 
     def functions(self, context):
         @tool(name='research_qa_context')
-        async def read_shared_sources(offset: int | None = None, source_id: str | None = None):
-            """Search shared sources. Use nextOffset for more matches, or source_id to read a returned source in full."""
-            return await asyncio.to_thread(self.context, context, offset or 0, source_id)
+        async def read_shared_sources(offset: int | None = None, source_id: str | None = None, query: str | None = None):
+            """Search team evidence. Optionally rephrase query. Use nextOffset with the same query or read a returned source_id in full."""
+            return await asyncio.to_thread(self.context, context, offset or 0, source_id, query)
 
         @tool(name='research_qa_record')
         async def save_reply(answer: str, citations: list[str],
@@ -93,38 +96,64 @@ class ResearchQA:
             raise HTTPException(403, 'RESEARCH_QA_TEAM_SOURCE_REQUIRED')
         return {key: source[key] for key in ('id', 'source', 'content', 'verificationStatus')}
 
-    def _select(self, message):
-        tokens = terms(message['text']) | set(re.findall(r'[\w]+', message['text'].casefold()))
-        ranked = []
-        for item in self._sources(message['recipientId']):
-            if item['visibility'] != 'team' or item['source']['application'] != 'research':
-                continue
+    @staticmethod
+    def _passage(item, tokens):
+        content = json.dumps(item['content'], ensure_ascii=False)
+        text = content.casefold()
+        hits = [(len(token), position) for token in tokens if (position := text.find(token)) >= 0]
+        if not hits:
+            return 0, ''
+        _, position = max(hits, key=lambda hit: (hit[0], -hit[1]))
+        start = max(0, min(position - 120, len(content) - 500))
+        return len(hits), content[start:start + 500]
+
+    def _page(self, conn, task, message, query, offset):
+        tokens = terms(query) | set(re.findall(r'[\w]+', query.casefold()))
+        search = conn.execute(select(self.searches).where(self.searches.c.task_id == task)).mappings().first()
+        if offset and search and search['query'] == query:
+            identifiers = search['source_ids']
+        else:
+            ranked = []
+            after = ''
+            while True:
+                batch = self.content.list(message['recipientId'], after=after, limit=50, team_application='research')
+                for item in batch['items']:
+                    score, _ = self._passage(item, tokens)
+                    if score:
+                        try:
+                            self.content.read(message['senderId'], item['id'])
+                        except HTTPException as error:
+                            if error.status_code not in {403, 404}:
+                                raise
+                            continue
+                        ranked.append((-score, item['id']))
+                after = batch.get('nextCursor')
+                if not after:
+                    break
+            identifiers = [identifier for _, identifier in sorted(ranked)]
+            values = {'source_ids': identifiers, 'query': query}
+            if search is None:
+                conn.execute(self.searches.insert().values(task_id=task, **values))
+            else:
+                conn.execute(self.searches.update().where(self.searches.c.task_id == task).values(**values))
+        # Store only ranked IDs. Recheck both readers before returning each passage.
+        page = []
+        while offset < len(identifiers) and len(page) < 10:
+            identifier = identifiers[offset]
+            offset += 1
             try:
-                source = self._source(message, item['id'])
+                source = self._source(message, identifier)
             except HTTPException as error:
                 if error.status_code not in {403, 404}:
                     raise
                 continue
-            content = json.dumps(source.pop('content'), ensure_ascii=False)
-            text = content.casefold()
-            hits = [(len(token), text.find(token)) for token in tokens if token in text]
-            if hits:
-                # Show the passage around the longest matching term, even in a long report.
-                _, position = max(hits, key=lambda hit: (hit[0], -hit[1]))
-                start = max(0, min(position - 120, len(content) - 500))
-                ranked.append((-len(hits), source['id'], {**source, 'excerpt': content[start:start + 500]}))
-        return [source for _, _, source in sorted(ranked)]
+            _, excerpt = self._passage(source, tokens)
+            source.pop('content')
+            page.append({**source, 'excerpt': excerpt})
+        return page, {'total': len(identifiers), 'nextOffset': offset if offset < len(identifiers) else None,
+                      'insufficientEvidence': not identifiers}
 
-    def _sources(self, owner):
-        after = ''
-        while True:
-            page = self.content.list(owner, after=after, limit=50)
-            yield from page['items']
-            after = page.get('nextCursor')
-            if not after:
-                break
-
-    def context(self, ctx, offset=0, source_id=None):
+    def context(self, ctx, offset=0, source_id=None, query=None):
         if offset < 0:
             raise HTTPException(422, "Invalid search offset")
         with self._write() as conn:
@@ -155,8 +184,7 @@ class ResearchQA:
                 if source_id not in previous:
                     raise HTTPException(422, 'RESEARCH_QA_UNKNOWN_CITATION')
                 return {'source': self._source(message, source_id)}
-            matches = self._select(message)
-            page = matches[offset:offset + 10]
+            page, search = self._page(conn, ctx.session_id, message, query or message['text'], offset)
             dependencies = list(dict.fromkeys([*previous, *(source['id'] for source in page)]))
             if row is None:
                 conn.execute(self.inputs.insert().values(task_id=ctx.session_id, owner_id=ctx.user_id,
@@ -165,9 +193,7 @@ class ResearchQA:
             elif dependencies != previous:
                 conn.execute(self.inputs.update().where(self.inputs.c.task_id == ctx.session_id)
                              .values(content_ids=dependencies))
-            return {'question': message['text'], 'sources': page,
-                'search': {'total': len(matches), 'nextOffset': offset + len(page) if offset + len(page) < len(matches)
-                           else None, 'insufficientEvidence': not matches}}
+            return {'question': message['text'], 'sources': page, 'search': search}
 
     @staticmethod
     def _match(row, ctx, message, config):

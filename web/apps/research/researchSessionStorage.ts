@@ -5,15 +5,19 @@ export interface PendingSessionRequest { detached?: boolean; requestId: string; 
 const prefix = (owner: string) => `factory:research-sessions:${encodeURIComponent(owner)}:`;
 export const draftKey = (owner: string, sessionId = '') => `${prefix(owner)}draft:${sessionId || 'new'}`;
 export const requestKey = (owner: string) => `${prefix(owner)}requests`;
+const volatile = new Map<string, string | null>();
 export function readStored<T>(key: string, fallback: T): T {
-  try { const value = sessionStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; } catch { return fallback; }
+  try { const value = volatile.has(key) ? volatile.get(key) : sessionStorage.getItem(key); return value ? JSON.parse(value) as T : fallback; } catch { return fallback; }
 }
 export function writeStored(key: string, value: unknown): boolean {
-  try { sessionStorage.setItem(key, JSON.stringify(value)); return true; } catch { return false; }
+  const serialized = JSON.stringify(value);
+  try { sessionStorage.setItem(key, serialized); volatile.delete(key); return true; }
+  catch { volatile.set(key, serialized); return false; }
 }
-export function removeStored(key: string) { try { sessionStorage.removeItem(key); } catch { /* Existing input stays visible. */ } }
+export function removeStored(key: string) { try { sessionStorage.removeItem(key); volatile.delete(key); } catch { volatile.set(key, null); } }
 /** Clear private text on logout; retain owner-scoped opaque pointers for read-only recovery. */
 export function clearSessionDrafts(owner: string) {
+  for (const key of volatile.keys()) if (key.startsWith(`${prefix(owner)}draft:`)) removeStored(key);
   try {
     const keys = Array.from({ length: sessionStorage.length }, (_, index) => sessionStorage.key(index));
     for (const key of keys) if (key?.startsWith(`${prefix(owner)}draft:`)) sessionStorage.removeItem(key);
