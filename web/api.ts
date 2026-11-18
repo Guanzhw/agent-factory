@@ -13,8 +13,8 @@ async function request<T>(path: string, method = 'GET', body?: unknown, signal?:
     assertAuthEpoch(started);
     response = await fetch(`${base}${path}`, {
       method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal,
-      headers: { ...(body === undefined ? {} : { 'Content-Type': 'application/json' }), ...(csrf ? { 'X-Factory-CSRF': csrf } : {}), ...(expectedOwner === undefined ? {} : { 'X-Factory-Expected-Owner': expectedOwner }) },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      headers: { ...(body === undefined || body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(csrf ? { 'X-Factory-CSRF': csrf } : {}), ...(expectedOwner === undefined ? {} : { 'X-Factory-Expected-Owner': expectedOwner }) },
+      body: body instanceof FormData ? body : body === undefined ? undefined : JSON.stringify(body),
     });
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') throw error;

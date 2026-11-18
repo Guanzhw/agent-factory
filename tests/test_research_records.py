@@ -19,8 +19,10 @@ class ResearchRecords(unittest.IsolatedAsyncioTestCase):
             db=SimpleNamespace(read=self.engine.connect, write=self.engine.begin),
             _execution=lambda conn, context: (self.session, None, None))
         self.publications = {}
+        self.visibility = {}
 
         def publish(owner, publication, key):
+            self.visibility[key] = publication.visibility
             self.publications.setdefault(key, deepcopy(publication.content))
             return {'id': key}
 
@@ -33,6 +35,7 @@ class ResearchRecords(unittest.IsolatedAsyncioTestCase):
         repeated = await self.research.invoke(self.context, 'note', 'research_record_experiment', values)
         self.assertEqual(record, repeated)
         self.assertEqual(record['status'], 'recorded')
+        self.assertEqual(set(self.visibility.values()), {'personal'})
         self.assertEqual(record['observations'], values['observations'])
         self.assertEqual(len(self.publications), 1)
         self.assertEqual(next(iter(self.publications.values()))['verificationStatus'], 'unverified')
@@ -43,6 +46,14 @@ class ResearchRecords(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ToolInvocationError):
             await self.research.invoke(other, 'read', 'research_experiment_result',
                                        {'experimentId': record['experimentId']})
+
+    async def test_explicit_sharing_is_specific_to_this_revision(self):
+        shared = await self.research.invoke(self.context, 'publish', 'research_record_experiment',
+            {'visibility': 'team', 'observations': ['Published by request']})
+        self.assertEqual(self.visibility[shared['terminalRecordId']], 'team')
+        assessment = await self.research.invoke(self.context, 'note', 'research_assess',
+            {'experimentId': shared['experimentId'], 'assessment': 'Private interpretation'})
+        self.assertEqual(self.visibility[assessment['recordId']], 'personal')
 
     async def test_unconfirmed_original_experiment_returns_identity_without_redispatch(self):
         values = {'hypothesis': 'A hypothesis', 'conditions': 'Existing input', 'goal': 'Inspect it'}

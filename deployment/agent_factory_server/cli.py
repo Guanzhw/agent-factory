@@ -16,6 +16,7 @@ def commands():
                         help='HTTPS origin of the running service')
     parser.add_argument('--user', help='local account (prompts for password); alternatively set FACTORY_ACCESS_TOKEN')
     actions = parser.add_subparsers(dest='action')
+    actions.add_parser('local', help='Set up and start the local HTTPS service')
     for name, description in [('worktree', 'Attach a repository in a separate session worktree'),
                               ('diff', 'Print the current patch and its review ID'),
                               ('review', 'Review the patch and its line comments using the session model'),
@@ -72,6 +73,9 @@ def operate(client, args):
 
 def main(argv=None):
     args = commands().parse_args(argv)
+    if args.action == 'local':
+        from .local import main as local
+        return local()
     if not args.action:
         from .research import main as serve
         return serve()

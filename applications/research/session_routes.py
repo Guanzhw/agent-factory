@@ -1,12 +1,13 @@
 """Owner-authenticated personal research conversation commands and reads."""
 import asyncio
 import os
+import re
 from contextlib import AsyncExitStack
 from pathlib import Path
 import stat
 from urllib.parse import quote
 
-from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.background import BackgroundTask
@@ -15,7 +16,7 @@ from agent_factory.application_content import ObjectId
 from .projects import Reference, RequestId
 from .session_triggers import CreateTrigger
 from .session_stream import changes, install_notifications, session_updates
-from .session_files import _directory, _open_file, _windows_path, _workspace_parts
+from .session_files import _directory, _open_file, _windows_path, _workspace_parts, receive_file
 
 
 # openai/codex 0ed34eb9: protocol/src/user_input.rs::MAX_USER_INPUT_TEXT_CHARS.
@@ -71,8 +72,8 @@ def session_router(auth, service):
         return service.options(auth.user(request)['id'])
 
     @router.get('')
-    async def listing(request: Request, after: str = Query(default='', max_length=200)):
-        return await service.listing(auth.user(request)['id'], after)
+    def listing(request: Request, after: str = Query(default='', max_length=200), q: str = ''):
+        return service.listing(auth.user(request)['id'], after, q)
 
     @router.post('')
     async def create(request: Request, body: CreateSession):
@@ -121,8 +122,19 @@ def session_router(auth, service):
             headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'},
             background=BackgroundTask(resources.aclose))
 
+    @router.post('/{identifier}/files', status_code=201)
+    def upload(request: Request, identifier: str, file: UploadFile):
+        workspace = service.workspace(auth.user(request)['id'], identifier)
+        try:
+            receive_file(workspace, file.filename or '', file.file)
+        except FileExistsError:
+            raise HTTPException(409, '同名文件已存在，请核对会话文件或更名后上传。') from None
+        except ValueError:
+            raise HTTPException(422, '请选择具有有效文件名的文件。') from None
+        return {'path': file.filename, 'size': file.size}
+
     @router.get('/{identifier}/files')
-    def files(request: Request, identifier: str):
+    def files(request: Request, identifier: str, directory: str | None = None):
         workspace = service.workspace(auth.user(request)['id'], identifier)
         workspace = _windows_path(workspace) if os.name == 'nt' else workspace
         result = []
@@ -130,9 +142,27 @@ def session_router(auth, service):
         def unavailable(error):
             errors.append({'path': Path(error.filename).relative_to(workspace).as_posix(),
                            'message': error.strerror or '读取失败'})
-        for directory, _, names in os.walk(workspace, onerror=unavailable):
+        if directory is not None:
+            try:
+                parts = _workspace_parts(workspace, directory, directory=True)
+                folders = []
+                with _directory(workspace, parts) as parent, os.scandir(parent) as entries:
+                    for entry in entries:
+                        path = '/'.join([*parts, entry.name])
+                        try:
+                            info = entry.stat(follow_symlinks=False)
+                        except FileNotFoundError:
+                            continue
+                        if stat.S_ISDIR(info.st_mode):
+                            folders.append(path)
+                        elif stat.S_ISREG(info.st_mode):
+                            result.append({'path': path, 'size': info.st_size})
+                return {'directories': sorted(folders), 'files': sorted(result, key=lambda f: f['path']), 'errors': []}
+            except (OSError, ValueError):
+                raise HTTPException(404, '目录无法读取，请返回上一级或刷新。') from None
+        for folder, _, names in os.walk(workspace, onerror=unavailable):
             for name in names:
-                file = Path(directory) / name
+                file = Path(folder) / name
                 try:
                     info = file.lstat()
                     if stat.S_ISREG(info.st_mode):
@@ -155,6 +185,27 @@ def session_router(auth, service):
                 raise ValueError()
         except (OSError, ValueError):
             raise HTTPException(404, '文件不存在或已移动，请刷新文件列表。') from None
+        byte_range = request.headers.get('range')
+        if byte_range:
+            match = re.fullmatch(r'bytes=(\d{1,20})-(\d{1,20})', byte_range)
+            size = os.fstat(stream.fileno()).st_size
+            if not match or int(match[1]) >= size or int(match[1]) > int(match[2]):
+                stream.close()
+                raise HTTPException(416, headers={'Content-Range': f'bytes */{size}'})
+            start, end = int(match[1]), min(size - 1, int(match[2]))
+            stream.seek(start)
+            def chunks():
+                remaining = end - start + 1
+                while remaining:
+                    block = stream.read(min(65536, remaining))
+                    if not block:
+                        break
+                    remaining -= len(block)
+                    yield block
+            return StreamingResponse(chunks(), status_code=206, media_type='application/octet-stream',
+                headers={'Content-Range': f'bytes {start}-{end}/{size}', 'Cache-Control': 'no-store',
+                         'Content-Disposition': 'attachment', 'X-Content-Type-Options': 'nosniff'},
+                background=BackgroundTask(stream.close))
         return StreamingResponse(iter(lambda: stream.read(65536), b''), media_type='application/octet-stream',
             headers={'Content-Disposition': "attachment; filename*=UTF-8''" + quote(parts[-1], safe=''),
                      'Cache-Control': 'no-store'}, background=BackgroundTask(stream.close))

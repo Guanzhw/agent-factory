@@ -10,7 +10,7 @@ import { MODEL_PROVIDER_PRESETS } from './modelProviderConfig.js';
 import { authEpoch } from './browserAuth.js';
 import { clearModelSettingsDraft, readModelSettingsDraft, saveModelSettingsDraft } from './modelSettingsDraft.js';
 
-export function ModelSettings({ ownerId, onBack, onCredentials, returnLabel = '返回工作区', continueLabel }: { ownerId: string; onBack: () => void; onCredentials?: () => void; returnLabel?: string; continueLabel?: string }) {
+export function ModelSettings({ ownerId, focusConnection, onBack, onCredentials, returnLabel = '返回工作区', continueLabel }: { focusConnection?: string; ownerId: string; onBack: () => void; onCredentials?: () => void; returnLabel?: string; continueLabel?: string }) {
   const [draft] = useState(() => readModelSettingsDraft(ownerId));
   const [draftRestored, setDraftRestored] = useState(false);
   const epoch = useRef(authEpoch());
@@ -20,6 +20,9 @@ export function ModelSettings({ ownerId, onBack, onCredentials, returnLabel = '�
   const [unresolved, setUnresolved] = useState<ModelSetup[]>(() => { try { return readModelSetups(localStorage.getItem(unresolvedStorage), ownerId); } catch { return []; } });
   const [confirmStopWaiting, setConfirmStopWaiting] = useState(false);
   const [records, setRecords] = useState<OwnerModel[]>([]);
+  useEffect(() => {
+    if (focusConnection && records.length) document.getElementById('model-' + focusConnection)?.focus();
+  }, [focusConnection, records]);
   const [credentials, setCredentials] = useState<PersonalCredential[]>([]);
   const [capability, setCapability] = useState<ModelCapabilities>();
   const [provider, setProvider] = useState<OwnerModel['provider']>(draft?.provider ?? 'openai');
@@ -174,7 +177,7 @@ export function ModelSettings({ ownerId, onBack, onCredentials, returnLabel = '�
     }
     if (!alive.current) return;
     if (!finished(s, submittedEditor)) return false;
-    setNotice(!submittedEditor ? '默认模型已确认。当前表单中的未提交输入仍未保存。' : checkedOriginal ? '原保存已核对完成。当前默认模型以最新列表为准。' : s.rotating ? '密钥已更新。旧任务绑定会按服务端规则重新检查。' : s.chooseDefault ? '模型已保存并设为默认。可以返回工作区。' : '模型已保存。可以返回工作区。');
+    setNotice(!submittedEditor ? '默认模型已确认。当前表单中的未提交输入仍未保存。' : checkedOriginal ? '原保存已核对完成。当前默认模型以最新列表为准。' : s.rotating ? '密钥已更新。旧任务绑定会按服务端规则重新检查。' : s.chooseDefault ? '模型已保存并设为默认，尚未验证连接。发送消息时将首次调用模型。' : '模型配置已保存，尚未验证连接。');
     return true;
   }
   function stopWaiting() {
@@ -358,7 +361,12 @@ export function ModelSettings({ ownerId, onBack, onCredentials, returnLabel = '�
     {ready && !capability?.enabled && <div className="state-note"><strong>此部署尚未启用模型设置。</strong><p>请启用部署的模型配置服务。</p></div>}
     {pending && <div className="state-note"><h2>上次保存尚未确认</h2><p>已保留原请求，密钥未保存在浏览器中。核对已发出的操作后，只继续尚未发送的后续设置。</p><button className="primary" disabled={busy} onClick={() => void run(() => continueSetup(pending, true))}>{busy ? '正在核对…' : '核对并继续原保存'}</button><button disabled={busy} onClick={() => setConfirmStopWaiting(true)}>停止等待此保存</button>{confirmStopWaiting && <div><p>原操作仍可能已完成。停止等待只解除本页编辑锁，原请求保留供只读核对。</p><button disabled={busy} onClick={stopWaiting}>确认停止等待并保留原请求</button><button disabled={busy} onClick={() => setConfirmStopWaiting(false)}>继续等待</button></div>}</div>}
     {unresolved.length > 0 && <div className="state-note"><h2>未确认的原请求（{unresolved.length}）</h2>{unresolved.map(s => <div key={s.modelRequest}><p>{s.model} · {s.stage === 'credential' ? '凭据保存' : s.stage === 'model' ? '模型保存' : '默认选择'}</p><button disabled={busy} onClick={() => void run(() => checkArchived(s))}>核对保留的原请求</button></div>)}</div>}
-    {records.length > 0 && <div className="model-records">{records.map(record => <article className="model-record" key={record.reference}><div><h2>{record.model}</h2><p>{record.visibility === 'team' ? '团队共享' : '个人'} · {record.ownerId}</p><p>{record.provider === 'openai' ? 'OpenAI' : '兼容 OpenAI 的服务'} · {new URL(record.baseURL).host}</p><p>单次输出上限：{record.maxOutputTokens === undefined ? '由提供方决定' : `${record.maxOutputTokens} token`}</p><span className={`badge status-${record.available ? 'completed' : 'failed'}`}>{record.isDefault && record.available ? '默认模型' : record.status === 'revoked' ? '已撤销' : record.available ? '已保存' : '密钥需更新'}</span></div>{record.status !== 'revoked' && <div className="button-row">{!record.isDefault && <button disabled={busy || !!pending || !record.available} onClick={() => command(record, 'default')}>设为默认</button>}{record.isOwner && currentCredential(record) && <button disabled={busy || !!pending} onClick={() => rebind(record)}>绑定更新后的凭据</button>}{record.isOwner && <><button disabled={busy || !!pending || !capability?.enabled || !record.available} onClick={() => editOutput(record)}>模型参数</button><button disabled={busy || !!pending || !capability?.enabled || !record.credentialRef || !!currentCredential(record)} onClick={() => rotate(record)}>更新密钥</button><button className="text-button danger" disabled={busy || !!pending} onClick={() => setConfirmRevoke(record.reference)}>撤销模型</button><button disabled={busy || !!pending || !!pendingSharing} onClick={() => void sharing(record)}>{record.visibility === 'team' ? '改为个人使用' : '共享给团队'}</button></>}</div>}{confirmRevoke === record.reference && <div className="state-note"><p>确认撤销 {record.model}？它将不能用于新任务，原任务会继续接受权限检查。</p><button className="secondary danger" disabled={busy} onClick={() => command(record, 'revoke')}>确认撤销</button><button disabled={busy} onClick={() => setConfirmRevoke('')}>保留模型</button></div>}</article>)}</div>}
+    {records.length > 0 && <div className="model-records">{records.map(record => <article className="model-record" key={record.reference} tabIndex={-1} id={'model-' + record.connectionRef}><div><h2>{record.model}</h2><p>{record.visibility === 'team' ? '团队共享' : '个人'} · {record.ownerId}</p><p>{record.provider === 'openai' ? 'OpenAI' : '兼容 OpenAI 的服务'} · {new URL(record.baseURL).host}</p><p>{record.verifiedAt ? `此版本最近一次连接验证成功：${new Date(record.verifiedAt).toLocaleString()}` : '此版本尚未验证连接'}</p><p>单次输出上限：{record.maxOutputTokens === undefined ? '由提供方决定' : `${record.maxOutputTokens} token`}</p><span className={`badge status-${record.available ? 'completed' : 'failed'}`}>{record.isDefault && record.available ? '默认模型' : record.status === 'revoked' ? '已撤销' : record.available ? '已保存' : '密钥需更新'}</span></div>{record.status !== 'revoked' && <div className="button-row"><button disabled={busy || !!pending || !record.available} onClick={() => void run(async () => {
+      const result = await ownerModelApi.probe(ownerId, record.reference);
+      if (!alive.current) return;
+      if (result.status === 'verified') { setNotice(`${record.model} 已通过文本响应验证。`); setRefresh(n => n + 1); }
+      else setError(`${record.model} 验证未完成${result.httpStatus ? `（HTTP ${result.httpStatus}）` : ''}。请检查端点、模型名称和凭据。`);
+    })}>验证连接（发送一次文本请求，可能计费）</button>{!record.isDefault && <button disabled={busy || !!pending || !record.available} onClick={() => command(record, 'default')}>设为默认</button>}{record.isOwner && currentCredential(record) && <button disabled={busy || !!pending} onClick={() => rebind(record)}>绑定更新后的凭据</button>}{record.isOwner && <><button disabled={busy || !!pending || !capability?.enabled || !record.available} onClick={() => editOutput(record)}>模型参数</button><button disabled={busy || !!pending || !capability?.enabled || !record.credentialRef || !!currentCredential(record)} onClick={() => rotate(record)}>更新密钥</button><button className="text-button danger" disabled={busy || !!pending} onClick={() => setConfirmRevoke(record.reference)}>撤销模型</button><button disabled={busy || !!pending || !!pendingSharing} onClick={() => void sharing(record)}>{record.visibility === 'team' ? '改为个人使用' : '共享给团队'}</button></>}</div>}{confirmRevoke === record.reference && <div className="state-note"><p>确认撤销 {record.model}？它将不能用于新任务，原任务会继续接受权限检查。</p><button className="secondary danger" disabled={busy} onClick={() => command(record, 'revoke')}>确认撤销</button><button disabled={busy} onClick={() => setConfirmRevoke('')}>保留模型</button></div>}</article>)}</div>}
     {ready && capability?.enabled && !pending && outputEditing && <form className="model-form" onSubmit={event => { event.preventDefault(); saveOutput(); }}>
       <h2>调整 {outputEditing.model} 的模型参数</h2>
       <p>保留当前凭据，无需重新输入密钥。新建研究会话会使用新设置；已有会话不会自动切换，请先核对原任务。</p>

@@ -14,7 +14,7 @@ from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 from agno.utils.tokens import count_tokens
 from fastapi import HTTPException
-from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, select, text
+from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, case, select, text, tuple_
 
 from agent_factory.application_interface import ApplicationStart
 from agent_factory.application_runs import StartNotSubmitted, factory_request_id
@@ -183,10 +183,28 @@ class ResearchSessions:
             if not isinstance(error.detail, dict) or error.detail.get('code') not in {
                     'RESEARCH_SOURCE_UNAVAILABLE', 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'}:
                 raise
-            # Derived replies and summaries have no finer source attribution.
-            body = {**row['body'], 'sharedSourceIds': [],
+            # Turns after the first revoked input may derive from it. Earlier runs
+            # did not see it. Unknown legacy provenance requires a full cut.
+            retained = []
+            retained_sources = set()
+            active = session_context.active_turns(row, turns)
+            attributed = {source for turn in active for source in turn['body'].get('sharedSourceIds', [])}
+            if set(row['body']['sharedSourceIds']) <= attributed:
+                for turn in active:
+                    sources = turn['body'].get('sharedSourceIds', [])
+                    try:
+                        self._sources(row['owner_id'], sources)
+                        self._replies(row['owner_id'], row['id'], [turn])
+                    except HTTPException as revoked:
+                        if not isinstance(revoked.detail, dict) or revoked.detail.get('code') not in {
+                                'RESEARCH_SOURCE_UNAVAILABLE', 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'}:
+                            raise
+                        break
+                    retained.append(turn['sequence'])
+                    retained_sources.update(sources)
+            body = {**row['body'], 'sharedSourceIds': sorted(retained_sources), 'retainedSequences': retained,
                     'contextAfterSequence': turns[-1]['sequence'] if turns else 0,
-                    'contextNotice': '旧共享来源或助手回答已不可用。后续对话从新的上下文继续，原聊天记录仍保留。'}
+                    'contextNotice': '旧共享来源或助手回答已不可用。后续对话保留可确认独立的早期轮次，原聊天记录仍保留。'}
             body.pop('contextCheckpoint', None)
             return {**row, 'body': body}
         return row
@@ -249,14 +267,16 @@ class ResearchSessions:
             body = {key: deepcopy(row['body'][key]) for key in ('title', 'goal', 'boundaries', 'configuration')}
             body.update(title=request.title or body['title'] + ' · 分支', createdAt=stamp, updatedAt=stamp,
                 stopped=False, stopRequestId=None,
-                fork={'sessionId': identifier, 'turnId': point['id'], 'sequence': point['sequence']})
+                fork={'sessionId': identifier, 'turnId': point['id'], 'sequence': point['sequence'], 'copiedWorktree': False})
             for key in ('projectId', 'projectGoalVersion'):
                 if key in row['body']:
                     body[key] = deepcopy(row['body'][key])
-            if row['body'].get('contextAfterSequence', 0) <= point['sequence']:
-                for key in ('contextAfterSequence', 'contextNotice'):
-                    if key in row['body']:
-                        body[key] = deepcopy(row['body'][key])
+            if 'contextAfterSequence' in row['body'] and (
+                    'retainedSequences' in row['body'] or row['body']['contextAfterSequence'] <= point['sequence']):
+                body['contextAfterSequence'] = min(point['sequence'], row['body']['contextAfterSequence'])
+                body['retainedSequences'] = [seq for seq in row['body'].get('retainedSequences', [])
+                                             if seq <= point['sequence']]
+                body['contextNotice'] = row['body'].get('contextNotice')
             body['sharedSourceIds'] = list(dict.fromkeys(source
                 for turn in session_context.active_turns({'body': body}, selected)
                 for source in turn['body'].get('sharedSourceIds', [])))
@@ -286,6 +306,7 @@ class ResearchSessions:
                 workspace = self.git.fork_workspace(owner, identifier, fork_id, conn)
                 if workspace is not None:
                     body['gitWorkspace'] = workspace
+                    body['fork']['copiedWorktree'] = True
                     self._save_session(conn, {'id': fork_id}, body)
             self._command(conn, owner, request.requestId, fingerprint, 'fork', fork_id)
             return fork_id
@@ -955,6 +976,7 @@ class ResearchSessions:
                     'rawCharacters': raw_characters, 'notice': context_row['body'].get('contextNotice'), **({'compaction': compact_view} if compact_view else {})},
                 'deliveries': self.triggers.receipts(conn, owner, identifier) if self.triggers is not None else [],
                 'turns': [{'id': item['id'], 'sequence': item['sequence'],
+                    'modelConnectionRef': item['body'].get('configuration', body['configuration'])['connectionRefs']['model'],
                     **({'inheritedFrom': deepcopy(item['body']['inheritedFrom'])} if 'inheritedFrom' in item['body'] else {}),
                     **({'assistantReply': self._reply_projection(owner,
                         item['body'].get('inheritedFrom', {}).get('sessionId', identifier), item['body']['assistantReply'])}
@@ -973,20 +995,36 @@ class ResearchSessions:
                             for effect in self.store.effects(item['body']['taskId'])]})
                        if item['body'].get('taskId') and not item['body'].get('terminal') else {})} for item in turns]}
 
-    async def listing(self, owner, after=''):
+    def listing(self, owner, after='', query=''):
         self.auth.require_member(owner)
+        sessions, turns = self.sessions.c, self.turns.c
+        stamp = sessions.body['updatedAt'].as_string()
+        title = sessions.body['title'].as_string()
+        reason = turns.body['blockReason'].as_string()
+        latest = select(case(
+            (reason.is_not(None) & (reason != 'RESEARCH_EFFECT_UNCONFIRMED'), 'blocked'),
+            (turns.body['terminal'].as_boolean().is_(False), 'running'), else_='idle')
+        ).where(turns.session_id == sessions.id).order_by(turns.sequence.desc()).limit(1).scalar_subquery()
+        statement = select(sessions.id, title.label('title'), stamp.label('updatedAt'),
+                           sessions.body['stopped'].as_boolean().label('stopped'),
+                           latest.label('state')).where(sessions.owner_id == owner)
+        if query:
+            statement = statement.where(title.icontains(query, autoescape=True))
         with self.db.read() as conn:
             if after:
-                self._row(conn, owner, after)
-            query = select(self.sessions.c.id).where(self.sessions.c.owner_id == owner)
-            if after:
-                query = query.where(self.sessions.c.id < after)
-            identifiers = list(conn.execute(query.order_by(self.sessions.c.id.desc()).limit(21)).scalars())
+                timestamp, separator, identifier = after.partition('|')
+                if not separator:
+                    identifier = after
+                    timestamp = self._row(conn, owner, identifier)['body']['updatedAt']
+                statement = statement.where(tuple_(stamp, sessions.id) < (timestamp, identifier))
+            rows = conn.execute(statement.order_by(stamp.desc(), sessions.id.desc()).limit(21)).mappings().all()
         items = []
-        for identifier in identifiers[:20]:
-            detail = await self.read(owner, identifier)
-            items.append({key: value for key, value in detail.items() if key != 'turns'})
-        return {'items': items, 'nextCursor': identifiers[19] if len(identifiers) > 20 else None}
+        for row in rows[:20]:
+            state = row['state'] or 'idle'
+            if row['stopped'] and state != 'blocked':
+                state = 'stopping' if state == 'running' else 'stopped'
+            items.append({'id': row['id'], 'title': row['title'], 'updatedAt': row['updatedAt'], 'state': state})
+        return {'items': items, 'nextCursor': rows[19]['updatedAt'] + '|' + rows[19]['id'] if len(rows) > 20 else None}
 
     async def request(self, owner, request_id):
         self.auth.require_member(owner)

@@ -18,6 +18,7 @@ export type SessionAssistantReply = { questionId: string; state: 'unavailable'; 
   questionText: string; reply: Extract<ResearchQuestion['reply'], { state: 'available' }>; delivery: ResearchQuestion['delivery'];
 };
 export interface SessionTurn {
+  modelConnectionRef?: string;
   id: string; sequence: number; requestId: string; taskId: string | null; runId: string | null; status: string;
   createdAt: string; completedAt: string | null; result: string | null; failure: string | null;
   messages: SessionMessage[]; events: SessionEvent[];
@@ -47,14 +48,14 @@ export interface InputDelivery {
   id: string; eventId: string; kind: 'evidence' | 'task'; state: string; createdAt: string;
   adoptedAt?: string; turnId?: string; error?: string; provenance?: { contentId: string; ownerId: string; decisionId?: string };
 }
-export interface ResearchSession extends SessionSummary { fork?: { sessionId: string; turnId: string; sequence: number }; turns: SessionTurn[]; deliveries?: InputDelivery[] }
+export interface ResearchSession extends SessionSummary { fork?: { copiedWorktree?: boolean; sessionId: string; turnId: string; sequence: number }; turns: SessionTurn[]; deliveries?: InputDelivery[] }
 export type SessionAction = 'create' | 'turn' | 'correct' | 'stop';
 export interface SessionRequest {
   requestId: string; action: SessionAction; sessionId: string; turnId: string | null;
   session: ResearchSession; createsExecution: false; automaticReplay: false;
 }
 export interface CreateSession { projectId?: string; requestId: string; title: string; goal: string; boundaries: string; modelConnectionRef: string; reasoningEffort?: string }
-export interface SessionPage { items: SessionSummary[]; nextCursor: string | null }
+export interface SessionPage { items: Pick<SessionSummary, 'id' | 'state' | 'title' | 'updatedAt'>[]; nextCursor: string | null }
 const base = '/research/sessions';
 const path = (id: string) => `${base}/${encodeURIComponent(id)}`;
 function detail(value: ResearchSession, id?: string) {
@@ -67,7 +68,7 @@ function detail(value: ResearchSession, id?: string) {
 }
 export const researchSessionsApi = {
   options: (owner: string, signal?: AbortSignal) => factoryRequest<SessionOptions>(`${base}/options`, 'GET', undefined, signal, owner),
-  list: (owner: string, after = '', signal?: AbortSignal) => factoryRequest<SessionPage>(`${base}${after ? `?after=${encodeURIComponent(after)}` : ''}`, 'GET', undefined, signal, owner),
+  list: (owner: string, after = '', signal?: AbortSignal, query = '') => factoryRequest<SessionPage>(`${base}${after || query ? '?' + new URLSearchParams({ after, q: query }) : ''}`, 'GET', undefined, signal, owner),
   get: async (owner: string, id: string, signal?: AbortSignal) => detail(await factoryRequest<ResearchSession>(path(id), 'GET', undefined, signal, owner), id),
   watch: async (owner: string, id: string, signal: AbortSignal, onSession: (value: ResearchSession) => void): Promise<void> => {
     const epoch = authEpoch();

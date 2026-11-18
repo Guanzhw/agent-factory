@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from sqlalchemy import Column, JSON, MetaData, String, Table, select
 
 from agent_factory.applications import GovernedStorage
+from .associations import terms
 
 
 INSTRUCTIONS = (
@@ -47,9 +48,9 @@ class ResearchQA:
 
     def functions(self, context):
         @tool(name='research_qa_context')
-        async def read_shared_sources():
-            """Read the original question and research sources shared with both participants."""
-            return await asyncio.to_thread(self.context, context)
+        async def read_shared_sources(offset: int | None = None, source_id: str | None = None):
+            """Search shared sources. Use nextOffset for more matches, or source_id to read a returned source in full."""
+            return await asyncio.to_thread(self.context, context, offset or 0, source_id)
 
         @tool(name='research_qa_record')
         async def save_reply(answer: str, citations: list[str],
@@ -93,7 +94,7 @@ class ResearchQA:
         return {key: source[key] for key in ('id', 'source', 'content', 'verificationStatus')}
 
     def _select(self, message):
-        tokens = set(re.findall(r'[\w]+', message['text'].casefold()))
+        tokens = terms(message['text']) | set(re.findall(r'[\w]+', message['text'].casefold()))
         ranked = []
         for item in self._sources(message['recipientId']):
             if item['visibility'] != 'team' or item['source']['application'] != 'research':
@@ -104,10 +105,14 @@ class ResearchQA:
                 if error.status_code not in {403, 404}:
                     raise
                 continue
-            text = json.dumps(source['content'], ensure_ascii=False).casefold()
-            score = sum(token in text for token in tokens)
-            if score:
-                ranked.append((-score, source['id'], source))
+            content = json.dumps(source.pop('content'), ensure_ascii=False)
+            text = content.casefold()
+            hits = [(len(token), text.find(token)) for token in tokens if token in text]
+            if hits:
+                # Show the passage around the longest matching term, even in a long report.
+                _, position = max(hits, key=lambda hit: (hit[0], -hit[1]))
+                start = max(0, position - 120)
+                ranked.append((-len(hits), source['id'], {**source, 'excerpt': content[start:start + 500]}))
         return [source for _, _, source in sorted(ranked)]
 
     def _sources(self, owner):
@@ -119,7 +124,9 @@ class ResearchQA:
             if not after:
                 break
 
-    def context(self, ctx):
+    def context(self, ctx, offset=0, source_id=None):
+        if offset < 0:
+            raise HTTPException(422, "Invalid search offset")
         with self._write() as conn:
             message, config = self._original(ctx)
             if self.associations is not None:
@@ -138,17 +145,29 @@ class ResearchQA:
                     raise HTTPException(403, 'RESEARCH_QA_REPLY_SOURCE_UNAVAILABLE')
                 return {'savedReply': self.messages.reply_for_task(ctx.user_id, ctx.session_id,
                     saved['text'], content_ids=row['content_ids'], cited_content_ids=saved.get('citedContentIds'))}
+            previous = []
+            if row is not None:
+                self._match(row, ctx, message, config)
+                previous = row['content_ids']
+                for identifier in previous:
+                    self._source(message, identifier)
+            if source_id is not None:
+                if source_id not in previous:
+                    raise HTTPException(422, 'RESEARCH_QA_UNKNOWN_CITATION')
+                return {'source': self._source(message, source_id)}
+            matches = self._select(message)
+            page = matches[offset:offset + 10]
+            dependencies = list(dict.fromkeys([*previous, *(source['id'] for source in page)]))
             if row is None:
-                sources = self._select(message)
                 conn.execute(self.inputs.insert().values(task_id=ctx.session_id, owner_id=ctx.user_id,
                     run_id=ctx.run_id, message_id=message['messageId'], configuration=config,
-                    content_ids=[source['id'] for source in sources]))
-            else:
-                self._match(row, ctx, message, config)
-                sources = [self._source(message, identifier) for identifier in row['content_ids']]
-            return {'question': message['text'], 'sources': sources,
-                'search': {'candidateLimit': None, 'sourceLimit': None, 'byteLimit': None,
-                           'insufficientEvidence': not sources}}
+                    content_ids=dependencies))
+            elif dependencies != previous:
+                conn.execute(self.inputs.update().where(self.inputs.c.task_id == ctx.session_id)
+                             .values(content_ids=dependencies))
+            return {'question': message['text'], 'sources': page,
+                'search': {'total': len(matches), 'nextOffset': offset + len(page) if offset + len(page) < len(matches)
+                           else None, 'insufficientEvidence': not matches}}
 
     @staticmethod
     def _match(row, ctx, message, config):

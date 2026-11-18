@@ -1,4 +1,4 @@
-import { useId, useRef } from 'react';
+import { useId, useLayoutEffect, useRef } from 'react';
 import { IconChevronDown, IconSettings } from '@tabler/icons-react';
 import type { SessionOptions } from './researchSessionsClient.js';
 import './modelPicker.css';
@@ -9,13 +9,26 @@ export function ChatModelPicker({ models, modelConnectionRef, reasoningEffort, o
 }) {
   const id = useId();
   const panel = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  function focusOption() {
+    const list = panel.current;
+    if (!list?.matches(':popover-open')) return;
+    const active = list.querySelector<HTMLButtonElement>('[aria-selected="true"]:enabled') ??
+      list.querySelector<HTMLButtonElement>('[role="option"]:enabled') ?? list.querySelector<HTMLButtonElement>('.rs-model-manage');
+    active?.focus();
+  }
+  useLayoutEffect(() => {
+    if (document.activeElement === trigger.current || document.activeElement?.matches('.rs-model-manage')) focusOption();
+  }, [models]);
   const selected = models.find(model => model.connectionRef === modelConnectionRef);
   const efforts = selected?.reasoningEfforts ?? [];
   return <div className="rs-model-picker">
-    <button type="button" className="rs-composer-model" aria-label="选择模型" popoverTarget={id}>
+    <button type="button" ref={trigger} className="rs-composer-model" aria-label="选择模型" popoverTarget={id}>
       <span>{selected?.model ?? '选择模型'}{reasoningEffort ? ` · ${reasoningEffort}` : ''}</span><IconChevronDown size={14}/>
     </button>
-    <div ref={panel} id={id} popover="auto" className="rs-model-popover" aria-label="模型选择">
+    <div ref={panel} id={id} popover="auto" className="rs-model-popover" aria-label="模型选择" onToggle={focusOption} onKeyDown={event => {
+      if (event.key === 'Escape') { panel.current?.hidePopover(); trigger.current?.focus(); }
+    }}>
       <div role="listbox" aria-label="已配置模型" onKeyDown={event => {
         if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
         const options = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));

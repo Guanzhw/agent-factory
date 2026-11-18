@@ -6,15 +6,18 @@ owner, protocol, TLS destination and credential revision; stale plans fail close
 from __future__ import annotations
 
 import asyncio
+import re
 from uuid import uuid4
 from typing import Literal
 
+from agno.exceptions import ModelProviderError
+from agno.models.message import Message
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import Column, JSON, MetaData, String, Table, or_, select
+from sqlalchemy import Column, JSON, MetaData, String, Table, func, or_, select
 
 from .applications import GovernedStorage
 from .byok_model import ADAPTER_ID, CAPABILITY, PROVIDER_ID, OwnerChatModel
@@ -95,7 +98,38 @@ class PersonalModels:
         with self.db.read() as conn:
             refs = conn.execute(select(self.models.c.reference).where(or_(self.models.c.owner_id == owner,
                 self.models.c.reference.in_(self.connections.sharing.visible_refs(conn, owner))))).scalars()
-            return [self._public(conn, owner, ref) for ref in refs]
+            records = [self._public(conn, owner, ref) for ref in refs]
+            result = self.commands.c.result
+            verified = {(ref, rev): stamp for ref, rev, stamp in conn.execute(select(
+                result['reference'].as_string().label('model_ref'), result['revision'].as_string().label('model_rev'), func.max(self.commands.c.created_at)
+            ).where(self.commands.c.actor_id == owner, self.commands.c.action == 'model.probe',
+                    result['status'].as_string() == 'verified').group_by('model_ref', 'model_rev'))}
+            return [{**record, 'verifiedAt': verified.get((record['reference'], record['revision']))}
+                    for record in records]
+
+    async def probe(self, owner, reference, request_id):
+        self.auth.require_member(owner)
+        intent = digest({'action': 'model.probe', 'reference': reference})
+        with self.db.write() as conn:
+            binding = self.binding(conn, owner, reference)
+            old = self.db.old(conn, self.commands, owner, request_id, intent)
+            if old is not None:
+                return old
+            handle = binding.opaque_handle
+            result = {'reference': reference, 'revision': binding.revision, 'status': 'pending'}
+            self.db.record(conn, self.commands, owner, request_id, intent, 'model.probe', result)
+        assert isinstance(handle, OwnerModelHandle)
+        model = OwnerChatModel(handle.body, handle.credential, recheck=handle.check)
+        try:
+            reply = await model.ainvoke([Message(role='user', content='Reply with OK.')])
+            result['status'] = 'verified' if reply.content else 'empty'
+        except ModelProviderError as exc:
+            status = re.fullmatch(r'PERSONAL_MODEL_HTTP_(\d{3})', str(exc))
+            result.update(status='failed', httpStatus=int(status[1]) if status else None)
+        with self.db.write() as conn:
+            conn.execute(self.commands.update().where(self.commands.c.actor_id == owner,
+                self.commands.c.request_id == request_id).values(result=result, created_at=now()))
+        return result
 
     def recover(self, owner, request_id):
         """Read the original command receipt, independently of current model state."""
@@ -327,6 +361,10 @@ def personal_model_router(auth, service):
     @router.post('/{reference}/configure')
     def rotate(reference: str, body: ConfigureModel, request: Request):
         return service.configure(owner(request), body.model_dump(exclude={'requestId'}, exclude_none=True), body.requestId, reference=reference)
+    @router.post('/{reference}/probe')
+    async def probe(reference: str, body: ModelCommand, request: Request):
+        return await service.probe(owner(request), reference, body.requestId)
+
     @router.post('/{reference}/default')
     def default(reference: str, body: ModelCommand, request: Request):
         return service.set_default(owner(request), reference, body.requestId)

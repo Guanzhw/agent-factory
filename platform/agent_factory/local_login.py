@@ -9,7 +9,7 @@ import sys
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import HTTPException
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 
 from .accounts import AccountCreate
 from .auth import ACCOUNT_MIGRATION_KEY
@@ -29,10 +29,34 @@ class LocalPasswords:
         if not isinstance(value, str) or not value:
             raise ValueError('Password must not be empty')
 
-    def create(self, owner, password):
+    def reset(self, owner, password):
         AccountCreate(id=owner)
         self._password(password)
         encoded = self.hasher.hash(password)
+        with self.engine.begin() as conn:
+            if conn.dialect.name == 'postgresql':
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_browser_auth'))"))
+            changed = conn.execute(text('UPDATE af_local_passwords SET password_hash=:hash WHERE owner=:owner'),
+                                   {'owner': owner, 'hash': encoded})
+            if not changed.rowcount:
+                raise ValueError('Only existing local passwords can be reset')
+            if inspect(conn).has_table('af_browser_auth'):
+                conn.execute(text("DELETE FROM af_browser_auth WHERE kind='session' AND body->>'owner'=:owner "
+                                  "AND body->>'expires' IS NULL"), {'owner': owner})
+
+    def local_owners(self, owners):
+        from sqlalchemy import bindparam
+        with self.engine.connect() as conn:
+            return set(conn.execute(text('SELECT owner FROM af_local_passwords WHERE owner IN :owners')
+                .bindparams(bindparam('owners', expanding=True)), {'owners': owners}).scalars())
+
+    def create(self, owner, password, *, name=None, email=None, actor=None):
+        self._password(password)
+        return self.create_member(owner, password, name=name, email=email, actor=actor)
+
+    def create_member(self, owner, password, *, name=None, email=None, actor=None):
+        AccountCreate(id=owner)
+        encoded = self.hasher.hash(password) if password is not None else None
         with self.engine.connect() as conn:
             if conn.dialect.name == 'sqlite':
                 conn.exec_driver_sql('BEGIN IMMEDIATE')
@@ -43,39 +67,53 @@ class LocalPasswords:
                 exists = conn.execute(text('SELECT 1 FROM af_local_passwords WHERE owner=:owner'), {'owner': owner}).first()
                 if exists or self.directory.get(owner) is not None:
                     raise ValueError('Account already exists; local identity was not attached')
-                self.directory.upsert(owner, name=owner, metadata={ACCOUNT_MIGRATION_KEY: True})
-                conn.execute(text('INSERT INTO af_local_passwords(owner,password_hash) VALUES(:owner,:hash)'),
+                if encoded is not None:
+                    conn.execute(text('INSERT INTO af_local_passwords(owner,password_hash) VALUES(:owner,:hash)'),
                              {'owner': owner, 'hash': encoded})
+                row = self.directory.upsert(owner, name=name or owner, email=email, actor=actor,
+                                            metadata={ACCOUNT_MIGRATION_KEY: True})
                 conn.commit()
+                return row
             except BaseException:
                 conn.rollback()
                 raise
 
-    def verify(self, owner, password):
+    @staticmethod
+    def current_hash(conn, owner):
+        return conn.execute(text('SELECT password_hash FROM af_local_passwords WHERE owner=:owner'),
+                            {'owner': owner}).scalar_one_or_none()
+
+    def verified_hash(self, owner, password):
         try:
             AccountCreate(id=owner)
             self._password(password)
         except ValueError:
             raise HTTPException(401, 'LOCAL_LOGIN_REJECTED') from None
         with self.engine.connect() as conn:
-            encoded = conn.execute(text('SELECT password_hash FROM af_local_passwords WHERE owner=:owner'),
-                                   {'owner': owner}).scalar_one_or_none()
+            encoded = self.current_hash(conn, owner)
         try:
             self.hasher.verify(encoded or self._dummy, password)
         except (VerificationError, InvalidHashError):
             raise HTTPException(401, 'LOCAL_LOGIN_REJECTED') from None
         if encoded is None:
             raise HTTPException(401, 'LOCAL_LOGIN_REJECTED')
+        return encoded
+
+    def verify(self, owner, password):
+        self.verified_hash(owner, password)
         return owner
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Create a new ordinary local account while the service is stopped.')
     parser.add_argument('username')
+    parser.add_argument('--reset', action='store_true', help='Reset an existing local password')
     args = parser.parse_args(argv)
     engine = None
     try:
         password = getpass.getpass('Password: ')
+        if password != getpass.getpass('Confirm password: '):
+            raise ValueError('Passwords differ')
         from agno.db.postgres import PostgresDb
         from agno.os.authz import UserDirectory
         from .config import Settings
@@ -83,14 +121,18 @@ def main(argv=None):
         engine = create_engine(settings.db_url)
         database = PostgresDb(db_engine=engine, id='factory-native-postgres')
         directory = UserDirectory(db=database, fail_closed=True, auto_provision=False)
-        LocalPasswords(database.db_engine, directory).create(args.username, password)
+        passwords = LocalPasswords(database.db_engine, directory)
+        if args.reset:
+            passwords.reset(args.username, password)
+        else:
+            passwords.create(args.username, password)
     except (Exception, KeyboardInterrupt):
-        print('Local account creation did not complete normally. Check the account before retrying; existing accounts are never changed.', file=sys.stderr)
+        print('Local account operation failed. Check the account and password confirmation before retrying.', file=sys.stderr)
         return 1
     finally:
         if engine is not None:
             engine.dispose()
-    print('Local account created.')
+    print('Local password reset.' if args.reset else 'Local account created.')
     return 0
 
 

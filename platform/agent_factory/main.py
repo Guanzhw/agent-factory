@@ -96,7 +96,12 @@ def create_app(settings=None, *, diagnostics=None, queue_max_attempts=2,
     at('PREPARATION_APP_ROUTES')
     base = FastAPI(title="Agent Factory", version="0.2.0")
     from .accounts import account_router
-    base.include_router(account_router(auth))
+    browser_auth = None
+    if settings.browser_oidc is not None or settings.local_login_origin is not None:
+        from .browser_auth import BrowserSessionService
+        browser_auth = BrowserSessionService(store, auth, settings.browser_oidc,
+            local_login_origin=settings.local_login_origin)
+    base.include_router(account_router(auth, browser_auth.local_passwords if browser_auth else None))
     base.include_router(personal_ssh_router(auth, store.personal_ssh))
     base.include_router(connection_router(auth, connections))
     base.include_router(personal_tool_router(auth, store.personal_tools))
@@ -225,10 +230,8 @@ def create_app(settings=None, *, diagnostics=None, queue_max_attempts=2,
     if settings.oidc_identity is not None:
         from .oidc_identity import OIDCAccessTokenVerifier, OIDCIdentityBridge
         external = OIDCIdentityBridge(native, auth, OIDCAccessTokenVerifier(settings.oidc_identity))
-    if settings.browser_oidc is not None or settings.local_login_origin is not None:
-        from .browser_auth import BrowserAuthBridge, BrowserSessionService
-        browser_auth = BrowserSessionService(store, auth, settings.browser_oidc,
-            local_login_origin=settings.local_login_origin)
+    if browser_auth is not None:
+        from .browser_auth import BrowserAuthBridge
         native.state.factory["browser_auth"] = browser_auth
         return BrowserAuthBridge(native, browser_auth, bearer_app=external)
     return external if external is not None else UnconfiguredIdentityBoundary(native)

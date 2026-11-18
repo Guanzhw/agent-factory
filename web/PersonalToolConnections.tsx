@@ -316,7 +316,7 @@ function MemberToolSetup({ ownerId, credentials, providers, disabled, onChanged 
     if (value) localStorage.setItem(storage, JSON.stringify(value)); else localStorage.removeItem(storage);
     if (alive.current) setPending(value);
   }
-  async function run(operation: () => Promise<void>) {
+  async function run(operation: () => Promise<void>, readFailure?: string) {
     if (lock.current) return;
     lock.current = true; setBusy(true); setMessage('');
     try {
@@ -328,7 +328,7 @@ function MemberToolSetup({ ownerId, credentials, providers, disabled, onChanged 
         const rejected = error instanceof ToolConnectionError && [400, 401, 403, 404, 422].includes(error.status)
           || error instanceof RemoteRequestError && error.rejected;
         if (rejected && !pending) retain(null);
-        setMessage(rejected && !pending ? '配置未被接受，请检查输入。' : '请求尚待核对，请恢复原请求。');
+        setMessage(readFailure ?? (rejected && !pending ? '配置未被接受，请检查输入。' : '请求尚待核对，请恢复原请求。'));
       }
     } finally { lock.current = false; if (alive.current) setBusy(false); }
   }
@@ -383,7 +383,7 @@ function MemberToolSetup({ ownerId, credentials, providers, disabled, onChanged 
     {pending && <button type="button" disabled={busy || disabled} onClick={recover}>恢复原资源请求</button>}
     <fieldset disabled={blocked}>
       <label>连接类型<select aria-label="自定义工具类型" value={transport} onChange={event => { setTransport(event.target.value as 'cli' | 'mcp'); setCredentialRef(''); setTools([]); setToken(''); }}><option value="mcp">MCP 服务</option><option value="cli">CLI 命令</option></select></label>
-      {transport === 'mcp' ? <label>MCP URL<input aria-label="MCP URL" placeholder="http://localhost:8000/mcp" value={url} onChange={event => { setUrl(event.target.value); setTools([]); setCredentialRef(''); }}/></label> : <>
+      {transport === 'mcp' ? <label>MCP URL<input aria-label="MCP URL" placeholder="http://localhost:8000/mcp" value={url} onChange={event => { setUrl(event.target.value); setTools([]); setRemoteName(''); setCredentialRef(''); }}/></label> : <>
         <p className="quiet">CLI 在部署服务器上运行。输入服务器上的可执行文件与工作目录；调用参数作为 JSON 传入 stdin。</p>
         <label>可执行文件<input aria-label="CLI 可执行文件" value={executable} onChange={event => setExecutable(event.target.value)} placeholder="/usr/bin/python3"/></label>
         <label>命令参数（JSON 数组）<textarea aria-label="CLI 命令参数" value={argumentsJson} onChange={event => setArguments(event.target.value)}/></label>
@@ -402,9 +402,10 @@ function MemberToolSetup({ ownerId, credentials, providers, disabled, onChanged 
         retain(null); setCredentialRef(saved.credentialRef); onChanged(); setMessage('凭据已加密保存。');
       }); }}>加密保存令牌</button></>}
       {transport === 'mcp' && <><button type="button" disabled={!url} onClick={() => { void run(async () => {
+        setTools([]); setRemoteName('');
         const result = await personalToolConnectionApi.discover(ownerId, url, selected);
         setUrl(result.url); setTools(result.tools); setRemoteName(''); setMessage(`已发现 ${result.tools.length} 个工具。`);
-      }); }}>发现 MCP 工具</button><label>MCP 工具<select aria-label="发现的 MCP 工具" value={remoteName} onChange={event => { setRemoteName(event.target.value); setToolName(event.target.value.replace(/[^A-Za-z0-9_]/g, '_').replace(/^[^A-Za-z_]/, '_').slice(0, 64)); }}><option value="">选择工具</option>{tools.map(tool => <option key={tool.name} value={tool.name}>{tool.name}</option>)}</select></label></>}
+      }, '发现 MCP 工具失败。请检查服务地址、凭据和服务状态，再重试发现。'); }}>发现 MCP 工具</button><label>MCP 工具<select aria-label="发现的 MCP 工具" value={remoteName} onChange={event => { setRemoteName(event.target.value); setToolName(event.target.value.replace(/[^A-Za-z0-9_]/g, '_').replace(/^[^A-Za-z_]/, '_').slice(0, 64)); }}><option value="">选择工具</option>{tools.map(tool => <option key={tool.name} value={tool.name}>{tool.name}</option>)}</select></label></>}
       <label>调用名称<input aria-label="自定义工具调用名称" value={toolName} onChange={event => setToolName(event.target.value)} pattern={'[A-Za-z_][A-Za-z0-9_\\-]{0,63}'} required/></label>
       <button className="primary" disabled={!toolName || (transport === 'mcp' ? !remoteName : !executable)}>保存自定义工具并绑定</button>
     </fieldset>

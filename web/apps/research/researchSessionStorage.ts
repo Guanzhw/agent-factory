@@ -1,7 +1,7 @@
 import type { SessionAction } from './researchSessionsClient.js';
 
 export interface SessionDraft { repositoryPath?: string; projectId?: string; title: string; goal: string; boundaries: string; modelConnectionRef: string; reasoningEffort?: string }
-export interface PendingSessionRequest { requestId: string; action: SessionAction; sessionId: string | null }
+export interface PendingSessionRequest { detached?: boolean; requestId: string; action: SessionAction; sessionId: string | null }
 const prefix = (owner: string) => `factory:research-sessions:${encodeURIComponent(owner)}:`;
 export const draftKey = (owner: string, sessionId = '') => `${prefix(owner)}draft:${sessionId || 'new'}`;
 export const requestKey = (owner: string) => `${prefix(owner)}requests`;

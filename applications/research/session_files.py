@@ -1,6 +1,8 @@
 """Owner-authenticated downloads, separate from unrestricted Agent coding tools."""
 from contextlib import contextmanager, ExitStack
 import os
+import shutil
+from uuid import uuid4
 from pathlib import Path, PureWindowsPath
 import sys
 from typing import cast
@@ -135,3 +137,32 @@ def _open_file(parent, name):
     return os.open(leaf, flags, 0o600, dir_fd=parent)
 
 
+
+def receive_file(workspace, name, source):
+    if len(_parts(name)) != 1:
+        raise ValueError('Invalid attachment name')
+    # Publish only a complete file. A duplicate upload must never replace a user's file.
+    with _directory(workspace) as directory:
+        temporary = '.upload-' + uuid4().hex
+        if sys.platform == 'win32':
+            directory = cast(Path, directory)
+            path = directory / temporary
+            with path.open('xb') as target:
+                try:
+                    shutil.copyfileobj(source, target)
+                except BaseException:
+                    target.close()
+                    path.unlink()
+                    raise
+            try:
+                path.rename(directory / name)  # Windows rename fails if the destination exists.
+            finally:
+                path.unlink(missing_ok=True)
+        else:
+            fd = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600, dir_fd=directory)
+            try:
+                with os.fdopen(fd, 'wb') as target:
+                    shutil.copyfileobj(source, target)
+                os.link(temporary, name, src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
+            finally:
+                os.unlink(temporary, dir_fd=directory)

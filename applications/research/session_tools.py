@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 import weakref
 
+from sqlalchemy import select
 from agno.exceptions import RunCancelledException
 from agno.tools.function import Function, FunctionCall
 from fastapi import HTTPException
@@ -29,6 +30,10 @@ TRIGGER_WRITES = TRIGGER_TOOLS - {'research_list_triggers'}
 TEAM_TOOLS = {'research_team_work', 'research_create_team_work', 'research_request_contribution',
               'research_contribute', 'research_synthesize_team_work'}
 TEAM_WRITES = TEAM_TOOLS - {'research_team_work'}
+
+
+RECORD_VISIBILITY = {'type': 'string', 'enum': ['personal', 'team'],
+    'description': 'Defaults to personal. Use team only when the member asks to publish this content.'}
 
 
 def _schema(properties, required):
@@ -92,15 +97,15 @@ TOOLS = {
     'research_project': ('Read the linked project agreement, or the session goal when no project is linked. '
         'This is context, not a required step or an instruction to launch work.', _schema({}, [])),
     'research_experiment': ('Start an experiment as a native child Agent when independent work is useful. '
-        'Publishes curated hypothesis/conditions and receipt identities to the team; omit private information. '
+        'Privately records the selected hypothesis, conditions and receipt identities by default. '
         'Uses this session workspace and resources. Use research_wait_child with the returned childTaskId. '
         'You may instead run commands directly and use research_record_experiment; delegation is optional.',
-        _schema({'hypothesis': MEMORY_TEXT, 'conditions': MEMORY_TEXT,
+        _schema({'visibility': RECORD_VISIBILITY, 'hypothesis': MEMORY_TEXT, 'conditions': MEMORY_TEXT,
                  'goal': {'type': 'string', 'minLength': 1}}, ['hypothesis', 'conditions', 'goal'])),
     'research_record_experiment': ('Save research observations from files, existing results or external tool output. '
-        'No command receipt is required. Publishes supplied observations and references to the team; omit private information. '
+        'No command receipt is required. Defaults to a private record. '
         'Recording an observation does not certify execution or scientific success.',
-        _schema({'hypothesis': MEMORY_TEXT, 'conditions': MEMORY_TEXT,
+        _schema({'visibility': RECORD_VISIBILITY, 'hypothesis': MEMORY_TEXT, 'conditions': MEMORY_TEXT,
                  'observations': {'type': 'array', 'items': {'type': 'string'}},
                  'evidenceIds': {'type': 'array', 'items': {'type': 'string'},
                      'description': 'Ordinary file paths, URLs or other references to supporting results.'},
@@ -109,15 +114,16 @@ TOOLS = {
     'research_experiment_result': ('Inspect an original research record; never restart unknown work.',
         _schema({'experimentId': MEMORY_ID}, ['experimentId'])),
     'research_assess': ('Save an interpretation of available evidence, optionally linked to a research record. '
-        'No terminal result is required. Publishes the supplied analysis to the team; omit private information. '
+        'No terminal result is required. Defaults to a private assessment. '
         'Analysis never changes execution facts or certifies scientific success.',
-        _schema({'experimentId': MEMORY_ID, 'assessment': MEMORY_TEXT,
+        _schema({'visibility': RECORD_VISIBILITY, 'experimentId': MEMORY_ID, 'assessment': MEMORY_TEXT,
                  'observations': {'type': 'array', 'items': {'type': 'string'}},
                  'evidenceIds': {'type': 'array', 'items': {'type': 'string'}}}, ['assessment'])),
     SPAWN: ('Delegate one independent subtask to a temporary assistant with the same owner, workspace, tools and execution configuration. '
         'State the precise subtask, relevant file paths and whether it may edit or only inspect. '
         'Avoid concurrent edits to the same file. This starts a child, not a finished result; use research_wait_child to collect it.',
-        _schema({'goal': {'type': 'string', 'minLength': 1}}, ['goal'])),
+        _schema({'goal': {'type': 'string', 'minLength': 1}, 'handoff': {'type': 'string',
+            'description': 'Optional relevant corrections, file references and context summary.'}}, ['goal'])),
     WAIT: ('Wait for the original childTaskId returned by research_delegate. This pauses the parent and frees its execution worker. '
         'The original parent resumes automatically when that child has a confirmed result. Unknown work is not replayed. '
         'A child result is evidence to inspect, not proof the main task succeeded.',
@@ -191,7 +197,21 @@ class ResearchSessionTools:
         self.sessions, self.content = sessions, content
 
     def functions(self, context):
-        functions = [self._function(self.sessions.store, context, name) for name in self.available_tools if name in TOOLS]
+        with self.sessions.db.read() as conn:
+            _, turn, task = self.sessions._execution(conn, context)
+            origin = turn['body'].get('origin') or {}
+            specialized = set()
+            if origin.get('kind') == 'git-review':
+                specialized.add('research_git_comment')
+            if origin.get('kind') == 'trigger' and not task['researchChild'] and self.sessions.discovery is not None:
+                deliveries = self.sessions.triggers.deliveries
+                if conn.execute(select(deliveries.c.id).where(deliveries.c.owner_id == context.user_id,
+                        deliveries.c.body['turnId'].as_string() == turn['id'],
+                        deliveries.c.body['kind'].as_string() == 'discovery')).first():
+                    specialized.add('research_route_discovery')
+        names = [name for name in self.available_tools if name in TOOLS and (
+            name not in {'research_git_comment', 'research_route_discovery'} or name in specialized)]
+        functions = [self._function(self.sessions.store, context, name) for name in names]
         if self.workspace_root is not None:
             functions.extend(self.coding(context).get_async_functions().values())
         return functions
@@ -329,7 +349,7 @@ class ResearchSessionTools:
                 elif name in RESEARCH_TOOLS:
                     output = await self.sessions.research.invoke(run_context, call_id, name, values)
                 elif name == SPAWN:
-                    output = await self.sessions.subagents.start(run_context, call_id, values['goal'])
+                    output = await self.sessions.subagents.start(run_context, call_id, values['goal'], values.get('handoff'))
                 elif name in MEMORY_WRITES:
                     output = self.sessions.memory.execute(identity[0], call_id, memory_operation, guard)
                 elif name == 'research_assistant_directory':

@@ -14,7 +14,8 @@ from agent_factory.store import canonical
 
 def active_turns(row, turns):
     after = row['body'].get('contextAfterSequence', 0)
-    return [turn for turn in turns if turn['sequence'] > after]
+    retained = set(row['body'].get('retainedSequences', []))
+    return [turn for turn in turns if turn['sequence'] > after or turn['sequence'] in retained]
 
 
 def checkpoint(row):

@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, field_validator
 
 from .auth import ACCOUNT_ADMIN_ROLE, ACCOUNT_MIGRATION_KEY, AuthService
 
@@ -24,6 +24,14 @@ class AccountCreate(BaseModel):
         return value
 
 
+class MemberCreate(AccountCreate):
+    password: SecretStr | None = Field(default=None, min_length=1)
+
+
+class PasswordReset(BaseModel):
+    password: SecretStr = Field(min_length=1)
+
+
 class AccountUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     name: str | None = Field(default=None, min_length=1, max_length=200)
@@ -39,7 +47,7 @@ class AccountUpdate(BaseModel):
         return value
 
 
-def account_router(auth: AuthService) -> APIRouter:
+def account_router(auth: AuthService, passwords=None) -> APIRouter:
     router = APIRouter(prefix="/api/factory/accounts", tags=["Accounts"])
 
     def actor(request: Request) -> str:
@@ -62,19 +70,42 @@ def account_router(auth: AuthService) -> APIRouter:
     def list_accounts(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 50,
                       offset: Annotated[int, Query(ge=0)] = 0):
         actor(request)
-        return {"accounts": [project(row) for row in auth.directory.list(limit=limit, offset=offset)],
+        rows = auth.directory.list(limit=limit, offset=offset)
+        local = passwords.local_owners([row['id'] for row in rows]) if passwords else set()
+        return {"accounts": [{**project(row), "localLogin": row['id'] in local} for row in rows],
+                "localLoginEnabled": passwords is not None,
                 "total": auth.directory.count()}
 
     @router.post("", status_code=201)
-    def create_account(body: AccountCreate, request: Request):
+    def create_account(body: MemberCreate, request: Request):
         operator = actor(request)
-        if auth.directory.get(body.id) is not None:
-            raise HTTPException(409, "Account already exists")
-        row = auth.directory.upsert(body.id, name=body.name, email=body.email,
-                                    metadata={ACCOUNT_MIGRATION_KEY: True}, actor=operator)
+        if passwords is not None:
+            try:
+                row = passwords.create_member(body.id, body.password.get_secret_value() if body.password else None,
+                                              name=body.name, email=body.email, actor=operator)
+            except ValueError:
+                raise HTTPException(409, "成员标识已存在，请使用其他标识。") from None
+        else:
+            if body.password is not None:
+                raise HTTPException(409, "此部署未启用本地密码登录。")
+            if auth.directory.get(body.id) is not None:
+                raise HTTPException(409, "Account already exists")
+            row = auth.directory.upsert(body.id, name=body.name, email=body.email,
+                                        metadata={ACCOUNT_MIGRATION_KEY: True}, actor=operator)
         if body.accountAdmin:
             set_admin(body.id, True)
         return project(row)
+
+    @router.put("/{user_id}/password")
+    def reset_password(user_id: str, body: PasswordReset, request: Request):
+        actor(request)
+        if passwords is None:
+            raise HTTPException(409, "此部署未启用本地密码登录。")
+        try:
+            passwords.reset(user_id, body.password.get_secret_value())
+        except ValueError:
+            raise HTTPException(409, "仅已有本地密码的成员可以重置密码。") from None
+        return {"updated": True}
 
     @router.patch("/{user_id}")
     def update_account(user_id: str, body: AccountUpdate, request: Request):

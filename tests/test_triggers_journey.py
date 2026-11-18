@@ -36,7 +36,7 @@ class TriggerModel(BaseHTTPRequestHandler):
             elif 'research_qa_record' not in outputs:
                 context = outputs['research_qa_context']
                 protocol = next(source for source in context['sources']
-                                if 'protocol-budget-4096' in json.dumps(source['content']))
+                                if 'protocol-budget-4096' in json.dumps(source.get('excerpt', source.get('content'))))
                 assert 'peer-research-observation' in context['question']
                 tool, arguments = 'research_qa_record', {
                     'answer': 'The result used output budget 4096, as the shared protocol records. '
@@ -46,12 +46,12 @@ class TriggerModel(BaseHTTPRequestHandler):
                 reply = 'Saved the answer with the shared protocol citation.'
         elif instruction == 'publish-peer-protocol' and not results:
             tool = 'research_record_experiment'
-            arguments = {'conditions': 'protocol-budget-4096: output budget 4096, same model and benchmark.',
+            arguments = {'visibility': 'team', 'conditions': 'protocol-budget-4096: output budget 4096, same model and benchmark.',
                          'observations': ['Protocol fixes the output budget at 4096.'],
                          'evidenceIds': ['protocol.json']}
         elif instruction == 'publish-team-research' and not results:
             tool = 'research_record_experiment'
-            arguments = {'observations': ['peer-research-observation: score improved from 40 to 60; '
+            arguments = {'visibility': 'team', 'observations': ['peer-research-observation: score improved from 40 to 60; '
                                           'output budget is missing from this result.'],
                          'evidenceIds': ['result.csv']}
         elif 'read-trigger-source' in instruction:

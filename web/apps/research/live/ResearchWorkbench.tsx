@@ -79,12 +79,12 @@ export function ResearchWorkbench({ user, route, navigate, onLogout, sessionBusy
   if (sessions || workspaceContent !== undefined) return <div className="rw-shell rw-chat-shell">
     <ResearchSessions key={user.id} ownerId={user.id} selectedId={route.researchSession} questionId={route.researchQuestion}
       onQuestion={id => navigate({ researchQuestion: id })} onSelect={openSessions}
-      onModels={() => navigate({ tab: 'models' })}
+      onModels={modelConnection => navigate({ tab: 'models', modelConnection })}
       navigation={navigation} workspaceContent={workspaceContent} sessionError={sessionError}/>
   </div>;
   return <div className="rw-shell rw-chat-shell">
     <ResearchSessions ownerId={user.id} selectedId={route.researchSession} onSelect={openSessions}
-      onQuestion={id => navigate({ researchQuestion: id })} onModels={() => navigate({ tab: 'models' })}
+      onQuestion={id => navigate({ researchQuestion: id })} onModels={modelConnection => navigate({ tab: 'models', modelConnection })}
       navigation={navigation} workspaceContent={<>{sessionError && <p className="rw-error" role="alert">{sessionError}</p>}
       <header className="rw-heading"><div>{(route.project || settings) && <button className="rw-back" onClick={home}><IconArrowLeft size={16}/>返回工作台</button>}<h1>{settings ? '助手设置' : team ? '团队经验' : route.project ? '项目详情' : '历史项目'}</h1><p>{settings ? '设置个人助手的模型与问答服务。' : team ? '向指定助手私密询问有出处的团队经验。' : '保留研究目标、实验条件与证据。'}</p></div></header>
       {settings ? <>{assistantError && <p role="alert">{assistantError}<button onClick={() => setAssistantRefresh(value => value + 1)}>重读个人助手</button></p>}{assistantLoading && <p role="status">正在读取个人助手…</p>}{((!assistantLoading && !assistantError) || myAssistant) && <AssistantSettings key={user.id} ownerId={user.id} assistant={myAssistant} onSaved={setMyAssistant} onReload={() => setAssistantRefresh(value => value + 1)} onResources={resources}/>}</> : team ? <><AssistantInbox key={`${user.id}:inbox`} ownerId={user.id} onSettings={openSettings} onQuestion={id => { navigate({ researchQuestion: id, researchPeer: '' }); setAssistantOpen(true); }}/><AssistantDirectory key={user.id} ownerId={user.id} onAsk={id => { navigate({ researchPeer: id, researchQuestion: '', researchAssociation: '' }); setAssistantOpen(true); }}/><EvidenceDirectory key={`${user.id}:associations`} ownerId={user.id} kind="associations" onSelect={id => navigate({ researchAssociation: id })}/>{route.researchAssociation && <AssociationDetail key={`${user.id}:${route.researchAssociation}`} ownerId={user.id} id={route.researchAssociation}/>}</> : <>

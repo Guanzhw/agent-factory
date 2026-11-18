@@ -75,7 +75,7 @@ class ResearchSessionResearch:
         if assessment is not None:
             content.update(assessment=assessment, verificationStatus='agent_analysis')
         publication = ContentPublication(source=ContentSource(application='research', record=row['id'], revision=revision),
-            content=content, visibility='team', sourceContentIds=(body.get('sourceContentIds', [])
+            content=content, visibility=body.get('visibility', 'team'), sourceContentIds=(body.get('sourceContentIds', [])
                 if source_ids is None else source_ids))
         return self.content.publish(row['owner_id'], publication,
             'session-experiment:' + row['id'] + ':' + revision)['id']
@@ -96,7 +96,7 @@ class ResearchSessionResearch:
         for source_id in session['body'].get('sharedSourceIds', []):
             source = self.content.read(context.user_id, source_id)
             source_ids.update([source_id, *source.get('sourceContentIds', [])])
-        body = {'hypothesis': values.get('hypothesis', ''), 'conditions': values.get('conditions', ''),
+        body = {'visibility': values.get('visibility', 'personal'), 'hypothesis': values.get('hypothesis', ''), 'conditions': values.get('conditions', ''),
                 'projectId': session['body'].get('projectId'),
                 'goalVersion': session['body'].get('projectGoalVersion'),
                 'status': 'pending_admission', 'evidenceIds': [], 'sourceContentIds': sorted(source_ids),
@@ -122,7 +122,7 @@ class ResearchSessionResearch:
         if name == 'research_assess':
             item = body.get('assessments', {}).get(context.run_id + ':' + call_id)
             if item and all(item.get(field) == values[field] for field in
-                            ('assessment', 'evidenceIds', 'observations') if field in values):
+                            ('assessment', 'visibility', 'evidenceIds', 'observations') if field in values):
                 return self._assessment_receipt(row, context.run_id + ':' + call_id)
             return None
         if body['request'] != values or body['toolName'] != name:
@@ -159,7 +159,7 @@ class ResearchSessionResearch:
         item = deepcopy(row['body']['assessments'][key])
         if not item.get('recordId'):
             publication = {**row, 'body': {**row['body'], **{field: item[field] for field in
-                ('evidenceIds', 'observations') if field in item}}}
+                ('visibility', 'evidenceIds', 'observations') if field in item}}}
             item['recordId'] = self._publish(publication, 'assessment-' + digest(key)[:32], item['assessment'],
                 item.get('sourceContentIds', row['body'].get('sourceContentIds', [])))
             with self.db.write() as conn:
@@ -201,14 +201,14 @@ class ResearchSessionResearch:
             with self.db.write() as conn:
                 row = conn.execute(select(self.experiments).where(self.experiments.c.id == row['id'])).mappings().one()
                 body = deepcopy(row['body'])
-                item = {'experimentId': row['id'], 'assessment': values['assessment'],
+                item = {'visibility': values.get('visibility', 'personal'), 'experimentId': row['id'], 'assessment': values['assessment'],
                         'evidenceIds': deepcopy(values.get('evidenceIds', body['evidenceIds'])),
                         'observations': deepcopy(values.get('observations', body.get('observations', []))),
                         'verificationStatus': 'agent_analysis', 'sourceContentIds': sorted(dependencies)}
                 key = context.run_id + ':' + call_id
                 old = body.setdefault('assessments', {}).get(key)
                 if old is not None and any(old.get(field) != values[field] for field in
-                                          ('assessment', 'evidenceIds', 'observations') if field in values):
+                                          ('assessment', 'visibility', 'evidenceIds', 'observations') if field in values):
                     raise rejected('RESEARCH_EXPERIMENT_REQUEST_CONFLICT')
                 body['assessments'][key] = old or item
                 conn.execute(self.experiments.update().where(self.experiments.c.id == row['id']).values(body=body))

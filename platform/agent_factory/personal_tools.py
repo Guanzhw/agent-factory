@@ -394,6 +394,8 @@ class PersonalTools:
             return {'url': destination, 'tools': tools}
         except ValueError:
             raise HTTPException(422, 'PERSONAL_TOOL_DISCOVERY_FAILED') from None
+        except (OSError, RuntimeError, ExceptionGroup):
+            raise HTTPException(502, 'PERSONAL_TOOL_DISCOVERY_UNAVAILABLE') from None
 
     def revoke(self, owner, reference, request_id):
         service = self.connections

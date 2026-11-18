@@ -8,7 +8,8 @@ Agent Factory 是面向可信小团队的 Agent 平台，基于 **Agno AgentOS 3
 
 ## 从本地使用开始
 
-- **首次在 Windows 启动：**按[本地启动指南](docs/WINDOWS_LOCAL_START.md)准备 PostgreSQL、依赖、登录和 HTTPS。
+- **本机首次使用**　准备 Python 3.12+、uv、Node.js 22.13+ 和一个可写的 PostgreSQL 数据库。在仓库根目录运行 `npm ci`、`npm run build`、`uv run agent-factory local`。向导检查数据库，生成并复用本地密钥，提示信任公开证书、创建首位账号管理员并打印登录地址。登录后在「配置我的模型」保存连接，再发送第一条消息。重启时使用同一数据库与工作目录。已有部署请传入原密钥及证书配置。
+- **Windows 数据库准备与团队 HTTPS 部署：**按[本地启动指南](docs/WINDOWS_LOCAL_START.md)准备 PostgreSQL、依赖、登录和 HTTPS。
 - **服务已经启动：**按[研究会话指南](docs/PERSONAL_RESEARCH_SESSIONS.md)配置模型、提交目标并核对结果。
 - **查找配置或实现细节：**从[文档目录](docs/README.md)进入对应主题。
 

@@ -206,7 +206,7 @@ class BrowserSessionService:
     def local_login(self, owner, password, session_cookie=None, flow_cookie=None):
         _check(self.local_passwords is not None, 405)
         assert self.local_passwords is not None
-        owner = self.local_passwords.verify(owner, password)
+        verified = self.local_passwords.verified_hash(owner, password)
         try:
             self.auth.require_member(owner)
         except HTTPException as error:
@@ -215,6 +215,8 @@ class BrowserSessionService:
             raise HTTPException(401, 'LOCAL_LOGIN_REJECTED') from None
         token = secrets.token_urlsafe(32)
         with self._transaction() as conn:
+            # Reset revokes sessions under this lock; a pre-reset verification cannot issue a new one.
+            _check(self.local_passwords.current_hash(conn, owner) == verified)
             self._gc(conn)
             self._cancel_flows(conn, flow_cookie)
             if _valid(session_cookie):
