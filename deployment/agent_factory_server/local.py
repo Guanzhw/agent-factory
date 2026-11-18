@@ -103,7 +103,7 @@ def main():
             password = getpass('本地密码：')
             if password != getpass('再次输入密码：'):
                 raise SystemExit('两次密码不一致，请重新启动向导。')
-            LocalPasswords(engine, directory).create(owner, password)
+            LocalPasswords(engine, directory).create_member(owner, password, first_member=True)
             NativePolicyEngine(db=database).assign(owner, ACCOUNT_ADMIN_ROLE)
     finally:
         engine.dispose()

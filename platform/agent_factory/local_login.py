@@ -54,8 +54,10 @@ class LocalPasswords:
         self._password(password)
         return self.create_member(owner, password, name=name, email=email, actor=actor)
 
-    def create_member(self, owner, password, *, name=None, email=None, actor=None):
+    def create_member(self, owner, password, *, name=None, email=None, actor=None, first_member=False):
         AccountCreate(id=owner)
+        if password is not None:
+            self._password(password)
         encoded = self.hasher.hash(password) if password is not None else None
         with self.engine.connect() as conn:
             if conn.dialect.name == 'sqlite':
@@ -65,6 +67,8 @@ class LocalPasswords:
                 conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_local_passwords_create'))"))
             try:
                 exists = conn.execute(text('SELECT 1 FROM af_local_passwords WHERE owner=:owner'), {'owner': owner}).first()
+                if first_member and self.directory.ids():
+                    raise ValueError('首位成员已创建，请使用已有账号登录。')
                 if exists or self.directory.get(owner) is not None:
                     raise ValueError('Account already exists; local identity was not attached')
                 if encoded is not None:
