@@ -374,6 +374,7 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
   const [streamError, setStreamError] = useState('');
   const [lastReceived, setLastReceived] = useState<number | null>(null);
   const [query, setQuery] = useState('');
+  const [restoredDraft, setRestoredDraft] = useState(0);
   const [refresh, setRefresh] = useState(0); const [busy, setBusy] = useState(false);
   const feedback = useRef<HTMLDivElement | null>(null);
   useEffect(() => { if (actionError || notice) { feedback.current?.focus(); feedback.current?.scrollIntoView?.({ block: 'nearest' }); } }, [actionError, notice]);
@@ -482,19 +483,19 @@ export function ResearchSessions({ ownerId, selectedId = '', questionId = '', on
         }
       }
       removeStored(draftKey(ownerId));
-      removeStored(draftKey(ownerId, created.id));
+      const firstDraft = draftKey(ownerId, created.id);
+      writeStored(firstDraft, firstMessage);
       if (!active.current) return;
-      setNotice('会话已创建，正在提交第一轮。');
+      onSelect(created.id); setNotice('会话已创建，正在提交第一轮。');
       try { await post('turn', created.id, requestId => api.turn(ownerId, created.id, { requestId, text: firstMessage })); }
       catch (reason) {
-        writeStored(draftKey(ownerId, created.id), firstMessage);
-        if (active.current) { onSelect(created.id); setNotice('会话已保存，可在这里继续编辑首条消息。'); }
+        if (active.current) setNotice('会话已保存，可在这里核对首条消息。');
         throw reason;
       }
-      if (active.current) { onSelect(created.id); setNotice(''); }
+      if (readStored(firstDraft, '') === firstMessage) removeStored(firstDraft);
+      if (active.current) { setRestoredDraft(n => n + 1); setNotice(''); }
     });
   }
-  const [restoredDraft, setRestoredDraft] = useState(0);
   async function recover(pointer: PendingSessionRequest) {
     await run(async () => {
       const receipt = await api.request(ownerId, pointer.requestId);
