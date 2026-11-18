@@ -15,6 +15,7 @@ from sqlalchemy import Boolean, Column, JSON, MetaData, String, Table, select
 
 from agent_factory.store import digest, now
 from .projects import RequestId
+from .session_stream import install_notifications
 
 
 class CreateTrigger(BaseModel):
@@ -345,6 +346,10 @@ class ResearchTriggers:
 @asynccontextmanager
 async def trigger_lifespan(app):
     service = app.state.factory.get('research_triggers')
+    if service is None:
+        yield
+        return
+    await asyncio.to_thread(install_notifications, service.store)
     stopping = asyncio.Event()
     async def run():
         while not stopping.is_set():

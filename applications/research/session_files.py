@@ -1,5 +1,6 @@
 """Owner-authenticated downloads, separate from unrestricted Agent coding tools."""
 from contextlib import contextmanager, ExitStack
+import errno
 import os
 import shutil
 from uuid import uuid4
@@ -137,6 +138,24 @@ def _open_file(parent, name):
     return os.open(leaf, flags, 0o600, dir_fd=parent)
 
 
+def _publish_upload(name, publish):
+    original = Path(name)
+    candidate = name
+    number = 1
+    while True:
+        try:
+            publish(candidate)
+            return candidate
+        except FileExistsError:
+            number += 1
+            candidate = f'{original.stem} ({number}){original.suffix}'
+        except OSError as error:
+            if candidate == name or error.errno != errno.ENAMETOOLONG:
+                raise
+            # A valid original name can already occupy the filesystem's entire name budget.
+            candidate = uuid4().hex
+
+
 def receive_file(workspace, name, source):
     if len(_parts(name)) != 1:
         raise ValueError('Invalid attachment name')
@@ -150,7 +169,7 @@ def receive_file(workspace, name, source):
             try:
                 with target:
                     shutil.copyfileobj(source, target)
-                path.rename(directory / name)  # Windows rename fails if the destination exists.
+                return _publish_upload(name, lambda candidate: path.rename(directory / candidate))
             finally:
                 path.unlink(missing_ok=True)
         else:
@@ -158,6 +177,7 @@ def receive_file(workspace, name, source):
             try:
                 with os.fdopen(fd, 'wb') as target:
                     shutil.copyfileobj(source, target)
-                os.link(temporary, name, src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
+                return _publish_upload(name, lambda candidate: os.link(temporary, candidate,
+                    src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False))
             finally:
                 os.unlink(temporary, dir_fd=directory)

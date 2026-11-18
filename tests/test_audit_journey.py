@@ -1,4 +1,5 @@
 """Member onboarding, attachments, recovery and cross-page search through real browser routes."""
+from base64 import b64decode
 from pathlib import Path
 from uuid import uuid4
 import unittest
@@ -24,7 +25,16 @@ class AuditJourney(ChatJourney):
         response = self.context.request.post(self.origin + '/api/factory/research/sessions/' + value['id'] + '/files',
             headers={'Origin': self.origin, 'X-Factory-CSRF': self.csrf}, multipart={
                 'file': {'name': 'input.csv', 'mimeType': 'text/plain', 'buffer': b'duplicate'}})
-        self.assertEqual(response.status, 409)
+        self.assertEqual(response.status, 201)
+        self.assertEqual(response.json()['path'], 'input (2).csv')
+        self.page.get_by_role('button', name='会话文件', exact=True).click()
+        self.page.get_by_role('button', name='刷新文件列表').click()
+        panel = self.page.locator('.rs-files')
+        png = b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII=')
+        for name, expected in [('input.csv', b'fruit,score\nplum,42\n'), ('input (2).csv', b'duplicate'), ('out.png', png)]:
+            with self.page.expect_download() as file:
+                panel.get_by_role('link', name=name, exact=True).click()
+            self.assertEqual(Path(file.value.path()).read_bytes(), expected)
         fork = self.post('/research/sessions/' + value['id'] + '/fork', {'turnId': value['turns'][0]['id']})
         self.assertFalse(fork['fork']['copiedWorktree'])
         files = self.context.request.get(self.origin + '/api/factory/research/sessions/' + fork['id'] + '/files')

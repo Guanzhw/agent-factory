@@ -35,17 +35,26 @@ def install_notifications(store):
                 'recipient', row->>'recipient_id', 'session', row->>'session_id',
                 'type', row->>'type')::text);
             RETURN NULL; END $$''')
-        native = store.native_db
-        tables = [('public', name) for name in TABLES]
-        if native is not None:
-            tables.append((native.db_schema, native.job_table_name))
-        for schema, table in tables:
-            name = sql.Identifier(schema, table).as_string()
-            # Native queue tables are initialized by the application lifespan.
-            conn.exec_driver_sql(f'DROP TRIGGER IF EXISTS af_research_changed ON {name}')
-            kind = 'job' if native is not None and table == native.job_table_name else 'application'
-            conn.exec_driver_sql(f'CREATE TRIGGER af_research_changed AFTER INSERT OR UPDATE OR DELETE ON {name} '
-                f"FOR EACH ROW EXECUTE FUNCTION af_research_changed('{kind}')")
+        installed = set(conn.exec_driver_sql("""SELECT n.nspname, c.relname FROM pg_trigger t
+            JOIN pg_class c ON t.tgrelid = c.oid JOIN pg_namespace n ON c.relnamespace = n.oid
+            WHERE t.tgname = 'af_research_changed' AND NOT t.tgisinternal""").all())
+    native = store.native_db
+    tables = [('public', name) for name in TABLES]
+    if native is not None:
+        native.ensure_jobs_table()
+        tables.append((native.db_schema, native.job_table_name))
+    for schema, table in tables:
+        if (schema, table) in installed:
+            continue
+        name = sql.Identifier(schema, table).as_string()
+        kind = 'job' if native is not None and table == native.job_table_name else 'application'
+        # Release each table's DDL lock before touching the next. Another replica may install first.
+        with store.engine.begin() as conn:
+            conn.exec_driver_sql(f"""DO $$ BEGIN
+                CREATE TRIGGER af_research_changed AFTER INSERT OR UPDATE OR DELETE ON {name}
+                FOR EACH ROW EXECUTE FUNCTION af_research_changed('{kind}');
+                EXCEPTION WHEN duplicate_object THEN NULL; END $$""")
+
 
 
 @asynccontextmanager

@@ -98,8 +98,13 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             if not results:
                 tool, arguments = 'write_file', {'file_path': 'ordered.txt', 'contents': '顺序工具结果'}
             reply = '顺序验收最终回答。'
+        elif user_text == 'within-turn-private-correction':
+            reply = 'derived-source-marker: Shared evidence says source-secret-marker.'
         elif user_text.startswith('共享资料验收:'):
             if not results:
+                if pause := getattr(self.server, 'before_evidence', None):
+                    pause[0].set()
+                    pause[1].wait(30)
                 tool, arguments = 'research_read_shared_evidence', {'content_id': user_text.split(':', 1)[1]}
             reply = 'derived-source-marker: Shared evidence says source-secret-marker.'
         elif '独立文件继续' in user_text:
@@ -175,7 +180,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             steps = [('demo_cli', {'arguments': {'mode': 'fail'}}), ('demo_cli', {'arguments': {'mode': 'ok'}}), ('ssh_servers', {}),
                      ('write_file', {'file_path': '结果.txt', 'contents': DOCUMENT}),
                      ('edit_file', {'file_path': '结果.txt', 'old_text': '状态：初稿', 'new_text': '状态：已复核'}),
-                     ('research_delegate', {'goal': 'child-only'})]
+                     ('research_delegate', {'goal': 'child-only', 'handoff': 'Read the selected result from the parent.'})]
             if len(results) < len(steps):
                 tool, arguments = steps[len(results)]
             elif len(results) == len(steps):
@@ -420,7 +425,14 @@ class ChatJourney(unittest.TestCase):
         self.send('摘要故障前的背景')
         early = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
         self.post('/research/sessions/' + early['id'] + '/corrections', {'text': 'independent-private-correction'})
-        self.post('/research/sessions/' + early['id'] + '/turns', {'text': '共享资料验收:' + source['id']})
+        ready, release = threading.Event(), threading.Event()
+        with patch.object(self.model, 'before_evidence', (ready, release), create=True):
+            try:
+                self.post('/research/sessions/' + early['id'] + '/turns', {'text': '共享资料验收:' + source['id']})
+                self.assertTrue(ready.wait(15))
+                self.post('/research/sessions/' + early['id'] + '/corrections', {'text': 'within-turn-private-correction'})
+            finally:
+                release.set()
         completed = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
         self.assertIn('derived-source-marker', completed['turns'][-1]['result'])
         service = self.state['research_sessions']
@@ -450,6 +462,7 @@ class ChatJourney(unittest.TestCase):
         continued = self.wait_for(lambda value: len(value['turns']) == 3 and value['turns'][-1]['status'] == 'completed')
         sent = json.dumps(self.model.requests[requests_before:], ensure_ascii=False)
         self.assertIn('independent-private-correction', sent)
+        self.assertIn('within-turn-private-correction', sent)
         for marker in ('source-secret-marker', 'derived-source-marker', 'source-correction-marker', 'source-summary-marker'):
             self.assertNotIn(marker, sent)
         self.assertIn('summary-history-answer-marker', sent)
@@ -465,7 +478,9 @@ class ChatJourney(unittest.TestCase):
             turns = service._turns(conn, row['id'])
             self.assertIsNone(row['body'].get('contextCheckpoint'))
             self.assertEqual([item['id'] for item in session_context.active_turns(row, turns)],
-                             [early['turns'][0]['id'], continued['turns'][-1]['id']])
+                             [turn['id'] for turn in continued['turns']])
+            self.assertTrue(session_context.active_turns(row, turns)[1]['correctionsOnly'])
+            self.assertIn('derived-source-marker', turns[1]['body']['result'])
         with self.assertRaises(HTTPException):
             content.read(self.owner, source['id'])
 
@@ -806,6 +821,10 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(len(turn['children']), 1)
         self.assertEqual(turn['children'][0]['status'], 'completed')
         self.assertIn('子助手已完成', turn['children'][0]['result'])
+        child_prompts = [message['content'] for req in self.model.requests for message in req['messages']
+                         if message['role'] == 'system' and '"goal": "child-only"' in message['content']]
+        self.assertTrue(any('Read the selected result from the parent.' in prompt for prompt in child_prompts))
+
         edits = [e for e in turn['events'] if e['type'] == 'tool_finished'
                  and e['data'].get('toolName') in {'write_file', 'edit_file'}]
         self.assertTrue(edits, turn['events'])

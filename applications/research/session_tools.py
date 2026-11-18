@@ -211,7 +211,7 @@ class ResearchSessionTools:
                     specialized.add('research_route_discovery')
         names = [name for name in self.available_tools if name in TOOLS and (
             name not in {'research_git_comment', 'research_route_discovery'} or name in specialized)]
-        functions = [self._function(self.sessions.store, context, name) for name in names]
+        functions = [self._function(self.sessions.store, context, task['id'], name) for name in names]
         if self.workspace_root is not None:
             functions.extend(self.coding(context).get_async_functions().values())
         return functions
@@ -229,9 +229,8 @@ class ResearchSessionTools:
         workspace.mkdir(parents=True, exist_ok=True)
         return workspace
 
-    def _function(self, store, expected, name):
+    def _function(self, store, expected, task_id, name):
         identity = (expected.user_id, expected.session_id, expected.run_id)
-        task_id = store.task_for_context(expected)['id']
 
         async def invoke(*, run_context, fc, **arguments):
             if (self.sessions is None or not isinstance(fc, FunctionCall) or not isinstance(fc.call_id, str)

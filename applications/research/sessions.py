@@ -89,6 +89,10 @@ class ResearchSessions:
         return list(conn.execute(select(self.turns).where(self.turns.c.session_id == identifier)
                                  .order_by(self.turns.c.sequence)).mappings())
 
+    def _latest_turn_id(self, conn, session_id):
+        return conn.execute(select(self.turns.c.id).where(self.turns.c.session_id == session_id)
+                            .order_by(self.turns.c.sequence.desc()).limit(1)).scalar_one_or_none()
+
     def _save_session(self, conn, row, body):
         body = {**body, 'updatedAt': now()}
         conn.execute(self.sessions.update().where(self.sessions.c.id == row['id']).values(body=body))
@@ -204,11 +208,12 @@ class ResearchSessions:
                                 'RESEARCH_SOURCE_UNAVAILABLE', 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'}:
                             raise
                         break
-                    retained.append(turn['sequence'])
+                    if not turn.get('correctionsOnly'):
+                        retained.append(turn['sequence'])
                     retained_sources.update(sources)
             body = {**row['body'], 'sharedSourceIds': sorted(retained_sources), 'retainedSequences': retained,
                     'contextAfterSequence': turns[-1]['sequence'] if turns else 0,
-                    'contextNotice': '旧共享来源或助手回答已不可用。后续对话保留可确认独立的早期轮次，原聊天记录仍保留。'}
+                    'contextNotice': '旧共享来源或助手回答已不可用。后续对话保留独立的早期轮次和接触共享资料前提交的纠正，原聊天记录仍保留。'}
             body.pop('contextCheckpoint', None)
             return {**row, 'body': body}
         return row
@@ -571,7 +576,13 @@ class ResearchSessions:
                 raise rejected('RESEARCH_CORRECTION_UNAVAILABLE', '当前没有可接收纠正的研究轮次。')
             turn = turns[-1]
             body = deepcopy(turn['body'])
-            body['messages'].append(self._message('correction', request.text))
+            note = self._message('correction', request.text)
+            if row['body'].get('sharedSourceIds') == [] and all(
+                not any(t['body'].get(k) for k in ('assistantReply', 'assistantReplies', 'sharedSourceIds'))
+                for t in session_context.active_turns(row, turns)
+            ):
+                note['beforeSharedInput'] = True
+            body['messages'].append(note)
             self._save_turn(conn, turn, body)
             self._save_session(conn, row, row['body'])
             self._command(conn, owner, request.requestId, fingerprint, 'correct', identifier, turn['id'])
@@ -648,8 +659,7 @@ class ResearchSessions:
             fingerprint = original[0]['fingerprint'] if len(original) == 1 else None
         if fingerprint != turn['body']['startFingerprint']:
             raise PermissionError('RESEARCH_SESSION_ADMISSION_PAYLOAD_MISMATCH')
-        latest = self._turns(conn, row['id'])[-1]
-        if (latest['id'] != turn['id'] or row['body']['stopped']
+        if (self._latest_turn_id(conn, row['id']) != turn['id'] or row['body']['stopped']
                 or task['cancel_requested'] or original_task['cancel_requested']):
             raise RunCancelledException('RESEARCH_SESSION_STOP_REQUESTED')
         if turn['body'].get('blockReason'):
@@ -814,6 +824,8 @@ class ResearchSessions:
                         messages.append(item)
                         known.add(item.id)
                 for previous in turns:
+                    if previous.get('correctionsOnly'):
+                        continue
                     body = deepcopy(previous['body'])
                     for item in body['messages']:
                         if item['kind'] == 'instruction' or item['id'] in known:
@@ -893,7 +905,7 @@ class ResearchSessions:
                 self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).mappings().first()
             if turn is not None:
                 row = self._row(conn, task['owner_id'], turn['session_id'])
-                if self._turns(conn, row['id'])[-1]['id'] == turn['id']:
+                if self._latest_turn_id(conn, row['id']) == turn['id']:
                     if (reason == 'native-failure' and self.collaboration is not None
                             and self.collaboration.retain_after_native_failure(conn, row, turn, task)):
                         return

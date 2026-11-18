@@ -52,7 +52,7 @@ class ResearchQA:
     def functions(self, context):
         @tool(name='research_qa_context')
         async def read_shared_sources(offset: int | None = None, source_id: str | None = None, query: str | None = None):
-            """Search team evidence. Optionally rephrase query. Use nextOffset with the same query or read a returned source_id in full."""
+            """Search team evidence. Optionally rephrase query. Use nextOffset with the same query or read a known source_id in full."""
             return await asyncio.to_thread(self.context, context, offset or 0, source_id, query)
 
         @tool(name='research_qa_record')
@@ -181,11 +181,13 @@ class ResearchQA:
                 for identifier in previous:
                     self._source(message, identifier)
             if source_id is not None:
-                if source_id not in previous:
-                    raise HTTPException(422, 'RESEARCH_QA_UNKNOWN_CITATION')
-                return {'source': self._source(message, source_id)}
-            page, search = self._page(conn, ctx.session_id, message, query or message['text'], offset)
-            dependencies = list(dict.fromkeys([*previous, *(source['id'] for source in page)]))
+                result = {'source': self._source(message, source_id)}
+                received = [source_id]
+            else:
+                page, search = self._page(conn, ctx.session_id, message, query or message['text'], offset)
+                result = {'question': message['text'], 'sources': page, 'search': search}
+                received = [source['id'] for source in page]
+            dependencies = list(dict.fromkeys([*previous, *received]))
             if row is None:
                 conn.execute(self.inputs.insert().values(task_id=ctx.session_id, owner_id=ctx.user_id,
                     run_id=ctx.run_id, message_id=message['messageId'], configuration=config,
@@ -193,7 +195,7 @@ class ResearchQA:
             elif dependencies != previous:
                 conn.execute(self.inputs.update().where(self.inputs.c.task_id == ctx.session_id)
                              .values(content_ids=dependencies))
-            return {'question': message['text'], 'sources': page, 'search': search}
+            return result
 
     @staticmethod
     def _match(row, ctx, message, config):

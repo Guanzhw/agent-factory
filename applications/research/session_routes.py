@@ -15,7 +15,7 @@ from starlette.background import BackgroundTask
 from agent_factory.application_content import ObjectId
 from .projects import Reference, RequestId
 from .session_triggers import CreateTrigger
-from .session_stream import SessionNotifications, install_notifications, session_updates
+from .session_stream import SessionNotifications, session_updates
 from .session_files import _directory, _open_file, _windows_path, _workspace_parts, receive_file
 
 
@@ -64,8 +64,6 @@ class ForkSession(SessionCommand):
 
 def session_router(auth, service):
     router = APIRouter(prefix='/api/factory/research/sessions')
-    initialized = False
-    initialize_lock = asyncio.Lock()
     subscriptions = SessionNotifications(service.store)
 
     @router.get('/options')
@@ -98,12 +96,7 @@ def session_router(auth, service):
 
     @router.get('/{identifier}/events')
     async def events(request: Request, identifier: str):
-        nonlocal initialized
         owner = auth.request_owner(request)
-        async with initialize_lock:
-            if not initialized:
-                await asyncio.to_thread(install_notifications, service.store)
-                initialized = True
         resources = AsyncExitStack()
         try:
             notifications = await resources.enter_async_context(subscriptions.subscribe())
@@ -127,12 +120,10 @@ def session_router(auth, service):
     def upload(request: Request, identifier: str, file: UploadFile):
         workspace = service.workspace(auth.request_owner(request), identifier)
         try:
-            receive_file(workspace, file.filename or '', file.file)
-        except FileExistsError:
-            raise HTTPException(409, '同名文件已存在，请核对会话文件或更名后上传。') from None
+            name = receive_file(workspace, file.filename or '', file.file)
         except ValueError:
             raise HTTPException(422, '请选择具有有效文件名的文件。') from None
-        return {'path': file.filename, 'size': file.size}
+        return {'path': name, 'size': file.size}
 
     @router.get('/{identifier}/files')
     def files(request: Request, identifier: str, directory: str | None = None):

@@ -33,6 +33,8 @@ class SharedSearch(unittest.TestCase):
                    'senderId': 'alice', 'recipientId': 'bob'}
         qa._original = lambda ctx: (message, {})
         ctx = SimpleNamespace(user_id='bob', session_id='task', run_id='run')
+        self.assertEqual(qa.context(ctx, source_id='42')['source']['id'], '42')
+        self.assertEqual(scans, [])
         result = qa.context(ctx)
         self.assertEqual(result['search']['total'], 149)
         seen = set()
