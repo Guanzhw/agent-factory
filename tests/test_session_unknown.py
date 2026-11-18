@@ -31,7 +31,8 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
         self.session._write = lambda: nullcontext(self.conn)
         self.session.turns = Table('turns', MetaData(), Column('id', String), Column('body', JSON))
         self.session._row = Mock(return_value={'id': 'session', 'body': {'sharedSourceIds': []}})
-        self.session._turns = Mock(return_value=[self.turn])
+        self.session._turns = lambda conn, session, unfinished_only=False: (
+            [] if unfinished_only and self.turn['body']['terminal'] else [self.turn])
         self.session._task = Mock(return_value=self.task)
         self.session.memory = SimpleNamespace(observe=Mock())
         self.session.subagents = SimpleNamespace(children=AsyncMock(return_value=[]),

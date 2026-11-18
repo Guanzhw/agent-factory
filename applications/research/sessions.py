@@ -85,9 +85,11 @@ class ResearchSessions:
             raise rejected('RESEARCH_SESSION_NOT_FOUND', '未找到研究会话。', 404)
         return row
 
-    def _turns(self, conn, identifier):
-        return list(conn.execute(select(self.turns).where(self.turns.c.session_id == identifier)
-                                 .order_by(self.turns.c.sequence)).mappings())
+    def _turns(self, conn, identifier, *, unfinished_only=False):
+        query = select(self.turns).where(self.turns.c.session_id == identifier)
+        if unfinished_only:
+            query = query.where(self.turns.c.body['terminal'].as_boolean().is_not(True))
+        return conn.execute(query.order_by(self.turns.c.sequence)).mappings().all()
 
     def _latest_turn_id(self, conn, session_id):
         return conn.execute(select(self.turns.c.id).where(self.turns.c.session_id == session_id)
@@ -340,9 +342,7 @@ class ResearchSessions:
         observations = {}
         with self.db.read() as conn:
             self._row(conn, owner, identifier)
-            turns = conn.execute(select(self.turns).where(self.turns.c.session_id == identifier,
-                self.turns.c.body['terminal'].as_boolean().is_not(True))
-                .order_by(self.turns.c.sequence)).mappings().all()
+            turns = self._turns(conn, identifier, unfinished_only=True)
         for turn in turns:
             task = await asyncio.to_thread(self._task, owner, turn)
             if task is None:
