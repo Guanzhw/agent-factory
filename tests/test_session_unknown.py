@@ -31,7 +31,8 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
         self.session._write = lambda: nullcontext(self.conn)
         self.session.turns = Table('turns', MetaData(), Column('id', String), Column('body', JSON))
         self.session._row = Mock(return_value={'id': 'session', 'body': {'sharedSourceIds': []}})
-        self.session._turns = Mock(return_value=[self.turn])
+        self.session._turns = lambda conn, session, unfinished_only=False: (
+            [] if unfinished_only and self.turn['body']['terminal'] else [self.turn])
         self.session._task = Mock(return_value=self.task)
         self.session.memory = SimpleNamespace(observe=Mock())
         self.session.subagents = SimpleNamespace(children=AsyncMock(return_value=[]),
@@ -46,7 +47,7 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
             'messages': [{'role': 'assistant', 'content': 'Finished; command outcome remains unknown.'}]}
         self.session.runs = SimpleNamespace(factory=SimpleNamespace(
             bridge=SimpleNamespace(native_db=SimpleNamespace(get_job=Mock(return_value=self.ticket))),
-            detail=AsyncMock(return_value={'job': {'status': 'finalizing'}, 'events': [],
+            observe_task=AsyncMock(return_value={'task': self.task, 'status': 'finalizing', 'events': [],
                 'snapshot': {'queue': self.ticket, 'run': run, 'effects': [self.effect]}})))
 
     async def test_other_applications_do_not_enter_research_session_callbacks(self):
@@ -158,7 +159,7 @@ class SessionUnknown(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual([item[2] for item in required], [earlier != 'failed', True])
                 self.assertEqual(ResearchSessions.retry_operations([finish, start]), [(start['data'], None)])
                 self.turn['body'].update(terminal=False, blockReason='RESEARCH_RESTART_REQUIRES_RECONCILIATION')
-                self.session.runs.factory.detail.return_value['events'] = events
-                self.session.runs.factory.detail.return_value['snapshot']['effects'] = []
+                self.session.runs.factory.observe_task.return_value['events'] = events
+                self.session.runs.factory.observe_task.return_value['snapshot']['effects'] = []
                 await self.session._refresh('owner', 'session')
                 self.assertEqual(self.turn['body']['status'], 'unknown')

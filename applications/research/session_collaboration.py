@@ -426,7 +426,7 @@ class ResearchCollaboration:
             service._save_turn(conn, target, {**target['body'], 'dispatchStarted': True})
         if start is not None:
             try:
-                await service.runs.start(owner, start, private_event_id=event_id)
+                await service.runs.submit(owner, start, private_event_id=event_id)
             except HTTPException as error:
                 # A failed later attempt cannot prove that an earlier dispatch never happened.
                 detail = error.detail

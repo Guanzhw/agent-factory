@@ -84,15 +84,16 @@ $env:FACTORY_TLS_KEY = Read-Host '输入私钥文件的绝对路径'
 
 首次启动会在 `FACTORY_WORKSPACE/runtime/credential-vault.key` 创建凭据加密密钥。把该文件与数据库一起备份，并在重启时保留它。只有数据库备份无法恢复已加密的模型和工具凭据。
 
-如果还没有本地成员，在应用停止时创建一个新成员：
+全新数据库先在本机运行 `uv run agent-factory local`。向导会提示输入首位本地成员 ID，并在隐藏提示中输入、确认密码。这个账号具有账号管理员权限。服务启动后可用它登录，在「团队账号管理」创建其他成员。若之后要改用团队域名，在停止本机服务后，按下文配置对应的 HTTPS 入口。
+
+已有管理员可以在「团队账号管理」为已有成员设密或换密。此前使用外部身份登录的成员沿用原 ID。如果唯一管理员还没有本地密码，在连接原数据库的服务主机执行以下命令。它保留账号角色、启停状态及所有者 ID；换密会撤销该账号已有的浏览器会话。
 
 ```powershell
-$member = Read-Host '输入新的成员 ID'
-uv run agent-factory-local-user $member
-if ($LASTEXITCODE) { throw '账号创建未完成，先核对实际状态' }
+$member = Read-Host '输入已有管理员 ID'
+uv run agent-factory-local-user --reset $member
 ```
 
-在隐藏提示中输入并确认 12–128 字符密码。该命令创建普通成员，不覆盖已有身份或重置密码。命令中断后，先核对记录，不要删除旧数据来重试。已有成员跳过此步。
+服务主机也可使用 `uv run agent-factory-local-user 新成员ID` 交互创建普通成员。
 
 ## 启用本地文件与命令
 
@@ -128,7 +129,7 @@ uv run python -m uvicorn agent_factory_server.research:create_app --factory `
 
 看到应用启动完成后，打开 `https://127.0.0.1:3100`，用已创建的成员登录。进入 **工作** 后，按[研究会话指南](PERSONAL_RESEARCH_SESSIONS.md)配置自己的模型并提交一个小任务。
 
-`npm start` 和 `uv run agent-factory` 是 HTTP 启动入口，适用于已有 HTTPS 反向代理的部署；它们不能替代上述直接 HTTPS 登录命令。组织 OIDC 的装配方式见[浏览器身份契约](BROWSER_AUTH_PROCESS_ENFORCEMENT.md)。
+团队域名部署时，将 `FACTORY_LOCAL_LOGIN_ORIGIN` 设为成员实际访问的 HTTPS 地址（包括非默认端口）。使用 `npm start` 或 `uv run agent-factory` 的 HTTP 入口时，由受信任的 HTTPS 反向代理提供该地址，并让应用识别 HTTPS 请求。
 
 配置保存成功不等于模型已可用。先通过一个小任务核对真实模型响应、工具退出状态和产物，再扩大任务范围。
 

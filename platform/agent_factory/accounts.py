@@ -4,9 +4,9 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, field_validator
 
-from .auth import ACCOUNT_ADMIN_ROLE, ACCOUNT_MIGRATION_KEY, AuthService
+from .auth import ACCOUNT_ADMIN_ROLE, AuthService
 
 
 class AccountCreate(BaseModel):
@@ -24,6 +24,14 @@ class AccountCreate(BaseModel):
         return value
 
 
+class MemberCreate(AccountCreate):
+    password: SecretStr = Field(min_length=1)
+
+
+class PasswordReset(BaseModel):
+    password: SecretStr = Field(min_length=1)
+
+
 class AccountUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     name: str | None = Field(default=None, min_length=1, max_length=200)
@@ -39,7 +47,7 @@ class AccountUpdate(BaseModel):
         return value
 
 
-def account_router(auth: AuthService) -> APIRouter:
+def account_router(auth: AuthService, passwords) -> APIRouter:
     router = APIRouter(prefix="/api/factory/accounts", tags=["Accounts"])
 
     def actor(request: Request) -> str:
@@ -47,10 +55,10 @@ def account_router(auth: AuthService) -> APIRouter:
         auth.require_account_admin(user_id)
         return user_id
 
-    def project(row: dict) -> dict:
+    def project(row: dict, roles) -> dict:
         return {"id": row["id"], "name": row.get("name") or row["id"], "email": row.get("email"),
                 "disabled": row["disabled"],
-                "accountAdmin": ACCOUNT_ADMIN_ROLE in auth.account_roles.roles_of(row["id"])}
+                "accountAdmin": ACCOUNT_ADMIN_ROLE in roles}
 
     def set_admin(user_id: str, admin: bool) -> None:
         if admin:
@@ -62,19 +70,30 @@ def account_router(auth: AuthService) -> APIRouter:
     def list_accounts(request: Request, limit: Annotated[int, Query(ge=1, le=100)] = 50,
                       offset: Annotated[int, Query(ge=0)] = 0):
         actor(request)
-        return {"accounts": [project(row) for row in auth.directory.list(limit=limit, offset=offset)],
+        rows = auth.directory.list(limit=limit, offset=offset)
+        ids = [row['id'] for row in rows]
+        roles = auth.account_roles.roles_of_many(ids)
+        return {"accounts": [project(row, roles.get(row['id'], [])) for row in rows],
                 "total": auth.directory.count()}
 
     @router.post("", status_code=201)
-    def create_account(body: AccountCreate, request: Request):
+    def create_account(body: MemberCreate, request: Request):
         operator = actor(request)
-        if auth.directory.get(body.id) is not None:
-            raise HTTPException(409, "Account already exists")
-        row = auth.directory.upsert(body.id, name=body.name, email=body.email,
-                                    metadata={ACCOUNT_MIGRATION_KEY: True}, actor=operator)
-        if body.accountAdmin:
-            set_admin(body.id, True)
-        return project(row)
+        try:
+            row = passwords.create_member(body.id, body.password.get_secret_value(), name=body.name,
+                email=body.email, actor=operator, admin=body.accountAdmin)
+        except ValueError:
+            raise HTTPException(409, "成员标识已存在，请使用其他标识。") from None
+        return project(row, auth.account_roles.roles_of(body.id))
+
+    @router.put("/{user_id}/password")
+    def reset_password(user_id: str, body: PasswordReset, request: Request):
+        actor(request)
+        try:
+            passwords.reset(user_id, body.password.get_secret_value())
+        except ValueError:
+            raise HTTPException(404, "未找到成员账号。") from None
+        return {"updated": True}
 
     @router.patch("/{user_id}")
     def update_account(user_id: str, body: AccountUpdate, request: Request):
@@ -89,6 +108,6 @@ def account_router(auth: AuthService) -> APIRouter:
             set_admin(user_id, bool(body.accountAdmin))
         if "disabled" in fields:
             row = auth.directory.set_disabled(user_id, bool(body.disabled), actor=operator)
-        return project(row)
+        return project(row, auth.account_roles.roles_of(row["id"]))
 
     return router

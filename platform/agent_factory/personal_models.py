@@ -6,20 +6,23 @@ owner, protocol, TLS destination and credential revision; stale plans fail close
 from __future__ import annotations
 
 import asyncio
+import re
 from uuid import uuid4
 from typing import Literal
 
+from agno.exceptions import ModelProviderError
+from agno.models.message import Message
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-from sqlalchemy import Column, JSON, MetaData, String, Table, or_, select
+from sqlalchemy import Column, JSON, MetaData, String, Table, and_, func, or_, select
 
 from .applications import GovernedStorage
 from .byok_model import ADAPTER_ID, CAPABILITY, PROVIDER_ID, OwnerChatModel
 from .connections import TrustedConnectionBinding
-from .credential_vault import CredentialVaultError
+from .credential_vault import CredentialVaultError, EncryptedCredentialVault
 from .model_endpoint_policy import ADDITIONAL_BASE_URLS, base_url, generation_options, max_output_tokens, model_id, model_origin
 from .model_protocol import protocol_name
 from .store import digest, now
@@ -53,9 +56,14 @@ class PersonalModels:
             'platformBillingEnabled': False, 'hardExternalBudgetEnforced': False,
             'liveCompatibilityVerified': False}
 
-    def _authorize(self, owner, body):
+    def _credential_scope(self, owner, body):
+        return owner, body['credentialRef'], body['credentialRevision'], PROVIDER_ID, model_origin(body['baseURL'])
+
+    def _authorize(self, owner, body, authorized_scopes=None):
         if body.get('credentialRef') is None:
             return body.get('credentialRevision') is None
+        if authorized_scopes is not None:
+            return self._credential_scope(owner, body) in authorized_scopes
         return self.vault is not None and self.vault.authorize(owner=owner,
             reference=body['credentialRef'], revision=body['credentialRevision'],
             provider_id=PROVIDER_ID, destination=model_origin(body['baseURL']))
@@ -67,35 +75,96 @@ class PersonalModels:
         row = conn.execute(query).mappings().first()
         if row is None: raise HTTPException(404, 'PERSONAL_MODEL_NOT_FOUND')
         if shared: self.connections.sharing.owner(conn, owner, reference, row['owner_id'])
-        if (digest(row['body']) != row['fingerprint'] or row['body']['ownerId'] != row['owner_id']
-                or row['body']['reference'] != reference or row['body']['revision'] != row['revision']):
-            raise HTTPException(409, 'PERSONAL_MODEL_INTEGRITY')
+        self._check_row(row)
         return row
 
+    @staticmethod
+    def _check_row(row):
+        if (digest(row['body']) != row['fingerprint'] or row['body']['ownerId'] != row['owner_id']
+                or row['body']['reference'] != row['reference'] or row['body']['revision'] != row['revision']):
+            raise HTTPException(409, 'PERSONAL_MODEL_INTEGRITY')
+
+    def _visible_models(self, owner):
+        models = self.models
+        resources = self.connections.sharing.resources
+        return select(models, resources.c.visibility, self.defaults.c.reference.label('default_ref'),
+            self.shared_defaults.c.connection_ref).select_from(models
+                .outerjoin(resources, resources.c.reference == models.c.reference)
+                .outerjoin(self.defaults, self.defaults.c.owner_id == owner)
+                .outerjoin(self.shared_defaults, and_(self.shared_defaults.c.actor_id == owner,
+                    self.shared_defaults.c.reference == models.c.reference))
+            ).where(or_(models.c.owner_id == owner, resources.c.visibility == 'team'))
+
     def _public(self, conn, owner, reference):
-        row = self._row(conn, owner, reference, shared=True)
-        default = conn.execute(select(self.defaults.c.reference).where(self.defaults.c.owner_id == owner)).scalar()
-        status = 'revoked' if row['state'] == 'REVOKED' else 'configured' if self._authorize(row['owner_id'], row['body']) else 'credential_unavailable'
+        row = conn.execute(self._visible_models(owner).where(self.models.c.reference == reference)).mappings().first()
+        if row is None:
+            raise HTTPException(404, 'PERSONAL_MODEL_NOT_FOUND')
+        self._check_row(row)
+        return self._project(conn, owner, row)
+
+    def _project(self, conn, owner, row, authorized_scopes=None):
+        status = 'revoked' if row['state'] == 'REVOKED' else 'configured' if self._authorize(row['owner_id'], row['body'], authorized_scopes) else 'credential_unavailable'
         body = dict(row['body'])
         default_binding_current = True
         if row['owner_id'] != owner:
             body = {key: body[key] for key in ('ownerId', 'reference', 'revision', 'updatedAt', 'provider', 'baseURL', 'model', 'protocol', 'thinkingMode', 'maxOutputTokens', 'contextWindow', 'autoCompactTokenLimit') if key in body}
-            binding = conn.execute(select(self.shared_defaults).where(self.shared_defaults.c.actor_id == owner,
-                self.shared_defaults.c.reference == reference)).mappings().first()
-            if binding:
-                body['connectionRef'] = binding['connection_ref']
-                alias = self.connections._row(conn, owner, binding['connection_ref'])
+            if row['connection_ref']:
+                body['connectionRef'] = row['connection_ref']
+                alias = self.connections._row(conn, owner, row['connection_ref'])
                 default_binding_current = alias['state'] == 'ACTIVE' and alias['body']['revision'] == row['revision']
-        return {**body, **self.connections.sharing.projection(conn, owner, reference, row['owner_id']),
-            'status': status, 'isDefault': default == reference and default_binding_current, 'available': status == 'configured',
+        return {**body, 'ownerId': row['owner_id'], 'visibility': row['visibility'] or 'personal',
+            'isOwner': owner == row['owner_id'], 'status': status, 'available': status == 'configured',
+            'isDefault': row['default_ref'] == row['reference'] and default_binding_current,
             'hardExternalBudgetEnforced': False}
 
     def list(self, owner):
         self.auth.require_member(owner)
         with self.db.read() as conn:
-            refs = conn.execute(select(self.models.c.reference).where(or_(self.models.c.owner_id == owner,
-                self.models.c.reference.in_(self.connections.sharing.visible_refs(conn, owner))))).scalars()
-            return [self._public(conn, owner, ref) for ref in refs]
+            rows = conn.execute(self._visible_models(owner)).mappings().all()
+            if not rows:
+                return []
+            for row in rows:
+                self._check_row(row)
+            authorized = None
+            if type(self.vault) is EncryptedCredentialVault:
+                scopes = {self._credential_scope(row['owner_id'], row['body']) for row in rows
+                          if row['state'] != 'REVOKED' and row['body'].get('credentialRef') is not None}
+                try:
+                    authorized = self.vault.authorized_scopes(scopes)
+                except Exception:
+                    authorized = set()
+            records = [self._project(conn, owner, row, authorized) for row in rows]
+            result = self.commands.c.result
+            verified = {(ref, rev): stamp for ref, rev, stamp in conn.execute(select(
+                result['reference'].as_string().label('model_ref'), result['revision'].as_string().label('model_rev'), func.max(self.commands.c.created_at)
+            ).where(self.commands.c.actor_id == owner, self.commands.c.action == 'model.probe',
+                    result['status'].as_string() == 'verified').group_by('model_ref', 'model_rev'))}
+            return [{**record, 'verifiedAt': verified.get((record['reference'], record['revision']))}
+                    for record in records]
+
+    async def probe(self, owner, reference, request_id):
+        self.auth.require_member(owner)
+        intent = digest({'action': 'model.probe', 'reference': reference})
+        with self.db.write() as conn:
+            binding = self.binding(conn, owner, reference)
+            old = self.db.old(conn, self.commands, owner, request_id, intent)
+            if old is not None:
+                return old
+            handle = binding.opaque_handle
+            result = {'reference': reference, 'revision': binding.revision, 'status': 'pending'}
+            self.db.record(conn, self.commands, owner, request_id, intent, 'model.probe', result)
+        assert isinstance(handle, OwnerModelHandle)
+        model = OwnerChatModel(handle.body, handle.credential, recheck=handle.check)
+        try:
+            reply = await model.ainvoke([Message(role='user', content='Reply with OK.')])
+            result['status'] = 'verified' if reply.content else 'empty'
+        except ModelProviderError as exc:
+            status = re.fullmatch(r'PERSONAL_MODEL_HTTP_(\d{3})', str(exc))
+            result.update(status='failed', httpStatus=int(status[1]) if status else None)
+        with self.db.write() as conn:
+            conn.execute(self.commands.update().where(self.commands.c.actor_id == owner,
+                self.commands.c.request_id == request_id).values(result=result, created_at=now()))
+        return result
 
     def recover(self, owner, request_id):
         """Read the original command receipt, independently of current model state."""
@@ -220,10 +289,10 @@ class PersonalModels:
         if not isinstance(handle, OwnerModelHandle) or handle.actor != owner:
             raise HTTPException(403, 'PERSONAL_MODEL_OWNER_REQUIRED')
         async def on_text(text, response_id):
-            await asyncio.to_thread(self.store.model_delta, task['id'],
+            await asyncio.to_thread(self.store.append_model_delta, task['id'],
                 'model_content_delta', text, response_id)
         async def on_reasoning(text, response_id):
-            await asyncio.to_thread(self.store.model_delta, task['id'],
+            await asyncio.to_thread(self.store.append_model_delta, task['id'],
                 'model_reasoning_delta', text, response_id)
         configuration = {**handle.body, **({'reasoningEffort': reasoning_effort} if reasoning_effort is not None else {})}
         return OwnerChatModel(configuration, handle.credential,
@@ -327,6 +396,10 @@ def personal_model_router(auth, service):
     @router.post('/{reference}/configure')
     def rotate(reference: str, body: ConfigureModel, request: Request):
         return service.configure(owner(request), body.model_dump(exclude={'requestId'}, exclude_none=True), body.requestId, reference=reference)
+    @router.post('/{reference}/probe')
+    async def probe(reference: str, body: ModelCommand, request: Request):
+        return await service.probe(owner(request), reference, body.requestId)
+
     @router.post('/{reference}/default')
     def default(reference: str, body: ModelCommand, request: Request):
         return service.set_default(owner(request), reference, body.requestId)

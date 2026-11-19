@@ -50,7 +50,7 @@ agent-factory --user alice apply SESSION REVIEW_ID
 agent-factory --user alice fork SESSION --turn TURN_ID
 ```
 
-`diff` 输出补丁和 `REVIEW_ID`，`review` 等待该轮完成并输出结果。省略 `--turn` 时从最后一条已完成的轮次分叉。`--user` 使用本地账号并交互输入密码；配置了外部 OIDC 访问令牌的部署可用 `FACTORY_ACCESS_TOKEN`。使用其他服务地址时，在子命令前传入 `--url https://host:port`。私有 CA 可通过 `SSL_CERT_FILE` 指向受信任证书。直接运行 `agent-factory` 仍会启动服务。
+`diff` 输出补丁和 `REVIEW_ID`，`review` 等待该轮完成并输出结果。省略 `--turn` 时从最后一条已完成的轮次分叉。在子命令前传入 `--user 成员ID`，按提示输入该本地账号的密码。使用其他服务地址时，在子命令前传入 `--url https://host:port`。私有 CA 可通过 `SSL_CERT_FILE` 指向受信任证书。直接运行 `agent-factory` 仍会启动服务。
 
 ## 让助手等到事件后继续工作
 
@@ -90,6 +90,8 @@ agent-factory --user alice fork SESSION --turn TURN_ID
 ## 按需要使用协作能力
 
 需要长期偏好时，直接告诉助手要记住、纠正或忘记的内容，例如“记住：回复先给复现步骤”。在工具记录中核对实际保存结果。个人偏好属于当前成员，不会自动共享给同事。
+
+正式记录研究成果时，告诉助手选定的结论、实验条件和允许共享的证据。正式实验记录与评估默认团队可读，同事和其 Agent 能搜索、读取，只有作者可管理；无需再手动发布一次。个人会话、工作目录、草稿和未选附件仍保持私有。证据引用不会开放原始文件或日志的权限。需要保密时明确要求私有记录（`visibility: personal`）；作者仍可通过原共享接口撤回。后续评估不自动随附旧证据，且不能绕过私有或已撤回来源。既有记录保持原可见性。
 
 需要分工时，在目标中说明子任务和文件范围。助手可创建临时子助手，并在原会话中汇总结果。多人修改同一文件没有自动编辑隔离，分工时明确文件归属。
 

@@ -8,6 +8,7 @@ interface ModelMetadata {
   visibility: 'personal' | 'team';
   provider: 'openai' | 'openai-compatible'; baseURL: string; model: string;
   protocol?: ModelProtocol;
+  verifiedAt?: string;
   updatedAt: string;
   thinkingMode?: 'disabled';
   maxOutputTokens?: number;
@@ -71,6 +72,7 @@ export function ownerModel(value: unknown, owner: string): OwnerModel {
     modelEndpoint(m.baseURL);
   } catch { throw new ModelRequestError(200, 'INVALID_RESPONSE'); }
   return {
+    verifiedAt: typeof m.verifiedAt === 'string' ? m.verifiedAt : undefined,
     reference: m.reference as string, revision: m.revision as string,
     visibility: m.visibility as OwnerModel['visibility'], isOwner: m.isOwner as boolean,
     ...('connectionRef' in m ? { connectionRef: m.connectionRef as string } : {}),
@@ -106,6 +108,8 @@ export const ownerModelApi = {
         || typeof receipt.completedAt !== 'string' || !Number.isFinite(Date.parse(receipt.completedAt))) throw new ModelRequestError(200, 'INVALID_RESPONSE');
     return { ownerId: owner, requestId, action: receipt.action as OwnerModelReceipt['action'], result: ownerModel(receipt.result, owner), completedAt: receipt.completedAt };
   },
+  probe: (owner: string, reference: string) => safe<{ status: string; httpStatus?: number }>(
+    `/personal-models/${ref(reference)}/probe`, 'POST', { requestId: crypto.randomUUID() }, undefined, owner),
   configure: async (owner: string, body: ModelConfiguration, reference?: string) => ownerModel(await safe(`/personal-models${reference ? `/${ref(reference)}/configure` : ''}`, 'POST', body, undefined, owner), owner),
   default: async (owner: string, reference: string, requestId: string) => ownerModel(await safe(`/personal-models/${ref(reference)}/default`, 'POST', { requestId }, undefined, owner), owner),
   revoke: async (owner: string, reference: string, requestId: string) => ownerModel(await safe(`/personal-models/${ref(reference)}/revoke`, 'POST', { requestId }, undefined, owner), owner),

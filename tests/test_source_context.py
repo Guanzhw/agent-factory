@@ -15,7 +15,7 @@ from research.sessions import ResearchSessions
 class SourceContext(unittest.TestCase):
     def test_automatic_continuation_and_later_summary_drop_unavailable_history(self):
         service = object.__new__(ResearchSessions)
-        service.content = SimpleNamespace(read=Mock())
+        service.content = SimpleNamespace(readable_ids=Mock())
         def validate(owner, session, reply):
             if reply['questionId'] == 'old':
                 raise HTTPException(404, 'unavailable')
@@ -59,7 +59,7 @@ class SourceContext(unittest.TestCase):
 
     def test_source_service_failure_is_not_treated_as_revocation(self):
         service = object.__new__(ResearchSessions)
-        service.content = SimpleNamespace(read=Mock(side_effect=HTTPException(503, 'temporarily unavailable')))
+        service.content = SimpleNamespace(readable_ids=Mock(side_effect=HTTPException(503, 'temporarily unavailable')))
         row = {'id': 'session', 'owner_id': 'owner', 'body': {'sharedSourceIds': ['source']}}
         with self.assertRaises(HTTPException) as raised:
             service._continuation_context(row, [])

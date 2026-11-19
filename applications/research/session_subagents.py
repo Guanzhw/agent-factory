@@ -34,12 +34,13 @@ class ResearchSubagents:
             raise PermissionError('RESEARCH_CHILD_ORIGINAL_ROOT_REQUIRED')
         return self.store.task(link['root_id'], owner)
 
-    async def start(self, context, call_id, goal):
+    async def start(self, context, call_id, goal, handoff=None):
         self.sessions.authorize_tool(context, SPAWN)
         with self.sessions.db.read() as conn:
             row, turn, task = self.sessions._execution(conn, context)
         inputs = {'sessionId': row['id'], 'turnId': turn['id'], 'sessionContext': json.dumps({
-            'goal': row['body']['goal'], 'boundaries': row['body']['boundaries'], 'subtask': goal})}
+            'goal': row['body']['goal'], 'boundaries': row['body']['boundaries'], 'subtask': goal,
+            **({'handoff': handoff} if handoff else {})})}
         configuration = turn['body'].get('configuration', row['body']['configuration'])
         if 'reasoningEffort' in configuration['model']:
             inputs['reasoningEffort'] = configuration['model']['reasoningEffort']

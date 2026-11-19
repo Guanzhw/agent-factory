@@ -8,10 +8,10 @@ The product has no persona login, demo cookie, built-in mock OIDC, automatic syn
 
 1. Keep the old service stopped. Do not restart old `scripts/dev.py`, development-login or prototype commands.
 2. Preserve the existing database, workspace and paired vault key; do not delete or relabel a demo database. Updating code does not authorize data deletion or migration of synthetic users into real identities.
-3. Update to the exact reviewed merge, install frozen dependencies, and rebuild the selected frontend (`npm run build` for core; `npm run build:research` when explicitly installing Research). Replace the old build output rather than serving old assets alongside it.
-4. Configure the existing database and signing key through the operator's secure configuration, then explicitly choose [local password or OIDC login](WINDOWS_LOCAL_START.md). No key, account or identity provider is automatically created for login. Missing configuration remains a closed state, not a reason to restore demo.
-5. Local function checks can use newly created ordinary members and HTTPS password login. The separate external OIDC path still needs trusted deployment composition: pinned HTTPS public client, S256 PKCE, exact callback, public verification keys and existing-member mappings. See [browser authentication](BROWSER_AUTH_PROCESS_ENFORCEMENT.md) and [external bearer identity](RESOURCE_IDENTITY_INTEGRATION.md); no confidential-client secret or discovery is invented.
-6. Verify sign-in, exact deep-link return, refresh, logout/relogin and current member permissions for the selected method. Local password or test OIDC results do not certify the organization provider; its external acceptance still requires the actual service.
+3. Install the frozen dependencies and rebuild the frontend with `npm ci` and `npm run build`.
+4. Start with the original database, workspace and signing key. Set `FACTORY_LOCAL_LOGIN_ORIGIN` to the HTTPS address the team uses. [Deployment instructions](WINDOWS_LOCAL_START.md)
+5. Set a local password on each existing member ID that previously used an external provider. If the administrator needs a password to sign in, run `uv run agent-factory-local-user --reset MEMBER_ID` on the service host with the original database configuration. [Account migration](TEAM_MEMBERSHIP.md)
+6. Verify sign-in, return to the original deep link, refresh, logout and the member's access to their existing work.
 
 ## Data boundary
 

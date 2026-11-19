@@ -47,7 +47,8 @@ class ResearchSessionSetup:
     def prepare(self, owner, model_ref, reasoning_effort=None):
         options = self.options(owner)
         if not options['available']:
-            raise rejected(options['unavailableCode'], '请先配置可用模型。')
+            raise HTTPException(409, {'code': options['unavailableCode'], 'message': '请先配置可用模型。'},
+                                headers={'X-Factory-Command-Rejected': 'true'})
         model = next((item for item in options['models'] if item.get('connectionRef') == model_ref and item.get('available')), None)
         if model is None:
             raise rejected('RESEARCH_MODEL_UNAVAILABLE', '所选模型连接当前不可用。')

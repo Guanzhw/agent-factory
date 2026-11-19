@@ -22,10 +22,13 @@ class ResourceSharing:
             Column('visibility', String, nullable=False))
         metadata.create_all(store.engine)
 
+    def create(self, conn, owner, reference, visibility):
+        conn.execute(self.resources.insert().values(reference=reference, owner_id=owner, visibility=visibility))
+
     def register(self, conn, owner, reference):
         row = conn.execute(select(self.resources).where(self.resources.c.reference == reference)).mappings().first()
         if row is None:
-            conn.execute(self.resources.insert().values(reference=reference, owner_id=owner, visibility='personal'))
+            self.create(conn, owner, reference, 'personal')
         elif row['owner_id'] != owner:
             raise HTTPException(409, 'RESOURCE_OWNER_CHANGED')
 

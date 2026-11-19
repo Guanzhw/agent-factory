@@ -14,8 +14,10 @@ from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 from agno.utils.tokens import count_tokens
 from fastapi import HTTPException
-from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, select, text
+from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, case, select, text, tuple_
 
+from agent_factory.auth import EXECUTOR_ID
+from agent_factory.native_bridge import session_for_run
 from agent_factory.application_interface import ApplicationStart
 from agent_factory.application_runs import StartNotSubmitted, factory_request_id
 from agent_factory.applications import GovernedStorage
@@ -59,6 +61,10 @@ class ResearchSessions:
             UniqueConstraint('session_id', 'sequence'))
         self.commands = self.db.command_table('research_session_commands', metadata)
         metadata.create_all(store.engine)
+        if store.engine.dialect.name == 'postgresql':
+            with store.engine.begin() as conn:
+                conn.exec_driver_sql("""CREATE INDEX IF NOT EXISTS research_sessions_owner_recent
+                    ON research_sessions (owner_id, (body->>'updatedAt') DESC, id DESC)""")
         store.research_sessions = self
 
     @contextmanager
@@ -81,9 +87,15 @@ class ResearchSessions:
             raise rejected('RESEARCH_SESSION_NOT_FOUND', '未找到研究会话。', 404)
         return row
 
-    def _turns(self, conn, identifier):
-        return list(conn.execute(select(self.turns).where(self.turns.c.session_id == identifier)
-                                 .order_by(self.turns.c.sequence)).mappings())
+    def _turns(self, conn, identifier, *, unfinished_only=False):
+        query = select(self.turns).where(self.turns.c.session_id == identifier)
+        if unfinished_only:
+            query = query.where(self.turns.c.body['terminal'].as_boolean().is_not(True))
+        return conn.execute(query.order_by(self.turns.c.sequence)).mappings().all()
+
+    def _latest_turn_id(self, conn, session_id):
+        return conn.execute(select(self.turns.c.id).where(self.turns.c.session_id == session_id)
+                            .order_by(self.turns.c.sequence.desc()).limit(1)).scalar_one_or_none()
 
     def _save_session(self, conn, row, body):
         body = {**body, 'updatedAt': now()}
@@ -138,22 +150,30 @@ class ResearchSessions:
 
     def _history_native(self, owner, turn):
         run_id = turn['body'].get('runId')
-        native = self.runs.factory.bridge.native_db.get_run(run_id) if run_id else None
-        if native is not None:
-            prior_task = self._task(owner, turn)
-            if (prior_task is None or native.user_id != owner
-                    or native.session_id != self.store.native_session_id(prior_task)):
+        if not run_id:
+            return None
+        db = self.runs.factory.bridge.native_db
+        prior_task = self._task(owner, turn)
+        if prior_task is not None:
+            session_id = self.store.native_session_id(prior_task)
+            if prior_task['run_id'] != run_id:
                 raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
-        return native
+            saved = session_for_run(db, session_id, owner, run_id)
+            if saved is not None and saved['runs']:
+                if saved.get('agent_id') != EXECUTOR_ID or len(saved['runs']) != 1:
+                    raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
+                native = RunOutput.from_dict(saved['runs'][0])
+                if native.agent_id != EXECUTOR_ID or native.user_id != owner or native.session_id != session_id:
+                    raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
+                return native
+        # A run that exists outside this task's owner/session was previously rejected, not treated as missing.
+        if db.get_run(run_id, deserialize=False) is not None:
+            raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
+        return None
 
     def _sources(self, owner, identifiers):
-        for identifier in identifiers:
-            try:
-                self.content.read(owner, identifier)
-            except HTTPException as error:
-                if error.status_code not in {403, 404}:
-                    raise
-                raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '本轮使用的共享来源已不可读，本轮已停止；可以发送新消息继续。') from None
+        if identifiers and self.content.readable_ids({owner}, identifiers) != set(identifiers):
+            raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '本轮使用的共享来源已不可读，本轮已停止；可以发送新消息继续。')
 
     def _reply(self, owner, identifier, snapshot):
         try:
@@ -183,10 +203,29 @@ class ResearchSessions:
             if not isinstance(error.detail, dict) or error.detail.get('code') not in {
                     'RESEARCH_SOURCE_UNAVAILABLE', 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'}:
                 raise
-            # Derived replies and summaries have no finer source attribution.
-            body = {**row['body'], 'sharedSourceIds': [],
+            # Turns after the first revoked input may derive from it. Earlier runs
+            # did not see it. Unknown legacy provenance requires a full cut.
+            retained = []
+            retained_sources = set()
+            active = session_context.active_turns(row, turns)
+            attributed = {source for turn in active for source in turn['body'].get('sharedSourceIds', [])}
+            if set(row['body']['sharedSourceIds']) <= attributed:
+                for turn in active:
+                    sources = turn['body'].get('sharedSourceIds', [])
+                    try:
+                        self._sources(row['owner_id'], sources)
+                        self._replies(row['owner_id'], row['id'], [turn])
+                    except HTTPException as revoked:
+                        if not isinstance(revoked.detail, dict) or revoked.detail.get('code') not in {
+                                'RESEARCH_SOURCE_UNAVAILABLE', 'RESEARCH_ASSISTANT_REPLY_UNAVAILABLE'}:
+                            raise
+                        break
+                    if not turn.get('correctionsOnly'):
+                        retained.append(turn['sequence'])
+                    retained_sources.update(sources)
+            body = {**row['body'], 'sharedSourceIds': sorted(retained_sources), 'retainedSequences': retained,
                     'contextAfterSequence': turns[-1]['sequence'] if turns else 0,
-                    'contextNotice': '旧共享来源或助手回答已不可用。后续对话从新的上下文继续，原聊天记录仍保留。'}
+                    'contextNotice': '旧共享来源或助手回答已不可用。后续对话保留独立的早期轮次和接触共享资料前提交的纠正，原聊天记录仍保留。'}
             body.pop('contextCheckpoint', None)
             return {**row, 'body': body}
         return row
@@ -249,14 +288,16 @@ class ResearchSessions:
             body = {key: deepcopy(row['body'][key]) for key in ('title', 'goal', 'boundaries', 'configuration')}
             body.update(title=request.title or body['title'] + ' · 分支', createdAt=stamp, updatedAt=stamp,
                 stopped=False, stopRequestId=None,
-                fork={'sessionId': identifier, 'turnId': point['id'], 'sequence': point['sequence']})
+                fork={'sessionId': identifier, 'turnId': point['id'], 'sequence': point['sequence'], 'copiedWorktree': False})
             for key in ('projectId', 'projectGoalVersion'):
                 if key in row['body']:
                     body[key] = deepcopy(row['body'][key])
-            if row['body'].get('contextAfterSequence', 0) <= point['sequence']:
-                for key in ('contextAfterSequence', 'contextNotice'):
-                    if key in row['body']:
-                        body[key] = deepcopy(row['body'][key])
+            if 'contextAfterSequence' in row['body'] and (
+                    'retainedSequences' in row['body'] or row['body']['contextAfterSequence'] <= point['sequence']):
+                body['contextAfterSequence'] = min(point['sequence'], row['body']['contextAfterSequence'])
+                body['retainedSequences'] = [seq for seq in row['body'].get('retainedSequences', [])
+                                             if seq <= point['sequence']]
+                body['contextNotice'] = row['body'].get('contextNotice')
             body['sharedSourceIds'] = list(dict.fromkeys(source
                 for turn in session_context.active_turns({'body': body}, selected)
                 for source in turn['body'].get('sharedSourceIds', [])))
@@ -286,6 +327,7 @@ class ResearchSessions:
                 workspace = self.git.fork_workspace(owner, identifier, fork_id, conn)
                 if workspace is not None:
                     body['gitWorkspace'] = workspace
+                    body['fork']['copiedWorktree'] = True
                     self._save_session(conn, {'id': fork_id}, body)
             self._command(conn, owner, request.requestId, fingerprint, 'fork', fork_id)
             return fork_id
@@ -310,24 +352,22 @@ class ResearchSessions:
         observations = {}
         with self.db.read() as conn:
             self._row(conn, owner, identifier)
-            turns = self._turns(conn, identifier)
+            turns = self._turns(conn, identifier, unfinished_only=True)
         for turn in turns:
-            if turn['body'].get('terminal'):
-                continue
             task = await asyncio.to_thread(self._task, owner, turn)
             if task is None:
                 continue
             await asyncio.to_thread(self.memory.observe, owner, turn, task, EFFECT_PREFIX)
             try:
-                detail = await self.runs.factory.detail(task)
+                detail = await self.runs.factory.observe_task(task)
             except HTTPException:
                 # A failed observation is not a failed task or a dispatch grant.
                 continue
-            task = self.store.task(task['id'], owner)
+            task = detail['task']
             children = await self.subagents.children(task)
             if self.research is not None:
-                await self.research.observe(task)
-            status, snapshot = detail['job']['status'], detail['snapshot']
+                await self.research.observe(task, identifier)
+            status, snapshot = detail['status'], detail['snapshot']
             observations[turn['id']] = {'events': detail['events'], 'toolResults': [
                 {'effectKey': item['effect_key'], 'status': item['status'], 'result': item['result']}
                 for item in snapshot.get('effects', [])]}
@@ -339,6 +379,10 @@ class ResearchSessions:
                 and run.get('run_id') == task['run_id'] and run.get('session_id') == self.store.native_session_id(task)
                 and run.get('user_id') == owner
                 and str(run.get('status', '')).lower() in {'completed', 'error', 'cancelled'})
+            progress = dict(taskId=task['id'], runId=task.get('run_id'), status=status, children=children)
+            if not native_ended and status in {'queued', 'running'} and all(
+                    turn['body'].get(key) == value for key, value in progress.items()):
+                continue  # No change to persist. Concurrent commands keep their own committed state.
             with self._write() as conn:
                 current = conn.execute(select(self.turns).where(self.turns.c.id == turn['id'])).mappings().one()
                 if current['body'].get('terminal'):
@@ -507,7 +551,7 @@ class ResearchSessions:
                 row = self._row(conn, owner, identifier)
                 turn = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
                 if (row['body']['stopped'] or turn['body'].get('stopRequestId')
-                        or self._turns(conn, identifier)[-1]['id'] != turn_id):
+                        or self._latest_turn_id(conn, identifier) != turn_id):
                     self._save_turn(conn, turn, {**turn['body'], 'status': 'canceled', 'terminal': True,
                         'completedAt': now(), 'neverDispatched': True})
                     start = None
@@ -516,7 +560,7 @@ class ResearchSessions:
                     self._save_turn(conn, turn, {**turn['body'], 'dispatchStarted': True})
             if start is not None:
                 try:
-                    await self.runs.start(owner, start)
+                    await self.runs.submit(owner, start)
                 except Exception as error:
                     never_submitted = self._not_submitted(owner, turn, error)
                     with self._write() as conn:
@@ -546,7 +590,13 @@ class ResearchSessions:
                 raise rejected('RESEARCH_CORRECTION_UNAVAILABLE', '当前没有可接收纠正的研究轮次。')
             turn = turns[-1]
             body = deepcopy(turn['body'])
-            body['messages'].append(self._message('correction', request.text))
+            note = self._message('correction', request.text)
+            if row['body'].get('sharedSourceIds') == [] and all(
+                not any(t['body'].get(k) for k in ('assistantReply', 'assistantReplies', 'sharedSourceIds'))
+                for t in session_context.active_turns(row, turns)
+            ):
+                note['beforeSharedInput'] = True
+            body['messages'].append(note)
             self._save_turn(conn, turn, body)
             self._save_session(conn, row, row['body'])
             self._command(conn, owner, request.requestId, fingerprint, 'correct', identifier, turn['id'])
@@ -623,8 +673,7 @@ class ResearchSessions:
             fingerprint = original[0]['fingerprint'] if len(original) == 1 else None
         if fingerprint != turn['body']['startFingerprint']:
             raise PermissionError('RESEARCH_SESSION_ADMISSION_PAYLOAD_MISMATCH')
-        latest = self._turns(conn, row['id'])[-1]
-        if (latest['id'] != turn['id'] or row['body']['stopped']
+        if (self._latest_turn_id(conn, row['id']) != turn['id'] or row['body']['stopped']
                 or task['cancel_requested'] or original_task['cancel_requested']):
             raise RunCancelledException('RESEARCH_SESSION_STOP_REQUESTED')
         if turn['body'].get('blockReason'):
@@ -643,17 +692,20 @@ class ResearchSessions:
                     'workspaceRef': row['id']}
 
     def record_source(self, context, identifier):
+        self.record_sources(context, [identifier])
+
+    def record_sources(self, context, identifiers):
         with self._write() as conn:
             row, turn, _ = self._execution(conn, context)
-            self._sources(context.user_id, [identifier])
-            body = deepcopy(row['body'])
-            if identifier not in body['sharedSourceIds']:
-                body['sharedSourceIds'].append(identifier)
-            turn_body = deepcopy(turn['body'])
-            if identifier not in turn_body.setdefault('sharedSourceIds', deepcopy(row['body']['sharedSourceIds'])):
-                turn_body['sharedSourceIds'].append(identifier)
-            self._save_turn(conn, turn, turn_body)
-            self._save_session(conn, row, body)
+            self._sources(context.user_id, identifiers)
+            session_ids = row['body']['sharedSourceIds']
+            turn_ids = turn['body'].get('sharedSourceIds', session_ids)
+            turn_sources = list(dict.fromkeys([*turn_ids, *identifiers]))
+            session_sources = list(dict.fromkeys([*session_ids, *identifiers]))
+            if turn_sources != turn['body'].get('sharedSourceIds'):
+                self._save_turn(conn, turn, {**turn['body'], 'sharedSourceIds': turn_sources})
+            if session_sources != session_ids:
+                self._save_session(conn, row, {**row['body'], 'sharedSourceIds': session_sources})
 
     def _model_boundary(self, conn, context):
         row, turn, task = self._execution(conn, context)
@@ -789,6 +841,8 @@ class ResearchSessions:
                         messages.append(item)
                         known.add(item.id)
                 for previous in turns:
+                    if previous.get('correctionsOnly'):
+                        continue
                     body = deepcopy(previous['body'])
                     for item in body['messages']:
                         if item['kind'] == 'instruction' or item['id'] in known:
@@ -821,7 +875,7 @@ class ResearchSessions:
             await asyncio.to_thread(self.memory.observe, task['owner_id'], turn, task, EFFECT_PREFIX)
         await self.subagents.observe_waits(observer, task)
         if self.research is not None:
-            await self.research.observe(task)
+            await self.research.observe(task, turn['session_id'] if turn else None)
 
     @staticmethod
     def retry_operations(events):
@@ -868,7 +922,7 @@ class ResearchSessions:
                 self.turns.c.application_request_id == task['request_id'].removeprefix('application-start:'))).mappings().first()
             if turn is not None:
                 row = self._row(conn, task['owner_id'], turn['session_id'])
-                if self._turns(conn, row['id'])[-1]['id'] == turn['id']:
+                if self._latest_turn_id(conn, row['id']) == turn['id']:
                     if (reason == 'native-failure' and self.collaboration is not None
                             and self.collaboration.retain_after_native_failure(conn, row, turn, task)):
                         return
@@ -900,6 +954,15 @@ class ResearchSessions:
             row = self._row(conn, owner, identifier)
             return self.tools._workspace({'ownerId': owner, 'id': row['id']})
 
+    @staticmethod
+    def _state(stopped, safe, status, reason):
+        block = None if reason == 'RESEARCH_EFFECT_UNCONFIRMED' else reason
+        if status == 'unknown' and not safe:
+            block = block or 'RESEARCH_ORIGINAL_OUTCOME_UNCONFIRMED'
+        state = ('blocked' if block else 'stopped' if stopped and safe else
+                 'stopping' if stopped else 'idle' if safe else 'running')
+        return state, block
+
     async def read(self, owner, identifier):
         self.auth.require_member(owner)
         observations = await self._refresh(owner, identifier)
@@ -908,11 +971,8 @@ class ResearchSessions:
             body = row['body']
             latest = turns[-1] if turns else None
             safe = not latest or self._safe(owner, latest)
-            block = latest['body'].get('blockReason') if latest else None
-            if block == 'RESEARCH_EFFECT_UNCONFIRMED':
-                block = None
-            if latest and latest['body']['status'] == 'unknown' and not safe:
-                block = block or 'RESEARCH_ORIGINAL_OUTCOME_UNCONFIRMED'
+            last = latest['body'] if latest else {}
+            state, block = self._state(body['stopped'], safe, last.get('status'), last.get('blockReason'))
             raw_characters = sum(len(item['text']) for turn in turns for item in turn['body']['messages'])
             raw_characters += sum(len(str(turn['body'].get('result') or '')) for turn in turns)
             context_row = self._continuation_context(row, turns) if safe else row
@@ -935,8 +995,6 @@ class ResearchSessions:
                 compact_view = {'status': 'ready'}
             if compact_view:
                 compact_view['throughSequence'] = saved['throughSequence'] if saved else 0
-            state = ('blocked' if block else 'stopped' if body['stopped'] and safe else
-                     'stopping' if body['stopped'] else 'idle' if safe else 'running')
             actions = []
             if safe and not block:
                 actions.append('start')
@@ -955,6 +1013,7 @@ class ResearchSessions:
                     'rawCharacters': raw_characters, 'notice': context_row['body'].get('contextNotice'), **({'compaction': compact_view} if compact_view else {})},
                 'deliveries': self.triggers.receipts(conn, owner, identifier) if self.triggers is not None else [],
                 'turns': [{'id': item['id'], 'sequence': item['sequence'],
+                    'modelConnectionRef': item['body'].get('configuration', body['configuration'])['connectionRefs']['model'],
                     **({'inheritedFrom': deepcopy(item['body']['inheritedFrom'])} if 'inheritedFrom' in item['body'] else {}),
                     **({'assistantReply': self._reply_projection(owner,
                         item['body'].get('inheritedFrom', {}).get('sessionId', identifier), item['body']['assistantReply'])}
@@ -973,20 +1032,38 @@ class ResearchSessions:
                             for effect in self.store.effects(item['body']['taskId'])]})
                        if item['body'].get('taskId') and not item['body'].get('terminal') else {})} for item in turns]}
 
-    async def listing(self, owner, after=''):
+    def listing(self, owner, after='', query=''):
         self.auth.require_member(owner)
+        sessions, turns = self.sessions.c, self.turns.c
+        stamp = sessions.body['updatedAt'].as_string()
+        title = sessions.body['title'].as_string()
+        terminal = turns.body['terminal'].as_boolean()
+        status = turns.body['status'].as_string()
+        latest = select(turns.id).where(turns.session_id == sessions.id).order_by(
+            turns.sequence.desc()).limit(1).correlate(self.sessions).scalar_subquery()
+        # A terminal turn with Stop or an unknown outcome still depends on its native task.
+        needs_task = terminal.is_(True) & ((status == 'unknown') | turns.body['stopRequestId'].as_string().is_not(None))
+        statement = select(sessions.id, title.label('title'), stamp.label('updatedAt'),
+            sessions.body['stopped'].as_boolean().label('stopped'), terminal.label('terminal'), status.label('status'),
+            turns.body['blockReason'].as_string().label('reason'), turns.application_request_id,
+            case((needs_task, turns.body)).label('body')).select_from(
+                self.sessions.outerjoin(self.turns, turns.id == latest)).where(sessions.owner_id == owner)
+        if query:
+            statement = statement.where(title.icontains(query, autoescape=True))
         with self.db.read() as conn:
             if after:
-                self._row(conn, owner, after)
-            query = select(self.sessions.c.id).where(self.sessions.c.owner_id == owner)
-            if after:
-                query = query.where(self.sessions.c.id < after)
-            identifiers = list(conn.execute(query.order_by(self.sessions.c.id.desc()).limit(21)).scalars())
-        items = []
-        for identifier in identifiers[:20]:
-            detail = await self.read(owner, identifier)
-            items.append({key: value for key, value in detail.items() if key != 'turns'})
-        return {'items': items, 'nextCursor': identifiers[19] if len(identifiers) > 20 else None}
+                timestamp, separator, identifier = after.partition('|')
+                if not separator:
+                    identifier = after
+                    timestamp = self._row(conn, owner, identifier)['body']['updatedAt']
+                statement = statement.where(tuple_(stamp, sessions.id) < (timestamp, identifier))
+            rows = conn.execute(statement.order_by(stamp.desc(), sessions.id.desc()).limit(21)).mappings().all()
+            items = []
+            for row in rows[:20]:
+                safe = self._safe(owner, row) if row['body'] is not None else row['terminal'] is not False
+                state, _ = self._state(row['stopped'], safe, row['status'], row['reason'])
+                items.append({'id': row['id'], 'title': row['title'], 'updatedAt': row['updatedAt'], 'state': state})
+        return {'items': items, 'nextCursor': rows[19]['updatedAt'] + '|' + rows[19]['id'] if len(rows) > 20 else None}
 
     async def request(self, owner, request_id):
         self.auth.require_member(owner)

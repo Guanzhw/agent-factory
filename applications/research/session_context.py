@@ -14,7 +14,18 @@ from agent_factory.store import canonical
 
 def active_turns(row, turns):
     after = row['body'].get('contextAfterSequence', 0)
-    return [turn for turn in turns if turn['sequence'] > after]
+    retained = set(row['body'].get('retainedSequences', []))
+    active = []
+    for turn in turns:
+        if turn['sequence'] > after or turn['sequence'] in retained:
+            active.append(turn)
+        else:
+            notes = [m for m in turn['body']['messages'] if m.get('beforeSharedInput') and m['kind'] == 'correction']
+            if notes:
+                # Carry only the member's original notes. Never load this turn's native run or result.
+                active.append({**turn, 'correctionsOnly': True,
+                               'body': {'messages': notes, 'status': 'completed', 'terminal': True}})
+    return active
 
 
 def checkpoint(row):

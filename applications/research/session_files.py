@@ -1,9 +1,16 @@
 """Owner-authenticated downloads, separate from unrestricted Agent coding tools."""
-from contextlib import contextmanager, ExitStack
+from contextlib import contextmanager, ExitStack, suppress
+import errno
 import os
+import hashlib
+import json
+from tempfile import NamedTemporaryFile
+from uuid import uuid4
 from pathlib import Path, PureWindowsPath
 import sys
 from typing import cast
+
+from fastapi import HTTPException
 
 def _parts(value, *, directory=False):
     if (not value or '\\' in value or '\0' in value or value.startswith('/')
@@ -135,3 +142,104 @@ def _open_file(parent, name):
     return os.open(leaf, flags, 0o600, dir_fd=parent)
 
 
+def _publish_upload(name, publish):
+    original = Path(name)
+    candidate = name
+    number = 1
+    while True:
+        try:
+            publish(candidate)
+            return candidate
+        except FileExistsError:
+            number += 1
+            candidate = f'{original.stem} ({number}){original.suffix}'
+        except OSError as error:
+            if candidate == name or error.errno != errno.ENAMETOOLONG:
+                raise
+            # A valid original name can already occupy the filesystem's entire name budget.
+            candidate = uuid4().hex
+
+
+@contextmanager
+def staged_upload(workspace, name, source):
+    if len(_parts(name)) != 1:
+        raise ValueError('Invalid attachment name')
+    # The owner directory is on the same filesystem and outside every session listing.
+    parent = _windows_path(workspace.parent) if sys.platform == 'win32' else workspace.parent
+    checksum = hashlib.sha256()
+    with NamedTemporaryFile(dir=parent, prefix='.upload-', delete_on_close=False) as target:
+        while block := source.read(1 << 20):
+            checksum.update(block)
+            target.write(block)
+        target.close()
+        yield Path(target.name), checksum.hexdigest()
+
+
+def _upload_identity(info):
+    return [info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns]
+
+
+def _publish_file(staged, directory, name):
+    if sys.platform == 'win32':
+        staged.rename(cast(Path, directory) / name)
+    else:
+        os.link(staged, name, dst_dir_fd=directory)
+
+
+def publish_upload(workspace, name, staged, receipt=None, checksum=''):
+    info = staged.stat()
+    identity = _upload_identity(info)
+    with _directory(workspace) as directory:
+        if receipt is not None and receipt.exists():
+            saved = json.loads(receipt.read_text(encoding='utf-8'))
+            if saved['name'] != name or saved['checksum'] != checksum:
+                raise HTTPException(409, 'IDEMPOTENCY_CONFLICT: attachment changed')
+            original = receipt.parent / saved['staged']
+            try:
+                with os.fdopen(_open_file(directory, saved['path']), 'rb') as stream:
+                    current = os.fstat(stream.fileno())
+                    if (_upload_identity(current) == saved['identity']
+                            and hashlib.file_digest(stream, 'sha256').hexdigest() == checksum):
+                        with suppress(FileNotFoundError):
+                            if os.path.samestat(current, original.stat()):
+                                original.unlink()
+                        return saved['path']
+            except FileNotFoundError:
+                # A stopped process can leave its intent and complete, still-unpublished staging file.
+                try:
+                    old = original.stat()
+                    if _upload_identity(old) == saved['identity'] and old.st_ctime_ns == saved['ctime']:
+                        _publish_file(original, directory, saved['path'])
+                        original.unlink(missing_ok=True)
+                        return saved['path']
+                except OSError:
+                    pass
+            except (OSError, ValueError):
+                pass
+            raise HTTPException(409, '上次上传的文件已变更或未完成，请重新选择文件上传。')
+        def publish(candidate):
+            if receipt is not None:
+                # A committed name is never assigned to a retry with different bytes.
+                try:
+                    if sys.platform == 'win32':
+                        os.stat(cast(Path, directory) / candidate, follow_symlinks=False)
+                    else:
+                        os.stat(candidate, dir_fd=directory, follow_symlinks=False)
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise FileExistsError()
+                saved = {'name': name, 'checksum': checksum, 'path': candidate, 'identity': identity,
+                         'staged': staged.name, 'ctime': info.st_ctime_ns}
+                with NamedTemporaryFile(mode='w', encoding='utf-8', dir=receipt.parent,
+                                        delete_on_close=False) as record:
+                    json.dump(saved, record)
+                    record.close()
+                    os.replace(record.name, receipt)
+            try:
+                _publish_file(staged, directory, candidate)
+            except OSError:
+                if receipt is not None:
+                    receipt.unlink(missing_ok=True)
+                raise
+        return _publish_upload(name, publish)

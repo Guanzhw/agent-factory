@@ -15,13 +15,13 @@ export function readWorkspaceRoute(url: URL, administrator: boolean, navigation 
   const requested = url.searchParams.get('tab');
   const tab = requested && Object.hasOwn(navigation.tabs, requested) && (requested !== 'accounts' || administrator) ? requested : navigation.homeTab ?? 'resources';
   const resource = url.searchParams.get('resource') as ConnectionResource;
-  return { ...navigation.readQuery?.(url), tab, ...(connectionResources.includes(resource) ? { resource } : {}) };
+  return { ...navigation.readQuery?.(url), tab, modelConnection: routePointer(url.searchParams.get('modelConnection')), ...(connectionResources.includes(resource) ? { resource } : {}) };
 }
 export function workspaceUrl(current: URL, route: WorkspaceRoute, navigation = defaultNavigation): string {
   const url = new URL(current);
   url.search = '';
   url.searchParams.set('tab', route.tab);
-  for (const key of ['resource', ...navigation.queryKeys ?? []]) if (route[key]) url.searchParams.set(key, route[key]);
+  for (const key of ['resource', 'modelConnection', ...navigation.queryKeys ?? []]) if (route[key]) url.searchParams.set(key, route[key]);
   return `${url.pathname}${url.search}${url.hash}`;
 }
 export function sameWorkspaceRoute(left: WorkspaceRoute, right: WorkspaceRoute) {

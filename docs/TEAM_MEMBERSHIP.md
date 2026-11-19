@@ -1,18 +1,22 @@
 # Team membership and account migration
 
-An existing, enabled Agno directory account is a member. Members can use supported components and workflows, connect resources, and publish or manage their own content. New components do not require additional resource grants. Disabling the account revokes subsequent requests made with existing browser sessions or member JWTs; execution boundaries also recheck membership.
+An existing, enabled Agno directory account is a member. Members can use supported components and workflows, connect resources, and publish or manage their own content. New components do not require additional resource grants. Disabling the account revokes subsequent requests made with existing browser sessions; execution boundaries also recheck membership.
 
 Account administrators additionally manage accounts through `/api/factory/accounts`: list and create accounts, edit names and email addresses, enable or disable accounts, and change the `accountAdmin` flag. Administrator status preserves ordinary session, task, resource and credential ownership boundaries. The identity response's existing `role: "manager"` label means account administrator; `role: "user"` means member.
 
-The account API accepts `GET` with `limit`/`offset`, `POST` with `id`, optional `name`, `email`, and `accountAdmin`, and `PATCH /{id}` with changed `name`, `email`, `disabled` or `accountAdmin` fields. Existing account creation returns 409. Renaming an account does not enable it. Login identity verification remains explicit; external subject mapping applies to the OIDC path. For a few local function-check accounts, use the [controlled new-member command](WINDOWS_LOCAL_START.md), which rejects existing owners and grants no administrator role.
+Members sign in over HTTPS using their local ID and password. Creating a member requires an initial password. Administrators can set or change a password for an existing member. The maintenance command `uv run agent-factory-local-user <new-id>` creates an ordinary member. [Local startup](WINDOWS_LOCAL_START.md)
 
 ## Existing installations
 
 Startup preserves the native directory, disabled flags, and existing role data. Existing `factory-manager` assignments continue as the account-administrator flag. A custom role that formerly granted effective global `agent_os:admin` authority is converted once to that same account flag. The native directory metadata marker `factory_account_admin_v1` records completion for each account while retaining unrelated metadata.
 
-After migration, removing the account flag remains effective across restart even if historical resource policies remain stored. Historical resource grants no longer decide ordinary member capabilities. Members are explicitly provisioned through the account API or trusted tooling; the local password command creates only new ordinary members and never attaches credentials to existing identities. Startup does not create demo identities, restore removed administrator assignments or enable disabled accounts.
+After upgrading an installation that used an external identity provider, set a local password on the **existing member ID** in account settings. If the only administrator has no local password yet, point `FACTORY_DATABASE_URL` at the original database on the service host and run the following command. Replace `MEMBER_ID` with the original administrator's ID.
 
-Native global administration, cross-user durable queue operations and native service-account administration are closed to both member roles. Previously issued Agno PATs are rejected at the member-token ingress boundary, including WebSocket authentication frames, because that native credential plane bypasses the owner's current directory status. Local password and OIDC browser login use the same session-to-native identity bridge and owner isolation; a directly supplied internal JWT is not a public login method. Native workflow WebSocket behavior remains unchanged.
+```sh
+uv run agent-factory-local-user --reset MEMBER_ID
+```
+
+Enter the password at the prompt. The member retains their owned data, role and enabled or disabled status. Changing the password revokes that member's existing browser sessions. An enabled member can immediately sign in with the new password.
 
 Agno's native `config:write` scope includes database schema upgrade and downgrade endpoints. Both member roles are denied that installation operation; ordinary `config:read` discovery remains available. Schema migration remains a deployment operation.
 
@@ -24,4 +28,4 @@ Back up the database and the corresponding key file together, preserving the key
 
 ## Verification
 
-`test_auth_contract.py` exercises native SQLite identity, workflow execution, component creation, private session isolation, account administration, account disablement, historical PAT refusal and migration/demotion across restart. `test_team_membership_postgres.py` covers native PostgreSQL components/workflows, an active durable queue, the global-management boundaries and administrator migration. `test_local_credentials.py` checks key reuse, concurrent first creation, restart decryption, ciphertext storage and exact owner/endpoint binding with real temporary files and SQLite.
+The browser journey creates a second local member, signs in with the initial password, resets the password and verifies the result. [Account and model diagnostics test](../tests/test_audit_journey.py)

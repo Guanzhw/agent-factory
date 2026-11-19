@@ -79,7 +79,7 @@ class ApplicationRuns:
             raise HTTPException(409, 'LEGACY_EXECUTION_INTEGRITY_MISMATCH')
         return row
 
-    async def start(self, owner, body, *, delivery_id=None, private_event_id=None):
+    async def submit(self, owner, body, *, delivery_id=None, private_event_id=None):
         if self.factory.store._connection.get() is not None:
             raise RuntimeError('Native admission requires a committed metadata boundary')
         try:
@@ -91,7 +91,12 @@ class ApplicationRuns:
             options['delivery_id'] = delivery_id
         if private_event_id is not None:
             options['private_event_id'] = private_event_id
-        job = await self.factory.instantiate(owner, execution, key, **options)
+        return await self.factory.admit(owner, execution, key, **options)
+
+    async def start(self, owner, body, *, delivery_id=None, private_event_id=None):
+        task_id = await self.submit(owner, body, delivery_id=delivery_id, private_event_id=private_event_id)
+        task = self.factory.store.task(task_id, owner)
+        job = (await self.factory.detail(task))['job']
         return {'interfaceVersion': 1, 'requestId': body.requestId,
                 'executionId': job['executionId'], 'planId': job['executionId'], 'job': job}
 

@@ -1,5 +1,5 @@
-# Removed development login
+# Local accounts for development
 
-The product no longer provides a development/mock/demo login mode. The old launcher and embedded identity provider have been removed; historical behavior remains in Git history and acceptance records only.
+Run `uv run agent-factory local` to set up the local HTTPS service and its first account administrator. Sign in with that account and create a second member in account settings to test team sharing. The CLI also signs in with a local member ID and prompts for the password. [Local startup](WINDOWS_LOCAL_START.md) · [Research CLI](PERSONAL_RESEARCH_SESSIONS.md)
 
-Use [explicit local password or OIDC login](WINDOWS_LOCAL_START.md) and the [upgrade instructions](REMOVE_DEMO_UPGRADE.md). With neither method configured, login stays unavailable. Local password login creates new ordinary members through a controlled command; it does not turn existing synthetic users into real accounts or authorize deleting their database.
+For an existing installation, use the original database, signing key and workspace. An administrator can set a password for an existing member. An operator can recover the original administrator with `uv run agent-factory-local-user --reset <member-id>` on the service host. [Team membership and migration](TEAM_MEMBERSHIP.md)

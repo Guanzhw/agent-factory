@@ -14,6 +14,20 @@ function CodeBlock({ children }: { children?: ReactNode }) {
   </div>;
 }
 
-export function ResearchReply({ text }: { text: string }) {
-  return <div className="rs-markdown"><Markdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock, table: ({ children }) => <div className="rs-table-scroll"><table>{children}</table></div>, img: ({ alt }) => <span>{alt || '图片'}</span> }}>{text}</Markdown></div>;
+export function ResearchReply({ text, sessionId }: { text: string; sessionId?: string }) {
+  function artifact(href?: string) {
+    if (!sessionId || !href || /^([a-z][a-z\d+.-]*:|[/#?])/i.test(href)) return;
+    try {
+      const path = decodeURIComponent(href).replace(/^\.\//, '');
+      if (path.split(/[\\/]/).some(part => !part || part === '..')) return;
+      return `/api/factory/research/sessions/${encodeURIComponent(sessionId)}/files/download?path=${encodeURIComponent(path)}`;
+    } catch { return; }
+  }
+  return <div className="rs-markdown"><Markdown remarkPlugins={[remarkGfm]} components={{ pre: CodeBlock, table: ({ children }) => <div className="rs-table-scroll"><table>{children}</table></div>, a: ({ href, children }) => {
+    const url = artifact(href);
+    return <a href={url ?? href} download={url ? true : undefined}>{children}</a>;
+  }, img: ({ alt, src }) => {
+    const url = typeof src === 'string' && /\.(?:png|jpe?g|gif|webp|avif)$/i.test(src) && artifact(src);
+    return url ? <img loading="lazy" src={url} alt={alt ?? ''}/> : <span>{alt || '图片'}</span>;
+  } }}>{text}</Markdown></div>;
 }

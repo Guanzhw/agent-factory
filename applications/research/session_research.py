@@ -3,7 +3,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 from uuid import NAMESPACE_URL, uuid5
 
-from sqlalchemy import Column, JSON, MetaData, String, Table, select
+from sqlalchemy import Column, JSON, MetaData, String, Table, func, select, text
 
 from agent_factory.application_content import ContentPublication, ContentSource
 from agent_factory.personal_tool_contract import ToolInvocationError
@@ -29,6 +29,12 @@ class ResearchSessionResearch:
             Column('session_id', String, nullable=False), Column('task_id', String, nullable=False),
             Column('body', JSON, nullable=False))
         metadata.create_all(self.store.engine)
+        if self.store.engine.dialect.name == 'postgresql':
+            with self.store.engine.begin() as conn:
+                conn.exec_driver_sql("""CREATE INDEX IF NOT EXISTS research_experiments_owner_task
+                    ON research_session_experiments (owner_id, task_id)""")
+                conn.exec_driver_sql("""CREATE INDEX IF NOT EXISTS research_experiments_assessed_session
+                    ON research_session_experiments (owner_id, session_id) WHERE body->'assessments' IS NOT NULL""")
 
     def _context(self, context):
         with self.db.read() as conn:
@@ -75,7 +81,7 @@ class ResearchSessionResearch:
         if assessment is not None:
             content.update(assessment=assessment, verificationStatus='agent_analysis')
         publication = ContentPublication(source=ContentSource(application='research', record=row['id'], revision=revision),
-            content=content, visibility='team', sourceContentIds=(body.get('sourceContentIds', [])
+            content=content, visibility=body.get('visibility', 'team'), sourceContentIds=(body.get('sourceContentIds', [])
                 if source_ids is None else source_ids))
         return self.content.publish(row['owner_id'], publication,
             'session-experiment:' + row['id'] + ':' + revision)['id']
@@ -96,7 +102,7 @@ class ResearchSessionResearch:
         for source_id in session['body'].get('sharedSourceIds', []):
             source = self.content.read(context.user_id, source_id)
             source_ids.update([source_id, *source.get('sourceContentIds', [])])
-        body = {'hypothesis': values.get('hypothesis', ''), 'conditions': values.get('conditions', ''),
+        body = {'visibility': values.get('visibility', 'team'), 'hypothesis': values.get('hypothesis', ''), 'conditions': values.get('conditions', ''),
                 'projectId': session['body'].get('projectId'),
                 'goalVersion': session['body'].get('projectGoalVersion'),
                 'status': 'pending_admission', 'evidenceIds': [], 'sourceContentIds': sorted(source_ids),
@@ -115,6 +121,9 @@ class ResearchSessionResearch:
 
     def reconcile(self, context, call_id, name, values):
         session = self._context(context)
+        return self.visible_output(context, self._reconcile(context, call_id, name, values, session), session)
+
+    def _reconcile(self, context, call_id, name, values, session):
         identifier = values.get('experimentId') if name == 'research_assess' else None
         identifier = identifier or self._identifier(context, call_id)
         row = self._row(context.user_id, session['id'], identifier)
@@ -122,12 +131,18 @@ class ResearchSessionResearch:
         if name == 'research_assess':
             item = body.get('assessments', {}).get(context.run_id + ':' + call_id)
             if item and all(item.get(field) == values[field] for field in
-                            ('assessment', 'evidenceIds', 'observations') if field in values):
+                            ('assessment', 'visibility', 'evidenceIds', 'observations') if field in values):
                 return self._assessment_receipt(row, context.run_id + ':' + call_id)
             return None
         if body['request'] != values or body['toolName'] != name:
             raise rejected('RESEARCH_EXPERIMENT_REQUEST_CONFLICT')
         return self._recover(row)
+
+    @staticmethod
+    def _has_receipt(body):
+        if body['toolName'] == 'research_experiment':
+            return bool(body.get('childTaskId') and body.get('startRecordId'))
+        return bool(body.get('terminalRecordId'))
 
     def _recover(self, row):
         body = row['body']
@@ -135,6 +150,8 @@ class ResearchSessionResearch:
         if name == 'research_assess':
             key = body['runId'] + ':' + body['callId']
             return self._assessment_receipt(row, key) if key in body.get('assessments', {}) else None
+        if self._has_receipt(body):
+            return self._projection(row)
         context = SimpleNamespace(user_id=row['owner_id'], session_id=row['task_id'], run_id=body['runId'])
         if name == 'research_record_experiment' and body['status'] == 'pending_admission':
             body = {**body, **self._record(body['request'])}
@@ -157,9 +174,10 @@ class ResearchSessionResearch:
 
     def _assessment_receipt(self, row, key):
         item = deepcopy(row['body']['assessments'][key])
+        if 'sourceContentIds' not in item and row['body'].get('sourceContentIds'):
+            item['sourceContentIds'] = row['body']['sourceContentIds']
         if not item.get('recordId'):
-            publication = {**row, 'body': {**row['body'], **{field: item[field] for field in
-                ('evidenceIds', 'observations') if field in item}}}
+            publication = {**row, 'body': {'visibility': row['body'].get('visibility', 'team'), **item}}
             item['recordId'] = self._publish(publication, 'assessment-' + digest(key)[:32], item['assessment'],
                 item.get('sourceContentIds', row['body'].get('sourceContentIds', [])))
             with self.db.write() as conn:
@@ -174,8 +192,41 @@ class ResearchSessionResearch:
         return {'experimentId': row['id'], **{key: deepcopy(value) for key, value in row['body'].items()
             if key not in {'request', 'toolName', 'callId', 'runId'}}}
 
+    def visible_output(self, context, output, session=None):
+        if not output or 'experimentId' not in output:
+            return output
+        base = set(output.get('sourceContentIds', []))
+        assessments = output.get('assessments', {})
+        required = base.union(*(item.get('sourceContentIds', []) for item in assessments.values()))
+        if not required:
+            return output
+        allowed = self.content.readable_ids({context.user_id}, required)
+        visible = set()
+        if base <= allowed:
+            result = dict(output)
+            visible.update(base)
+        else:
+            result = {'experimentId': output['experimentId'], 'sourceUnavailable': True}
+        if assessments:
+            result['assessments'] = {}
+            for key, item in assessments.items():
+                sources = item.get('sourceContentIds', base)
+                if allowed.issuperset(sources):
+                    result['assessments'][key] = item
+                    visible.update(sources)
+        if visible:
+            session = session or self._context(context)
+            missing = visible.difference(session['body'].get('sharedSourceIds', []))
+            if missing:
+                self.sessions.record_sources(context, sorted(missing))
+        return result
+
     async def invoke(self, context, call_id, name, values):
         session = self._context(context)
+        output = await self._invoke(context, call_id, name, values, session)
+        return self.visible_output(context, output, session)
+
+    async def _invoke(self, context, call_id, name, values, session):
         project = self._project(context.user_id, session) if name in {'research_project', 'research_experiment'} else None
         if name == 'research_project':
             if project:
@@ -192,23 +243,29 @@ class ResearchSessionResearch:
             else:
                 row = self._row(context.user_id, session['id'], values['experimentId'])
             if name == 'research_experiment_result':
-                await self._observe(row)
-                return self._projection(self._row(context.user_id, session['id'], row['id']))
+                if not row['body'].get('terminalRecordId') and row['body'].get('childTaskId'):
+                    await self._observe(row)
+                    row = self._row(context.user_id, session['id'], row['id'])
+                return self._projection(row)
             dependencies = set(row['body'].get('sourceContentIds', []))
+            dependencies.update(row['body'][field] for field in ('startRecordId', 'terminalRecordId')
+                                if row['body'].get(field))
+            if dependencies and self.content.readable_ids({context.user_id}, dependencies) != dependencies:
+                raise rejected('RESEARCH_SOURCE_UNAVAILABLE')
             for identifier in session['body'].get('sharedSourceIds', []):
                 source = self.content.read(context.user_id, identifier)
                 dependencies.update([identifier, *source.get('sourceContentIds', [])])
             with self.db.write() as conn:
                 row = conn.execute(select(self.experiments).where(self.experiments.c.id == row['id'])).mappings().one()
                 body = deepcopy(row['body'])
-                item = {'experimentId': row['id'], 'assessment': values['assessment'],
-                        'evidenceIds': deepcopy(values.get('evidenceIds', body['evidenceIds'])),
-                        'observations': deepcopy(values.get('observations', body.get('observations', []))),
+                item = {'visibility': values.get('visibility', 'team'), 'experimentId': row['id'], 'assessment': values['assessment'],
+                        'evidenceIds': deepcopy(values.get('evidenceIds', [])),
+                        'observations': deepcopy(values.get('observations', [])),
                         'verificationStatus': 'agent_analysis', 'sourceContentIds': sorted(dependencies)}
                 key = context.run_id + ':' + call_id
                 old = body.setdefault('assessments', {}).get(key)
                 if old is not None and any(old.get(field) != values[field] for field in
-                                          ('assessment', 'evidenceIds', 'observations') if field in values):
+                                          ('assessment', 'visibility', 'evidenceIds', 'observations') if field in values):
                     raise rejected('RESEARCH_EXPERIMENT_REQUEST_CONFLICT')
                 body['assessments'][key] = old or item
                 conn.execute(self.experiments.update().where(self.experiments.c.id == row['id']).values(body=body))
@@ -218,7 +275,7 @@ class ResearchSessionResearch:
         row, existing = self._create(context, call_id, name, values, session)
         identifier, body = row['id'], deepcopy(row['body'])
         if existing:
-            result = self.reconcile(context, call_id, name, values)
+            result = self._reconcile(context, call_id, name, values, session)
             if result is None:
                 return {**self._projection(row), 'status': 'unknown', 'outcome': 'unknown',
                         'code': 'RESEARCH_TOOL_OUTCOME_UNKNOWN',
@@ -253,33 +310,58 @@ class ResearchSessionResearch:
         if group['allStopped'] and not group['unknown'] and body['status'] in {'completed', 'failed', 'canceled'}:
             body['observations'] = [{'evidenceId': child['id'], 'nativeStatus': body['status'], 'stopped': True}]
             body['terminalRecordId'] = self._publish({**row, 'body': body}, 'terminal')
-        self._save(row['id'], body)
+        changes = {key: body[key] for key in ('status', 'observations', 'terminalRecordId')
+                   if key in body and body[key] != row['body'].get(key)}
+        if changes:
+            self._save(row['id'], changes)
 
-    async def observe(self, task):
+    async def observe(self, task, session_id):
         run_id = task.get('run_id')
         if not run_id:
             # Pending admission has no native run identity or original effects
             # to reconcile. Do not substitute an empty matching prefix.
             return
-        with self.db.read() as conn:
-            rows = list(conn.execute(select(self.experiments).where(
-                self.experiments.c.owner_id == task['owner_id'])).mappings())
-        effects = {item['effect_key']: item for item in self.store.effects(task['id'])}
         prefix = run_id + ':'
+        # Assessments can belong to this run even when an earlier task created the experiment.
+        columns = self.experiments.c
+        key = func.json_object_keys(columns.body['assessments']).column_valued('assessment_key')
+        matching_assessment = select(1).where(func.starts_with(key, prefix)).correlate(self.experiments).exists()
+        assessed = text("body->'assessments' IS NOT NULL") & matching_assessment
+        if session_id is not None:
+            assessed = (columns.session_id == session_id) & assessed
+        with self.db.read() as conn:
+            rows = conn.execute(select(self.experiments).where(columns.owner_id == task['owner_id'],
+                (columns.task_id == task['id']) | assessed)).mappings().all()
+        if not rows:
+            return
+        unknown = {item['effect_key'] for item in self.store.effects(task['id']) if item['status'] == 'UNKNOWN'}
 
-        def complete(run_id, call_id, output):
-            key = 'research-session-tool:' + call_id
-            effect = effects.get(run_id + ':' + key)
-            if effect and effect['status'] == 'UNKNOWN' and output is not None:
-                self.store.effect_complete(run_id, key, {'outcome': 'completed', 'output': output})
+        def pending(original_run, call_id):
+            return original_run + ':research-session-tool:' + call_id in unknown
+
+        def complete(original_run, call_id, output):
+            self.store.effect_complete(original_run, 'research-session-tool:' + call_id,
+                                       {'outcome': 'completed', 'output': output})
 
         for row in rows:
-            if row['task_id'] == task['id']:
-                recovered = self._recover(row)
-                if recovered is not None:
-                    complete(row['body']['runId'], row['body']['callId'], recovered)
-                    await self._observe(self._row(row['owner_id'], row['session_id'], row['id']))
-            for key in row['body'].get('assessments', {}):
+            body = row['body']
+            if row['task_id'] == task['id'] and body['toolName'] != 'research_assess':
+                missing = not self._has_receipt(body)
+                waiting = pending(body['runId'], body['callId'])
+                if missing or waiting:
+                    recovered = self._recover(row)
+                    if recovered is not None:
+                        if waiting:
+                            complete(body['runId'], body['callId'], recovered)
+                        if missing and body['toolName'] == 'research_experiment':
+                            row = self._row(row['owner_id'], row['session_id'], row['id'])
+                if body['toolName'] == 'research_experiment':
+                    await self._observe(row)
+            for key, assessment in row['body'].get('assessments', {}).items():
                 if key.startswith(prefix):
-                    item = self._assessment_receipt(row, key)
-                    complete(task['run_id'], key.removeprefix(prefix), item)
+                    call_id = key.removeprefix(prefix)
+                    waiting = pending(run_id, call_id)
+                    if waiting or not assessment.get('recordId'):
+                        item = self._assessment_receipt(row, key)
+                        if waiting:
+                            complete(run_id, call_id, item)

@@ -19,6 +19,9 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, event, text
 
 
+FAILURE_CLEANUP_REASONS = ('protected-failure', 'current-authority-ended', 'native-failure', 'admission-rejected')
+
+
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -122,14 +125,13 @@ class Store:
     def initialize(self):
         statements = [
             "CREATE TABLE IF NOT EXISTS af_browser_auth (id TEXT PRIMARY KEY,kind TEXT NOT NULL,body JSONB NOT NULL)",
-            "CREATE INDEX IF NOT EXISTS af_browser_auth_expiry ON af_browser_auth ((CAST(body->>'expires' AS DOUBLE PRECISION)))",
-            "CREATE INDEX IF NOT EXISTS af_browser_auth_binding ON af_browser_auth ((body->>'binding')) WHERE kind='flow'",
             "CREATE TABLE IF NOT EXISTS af_plans (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, body JSONB NOT NULL, hash TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_plan_requests (owner_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id), PRIMARY KEY(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_tasks (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, plan_id TEXT REFERENCES af_plans(id), request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, run_id TEXT UNIQUE, admission TEXT NOT NULL DEFAULT 'reserved', terminal BOOLEAN NOT NULL DEFAULT FALSE, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, body JSONB NOT NULL, UNIQUE(owner_id,request_id))",
             "ALTER TABLE af_tasks ALTER COLUMN plan_id DROP NOT NULL",
             "CREATE INDEX IF NOT EXISTS af_tasks_owner_history ON af_tasks(owner_id,(body->>'createdAt') DESC,id DESC)",
             "CREATE TABLE IF NOT EXISTS af_events (id BIGSERIAL PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), type TEXT NOT NULL, message TEXT NOT NULL, data JSONB NOT NULL, created_at TEXT NOT NULL)",
+            "CREATE INDEX IF NOT EXISTS af_events_task_id_id ON af_events(task_id,id)",
             "CREATE TABLE IF NOT EXISTS af_control_commands (owner_id TEXT NOT NULL, command_id TEXT NOT NULL, task_ref TEXT NOT NULL, root_task_id TEXT NOT NULL REFERENCES af_tasks(id), action TEXT NOT NULL, fingerprint TEXT NOT NULL, requirement_slot TEXT, state TEXT NOT NULL, body JSONB NOT NULL, updated_at TEXT NOT NULL, PRIMARY KEY(owner_id,command_id), UNIQUE(owner_id,requirement_slot))",
             "CREATE INDEX IF NOT EXISTS af_control_commands_owner_task ON af_control_commands(owner_id,task_ref)",
             "CREATE TABLE IF NOT EXISTS af_effects (effect_key TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES af_tasks(id), run_id TEXT NOT NULL, fingerprint TEXT NOT NULL, status TEXT NOT NULL, result JSONB)",
@@ -190,7 +192,7 @@ class Store:
                                {"id": task_id, "owner": owner, "request": request_id, "fp": fp, "body": canonical(body)}).mappings().first()
             if row is None:
                 raise RuntimeError("Task reservation did not persist")
-        self.event(task_id, "admission_reserved", "Task reserved; native queue acceptance pending", {})
+            self._append_event(task_id, "admission_reserved", "Task reserved; native queue acceptance pending", {})
         return dict(row), True
 
     def task(self, identifier, owner=None):
@@ -360,12 +362,16 @@ class Store:
         return checked
 
     def event(self, identifier, event_type, message, data=None):
-        task = self.task(identifier)
+        self._append_event(self.task(identifier)["id"], event_type, message, data)
+
+    def _append_event(self, task_id, event_type, message, data):
         self.sql("INSERT INTO af_events(task_id,type,message,data,created_at) VALUES(:id,:type,:message,CAST(:data AS JSONB),:at)",
-                 id=task["id"], type=event_type, message=message, data=canonical(data or {}), at=now())
+                 id=task_id, type=event_type, message=message, data=canonical(data or {}), at=now())
 
     def model_delta(self, identifier, event_type, text, response_id):
-        task = self.task(identifier)
+        self.append_model_delta(self.task(identifier)['id'], event_type, text, response_id)
+
+    def append_model_delta(self, task_id, event_type, text, response_id):
         stamp = now()
         # Keep one ordered row per adjacent model segment, including across refresh.
         self.sql("""WITH latest AS (
@@ -377,7 +383,7 @@ class Store:
                 RETURNING id
             ) INSERT INTO af_events(task_id,type,message,data,created_at)
                 SELECT :id,:type,:message,CAST(:data AS JSONB),:at WHERE NOT EXISTS(SELECT id FROM updated)""",
-            id=task['id'], type=event_type, text=text, response=response_id,
+            id=task_id, type=event_type, text=text, response=response_id,
             message='正在思考' if event_type == 'model_reasoning_delta' else '正在生成回答',
             data=canonical({'responseId': response_id, 'text': text, 'updatedAt': stamp}), at=stamp)
 
@@ -391,11 +397,8 @@ class Store:
         # cancellation is excluded, including known no-dispatch rejection.
         return bool(self.sql("""SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND (
             type IN ('tool_failed','protected_denied','experiment_failed') OR
-            type='lifecycle_cleanup_requested' AND data->>'reason' IN
-            ('protected-failure','current-authority-ended','native-failure','admission-rejected'))) AS failed""", id=task_id)[0]["failed"])
-
-    def failure_cleanup_requested(self, task_id):
-        return bool(self.sql("SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND type='lifecycle_cleanup_requested' AND data->>'reason' IN ('protected-failure','current-authority-ended','native-failure','admission-rejected')) AS failed", id=task_id)[0]["failed"])
+            type='lifecycle_cleanup_requested' AND data->>'reason' = ANY(:reasons))) AS failed""",
+            id=task_id, reasons=list(FAILURE_CLEANUP_REASONS))[0]["failed"])
 
     def observe_stopped(self, task, status):
         with self.transaction():

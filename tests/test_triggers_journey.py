@@ -36,7 +36,7 @@ class TriggerModel(BaseHTTPRequestHandler):
             elif 'research_qa_record' not in outputs:
                 context = outputs['research_qa_context']
                 protocol = next(source for source in context['sources']
-                                if 'protocol-budget-4096' in json.dumps(source['content']))
+                                if 'protocol-budget-4096' in json.dumps(source.get('excerpt', source.get('content'))))
                 assert 'peer-research-observation' in context['question']
                 tool, arguments = 'research_qa_record', {
                     'answer': 'The result used output budget 4096, as the shared protocol records. '
@@ -226,6 +226,16 @@ class TriggersJourney(unittest.TestCase):
             for event in protocol_session['turns'][-1]['events']
             if event['type'] == 'research_tool_finished'
             and event['data'].get('toolName') == 'research_record_experiment')
+        workspace = self.state['research_sessions'].workspace(peer.owner, protocol_session['id'])
+        (workspace / 'protocol.json').write_text('private-raw-evidence-marker', encoding='utf-8')
+        (workspace / 'unselected.txt').write_text('private-unselected-marker', encoding='utf-8')
+        protocol = self.context.request.get(self.origin + '/api/factory/application-content/' + protocol_id).json()
+        self.assertEqual(protocol['visibility'], 'team')
+        self.assertEqual(protocol['artifacts'], [])
+        self.assertNotIn('private-', json.dumps(protocol))
+        for suffix in ('', '/files', '/files/download?path=protocol.json', '/files/download?path=unselected.txt'):
+            response = self.context.request.get(self.origin + '/api/factory/research/sessions/' + protocol_session['id'] + suffix)
+            self.assertEqual(response.status, 404)
         self.assertEqual(len(self.session()['turns']), 1)
         peer.post('/research/sessions/' + protocol_session['id'] + '/turns', {'text': 'publish-team-research'})
         result = journey.ChatJourney.wait_for(self, lambda value: value['state'] == 'idle'

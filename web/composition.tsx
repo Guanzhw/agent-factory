@@ -10,7 +10,7 @@ export function Pages({ context, resourceReturn }: { context: WorkspaceContext; 
   return <>
     {route.tab === 'accounts' && user.role === 'manager' && <AccountManagement/>}
     {route.tab === 'resources' && <ResourceCenter onModels={() => navigate({ tab: 'models' })} onConnections={resource => navigate({ tab: 'connections', resource })} onBack={resourceReturn.onBack} applicationLabel={resourceReturn.label}/>}
-    {route.tab === 'models' && <ModelSettings key={user.id} ownerId={user.id} returnLabel={`返回${resourceReturn.label}`} continueLabel={`继续${resourceReturn.label}`} onBack={resourceReturn.onBack} onCredentials={() => navigate({ tab: 'connections', resource: 'credentials' })}/>}
+    {route.tab === 'models' && <ModelSettings focusConnection={route.modelConnection} key={user.id} ownerId={user.id} returnLabel={`返回${resourceReturn.label}`} continueLabel={`继续${resourceReturn.label}`} onBack={resourceReturn.onBack} onCredentials={() => navigate({ tab: 'connections', resource: 'credentials' })}/>}
     {route.tab === 'connections' && <ConnectionsPanel user={user} resource={route.resource as ConnectionResource | undefined} onSelectResource={resource => navigate({ resource })} onModels={() => navigate({ tab: 'models' })} onBack={resourceReturn.onBack}/>}
   </>;
 }

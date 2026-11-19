@@ -4,7 +4,7 @@ Agent Factory serves a trusted small team. Members can publish content, configur
 
 ## Identity and ownership
 
-Browser access requires configured local password login or external OIDC login. Accounts must be enabled. Browser sessions use HTTPS cookies, revocation, and Origin/CSRF checks. There is no bundled demo account or public self-registration. [Team membership](TEAM_MEMBERSHIP.md) describes account management.
+Members sign in with an enabled local account and password. Browser sessions use HTTPS cookies, revocation, and Origin/CSRF checks. There is no bundled demo account or public self-registration. [Team membership](TEAM_MEMBERSHIP.md) describes account management.
 
 A task, session, credential, or personal resource remains owned by its member. Team sharing permits use without transferring the resource's secret. Current account and resource state apply to subsequent calls. [Resource sharing](RESOURCE_SHARING.md) describes the supported changes.
 

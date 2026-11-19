@@ -83,6 +83,17 @@ class ForkHistory(unittest.TestCase):
             self.assertIn('independent answer', str(session_context.history_run(active[0], None).messages))
             service.content.read.assert_not_called()
 
+    def test_only_pre_exposure_corrections_survive_a_cut_inside_the_same_turn(self):
+        before = {'id': 'c', 'kind': 'correction', 'text': 'keep metric A', 'beforeSharedInput': True}
+        after = {'id': 'd', 'kind': 'correction', 'text': 'derived from withdrawn B'}
+        turn = {'id': 'turn', 'sequence': 1, 'body': {'messages': [before, after], 'status': 'completed',
+                'result': 'derived from withdrawn B', 'runId': 'contaminated-run', 'sharedSourceIds': ['B']}}
+        row = {'body': {'contextAfterSequence': 1, 'retainedSequences': []}}
+        retained, = session_context.active_turns(row, [turn])
+        self.assertIsNone(retained['body'].get('runId'))
+        messages = session_context.history_run(retained, None).messages
+        self.assertEqual([m.content for m in messages], ['keep metric A'])
+
     def test_snapshot_preserves_dialogue_and_tool_results_without_original_runtime(self):
         original = RunOutput(run_id='original-run', status=RunStatus.completed, messages=[
             Message(role='system', content='private original runtime instructions'),

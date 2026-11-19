@@ -74,7 +74,17 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             self.wfile.write(b'synthetic summary provider failure')
             return
         tool, arguments, reply = None, {}, '任务完成，结果可下载。\n\n| 结果 | 状态 |\n| --- | --- |\n| 工具 | 已完成 |'
-        if user_text == '摘要故障前的背景':
+        if user_text == 'Reply with OK.':
+            reply = 'OK'
+        elif user_text.startswith('审计附件验收'):
+            if not results:
+                tool, arguments = 'read_file', {'file_path': 'input.csv'}
+            elif len(results) == 1 and 'plum,42' in str(results[0][1]):
+                tool, arguments = 'run_shell', {'command': shell_command([sys.executable, '-c',
+                    "import base64; from pathlib import Path; Path('out.png').write_bytes(base64.b64decode("
+                    "'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aS1sAAAAASUVORK5CYII='))"])}
+            reply = '![产物](out.png) [原始材料](input.csv)'
+        elif user_text == '摘要故障前的背景':
             reply = 'summary-history-answer-marker'
         elif '摘要失败后继续' in user_text:
             if not results:
@@ -88,8 +98,13 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             if not results:
                 tool, arguments = 'write_file', {'file_path': 'ordered.txt', 'contents': '顺序工具结果'}
             reply = '顺序验收最终回答。'
+        elif user_text == 'within-turn-private-correction':
+            reply = 'derived-source-marker: Shared evidence says source-secret-marker.'
         elif user_text.startswith('共享资料验收:'):
             if not results:
+                if pause := getattr(self.server, 'before_evidence', None):
+                    pause[0].set()
+                    pause[1].wait(30)
                 tool, arguments = 'research_read_shared_evidence', {'content_id': user_text.split(':', 1)[1]}
             reply = 'derived-source-marker: Shared evidence says source-secret-marker.'
         elif '独立文件继续' in user_text:
@@ -165,7 +180,7 @@ class ModelEndpoint(BaseHTTPRequestHandler):
             steps = [('demo_cli', {'arguments': {'mode': 'fail'}}), ('demo_cli', {'arguments': {'mode': 'ok'}}), ('ssh_servers', {}),
                      ('write_file', {'file_path': '结果.txt', 'contents': DOCUMENT}),
                      ('edit_file', {'file_path': '结果.txt', 'old_text': '状态：初稿', 'new_text': '状态：已复核'}),
-                     ('research_delegate', {'goal': 'child-only'})]
+                     ('research_delegate', {'goal': 'child-only', 'handoff': 'Read the selected result from the parent.'})]
             if len(results) < len(steps):
                 tool, arguments = steps[len(results)]
             elif len(results) == len(steps):
@@ -407,15 +422,25 @@ class ChatJourney(unittest.TestCase):
         source = content.publish(publisher, ContentPublication(
             source=ContentSource(application='research', record='source-fixture', revision='1'),
             content={'observation': 'source-secret-marker'}, visibility='team'), str(uuid4()))
-        self.send('共享资料验收:' + source['id'])
+        self.send('摘要故障前的背景')
+        early = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
+        self.post('/research/sessions/' + early['id'] + '/corrections', {'text': 'independent-private-correction'})
+        ready, release = threading.Event(), threading.Event()
+        with patch.object(self.model, 'before_evidence', (ready, release), create=True):
+            try:
+                self.post('/research/sessions/' + early['id'] + '/turns', {'text': '共享资料验收:' + source['id']})
+                self.assertTrue(ready.wait(15))
+                self.post('/research/sessions/' + early['id'] + '/corrections', {'text': 'within-turn-private-correction'})
+            finally:
+                release.set()
         completed = self.wait_for(lambda value: value['turns'][-1]['status'] == 'completed')
-        self.assertIn('derived-source-marker', completed['turns'][0]['result'])
+        self.assertIn('derived-source-marker', completed['turns'][-1]['result'])
         service = self.state['research_sessions']
         # Persist representative old correction/summary records; the provider path is real.
         with service._write() as conn:
             row = service._row(conn, self.owner, completed['id'])
             turns = service._turns(conn, row['id'])
-            turn = turns[0]
+            turn = turns[-1]
             body = {**turn['body'], 'messages': [*turn['body']['messages'],
                 service._message('correction', 'source-correction-marker')]}
             service._save_turn(conn, turn, body)
@@ -434,23 +459,28 @@ class ChatJourney(unittest.TestCase):
         path = '/research/sessions/' + snapshot['id'] + '/turns'
         request = {'requestId': str(uuid4()), 'text': '独立文件继续'}
         self.post(path, request)
-        continued = self.wait_for(lambda value: len(value['turns']) == 2 and value['turns'][-1]['status'] == 'completed')
+        continued = self.wait_for(lambda value: len(value['turns']) == 3 and value['turns'][-1]['status'] == 'completed')
         sent = json.dumps(self.model.requests[requests_before:], ensure_ascii=False)
+        self.assertIn('independent-private-correction', sent)
+        self.assertIn('within-turn-private-correction', sent)
         for marker in ('source-secret-marker', 'derived-source-marker', 'source-correction-marker', 'source-summary-marker'):
             self.assertNotIn(marker, sent)
+        self.assertIn('summary-history-answer-marker', sent)
         self.assertIn('独立文件继续', sent)
         self.assertEqual((service.workspace(self.owner, snapshot['id']) / 'independent-source.txt').read_text(),
                          'independent-source-result')
-        self.assertIn('derived-source-marker', continued['turns'][0]['result'])
+        self.assertIn('derived-source-marker', continued['turns'][1]['result'])
         self.post(path, request)
         self.page.reload()
-        self.assertEqual(len(self.session()['turns']), 2)
+        self.assertEqual(len(self.session()['turns']), 3)
         with service.db.read() as conn:
             row = service._row(conn, self.owner, snapshot['id'])
             turns = service._turns(conn, row['id'])
             self.assertIsNone(row['body'].get('contextCheckpoint'))
             self.assertEqual([item['id'] for item in session_context.active_turns(row, turns)],
-                             [continued['turns'][-1]['id']])
+                             [turn['id'] for turn in continued['turns']])
+            self.assertTrue(session_context.active_turns(row, turns)[1]['correctionsOnly'])
+            self.assertIn('derived-source-marker', turns[1]['body']['result'])
         with self.assertRaises(HTTPException):
             content.read(self.owner, source['id'])
 
@@ -791,6 +821,10 @@ class ChatJourney(unittest.TestCase):
         self.assertEqual(len(turn['children']), 1)
         self.assertEqual(turn['children'][0]['status'], 'completed')
         self.assertIn('子助手已完成', turn['children'][0]['result'])
+        child_prompts = [message['content'] for req in self.model.requests for message in req['messages']
+                         if message['role'] == 'system' and '"goal": "child-only"' in message['content']]
+        self.assertTrue(any('Read the selected result from the parent.' in prompt for prompt in child_prompts))
+
         edits = [e for e in turn['events'] if e['type'] == 'tool_finished'
                  and e['data'].get('toolName') in {'write_file', 'edit_file'}]
         self.assertTrue(edits, turn['events'])
@@ -874,8 +908,9 @@ class ChatJourney(unittest.TestCase):
             reason = response.json()['errors'][0]['message']
             self.assertTrue(reason)
             self.page.get_by_role('button', name='刷新文件列表', exact=True).click()
-            expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(blocked.name)
-            expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(reason)
+            self.page.get_by_role('button', name='打开目录 ' + blocked.name).click()
+            expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text('目录无法读取')
+            self.page.get_by_role('button', name='上一级目录').click()
             expect(self.page.locator('.rs-files').get_by_text('还没有生成文件。', exact=True)).to_have_count(0)
             with self.page.expect_download() as partial_download:
                 self.page.get_by_role('link', name='结果.txt', exact=True).click()
@@ -885,13 +920,19 @@ class ChatJourney(unittest.TestCase):
                 'boundaries': '', 'modelConnectionRef': snapshot['model']['connectionRef']})
             self.page.get_by_role('button', name='刷新会话', exact=True).click()
             pending = []
-            next_files = '**/research/sessions/' + next_session['id'] + '/files'
-            self.page.route(next_files, lambda route: pending.append(route))
-            with self.page.expect_request(next_files):
-                self.page.get_by_role('button', name=re.compile('^文件列表切换验收')).click()
+            next_files = '**/research/sessions/' + next_session['id'] + '/files?directory=*'
+            def delay_first_listing(route):
+                if pending:
+                    route.fulfill(status=503, json={'detail': '文件列表读取失败验收'})
+                else:
+                    pending.append(route)
+            self.page.route(next_files, delay_first_listing)
+            self.page.get_by_role('button', name=re.compile('^文件列表切换验收')).click()
             expect(self.page.get_by_role('heading', name='文件列表切换验收', exact=True)).to_be_visible()
             expect(self.page.locator('#rs-file-panel')).to_be_hidden()
-            self.page.get_by_role('button', name='会话文件', exact=True).click()
+            self.assertEqual(pending, [])
+            with self.page.expect_request(next_files):
+                self.page.get_by_role('button', name='会话文件', exact=True).click()
             file_panel = self.page.locator('.rs-files')
             expect(file_panel.get_by_role('status')).to_have_text('正在读取文件…')
             expect(file_panel.get_by_role('link')).to_have_count(0)
@@ -903,7 +944,9 @@ class ChatJourney(unittest.TestCase):
             self.page.get_by_role('button', name='关闭会话文件', exact=True).click()
             expect(self.page.locator('.rs-detail-body > .rs-panel-warning')).to_contain_text('部分会话文件无法读取')
             expect(self.page.locator('#rs-file-panel')).to_be_hidden()
-            self.page.get_by_role('button', name='查看文件问题', exact=True).click()
+            with self.page.expect_request(next_files):
+                self.page.get_by_role('button', name='查看文件问题', exact=True).click()
+            expect(file_panel.get_by_role('alert')).to_have_text('文件列表读取失败验收')
             expect(file_panel.get_by_role('link')).to_have_count(0)
             expect(file_panel.get_by_text(blocked.name, exact=False)).to_have_count(0)
             expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(0)
@@ -913,7 +956,7 @@ class ChatJourney(unittest.TestCase):
             expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(1)
             self.page.get_by_role('button', name=re.compile('^' + re.escape(snapshot['title']))).click()
             self.page.get_by_role('button', name='会话文件', exact=True).click()
-            expect(self.page.locator('.rs-files [role="alert"]')).to_contain_text(blocked.name)
+            expect(self.page.get_by_role('button', name='打开目录 ' + blocked.name)).to_be_visible()
         finally:
             if sys.platform == 'win32':
                 win32security.SetNamedSecurityInfo(str(blocked), win32security.SE_FILE_OBJECT,
@@ -922,7 +965,9 @@ class ChatJourney(unittest.TestCase):
                 blocked.chmod(0o700)
         self.page.get_by_role('button', name='刷新文件列表', exact=True).click()
         expect(self.page.locator('.rs-files [role="alert"]')).to_have_count(0)
+        self.page.get_by_role('button', name='打开目录 ' + blocked.name).click()
         expect(self.page.get_by_role('link', name=blocked.name + '/hidden.txt', exact=True)).to_be_visible()
+        self.page.get_by_role('button', name='上一级目录').click()
         expect(self.page.get_by_role('link', name='child.txt', exact=True)).to_be_visible()
         self.assertEqual(len(self.session()['turns']), 1)  # Refresh must not start another run.
         self.assertEqual(len(self.model.requests), requests_before_refresh)
@@ -1321,10 +1366,8 @@ class ChatJourney(unittest.TestCase):
         self.configure_ssh()
         self.send('ssh 可用了吗?')
         snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
-        files_url = '**/research/sessions/' + snapshot['id'] + '/files'
-        with self.page.expect_response(files_url) as files:
-            self.page.reload()
-        self.assertTrue(files.value.ok)
+        files_url = '**/research/sessions/' + snapshot['id'] + '/files?directory=*'
+        self.page.reload()
         expect(self.page.locator('.rs-turn > .rs-reply').get_by_text('已找到配置的 SSH 服务器', exact=False).last).to_be_visible()
         pane = self.page.locator('.rs-content')
         header = self.page.locator('.rs-detail > .rs-detail-heading')
@@ -1344,7 +1387,12 @@ class ChatJourney(unittest.TestCase):
                                ('会话信息', 'rs-info-panel')]:
             panel = self.page.locator('#' + panel_id)
             expect(panel).to_be_hidden()
-            self.page.get_by_role('button', name=name, exact=True).click()
+            if name == '会话文件':
+                with self.page.expect_response(files_url) as files:
+                    self.page.get_by_role('button', name=name, exact=True).click()
+                self.assertTrue(files.value.ok)
+            else:
+                self.page.get_by_role('button', name=name, exact=True).click()
             self.assertTrue(panel.evaluate('el => el.matches(":popover-open")'))
             if name == '会话文件':
                 expect(panel.get_by_role('button', name='刷新文件列表', exact=True)).to_be_visible()
@@ -1420,7 +1468,7 @@ class ChatJourney(unittest.TestCase):
             {'owner': self.owner, 'request': str(uuid4()), 'session': snapshot['id']})
         self.page.reload()
         expect(self.page.locator('.rs-recovery')).to_be_visible()
-        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_be_disabled()
+        expect(self.page.get_by_role('textbox', name='下一轮指令', exact=True)).to_be_editable()
         self.page.get_by_role('button', name='会话信息', exact=True).click()
         stop = self.page.get_by_role('button', name='停止会话', exact=True)
         expect(stop).to_be_enabled()
@@ -1715,6 +1763,7 @@ class ChatJourney(unittest.TestCase):
             expect(row.get_by_text('失败', exact=True)).to_be_visible()
             expect(row.get_by_text(call.error, exact=True)).to_be_visible()
         self.page.get_by_role('button', name='会话文件', exact=True).click()
+        self.page.get_by_role('button', name='打开目录 skill-work').click()
         with self.page.expect_download() as download:
             self.page.get_by_role('link', name='skill-work/skill-result.json', exact=True).click()
         self.assertEqual(json.loads(Path(download.value.path()).read_bytes()), expected)

@@ -277,6 +277,25 @@ class EncryptedCredentialVault:
             return self._public(row)
         return self._mutate(owner, request_id, ["revoke", reference, revision], execute)
 
+    def authorized_scopes(self, scopes):
+        """Project active credential metadata for a single listing without reading secrets."""
+        normalized = {}
+        for scope in scopes:
+            owner, ref, rev, provider, destination = scope
+            if all(self._identifier(value) for value in (owner, ref, rev)):
+                try:
+                    normalized[scope] = (owner, ref, rev, provider, self._destination(provider, destination))
+                except Exception:
+                    continue
+        if not normalized:
+            return set()
+        columns = self.credentials.c
+        with self._read() as conn:
+            active = set(conn.execute(select(columns.owner_id, columns.reference, columns.revision,
+                columns.provider_id, columns.destination).where(columns.state == "ACTIVE",
+                    columns.reference.in_({scope[1] for scope in normalized}))))
+        return {scope for scope, key in normalized.items() if key in active}
+
     def authorize(self, *, owner, reference, revision, provider_id, destination):
         try:
             with self._read() as conn:

@@ -1,11 +1,9 @@
+import type { User } from './models.js';
+
 /** Browser credentials remain in the server cookie; CSRF stays in memory only. */
-export interface BrowserAuthConfig { enabled: boolean; oidcEnabled: boolean; localLoginEnabled: boolean; loginPath: '/api/factory/auth/login'; logoutPath: '/api/factory/auth/logout' }
 export class BrowserAuthError extends Error {
   constructor(public readonly status: number) { super(status === 401 ? '登录会话已过期，请重新登录。' : '身份认证暂时不可用，请重新尝试。'); }
 }
-let enabled = false;
-let oidcEnabled = false;
-let localLoginEnabled = false;
 let epoch = 0;
 let csrf: string | undefined;
 let pending: Promise<string> | undefined;
@@ -21,20 +19,7 @@ export function clearBrowserSession(notify = false) {
 export function subscribeSessionExpiry(listener: () => void) {
   listeners.add(listener); return () => { listeners.delete(listener); };
 }
-export function expireBrowserSession() { if (enabled) clearBrowserSession(true); }
-export function configureBrowserAuth(value: unknown): BrowserAuthConfig {
-  if (!value || typeof value !== 'object') throw new BrowserAuthError(0);
-  const config = value as Partial<BrowserAuthConfig>;
-  if ('developmentOnly' in config && config.developmentOnly !== false) throw new BrowserAuthError(0);
-  if (typeof config.enabled !== 'boolean' || typeof config.oidcEnabled !== 'boolean' || typeof config.localLoginEnabled !== 'boolean'
-      || config.enabled !== (config.oidcEnabled || config.localLoginEnabled)
-      || config.loginPath !== '/api/factory/auth/login' || config.logoutPath !== '/api/factory/auth/logout') throw new BrowserAuthError(0);
-  if (enabled !== config.enabled) clearBrowserSession();
-  enabled = config.enabled;
-  oidcEnabled = config.oidcEnabled;
-  localLoginEnabled = config.localLoginEnabled;
-  return config as BrowserAuthConfig;
-}
+export function expireBrowserSession() { clearBrowserSession(true); }
 async function authJson(path: string, method = 'GET', signal?: AbortSignal, body: object = {}) {
   const started = epoch;
   let response: Response;
@@ -52,55 +37,30 @@ async function authJson(path: string, method = 'GET', signal?: AbortSignal, body
   assertAuthEpoch(started);
   return value;
 }
-export async function browserAuthConfig(signal?: AbortSignal) {
-  const value = await authJson('/api/factory/auth/config', 'GET', signal);
-  if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-  return configureBrowserAuth(value);
+export async function readBrowserSession(signal?: AbortSignal): Promise<User | null> {
+  const session = await authJson('/api/factory/auth/session', 'GET', signal) as {
+    authenticated?: boolean; csrfToken?: string; user?: User;
+  } | null;
+  if (session?.authenticated === false) { csrf = undefined; return null; }
+  if (session?.authenticated !== true || !session.user?.id || typeof session.csrfToken !== 'string'
+      || !/^[\x21-\x7e]{16,512}$/.test(session.csrfToken)) throw new BrowserAuthError(0);
+  csrf = session.csrfToken;
+  return session.user;
 }
-export async function browserCsrf(): Promise<string | undefined> {
-  if (!enabled) return undefined;
+export async function browserCsrf(): Promise<string> {
   if (csrf) return csrf;
   if (!pending) {
-    const started = epoch;
-    const work = (async () => {
-      const value = await authJson('/api/factory/auth/session');
-      assertAuthEpoch(started);
-      const session = value as { authenticated?: unknown; csrfToken?: unknown } | null;
-      if (!session || session.authenticated !== true) { expireBrowserSession(); throw new BrowserAuthError(401); }
-      if (typeof session.csrfToken !== 'string' || !/^[\x21-\x7e]{16,512}$/.test(session.csrfToken)) throw new BrowserAuthError(0);
-      csrf = session.csrfToken; return csrf;
-    })();
+    const work = readBrowserSession().then(user => {
+      if (!user || !csrf) { expireBrowserSession(); throw new BrowserAuthError(401); }
+      return csrf;
+    });
     pending = work;
     void work.finally(() => { if (pending === work) pending = undefined; }).catch(() => {});
   }
   return pending;
 }
-export function authorizationDestination(value: unknown): string {
-  if (!value || typeof value !== 'object' || typeof (value as { authorizationUrl?: unknown }).authorizationUrl !== 'string') throw new BrowserAuthError(0);
-  const raw = (value as { authorizationUrl: string }).authorizationUrl;
-  let url: URL;
-  try { url = new URL(raw); } catch { throw new BrowserAuthError(0); }
-  if (url.protocol !== 'https:' || url.username || url.password || raw.length > 8192) throw new BrowserAuthError(0);
-  return url.href;
-}
-export async function startBrowserLogin(): Promise<string> {
-  if (!oidcEnabled) throw new BrowserAuthError(0);
-  clearBrowserSession();
-  const started = epoch;
-  const value = await authJson('/api/factory/auth/login', 'POST', undefined,
-    { returnTo: window.location.pathname + window.location.search + window.location.hash });
-  assertAuthEpoch(started);
-  return authorizationDestination(value);
-}
 export async function startLocalLogin(username: string, password: string): Promise<void> {
-  if (!localLoginEnabled) throw new BrowserAuthError(0);
   clearBrowserSession();
   const value = await authJson('/api/factory/auth/local-login', 'POST', undefined, { username, password });
   if (!value || typeof value !== 'object' || (value as { authenticated?: unknown }).authenticated !== true) throw new BrowserAuthError(0);
-}
-export function consumeSigninFailure(location: Pick<Location, 'href'>, replace: (url: string) => void): boolean {
-  const url = new URL(location.href);
-  const failed = url.searchParams.has('auth_error');
-  if (failed) { url.searchParams.delete('auth_error'); replace(url.pathname + url.search + url.hash); }
-  return failed;
 }

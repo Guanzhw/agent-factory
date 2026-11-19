@@ -176,9 +176,10 @@
 .rw-chat-shell .rw-error { background: #342222; color: #f2b8b5; border-color: #764a46; }
 .rw-chat-shell .rs-action-feedback { background: #242b38; }
 .rw-chat-shell .rs-settings-content { padding-top: 32px; }
-.rw-chat-shell .rs-settings-content :is(.settings-card, .storage-card, .model-editor, .model-form, .model-record, .resource-catalog-card, .rw-project-card) { background: #1c1c1c; border-color: #343434; color: #ededed; box-shadow: none; }
+.rw-chat-shell .rs-settings-content :is(.settings-card, .storage-card, .model-editor, .model-form, .model-record, .resource-catalog-card, .rw-project-card, .material-editor, .material-row, .state-note) { background: #1c1c1c; border-color: #343434; color: #ededed; box-shadow: none; }
 .rw-shell.rw-chat-shell .model-settings button:not([class]) { background: #242424; color: #ededed; border-color: #43454a; }
 .rw-chat-shell .rs-settings-content :is(input, select, textarea) { color: #ededed; background: #292929; border-color: #43454a; }
+.rw-shell.rw-chat-shell .rs-settings-content :is(button.primary, button.secondary, .material-editor button) { color: #ededed; background: #30343b; border-color: #656970; }
 .rw-chat-shell .model-form { padding: 24px; width: 100%; max-width: none; }
 .rw-chat-shell .model-form fieldset { gap: 16px; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
@@ -261,3 +262,7 @@
   .rw-chat-shell .rs-header-tabs { margin-left: -36px; }
   .rw-chat-shell .rs-tool-call > summary { min-height: 44px; }
 }
+
+.rw-chat-shell .rs-markdown img { max-width: 100%; height: auto; }
+.rw-chat-shell .rs-attachment { align-self: flex-start; margin: 0 12px; font-size: 12px; }
+.rw-shell.rw-chat-shell .rs-attachment input[type=file] { width: auto; max-width: 100%; font-size: 12px; margin: 0; padding: 2px; }
