@@ -52,7 +52,7 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
         updated = {**snapshot, 'state': 'stopped'}
         service = SimpleNamespace(read=AsyncMock(return_value=updated))
         request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
-        auth = SimpleNamespace(user=lambda _: {'id': 'owner'})
+        auth = SimpleNamespace(require_member=lambda _: None)
         with patch('research.session_stream.get_event_stream', return_value=SimpleNamespace(tail=failed_tail)):
             stream = session_updates(request, auth, service, 'owner', 'session', notifications(), snapshot)
             await anext(stream)
@@ -72,6 +72,26 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
                 next_frame.cancel()
                 await asyncio.gather(next_frame, return_exceptions=True)
                 await stream.aclose()
+
+    async def test_disabled_member_receives_no_more_stream_content(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock
+        from fastapi import HTTPException
+        from research.session_stream import session_updates
+
+        async def notifications():
+            yield SimpleNamespace(payload=json.dumps(
+                {'table': 'af_events', 'task': 'task', 'type': 'model_content_delta'}))
+
+        snapshot = {'id': 'session', 'turns': [{'id': 'turn', 'taskId': 'task', 'status': 'running'}]}
+        auth = SimpleNamespace(require_member=Mock(side_effect=HTTPException(403)))
+        service = SimpleNamespace(store=SimpleNamespace(sql=Mock()))
+        stream = session_updates(SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
+            auth, service, 'member', 'session', notifications(), snapshot)
+        self.assertIn('session', await anext(stream))
+        with self.assertRaises(StopAsyncIteration):
+            await asyncio.wait_for(anext(stream), 1)
+        service.store.sql.assert_not_called()
 
     async def test_streaming_admission_returns_before_execution_and_preserves_rejection(self):
         from fastapi import FastAPI, Request

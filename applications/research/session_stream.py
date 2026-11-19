@@ -1,10 +1,12 @@
 """Conversation updates from native execution and committed application changes."""
 import asyncio
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import json
 
 from agno.os.event_streams import get_event_stream
 import anyio
+from fastapi import HTTPException
 import psycopg
 from psycopg import sql
 
@@ -140,7 +142,7 @@ def frame(kind, value):
     return 'event: ' + kind + '\ndata: ' + json.dumps(value, ensure_ascii=False, separators=(',', ':')) + '\n\n'
 
 
-async def session_updates(request, auth, service, owner, identifier, notifications, initial):
+async def session_updates(request, auth, service, owner, identifier, notifications, initial) -> AsyncIterator[str]:
     pending = asyncio.Queue()
     snapshot = initial
     watchers = {}
@@ -172,19 +174,25 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
 
     listener = asyncio.create_task(database())
     try:
+        loop = asyncio.get_running_loop()
+        next_snapshot = loop.time()
         yield frame('session', snapshot)
         watch()
         while not await request.is_disconnected():
             try:
                 notice = await asyncio.wait_for(pending.get(), timeout=15)
             except TimeoutError:
-                if auth.user(request)['id'] != owner:
-                    return
+                auth.require_member(owner)
                 yield ': connected\n\n'
                 if listener.done():
                     listener.result()
                     return
                 continue
+            # Collect notifications that arrive just after a full read in the same batch.
+            # A fixed deadline keeps a busy stream moving even if changes never pause.
+            delay = next_snapshot - loop.time()
+            if delay > 0:
+                await asyncio.sleep(delay)
             notices = [notice]
             while not pending.empty():
                 notices.append(pending.get_nowait())
@@ -217,15 +225,15 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
                     refresh = True
             if not refresh and not changed:
                 continue
-            if auth.user(request)['id'] != owner:
-                return
             if refresh:
-                current = await service.read(owner, identifier)
+                current = await service.read(owner, identifier)  # Includes a fresh membership check.
+                next_snapshot = loop.time() + 0.2
                 if current != snapshot:
                     snapshot = current
                     yield frame('session', snapshot)
                 watch()
             else:
+                auth.require_member(owner)
                 for task_id in changed:
                     turn = turns[task_id]
                     old = {event['id']: event for event in turn.get('events') or []}
@@ -239,6 +247,10 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
                         old.update({event['id']: event for event in updated})
                         turn['events'] = sorted(old.values(), key=lambda event: event['id'])
                         yield frame('turn_events', {'sessionId': identifier, 'turnId': turn['id'], 'events': updated})
+    except HTTPException as error:
+        if error.status_code not in (401, 403):
+            raise
+        # The stream already sent HTTP headers. End it when the member loses access.
     finally:
         listener.cancel()
         for task in watchers.values():

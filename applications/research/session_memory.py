@@ -103,9 +103,12 @@ class ResearchSessionMemory:
 
     def observe(self, owner, turn, task, prefix):
         """Only inspect original memory IDs; never repeat a memory mutation."""
+        operations = turn['body'].get('memoryOperations')
+        if not operations:
+            return
         store = self.sessions.store
         effects = {item['effect_key']: item for item in store.effects(task['id'])}
-        for operation_key, operation in turn['body'].get('memoryOperations', {}).items():
+        for operation_key, operation in operations.items():
             call_id = operation.get('callId', operation_key)
             key = prefix + call_id
             effect = effects.get(operation['runId'] + ':' + key)

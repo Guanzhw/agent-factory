@@ -104,7 +104,7 @@ class FactoryAPI:
     def scoped_task(self, identifier, owner):
         return self.store.task(identifier, owner), None
 
-    async def detail(self, task, remote_child=None):
+    async def observe_task(self, task):
         task = await self.store.lifecycle_observer.recover_admission(task)
         snapshot = {}
         if task.get("run_id"):
@@ -116,16 +116,13 @@ class FactoryAPI:
                     raise
                 # Native acceptance preparation can cancel its ticket before saving a run.
                 snapshot = {'queue': ticket}
-        task = self.store.task(task["id"], task["owner_id"])
-        events = self.store.events(task["id"])
-        status_task = {**task, "protected_failed": self.store.has_failures(task["id"])}
         group = None
         if self.delegation:
             group = await self.delegation.inspect_group(task["owner_id"], task["id"])
-            # Native/group reads can await a concurrent trusted cleanup. Its
-            # cancellation flag and failure provenance commit together; never
-            # overwrite that cause using the caller's pre-await task snapshot.
-            task = self.store.task(task["id"], task["owner_id"])
+        # Cleanup can commit during the native/group reads; use its latest cancellation and failure state.
+        task = self.store.task(task["id"], task["owner_id"])
+        events = self.store.events(task["id"])
+        status_task = {**task, "protected_failed": self.store.has_failures(task["id"])}
         effects = group["parent"]["effects"] if group is not None else self.store.effects(task["id"])
         status = status_of(status_task, snapshot, effects, events, self.store)
         if group is not None:
@@ -134,9 +131,15 @@ class FactoryAPI:
                 status = "unknown" if group["unknown"] else "canceling"
             elif task["cancel_requested"] and group["allStopped"]:
                 status = "failed" if self.store.failure_cleanup_requested(task["id"]) else "canceled"
-        execution = self.store.execution(task)
         stopped_status = task["body"].get("stoppedStatus")
         status = (stopped_status if task["terminal"] else "finalizing") if stopped_status else finalized_status(status, task["terminal"])
+        return {"task": task, "status": status, "events": events, "snapshot": {**snapshot, "delegation": group, "effects": effects}}
+
+    async def detail(self, task, remote_child=None):
+        observation = await self.observe_task(task)
+        task, status, snapshot = observation["task"], observation["status"], observation["snapshot"]
+        execution = self.store.execution(task)
+        stopped_status = task["body"].get("stoppedStatus")
         delegation_scope = await asyncio.to_thread(self.delegation.delegation_scope, task["owner_id"], task["id"]) if self.delegation else None
         actions = ["inspect"]
         if delegation_scope and delegation_scope["allowed"]:
@@ -186,10 +189,10 @@ class FactoryAPI:
                 raise
             job["allowedActions"] = ["inspect"]
         return {"job": job,
-                "events": events, "artifacts": self.store.artifacts(task["id"]),
-                "snapshot": {**snapshot, "delegation": group, "delegationScope": delegation_scope,
+                "events": observation["events"], "artifacts": self.store.artifacts(task["id"]),
+                "snapshot": {**snapshot, "delegationScope": delegation_scope,
                     "nativeMetrics": snapshot.get("metrics") or (snapshot.get("run") or {}).get("metrics"),
-                    "executionFingerprint": task["fingerprint"], "planFingerprint": task["fingerprint"], "effects": effects,
+                    "executionFingerprint": task["fingerprint"], "planFingerprint": task["fingerprint"],
                     "syntheticFixture": execution_classification(execution)["syntheticFixture"]}}
 
     def routes(self):

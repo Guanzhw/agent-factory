@@ -14,7 +14,7 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 import httpx
 from agno.db.base import SessionType
-from sqlalchemy import MetaData, Table, inspect, select
+from sqlalchemy import select
 
 from .auth import EXECUTOR_ID
 from .native_stream import submit_stream
@@ -75,7 +75,6 @@ class NativeBridge:
     async def _request(self, method: str, path: str, user_id: str, **kwargs: Any) -> dict[str, Any]:
         if self._app is None:
             raise RuntimeError("Native HTTP application has not been attached")
-        self.auth.require_member(user_id)
         headers = {**kwargs.pop("headers", {}), "Authorization": f"Bearer {self.auth._issue_native_token(user_id)}"}
         streaming = method == "POST" and path.endswith("/runs") and kwargs.get("data", {}).get("stream") == "true"
         trusted_context = INTERNAL_NATIVE.set(True)
@@ -180,16 +179,15 @@ class NativeBridge:
         component = self._component(session_id, user_id)
         task_id = session_id
         task = self.store.task(task_id, user_id) if self.store is not None else None
-        session_id = self.native_session_id(task_id, user_id)
+        session_id = self.store.native_session_id(task) if task is not None else task_id
         kind, identifier = component["kind"], component["id"]
         session_type = SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT
         try:
             engine = self.native_db.db_engine
-            table_name = self.native_db.job_table_name
-            schema = getattr(self.native_db, "db_schema", None)
+            # Agno reuses the resolved table definition. Ticket rows are read on every lookup.
+            table = self.native_db._get_table(table_type="jobs")
             tickets = []
-            if inspect(engine).has_table(table_name, schema=schema):
-                table = Table(table_name, MetaData(), schema=schema, autoload_with=engine)
+            if table is not None:
                 with engine.connect() as connection:
                     query = select(table).where(
                         table.c.session_id == session_id, table.c.user_id == user_id,

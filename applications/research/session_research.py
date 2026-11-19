@@ -3,7 +3,7 @@ from copy import deepcopy
 from types import SimpleNamespace
 from uuid import NAMESPACE_URL, uuid5
 
-from sqlalchemy import Column, JSON, MetaData, String, Table, select
+from sqlalchemy import Column, JSON, MetaData, String, Table, func, select
 
 from agent_factory.application_content import ContentPublication, ContentSource
 from agent_factory.personal_tool_contract import ToolInvocationError
@@ -261,11 +261,17 @@ class ResearchSessionResearch:
             # Pending admission has no native run identity or original effects
             # to reconcile. Do not substitute an empty matching prefix.
             return
-        with self.db.read() as conn:
-            rows = list(conn.execute(select(self.experiments).where(
-                self.experiments.c.owner_id == task['owner_id'])).mappings())
-        effects = {item['effect_key']: item for item in self.store.effects(task['id'])}
         prefix = run_id + ':'
+        # Assessments can belong to this run even when an earlier task created the experiment.
+        columns = self.experiments.c
+        key = func.json_object_keys(columns.body['assessments']).column_valued('assessment_key')
+        matching_assessment = select(1).where(func.starts_with(key, prefix)).correlate(self.experiments).exists()
+        with self.db.read() as conn:
+            rows = conn.execute(select(self.experiments).where(columns.owner_id == task['owner_id'],
+                (columns.task_id == task['id']) | matching_assessment)).mappings().all()
+        if not rows:
+            return
+        effects = {item['effect_key']: item for item in self.store.effects(task['id'])}
 
         def complete(run_id, call_id, output):
             key = 'research-session-tool:' + call_id

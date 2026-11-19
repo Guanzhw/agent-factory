@@ -349,15 +349,15 @@ class ResearchSessions:
                 continue
             await asyncio.to_thread(self.memory.observe, owner, turn, task, EFFECT_PREFIX)
             try:
-                detail = await self.runs.factory.detail(task)
+                detail = await self.runs.factory.observe_task(task)
             except HTTPException:
                 # A failed observation is not a failed task or a dispatch grant.
                 continue
-            task = self.store.task(task['id'], owner)
+            task = detail['task']
             children = await self.subagents.children(task)
             if self.research is not None:
                 await self.research.observe(task)
-            status, snapshot = detail['job']['status'], detail['snapshot']
+            status, snapshot = detail['status'], detail['snapshot']
             observations[turn['id']] = {'events': detail['events'], 'toolResults': [
                 {'effectKey': item['effect_key'], 'status': item['status'], 'result': item['result']}
                 for item in snapshot.get('effects', [])]}
@@ -369,6 +369,10 @@ class ResearchSessions:
                 and run.get('run_id') == task['run_id'] and run.get('session_id') == self.store.native_session_id(task)
                 and run.get('user_id') == owner
                 and str(run.get('status', '')).lower() in {'completed', 'error', 'cancelled'})
+            progress = dict(taskId=task['id'], runId=task.get('run_id'), status=status, children=children)
+            if not native_ended and status in {'queued', 'running'} and all(
+                    turn['body'].get(key) == value for key, value in progress.items()):
+                continue  # No change to persist. Concurrent commands keep their own committed state.
             with self._write() as conn:
                 current = conn.execute(select(self.turns).where(self.turns.c.id == turn['id'])).mappings().one()
                 if current['body'].get('terminal'):
@@ -537,7 +541,7 @@ class ResearchSessions:
                 row = self._row(conn, owner, identifier)
                 turn = conn.execute(select(self.turns).where(self.turns.c.id == turn_id)).mappings().one()
                 if (row['body']['stopped'] or turn['body'].get('stopRequestId')
-                        or self._turns(conn, identifier)[-1]['id'] != turn_id):
+                        or self._latest_turn_id(conn, identifier) != turn_id):
                     self._save_turn(conn, turn, {**turn['body'], 'status': 'canceled', 'terminal': True,
                         'completedAt': now(), 'neverDispatched': True})
                     start = None
