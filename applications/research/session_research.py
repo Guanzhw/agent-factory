@@ -102,7 +102,7 @@ class ResearchSessionResearch:
         for source_id in session['body'].get('sharedSourceIds', []):
             source = self.content.read(context.user_id, source_id)
             source_ids.update([source_id, *source.get('sourceContentIds', [])])
-        body = {'visibility': values.get('visibility', 'personal'), 'hypothesis': values.get('hypothesis', ''), 'conditions': values.get('conditions', ''),
+        body = {'visibility': values.get('visibility', 'team'), 'hypothesis': values.get('hypothesis', ''), 'conditions': values.get('conditions', ''),
                 'projectId': session['body'].get('projectId'),
                 'goalVersion': session['body'].get('projectGoalVersion'),
                 'status': 'pending_admission', 'evidenceIds': [], 'sourceContentIds': sorted(source_ids),
@@ -177,8 +177,7 @@ class ResearchSessionResearch:
         if 'sourceContentIds' not in item and row['body'].get('sourceContentIds'):
             item['sourceContentIds'] = row['body']['sourceContentIds']
         if not item.get('recordId'):
-            publication = {**row, 'body': {**row['body'], **{field: item[field] for field in
-                ('visibility', 'evidenceIds', 'observations') if field in item}}}
+            publication = {**row, 'body': {'visibility': row['body'].get('visibility', 'team'), **item}}
             item['recordId'] = self._publish(publication, 'assessment-' + digest(key)[:32], item['assessment'],
                 item.get('sourceContentIds', row['body'].get('sourceContentIds', [])))
             with self.db.write() as conn:
@@ -249,6 +248,8 @@ class ResearchSessionResearch:
                     row = self._row(context.user_id, session['id'], row['id'])
                 return self._projection(row)
             dependencies = set(row['body'].get('sourceContentIds', []))
+            dependencies.update(row['body'][field] for field in ('startRecordId', 'terminalRecordId')
+                                if row['body'].get(field))
             if dependencies and self.content.readable_ids({context.user_id}, dependencies) != dependencies:
                 raise rejected('RESEARCH_SOURCE_UNAVAILABLE')
             for identifier in session['body'].get('sharedSourceIds', []):
@@ -257,9 +258,9 @@ class ResearchSessionResearch:
             with self.db.write() as conn:
                 row = conn.execute(select(self.experiments).where(self.experiments.c.id == row['id'])).mappings().one()
                 body = deepcopy(row['body'])
-                item = {'visibility': values.get('visibility', 'personal'), 'experimentId': row['id'], 'assessment': values['assessment'],
-                        'evidenceIds': deepcopy(values.get('evidenceIds', body['evidenceIds'])),
-                        'observations': deepcopy(values.get('observations', body.get('observations', []))),
+                item = {'visibility': values.get('visibility', 'team'), 'experimentId': row['id'], 'assessment': values['assessment'],
+                        'evidenceIds': deepcopy(values.get('evidenceIds', [])),
+                        'observations': deepcopy(values.get('observations', [])),
                         'verificationStatus': 'agent_analysis', 'sourceContentIds': sorted(dependencies)}
                 key = context.run_id + ':' + call_id
                 old = body.setdefault('assessments', {}).get(key)

@@ -46,12 +46,12 @@ class TriggerModel(BaseHTTPRequestHandler):
                 reply = 'Saved the answer with the shared protocol citation.'
         elif instruction == 'publish-peer-protocol' and not results:
             tool = 'research_record_experiment'
-            arguments = {'visibility': 'team', 'conditions': 'protocol-budget-4096: output budget 4096, same model and benchmark.',
+            arguments = {'conditions': 'protocol-budget-4096: output budget 4096, same model and benchmark.',
                          'observations': ['Protocol fixes the output budget at 4096.'],
                          'evidenceIds': ['protocol.json']}
         elif instruction == 'publish-team-research' and not results:
             tool = 'research_record_experiment'
-            arguments = {'visibility': 'team', 'observations': ['peer-research-observation: score improved from 40 to 60; '
+            arguments = {'observations': ['peer-research-observation: score improved from 40 to 60; '
                                           'output budget is missing from this result.'],
                          'evidenceIds': ['result.csv']}
         elif 'read-trigger-source' in instruction:
@@ -226,6 +226,16 @@ class TriggersJourney(unittest.TestCase):
             for event in protocol_session['turns'][-1]['events']
             if event['type'] == 'research_tool_finished'
             and event['data'].get('toolName') == 'research_record_experiment')
+        workspace = self.state['research_sessions'].workspace(peer.owner, protocol_session['id'])
+        (workspace / 'protocol.json').write_text('private-raw-evidence-marker', encoding='utf-8')
+        (workspace / 'unselected.txt').write_text('private-unselected-marker', encoding='utf-8')
+        protocol = self.context.request.get(self.origin + '/api/factory/application-content/' + protocol_id).json()
+        self.assertEqual(protocol['visibility'], 'team')
+        self.assertEqual(protocol['artifacts'], [])
+        self.assertNotIn('private-', json.dumps(protocol))
+        for suffix in ('', '/files', '/files/download?path=protocol.json', '/files/download?path=unselected.txt'):
+            response = self.context.request.get(self.origin + '/api/factory/research/sessions/' + protocol_session['id'] + suffix)
+            self.assertEqual(response.status, 404)
         self.assertEqual(len(self.session()['turns']), 1)
         peer.post('/research/sessions/' + protocol_session['id'] + '/turns', {'text': 'publish-team-research'})
         result = journey.ChatJourney.wait_for(self, lambda value: value['state'] == 'idle'

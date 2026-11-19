@@ -33,7 +33,8 @@ TEAM_WRITES = TEAM_TOOLS - {'research_team_work'}
 
 
 RECORD_VISIBILITY = {'type': 'string', 'enum': ['personal', 'team'],
-    'description': 'Defaults to personal. Use team only when the member asks to publish this content.'}
+    'description': 'Formal research records default to team-readable, editable only by the author. '
+                   'Use personal for an explicitly private record. Drafts and temporary notes belong in the private workspace.'}
 
 
 def _schema(properties, required):
@@ -97,24 +98,28 @@ TOOLS = {
     'research_project': ('Read the linked project agreement, or the session goal when no project is linked. '
         'This is context, not a required step or an instruction to launch work.', _schema({}, [])),
     'research_experiment': ('Start an experiment as a native child Agent when independent work is useful. '
-        'Privately records the selected hypothesis, conditions and receipt identities by default. '
+        'Formally records the selected hypothesis, conditions and receipt identities, team-readable by default. '
         'Uses this session workspace and resources. Use research_wait_child with the returned childTaskId. '
         'You may instead run commands directly and use research_record_experiment; delegation is optional.',
         _schema({'visibility': RECORD_VISIBILITY, 'hypothesis': MEMORY_TEXT, 'conditions': MEMORY_TEXT,
                  'goal': {'type': 'string', 'minLength': 1}}, ['hypothesis', 'conditions', 'goal'])),
-    'research_record_experiment': ('Save research observations from files, existing results or external tool output. '
-        'No command receipt is required. Defaults to a private record. '
+    'research_record_experiment': ('Formally record selected research conclusions and observations from existing results. '
+        'No command receipt is required. Defaults to team-readable. Use only for content selected for the formal record; '
+        'keep drafts and temporary observations in the private workspace. '
+        'Include only explicitly selected, team-shareable evidence; references do not grant access to files or logs. '
         'Recording an observation does not certify execution or scientific success.',
         _schema({'visibility': RECORD_VISIBILITY, 'hypothesis': MEMORY_TEXT, 'conditions': MEMORY_TEXT,
                  'observations': {'type': 'array', 'items': {'type': 'string'}},
                  'evidenceIds': {'type': 'array', 'items': {'type': 'string'},
-                     'description': 'Ordinary file paths, URLs or other references to supporting results.'},
+                     'description': 'Explicitly selected, shareable supporting references. Does not publish referenced files.'},
                  'effectKeys': {'type': 'array', 'items': {'type': 'string'},
                      'description': 'Optional legacy result references.'}}, [])),
     'research_experiment_result': ('Inspect an original research record; never restart unknown work.',
         _schema({'experimentId': MEMORY_ID}, ['experimentId'])),
-    'research_assess': ('Save an interpretation of available evidence, optionally linked to a research record. '
-        'No terminal result is required. Defaults to a private assessment. '
+    'research_assess': ('Formally record a selected interpretation of available evidence, optionally linked to a research record. '
+        'No terminal result is required. Defaults to team-readable. Keep temporary analysis in the private workspace. '
+        'Only supplied observations and evidence references are included; select only team-shareable content. '
+        'A linked private or withdrawn source still restricts who can read this assessment. '
         'Analysis never changes execution facts or certifies scientific success.',
         _schema({'visibility': RECORD_VISIBILITY, 'experimentId': MEMORY_ID, 'assessment': MEMORY_TEXT,
                  'observations': {'type': 'array', 'items': {'type': 'string'}},
