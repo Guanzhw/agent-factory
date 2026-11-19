@@ -87,7 +87,7 @@ class AssistantMessages:
         if fresh:
             self.auth.require_member(sender)
             endpoint = await asyncio.to_thread(self.endpoints.resolve, endpoint_id)
-            await self.runs.start(message['recipient_id'], self._start_body(message, endpoint))
+            await self.runs.submit(message['recipient_id'], self._start_body(message, endpoint))
         return await asyncio.to_thread(self.read, sender, message['id'])
 
     async def recover(self, recipient, identifier, *, delivery_id=None, private_event_id=None):
@@ -108,7 +108,7 @@ class AssistantMessages:
                 options['delivery_id'] = delivery_id
             if private_event_id is not None:
                 options['private_event_id'] = private_event_id
-            await self.runs.start(recipient, self._start_body(message, endpoint), **options)
+            await self.runs.submit(recipient, self._start_body(message, endpoint), **options)
         return await asyncio.to_thread(self.read, recipient, identifier)
 
     def _message_id(self, request_id, execution):

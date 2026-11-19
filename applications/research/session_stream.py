@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 import json
 
-from agno.os.event_streams import get_event_stream
 import anyio
 from fastapi import HTTPException
 import psycopg
@@ -102,8 +101,9 @@ class SessionNotifications:
             async with changes(self.store) as notifications:
                 ready.set_result(None)
                 async for notice in notifications:
+                    change = json.loads(notice.payload)
                     for queue in queues:
-                        queue.put_nowait(notice)
+                        queue.put_nowait(change)
         except Exception as error:
             if not ready.done():
                 ready.set_exception(error)
@@ -124,10 +124,7 @@ class SessionNotifications:
         queues.add(queue)
         try:
             await asyncio.shield(self.ready)
-            async def notifications():
-                while (notice := await queue.get()) is not None:
-                    yield notice
-            yield notifications()
+            yield queue
         finally:
             queues.discard(queue)
             if not queues:
@@ -143,71 +140,35 @@ def frame(kind, value):
 
 
 async def session_updates(request, auth, service, owner, identifier, notifications, initial) -> AsyncIterator[str]:
-    pending = asyncio.Queue()
     snapshot = initial
-    watchers = {}
-    cursors = {}
-
-    async def database():
-        async for notification in notifications:
-            await pending.put(json.loads(notification.payload))
-
-    async def native(run_id):
-        try:
-            async for index, raw in get_event_stream().tail(run_id, last_event_index=cursors.get(run_id)):
-                cursors[run_id] = index
-                for line in raw.splitlines():
-                    if line.startswith('data:'):
-                        event = json.loads(line[5:])
-                        await pending.put({'native': run_id, 'type': event.get('event')})
-        except Exception:
-            # Database notifications remain authoritative if the in-memory tail expires.
-            return
-
-    def watch():
-        for turn in snapshot['turns']:
-            run_id = turn.get('runId')
-            if run_id and turn['status'] not in {'completed', 'failed', 'canceled'}:
-                task = watchers.get(run_id)
-                if task is None or task.done():
-                    watchers[run_id] = asyncio.create_task(native(run_id))
-
-    listener = asyncio.create_task(database())
     try:
         loop = asyncio.get_running_loop()
-        next_snapshot = loop.time()
+        next_read = loop.time()
         yield frame('session', snapshot)
-        watch()
         while not await request.is_disconnected():
             try:
-                notice = await asyncio.wait_for(pending.get(), timeout=15)
+                notice = await asyncio.wait_for(notifications.get(), timeout=15)
             except TimeoutError:
                 auth.require_member(owner)
                 yield ': connected\n\n'
-                if listener.done():
-                    listener.result()
-                    return
                 continue
-            # Collect notifications that arrive just after a full read in the same batch.
+            if notice is None:
+                return
+            # Collect notifications that arrive just after a read in the same batch.
             # A fixed deadline keeps a busy stream moving even if changes never pause.
-            delay = next_snapshot - loop.time()
+            delay = next_read - loop.time()
             if delay > 0:
                 await asyncio.sleep(delay)
             notices = [notice]
-            while not pending.empty():
-                notices.append(pending.get_nowait())
+            while not notifications.empty():
+                notice = notifications.get_nowait()
+                if notice is None:
+                    return  # Reconnect with a new snapshot after the database listener exits.
+                notices.append(notice)
             turns = {turn['taskId']: turn for turn in snapshot['turns'] if turn.get('taskId')}
-            runs = {turn['runId']: turn for turn in snapshot['turns'] if turn.get('runId')}
             changed, refresh = set(), False
             for notice in notices:
-                if notice.get('native'):
-                    turn = runs.get(notice['native'])
-                    if turn:
-                        if notice['type'] in {'RunContent', 'RunContentCompleted'}:
-                            changed.add(turn['taskId'])
-                        else:
-                            refresh = True
-                elif notice['table'] == 'af_events':
+                if notice['table'] == 'af_events':
                     if notice['task'] in turns:
                         changed.add(notice['task'])
                         refresh |= notice['type'] not in {'model_content_delta', 'model_reasoning_delta'}
@@ -227,11 +188,10 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
                 continue
             if refresh:
                 current = await service.read(owner, identifier)  # Includes a fresh membership check.
-                next_snapshot = loop.time() + 0.2
+                next_read = loop.time() + 0.2
                 if current != snapshot:
                     snapshot = current
                     yield frame('session', snapshot)
-                watch()
             else:
                 auth.require_member(owner)
                 for task_id in changed:
@@ -247,12 +207,8 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
                         old.update({event['id']: event for event in updated})
                         turn['events'] = sorted(old.values(), key=lambda event: event['id'])
                         yield frame('turn_events', {'sessionId': identifier, 'turnId': turn['id'], 'events': updated})
+                next_read = loop.time() + 0.05
     except HTTPException as error:
         if error.status_code not in (401, 403):
             raise
         # The stream already sent HTTP headers. End it when the member loses access.
-    finally:
-        listener.cancel()
-        for task in watchers.values():
-            task.cancel()
-        await asyncio.gather(listener, *watchers.values(), return_exceptions=True)

@@ -254,10 +254,10 @@ class PersonalModels:
         if not isinstance(handle, OwnerModelHandle) or handle.actor != owner:
             raise HTTPException(403, 'PERSONAL_MODEL_OWNER_REQUIRED')
         async def on_text(text, response_id):
-            await asyncio.to_thread(self.store.model_delta, task['id'],
+            await asyncio.to_thread(self.store.append_model_delta, task['id'],
                 'model_content_delta', text, response_id)
         async def on_reasoning(text, response_id):
-            await asyncio.to_thread(self.store.model_delta, task['id'],
+            await asyncio.to_thread(self.store.append_model_delta, task['id'],
                 'model_reasoning_delta', text, response_id)
         configuration = {**handle.body, **({'reasoningEffort': reasoning_effort} if reasoning_effort is not None else {})}
         return OwnerChatModel(configuration, handle.credential,

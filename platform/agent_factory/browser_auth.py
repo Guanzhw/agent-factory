@@ -229,15 +229,25 @@ class BrowserSessionService:
                 'config': self.fingerprint, 'revoked': False}, insert=True)
         return token
 
-    def session(self, token):
+    def _session_record(self, token):
         _check(_valid(token))
         with self.store.engine.connect() as conn:
             row = self._get(conn, _hash(token), "session")
             _check(row and not row["revoked"] and (row["expires"] is None or row["expires"] > self.clock())
                    and row["config"] == self.fingerprint)
         assert row is not None
-        self.auth._current_user(row["owner"])
         return row
+
+    def session(self, token):
+        row = self._session_record(token)
+        self.auth.require_member(row["owner"])
+        return row
+
+    def native_token(self, token):
+        row = self._session_record(token)
+        remaining = int(row["expires"] - self.clock()) if row["expires"] is not None else 60
+        _check(remaining > 0)
+        return self.auth._issue_native_token(row["owner"], lifetime_seconds=min(60, remaining))
 
     def csrf(self, token):
         _check(_valid(token))
@@ -385,10 +395,7 @@ class BrowserAuthBridge:
                 _check(scope.get("scheme") == "https", 403)
                 if scope.get("method") not in {"GET", "HEAD", "OPTIONS"}:
                     self._csrf(scope, token)
-                row = await asyncio.to_thread(self.service.session, token)
-                remaining = int(row["expires"] - self.service.clock()) if row["expires"] is not None else 60
-                _check(remaining > 0)
-                native = self.service.auth._issue_native_token(row["owner"], lifetime_seconds=min(60, remaining))
+                native = await asyncio.to_thread(self.service.native_token, token)
                 scope = {**scope, "headers": [*scope.get("headers", []), (b"authorization", ("Bearer " + native).encode())]}
             async def private_send(message):
                 if message["type"] == "http.response.start":

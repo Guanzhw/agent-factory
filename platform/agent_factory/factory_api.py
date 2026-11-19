@@ -7,7 +7,7 @@ from .application_runs import StartNotSubmitted
 from .native_bridge import NativeAdmissionRejected
 from .delegation import application_group_status
 from fastapi.routing import APIRoute as FactoryPublicRoute
-from .store import effect_unresolved, canonical
+from .store import FAILURE_CLEANUP_REASONS, effect_unresolved, canonical
 from .runtime_hooks import execution_classification
 from .task_status import finalized_status, native_status
 
@@ -22,7 +22,7 @@ def native_requirements(snapshot):
     return run.get("requirements") or []
 
 
-def status_of(task, snapshot, effects, events, store=None):
+def status_of(task, snapshot, effects, events, store, *, failure_cleanup):
     if task["admission"] == "rejected":
         return "failed"
     if task["admission"] in {"unknown", "reserved"} and not task.get("run_id"):
@@ -45,7 +45,7 @@ def status_of(task, snapshot, effects, events, store=None):
         return "failed"
     if raw in {"completed", "runstatus.completed"}:
         # A model's completed response is not evidence that a protected tool succeeded.
-        if task.get("protected_failed") or any(event["type"] in {"tool_failed", "protected_denied", "experiment_failed"} for event in events):
+        if failure_cleanup or any(event["type"] in {"tool_failed", "protected_denied", "experiment_failed"} for event in events):
             return "failed"
         return "completed"
     return "running" if raw in {"running", "runstatus.running"} else "queued"
@@ -67,7 +67,7 @@ class FactoryAPI:
             raise HTTPException(403, "Delegated tasks require their persisted ancestor context; use the child admission API")
         self.store.require_plan_execution(owner, execution)
 
-    async def instantiate(self, owner, execution, request_id, *, delivery_id=None, private_event_id=None):
+    async def admit(self, owner, execution, request_id, *, delivery_id=None, private_event_id=None):
         """Shared governed admission, including durable unknown-ack handling."""
         if self.store._connection.get() is not None:
             raise RuntimeError('Native admission requires a committed metadata boundary')
@@ -89,17 +89,20 @@ class FactoryAPI:
                 receipt = await self.bridge.submit({**execution, "task_id": task["id"]}, owner, request_id)
                 self.store.accept(task["id"], receipt["run_id"])
                 self.store.event(task["id"], "native_accepted", "Native durable queue accepted the task", {"runId": receipt["run_id"]})
+                return task["id"]
             except NativeAdmissionRejected:
                 self.store.admission_failed(task["id"], "Native queue is full; submission was not accepted", never_submitted=True)
                 raise
             except Exception:
                 self.store.admission_unknown(task["id"])
-        return (await self.detail(self.store.task(task["id"], owner))) ["job"]
+        if not task.get("run_id") and task["admission"] != "rejected":
+            await self.store.lifecycle_observer.recover_admission(self.store.task(task["id"], owner))
+        return task["id"]
 
-    def user(self, request):
-        user = self.auth.user(request)
-        self.auth.require_member(user["id"])
-        return user
+    def owner(self, request):
+        owner = self.auth.request_owner(request)
+        self.auth.require_member(owner)
+        return owner
 
     def scoped_task(self, identifier, owner):
         return self.store.task(identifier, owner), None
@@ -122,15 +125,16 @@ class FactoryAPI:
         # Cleanup can commit during the native/group reads; use its latest cancellation and failure state.
         task = self.store.task(task["id"], task["owner_id"])
         events = self.store.events(task["id"])
-        status_task = {**task, "protected_failed": self.store.has_failures(task["id"])}
+        failure_cleanup = any(event["type"] == "lifecycle_cleanup_requested" and
+            isinstance(event["data"], dict) and event["data"].get("reason") in FAILURE_CLEANUP_REASONS for event in events)
         effects = group["parent"]["effects"] if group is not None else self.store.effects(task["id"])
-        status = status_of(status_task, snapshot, effects, events, self.store)
+        status = status_of(task, snapshot, effects, events, self.store, failure_cleanup=failure_cleanup)
         if group is not None:
             status = application_group_status(status, group)
             if task["cancel_requested"] and not group["allStopped"]:
                 status = "unknown" if group["unknown"] else "canceling"
             elif task["cancel_requested"] and group["allStopped"]:
-                status = "failed" if self.store.failure_cleanup_requested(task["id"]) else "canceled"
+                status = "failed" if failure_cleanup else "canceled"
         stopped_status = task["body"].get("stoppedStatus")
         status = (stopped_status if task["terminal"] else "finalizing") if stopped_status else finalized_status(status, task["terminal"])
         return {"task": task, "status": status, "events": events, "snapshot": {**snapshot, "delegation": group, "effects": effects}}
@@ -204,11 +208,11 @@ class FactoryAPI:
 
         @router.get('/jobs/{task_id}')
         async def detail(task_id: str, request: Request):
-            return await self.detail(self.store.task(task_id, self.user(request)['id']))
+            return await self.detail(self.store.task(task_id, self.owner(request)))
 
         @router.get('/jobs/{task_id}/artifacts/{artifact_id}')
         async def download(task_id: str, artifact_id: str, request: Request):
-            self.store.task(task_id, self.user(request)['id'])
+            self.store.task(task_id, self.owner(request))
             meta, raw = self.store.artifact(task_id, artifact_id)
             from urllib.parse import quote
             return Response(raw, media_type=meta['mediaType'], headers={

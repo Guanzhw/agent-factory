@@ -550,7 +550,7 @@ class ResearchSessions:
                     self._save_turn(conn, turn, {**turn['body'], 'dispatchStarted': True})
             if start is not None:
                 try:
-                    await self.runs.start(owner, start)
+                    await self.runs.submit(owner, start)
                 except Exception as error:
                     never_submitted = self._not_submitted(owner, turn, error)
                     with self._write() as conn:

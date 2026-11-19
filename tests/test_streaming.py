@@ -36,42 +36,30 @@ def chat_chunk(delta, finish=None):
 
 
 class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
-    async def test_failed_native_tail_waits_for_database_changes_without_projection_loop(self):
+    async def test_stream_only_refreshes_for_relevant_database_changes(self):
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
         from research.session_stream import session_updates
-        queue, attempts = asyncio.Queue(), []
-        async def notifications():
-            while True:
-                yield await queue.get()
-        async def failed_tail(*args, **kwargs):
-            attempts.append(True)
-            raise ConnectionError('fixture native buffer unavailable')
-            yield
+
+        queue = asyncio.Queue()
         snapshot = {'id': 'session', 'turns': [{'id': 'turn', 'taskId': 'task', 'runId': 'run', 'status': 'running'}]}
-        updated = {**snapshot, 'state': 'stopped'}
-        service = SimpleNamespace(read=AsyncMock(return_value=updated))
+        service = SimpleNamespace(read=AsyncMock(return_value={**snapshot, 'state': 'stopped'}))
         request = SimpleNamespace(is_disconnected=AsyncMock(return_value=False))
-        auth = SimpleNamespace(require_member=lambda _: None)
-        with patch('research.session_stream.get_event_stream', return_value=SimpleNamespace(tail=failed_tail)):
-            stream = session_updates(request, auth, service, 'owner', 'session', notifications(), snapshot)
-            await anext(stream)
-            next_frame = asyncio.create_task(anext(stream))
-            try:
-                await asyncio.sleep(0.05)
-                self.assertEqual(attempts, [True])
-                service.read.assert_not_called()
-                await queue.put(SimpleNamespace(payload=json.dumps({'table': 'af_resource_sharing'})))
-                await queue.put(SimpleNamespace(payload=json.dumps({'table': 'research_sessions', 'id': 'other', 'owner': 'owner'})))
-                await asyncio.sleep(0.05)
-                service.read.assert_not_called()
-                await queue.put(SimpleNamespace(payload=json.dumps({'table': 'research_sessions', 'id': 'session', 'owner': 'owner'})))
-                self.assertIn('stopped', await asyncio.wait_for(next_frame, timeout=1))
-                service.read.assert_awaited_once()
-            finally:
-                next_frame.cancel()
-                await asyncio.gather(next_frame, return_exceptions=True)
-                await stream.aclose()
+        stream = session_updates(request, None, service, 'owner', 'session', queue, snapshot)
+        await anext(stream)
+        next_frame = asyncio.create_task(anext(stream))
+        try:
+            await queue.put({'table': 'af_resource_sharing'})
+            await queue.put({'table': 'research_sessions', 'id': 'other', 'owner': 'owner'})
+            await asyncio.sleep(0.05)
+            service.read.assert_not_called()
+            await queue.put({'table': 'research_sessions', 'id': 'session', 'owner': 'owner'})
+            self.assertIn('stopped', await asyncio.wait_for(next_frame, timeout=1))
+            service.read.assert_awaited_once()
+        finally:
+            next_frame.cancel()
+            await asyncio.gather(next_frame, return_exceptions=True)
+            await stream.aclose()
 
     async def test_disabled_member_receives_no_more_stream_content(self):
         from types import SimpleNamespace
@@ -79,15 +67,14 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
         from fastapi import HTTPException
         from research.session_stream import session_updates
 
-        async def notifications():
-            yield SimpleNamespace(payload=json.dumps(
-                {'table': 'af_events', 'task': 'task', 'type': 'model_content_delta'}))
+        notifications = asyncio.Queue()
+        notifications.put_nowait({'table': 'af_events', 'task': 'task', 'type': 'model_content_delta'})
 
         snapshot = {'id': 'session', 'turns': [{'id': 'turn', 'taskId': 'task', 'status': 'running'}]}
         auth = SimpleNamespace(require_member=Mock(side_effect=HTTPException(403)))
         service = SimpleNamespace(store=SimpleNamespace(sql=Mock()))
         stream = session_updates(SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
-            auth, service, 'member', 'session', notifications(), snapshot)
+            auth, service, 'member', 'session', notifications, snapshot)
         self.assertIn('session', await anext(stream))
         with self.assertRaises(StopAsyncIteration):
             await asyncio.wait_for(anext(stream), 1)
@@ -310,15 +297,15 @@ class StoredStreaming(unittest.TestCase):
         hub = SessionNotifications(self.store)
         def notify(message):
             with self.store.engine.begin() as conn:
-                conn.execute(text('SELECT pg_notify(:channel, :payload)'), {'channel': CHANNEL, 'payload': message})
+                conn.execute(text('SELECT pg_notify(:channel, :payload)'), {'channel': CHANNEL, 'payload': json.dumps({'id': message})})
         async def check():
             async with hub.subscribe() as first:
                 async with hub.subscribe() as second:
                     notify('both')
-                    received = await asyncio.wait_for(asyncio.gather(anext(first), anext(second)), 3)
-                    self.assertEqual([n.payload for n in received], ['both', 'both'])
+                    received = await asyncio.wait_for(asyncio.gather(first.get(), second.get()), 3)
+                    self.assertEqual([n['id'] for n in received], ['both', 'both'])
                 notify('remaining')
-                self.assertEqual((await asyncio.wait_for(anext(first), 3)).payload, 'remaining')
+                self.assertEqual((await asyncio.wait_for(first.get(), 3))['id'], 'remaining')
         with patch.object(psycopg.Connection, 'connect', wraps=psycopg.Connection.connect) as connect:
             asyncio.run(check())
             self.assertEqual(connect.call_count, 1)

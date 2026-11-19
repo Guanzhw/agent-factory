@@ -102,7 +102,7 @@ class CollaborationAdmission(unittest.TestCase):
             if not release.wait(10):
                 raise AssertionError('Admission barrier timed out')
             return result
-        original_start = self.sessions.runs.start
+        original_start = self.sessions.runs.submit
         original_transaction = self.store.transaction
         second_thread = None
         @contextmanager
@@ -116,7 +116,7 @@ class CollaborationAdmission(unittest.TestCase):
             second_thread = threading.get_ident()
             return asyncio.run(self.sessions.deliver_collaboration(
                 self.store, self.origin_task, self.event, self.question))
-        with patch.object(self.sessions.runs, 'start', side_effect=start), \
+        with patch.object(self.sessions.runs, 'submit', side_effect=start), \
                 patch.object(self.sessions, '_not_submitted', side_effect=absence), \
                 patch.object(self.store, 'transaction', side_effect=transaction):
             a = self.deliver()
@@ -164,6 +164,6 @@ class CollaborationAdmission(unittest.TestCase):
         self.assertEqual(self.latest()['body']['stopRequestId'], request)
         self.assertEqual(self.intent()['body']['state'], 'stopped')
         self.assertIsNone(self.sessions._task(self.owner, self.latest()))
-        with patch.object(self.sessions.runs, 'start', new=AsyncMock()) as start:
+        with patch.object(self.sessions.runs, 'submit', new=AsyncMock()) as start:
             self.assertTrue(self.deliver().result(15))
             start.assert_not_called()

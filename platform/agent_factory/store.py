@@ -19,6 +19,9 @@ from fastapi import HTTPException
 from sqlalchemy import create_engine, event, text
 
 
+FAILURE_CLEANUP_REASONS = ('protected-failure', 'current-authority-ended', 'native-failure', 'admission-rejected')
+
+
 def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
@@ -365,7 +368,9 @@ class Store:
                  id=task["id"], type=event_type, message=message, data=canonical(data or {}), at=now())
 
     def model_delta(self, identifier, event_type, text, response_id):
-        task = self.task(identifier)
+        self.append_model_delta(self.task(identifier)['id'], event_type, text, response_id)
+
+    def append_model_delta(self, task_id, event_type, text, response_id):
         stamp = now()
         # Keep one ordered row per adjacent model segment, including across refresh.
         self.sql("""WITH latest AS (
@@ -377,7 +382,7 @@ class Store:
                 RETURNING id
             ) INSERT INTO af_events(task_id,type,message,data,created_at)
                 SELECT :id,:type,:message,CAST(:data AS JSONB),:at WHERE NOT EXISTS(SELECT id FROM updated)""",
-            id=task['id'], type=event_type, text=text, response=response_id,
+            id=task_id, type=event_type, text=text, response=response_id,
             message='正在思考' if event_type == 'model_reasoning_delta' else '正在生成回答',
             data=canonical({'responseId': response_id, 'text': text, 'updatedAt': stamp}), at=stamp)
 
@@ -391,11 +396,8 @@ class Store:
         # cancellation is excluded, including known no-dispatch rejection.
         return bool(self.sql("""SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND (
             type IN ('tool_failed','protected_denied','experiment_failed') OR
-            type='lifecycle_cleanup_requested' AND data->>'reason' IN
-            ('protected-failure','current-authority-ended','native-failure','admission-rejected'))) AS failed""", id=task_id)[0]["failed"])
-
-    def failure_cleanup_requested(self, task_id):
-        return bool(self.sql("SELECT EXISTS(SELECT 1 FROM af_events WHERE task_id=:id AND type='lifecycle_cleanup_requested' AND data->>'reason' IN ('protected-failure','current-authority-ended','native-failure','admission-rejected')) AS failed", id=task_id)[0]["failed"])
+            type='lifecycle_cleanup_requested' AND data->>'reason' = ANY(:reasons))) AS failed""",
+            id=task_id, reasons=list(FAILURE_CLEANUP_REASONS))[0]["failed"])
 
     def observe_stopped(self, task, status):
         with self.transaction():
