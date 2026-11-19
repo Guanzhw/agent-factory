@@ -921,12 +921,18 @@ class ChatJourney(unittest.TestCase):
             self.page.get_by_role('button', name='刷新会话', exact=True).click()
             pending = []
             next_files = '**/research/sessions/' + next_session['id'] + '/files?directory=*'
-            self.page.route(next_files, lambda route: pending.append(route))
-            with self.page.expect_request(next_files):
-                self.page.get_by_role('button', name=re.compile('^文件列表切换验收')).click()
+            def delay_first_listing(route):
+                if pending:
+                    route.fulfill(status=503, json={'detail': '文件列表读取失败验收'})
+                else:
+                    pending.append(route)
+            self.page.route(next_files, delay_first_listing)
+            self.page.get_by_role('button', name=re.compile('^文件列表切换验收')).click()
             expect(self.page.get_by_role('heading', name='文件列表切换验收', exact=True)).to_be_visible()
             expect(self.page.locator('#rs-file-panel')).to_be_hidden()
-            self.page.get_by_role('button', name='会话文件', exact=True).click()
+            self.assertEqual(pending, [])
+            with self.page.expect_request(next_files):
+                self.page.get_by_role('button', name='会话文件', exact=True).click()
             file_panel = self.page.locator('.rs-files')
             expect(file_panel.get_by_role('status')).to_have_text('正在读取文件…')
             expect(file_panel.get_by_role('link')).to_have_count(0)
@@ -938,7 +944,9 @@ class ChatJourney(unittest.TestCase):
             self.page.get_by_role('button', name='关闭会话文件', exact=True).click()
             expect(self.page.locator('.rs-detail-body > .rs-panel-warning')).to_contain_text('部分会话文件无法读取')
             expect(self.page.locator('#rs-file-panel')).to_be_hidden()
-            self.page.get_by_role('button', name='查看文件问题', exact=True).click()
+            with self.page.expect_request(next_files):
+                self.page.get_by_role('button', name='查看文件问题', exact=True).click()
+            expect(file_panel.get_by_role('alert')).to_have_text('文件列表读取失败验收')
             expect(file_panel.get_by_role('link')).to_have_count(0)
             expect(file_panel.get_by_text(blocked.name, exact=False)).to_have_count(0)
             expect(file_panel.get_by_text('还没有生成文件。', exact=True)).to_have_count(0)
@@ -1359,9 +1367,7 @@ class ChatJourney(unittest.TestCase):
         self.send('ssh 可用了吗?')
         snapshot = self.wait_for(lambda s: s['turns'][-1]['status'] == 'completed')
         files_url = '**/research/sessions/' + snapshot['id'] + '/files?directory=*'
-        with self.page.expect_response(files_url) as files:
-            self.page.reload()
-        self.assertTrue(files.value.ok)
+        self.page.reload()
         expect(self.page.locator('.rs-turn > .rs-reply').get_by_text('已找到配置的 SSH 服务器', exact=False).last).to_be_visible()
         pane = self.page.locator('.rs-content')
         header = self.page.locator('.rs-detail > .rs-detail-heading')
@@ -1381,7 +1387,12 @@ class ChatJourney(unittest.TestCase):
                                ('会话信息', 'rs-info-panel')]:
             panel = self.page.locator('#' + panel_id)
             expect(panel).to_be_hidden()
-            self.page.get_by_role('button', name=name, exact=True).click()
+            if name == '会话文件':
+                with self.page.expect_response(files_url) as files:
+                    self.page.get_by_role('button', name=name, exact=True).click()
+                self.assertTrue(files.value.ok)
+            else:
+                self.page.get_by_role('button', name=name, exact=True).click()
             self.assertTrue(panel.evaluate('el => el.matches(":popover-open")'))
             if name == '会话文件':
                 expect(panel.get_by_role('button', name='刷新文件列表', exact=True)).to_be_visible()
