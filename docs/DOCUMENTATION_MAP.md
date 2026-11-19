@@ -30,8 +30,7 @@ rg --files docs -g "*.md"
 - [成员助手端点与消息](ASSISTANT_MESSAGING.md) — `ASSISTANT_MESSAGING.md`
 - [Durable task control commands](CONTROL_COMMANDS.md) — `CONTROL_COMMANDS.md`
 - [Bounded native delegation](DELEGATION.md) — `DELEGATION.md`
-- [Deployment declaration validation](DEPLOYMENT_VALIDATION.md) — `DEPLOYMENT_VALIDATION.md`
-- [Removed development login](DEVELOPMENT_LOGIN.md) — `DEVELOPMENT_LOGIN.md`
+- [Local accounts for development](DEVELOPMENT_LOGIN.md) — `DEVELOPMENT_LOGIN.md`
 - [Durable Factory event replay](EVENT_REPLAY.md) — `EVENT_REPLAY.md`
 - [Trusted lifecycle cleanup observation](LIFECYCLE.md) — `LIFECYCLE.md`
 - [Material assembly and execution bindings](MATERIAL_ASSEMBLY.md) — `MATERIAL_ASSEMBLY.md`
@@ -110,6 +109,7 @@ These procedures exercise current test entrypoints. A procedure describes how to
 - [Actual backend contract acceptance](BACKEND_CONTRACTS.md) — `BACKEND_CONTRACTS.md`
 - [Offline baseline/candidate comparison contract](BASELINE_CANDIDATE_CONTRACT.md) — `BASELINE_CANDIDATE_CONTRACT.md`
 - [Bounded original-model research recovery](BOUNDED_RESEARCH_RECOVERY.md) — `BOUNDED_RESEARCH_RECOVERY.md`
+- [Deployment declaration validation](DEPLOYMENT_VALIDATION.md) — `DEPLOYMENT_VALIDATION.md`
 - [Browser authentication and bounded process enforcement](BROWSER_AUTH_PROCESS_ENFORCEMENT.md) — `BROWSER_AUTH_PROCESS_ENFORCEMENT.md`
 - [Cloud Codex handoff checkpoint — WIP](CLOUD_HANDOFF.md) — `CLOUD_HANDOFF.md`
 - [Active: Windows SSH final verification — 2026-10-26](CLOUD_TASK_BOARD.md) — `CLOUD_TASK_BOARD.md`

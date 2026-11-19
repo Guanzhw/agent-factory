@@ -10,7 +10,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from .auth import AuthService, MemberTokenBoundary, UnconfiguredIdentityBoundary
+from .auth import AuthService
+from .browser_auth import BrowserAuthBridge, BrowserSessionService
 from .config import Settings
 from .connections import ConnectionService, connection_router
 from .delegation import DelegationService
@@ -96,12 +97,8 @@ def create_app(settings=None, *, diagnostics=None, queue_max_attempts=2,
     at('PREPARATION_APP_ROUTES')
     base = FastAPI(title="Agent Factory", version="0.2.0")
     from .accounts import account_router
-    browser_auth = None
-    if settings.browser_oidc is not None or settings.local_login_origin is not None:
-        from .browser_auth import BrowserSessionService
-        browser_auth = BrowserSessionService(store, auth, settings.browser_oidc,
-            local_login_origin=settings.local_login_origin)
-    base.include_router(account_router(auth, browser_auth.local_passwords if browser_auth else None))
+    browser_auth = BrowserSessionService(store, auth, local_login_origin=settings.local_login_origin)
+    base.include_router(account_router(auth, browser_auth.local_passwords))
     base.include_router(personal_ssh_router(auth, store.personal_ssh))
     base.include_router(connection_router(auth, connections))
     base.include_router(personal_tool_router(auth, store.personal_tools))
@@ -134,11 +131,6 @@ def create_app(settings=None, *, diagnostics=None, queue_max_attempts=2,
     async def validation_error(request: Request, error: RequestValidationError):
         return JSONResponse({"message": "Invalid request fields", "code": "INVALID_REQUEST"}, status_code=422)
 
-    @base.get("/api/factory/auth/config")
-    def browser_auth_config():
-        from .browser_auth import CONFIG
-        return JSONResponse({**CONFIG, "enabled": False}, headers={"Cache-Control": "no-store"})
-
     @base.get("/api/health")
     def health():
         store.sql("SELECT 1")
@@ -168,7 +160,6 @@ def create_app(settings=None, *, diagnostics=None, queue_max_attempts=2,
                          timeout_seconds=settings.native_timeout_seconds), telemetry=False, mcp=False, scheduler=False,
                      tracing=False, cors_allowed_origins=[f"http://127.0.0.1:{settings.port}"]).get_app()
     at('PREPARATION_APP_ATTACH')
-    native.add_middleware(MemberTokenBoundary)
     bridge.attach(native)
     # Start after the native DB/worker lifespans; stop before their drain.
     at('PREPARATION_APP_OBSERVER')
@@ -226,15 +217,8 @@ def create_app(settings=None, *, diagnostics=None, queue_max_attempts=2,
         "http_app": native,
     }
     at('PREPARATION_APP_BROWSER_AUTH')
-    external = None
-    if settings.oidc_identity is not None:
-        from .oidc_identity import OIDCAccessTokenVerifier, OIDCIdentityBridge
-        external = OIDCIdentityBridge(native, auth, OIDCAccessTokenVerifier(settings.oidc_identity))
-    if browser_auth is not None:
-        from .browser_auth import BrowserAuthBridge
-        native.state.factory["browser_auth"] = browser_auth
-        return BrowserAuthBridge(native, browser_auth, bearer_app=external)
-    return external if external is not None else UnconfiguredIdentityBoundary(native)
+    native.state.factory["browser_auth"] = browser_auth
+    return BrowserAuthBridge(native, browser_auth)
 
 
 def main():

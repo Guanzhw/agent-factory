@@ -1,5 +1,7 @@
 # Deployment declaration validation
 
+> Archived deployment-manifest reference. The commands and identity fields below describe an earlier revision. For current service configuration, use the [local account and HTTPS deployment guide](WINDOWS_LOCAL_START.md).
+
 This tool validates a **non-secret declaration**, not a deployed service. It does
 not initialize Factory Settings, read environment credentials, open PostgreSQL,
 contact an IdP/runtime, obtain tokens, launch processes, write cgroups, provision

@@ -40,6 +40,6 @@ async function request<T>(path: string, method = 'GET', body?: unknown, signal?:
 }
 export const api = {
   session: (signal?: AbortSignal) => request<User>('/session', 'GET', undefined, signal),
-  logout: () => request<void>('/logout', 'POST'),
+  logout: () => request<void>('/auth/logout', 'POST'),
 };
 export { request as factoryRequest };

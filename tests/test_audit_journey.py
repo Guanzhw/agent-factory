@@ -115,29 +115,53 @@ class AuditJourney(ChatJourney):
         self.page.goto(self.origin + '/?tab=accounts')
         member = 'member-' + uuid4().hex
         self.page.get_by_label('账号标识', exact=True).fill(member)
-        self.page.get_by_label('初始本地密码').fill('synthetic-first')
+        initial_password = self.page.get_by_label('初始密码', exact=True)
+        self.page.get_by_role('button', name='新增账号').click()
+        self.assertTrue(initial_password.evaluate('input => input.validity.valueMissing'))
+        initial_password.fill('synthetic-first')
         self.page.get_by_role('button', name='新增账号').click()
         expect(self.page.get_by_role('heading', name=member)).to_be_visible()
         editor = self.page.locator('article').filter(has=self.page.get_by_role('heading', name=member))
-        def login(password):
-            return client.post(self.origin + '/api/factory/auth/local-login',
-                headers={'Origin': self.origin}, data={'username': member, 'password': password})
-        client = self.playwright.request.new_context(ignore_https_errors=True)
-        self.addCleanup(client.dispose)
-        self.assertTrue(login('synthetic-first').ok)
-        editor.get_by_label('新本地密码').fill('synthetic-second')
+
+        member_browser = self.browser.new_context(ignore_https_errors=True)
+        self.addCleanup(member_browser.close)
+        member_page = member_browser.new_page()
+        member_page.goto(self.origin)
+        def login(username, password):
+            member_page.get_by_label('用户名', exact=True).fill(username)
+            member_page.get_by_label('密码', exact=True).fill(password)
+            member_page.get_by_role('button', name='登录', exact=True).click()
+        login(member, 'synthetic-first')
+        expect(member_page.get_by_role('heading', name='今天想一起完成什么？')).to_be_visible()
+
+        editor.get_by_label('新密码').fill('synthetic-second')
         with self.page.expect_response(lambda r: r.request.method == 'PUT') as reset:
-            editor.get_by_role('button', name='重置本地密码').click()
+            editor.get_by_role('button', name='设置密码').click()
         self.assertTrue(reset.value.ok)
-        self.assertEqual(login('synthetic-first').status, 401)
-        self.assertTrue(login('synthetic-second').ok)
-        self.page.get_by_label('登录方式').select_option('directory')
-        self.page.get_by_label('账号标识', exact=True).fill(member + '-external')
-        self.page.get_by_role('button', name='新增账号').click()
-        expect(self.page.get_by_role('heading', name=member + '-external')).to_be_visible()
-        denied = self.context.request.put(self.origin + '/api/factory/accounts/' + member + '-external/password',
-            headers={'Origin': self.origin, 'X-Factory-CSRF': self.csrf}, data={'password': 'synthetic'})
-        self.assertEqual(denied.status, 409)
+        member_page.reload()
+        login(member, 'synthetic-first')
+        expect(member_page.get_by_text('登录失败，请核对用户名和密码。')).to_be_visible()
+        login(member, 'synthetic-second')
+        expect(member_page.get_by_role('heading', name='今天想一起完成什么？')).to_be_visible()
+
+        existing = member + '-existing'
+        self.state['auth'].directory.upsert(existing, name='已有成员')
+        self.state['auth'].account_roles.assign(existing, ACCOUNT_ADMIN_ROLE)
+        self.page.get_by_role('button', name='刷新账号').click()
+        row = self.page.locator('article').filter(has=self.page.get_by_role('heading', name=existing))
+        row.get_by_label('新密码').fill('synthetic-existing')
+        with self.page.expect_response(lambda r: r.request.method == 'PUT') as assigned:
+            row.get_by_role('button', name='设置密码').click()
+        self.assertTrue(assigned.value.ok)
+        member_page.get_by_role('button', name=member, exact=True).click()
+        member_page.get_by_role('button', name='退出登录', exact=True).click()
+        expect(member_page.get_by_role('button', name='登录', exact=True)).to_be_visible()
+        self.assertFalse(member_browser.request.get(self.origin + '/api/factory/auth/session').json()['authenticated'])
+        member_page.reload()
+        login(existing, 'synthetic-existing')
+        expect(member_page.get_by_role('heading', name='今天想一起完成什么？')).to_be_visible()
+        user = member_browser.request.get(self.origin + '/api/factory/auth/session').json()['user']
+        self.assertEqual((user['id'], user['name'], user['role']), (existing, '已有成员', 'manager'))
         self.page.goto(self.origin + '/?tab=models')
         self.page.get_by_role('button', name='验证连接', exact=False).click()
         expect(self.page.get_by_text('此版本最近一次连接验证成功', exact=False)).to_be_visible()
@@ -148,6 +172,31 @@ class AuditJourney(ChatJourney):
         expect(self.page.get_by_role('option', name='regression')).to_be_focused()
         self.page.keyboard.press('Escape')
         expect(button).to_be_focused()
+
+    def test_browser_logout_closes_stream_and_invalidates_old_cookie(self):
+        options = self.context.request.get(self.origin + '/api/factory/research/sessions/options').json()
+        session = self.post('/research/sessions', {'title': '退出验收', 'goal': '退出验收',
+            'modelConnectionRef': options['models'][0]['connectionRef']})
+        old_client = self.playwright.request.new_context(ignore_https_errors=True,
+            storage_state=self.context.storage_state())
+        self.addCleanup(old_client.dispose)
+        observer = self.context.new_page()
+        observer.goto(self.origin)
+        self.assertTrue(observer.evaluate("""async id => {
+            const response = await fetch('/api/factory/research/sessions/' + id + '/events');
+            const reader = response.body.getReader();
+            const first = await reader.read();
+            (async () => {
+                while (!(await reader.read()).done) {}
+                window.streamClosed = true;
+            })();
+            return response.ok && !first.done;
+        }""", session['id']))
+        self.page.get_by_role('button', name=self.owner, exact=True).click()
+        self.page.get_by_role('button', name='退出登录', exact=True).click()
+        expect(self.page.get_by_role('button', name='登录', exact=True)).to_be_visible()
+        self.assertFalse(old_client.get(self.origin + '/api/factory/auth/session').json()['authenticated'])
+        observer.wait_for_function('window.streamClosed === true')
 
     def test_shared_model_listing_tracks_credential_rotation_and_withdrawal(self):
         models = self.state['store'].personal_models
@@ -197,6 +246,39 @@ class AuditJourney(ChatJourney):
         self.assertEqual(self.context.request.get(api).json()['items'][0]['id'], ids[0])
         self.page.get_by_label('搜索会话').fill('记录 02')
         expect(self.page.get_by_role('button', name='历史记录 02', exact=False)).to_be_visible()
+
+
+    def test_sessions_after_local_only_upgrade(self):
+        import hashlib
+        import time
+        from agent_factory.store import canonical
+
+        route = self.origin + '/api/factory/auth/session'
+        current = self.context.request.get(route).json()
+        self.assertEqual(current['user'], self.context.request.get(self.origin + '/api/factory/session').json())
+        self.assertTrue(current['authenticated'])
+        self.assertTrue(current['csrfToken'])
+
+        def old_config(identity_config):
+            return hashlib.sha256(canonical({'localOrigin': self.origin, 'oidc': identity_config}).encode()).hexdigest()
+        for fingerprint, expires, expected in (
+            (old_config('previous-identity-provider'), time.time() + 3600, False),
+            (old_config('previous-identity-provider'), None, False),
+            (old_config(''), time.time() + 3600, False),
+            (old_config(''), None, True),
+        ):
+            self.state['store'].sql("UPDATE af_browser_auth SET body=CAST(:body AS JSONB) "
+                                    "WHERE kind='session' AND body->>'owner'=:owner", owner=self.owner,
+                                    body=canonical({'owner': self.owner, 'revoked': False, 'config': fingerprint, 'expires': expires}))
+            with self.subTest(fingerprint=fingerprint, expires=expires):
+                self.assertEqual(self.context.request.get(route).json()['authenticated'], expected)
+        # A tab loaded before the upgrade still uses the previous logout URL.
+        logout = self.context.request.post(self.origin + '/api/factory/logout',
+            headers={'Origin': self.origin, 'X-Factory-CSRF': current['csrfToken']})
+        self.assertEqual(logout.status, 204)
+        self.assertEqual(self.context.request.get(route).json(), {'authenticated': False})
+        self.assertFalse(self.state['store'].sql("SELECT id FROM af_browser_auth WHERE kind='session' AND body->>'owner'=:owner",
+                                                 owner=self.owner))
 
 
 def load_tests(loader, tests, pattern):

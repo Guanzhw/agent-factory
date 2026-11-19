@@ -12,9 +12,10 @@ import httpx
 
 def commands():
     parser = argparse.ArgumentParser(prog='agent-factory', description='Start the service or operate a research session.')
-    parser.add_argument('--url', default=os.getenv('FACTORY_LOCAL_LOGIN_ORIGIN', 'https://127.0.0.1:3100'),
+    parser.add_argument('--url', default=os.getenv('FACTORY_LOCAL_LOGIN_ORIGIN') or
+                        "https://127.0.0.1:" + os.getenv('FACTORY_PORT', '3100'),
                         help='HTTPS origin of the running service')
-    parser.add_argument('--user', help='local account (prompts for password); alternatively set FACTORY_ACCESS_TOKEN')
+    parser.add_argument('--user', help='local username (prompts for password)')
     actions = parser.add_subparsers(dest='action')
     actions.add_parser('local', help='Set up and start the local HTTPS service')
     for name, description in [('worktree', 'Attach a repository in a separate session worktree'),
@@ -84,11 +85,6 @@ def main(argv=None):
         raise SystemExit('Use the HTTPS origin of the running service.')
     try:
         with httpx.Client(base_url=origin, headers={'Origin': origin}, timeout=None) as client:
-            token = os.getenv('FACTORY_ACCESS_TOKEN')
-            if token and not args.user:
-                client.headers['Authorization'] = 'Bearer ' + token
-                operate(client, args)
-                return
             user = args.user or input('Username: ')
             client.post('/api/factory/auth/local-login', json={'username': user, 'password': getpass()}
                         ).raise_for_status()

@@ -361,8 +361,8 @@ v2 `config` 是应用声明数据，用户本轮值由 `inputSchema/inputValues`
 更换材料需显式创建新计划，并完成该操作要求的原生确认，不能修改进行中的不可变 plan。
 
 部署生产实例需独立数据库、受管成员身份、账号管理员标记、私密服务配置及实际 runtime 资源边界。
-登录需要显式配置外部身份提供方；缺少配置时拒绝认证。远端执行还需单独的受信映射和当前源授权，不能把应用
-输入中的地址当受信执行目标。参见 [部署决策](PRODUCTION_DECISIONS.md)、
+成员通过 HTTPS 使用本地账号和密码登录。远端执行还需单独的受信映射和当前源授权，不能把应用
+输入中的地址当受信执行目标。参见 [部署与账号配置](WINDOWS_LOCAL_START.md)、
 [部门协作与历史计划迁移](department-minimal-integration.md) 和 [远端绑定](REMOTE_BINDINGS.md)。
 
 ## 可执行检查与验收记录
@@ -437,7 +437,7 @@ uv run python scripts/check_core_install.py
 
 `npm run check:python` 执行 Python lint/type 检查及完整 discovery；
 `npm run check` 检查公共前端并构建静态装配页面。浏览器 fixtures 位于
-`platform/tests/browser/`，合成浏览器、真实数据库及外部身份/模型验收分别记录。
+`platform/tests/browser/`，浏览器流程、真实数据库及外部模型验收分别记录。
 当前 core-only revision 的通过情况以其实际检查结果为准，旧研究验收不能替代。
 
 真实队列/恢复测试使用管理员提供的**可销毁测试服务器**，设置

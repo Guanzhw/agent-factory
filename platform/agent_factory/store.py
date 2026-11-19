@@ -125,8 +125,6 @@ class Store:
     def initialize(self):
         statements = [
             "CREATE TABLE IF NOT EXISTS af_browser_auth (id TEXT PRIMARY KEY,kind TEXT NOT NULL,body JSONB NOT NULL)",
-            "CREATE INDEX IF NOT EXISTS af_browser_auth_expiry ON af_browser_auth ((CAST(body->>'expires' AS DOUBLE PRECISION)))",
-            "CREATE INDEX IF NOT EXISTS af_browser_auth_binding ON af_browser_auth ((body->>'binding')) WHERE kind='flow'",
             "CREATE TABLE IF NOT EXISTS af_plans (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, body JSONB NOT NULL, hash TEXT NOT NULL)",
             "CREATE TABLE IF NOT EXISTS af_plan_requests (owner_id TEXT NOT NULL, request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, plan_id TEXT NOT NULL REFERENCES af_plans(id), PRIMARY KEY(owner_id,request_id))",
             "CREATE TABLE IF NOT EXISTS af_tasks (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, plan_id TEXT REFERENCES af_plans(id), request_id TEXT NOT NULL, fingerprint TEXT NOT NULL, run_id TEXT UNIQUE, admission TEXT NOT NULL DEFAULT 'reserved', terminal BOOLEAN NOT NULL DEFAULT FALSE, cancel_requested BOOLEAN NOT NULL DEFAULT FALSE, body JSONB NOT NULL, UNIQUE(owner_id,request_id))",

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from contextvars import ContextVar
 import hashlib
 import json
 import re
@@ -19,8 +18,6 @@ from sqlalchemy import select
 
 from .auth import EXECUTOR_ID
 from .native_stream import submit_stream
-
-INTERNAL_NATIVE: ContextVar[bool] = ContextVar("factory_internal_native", default=False)
 
 
 class NativeAdmissionRejected(HTTPException):
@@ -99,7 +96,6 @@ class NativeBridge:
             raise RuntimeError("Native HTTP application has not been attached")
         headers = {**kwargs.pop("headers", {}), "Authorization": f"Bearer {self.auth._issue_native_token(user_id)}"}
         streaming = method == "POST" and path.endswith("/runs") and kwargs.get("data", {}).get("stream") == "true"
-        trusted_context = INTERNAL_NATIVE.set(True)
         try:
             if streaming:
                 response = await submit_stream(self._app, method, path, headers=headers, data=kwargs['data'])
@@ -109,8 +105,6 @@ class NativeBridge:
                     response = await client.request(method, path, headers=headers, **kwargs)
         except httpx.TimeoutException as error:
             raise HTTPException(503, {"code": "NATIVE_ACK_UNKNOWN", "message": "Native acknowledgement timed out; reconcile the stored task before retrying"}) from error
-        finally:
-            INTERNAL_NATIVE.reset(trusted_context)
         if streaming and response.status_code < 400:
             return {}  # Submission resolves the exact durable ticket below.
         try:

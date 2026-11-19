@@ -50,7 +50,7 @@ agent-factory --user alice apply SESSION REVIEW_ID
 agent-factory --user alice fork SESSION --turn TURN_ID
 ```
 
-`diff` 输出补丁和 `REVIEW_ID`，`review` 等待该轮完成并输出结果。省略 `--turn` 时从最后一条已完成的轮次分叉。`--user` 使用本地账号并交互输入密码；配置了外部 OIDC 访问令牌的部署可用 `FACTORY_ACCESS_TOKEN`。使用其他服务地址时，在子命令前传入 `--url https://host:port`。私有 CA 可通过 `SSL_CERT_FILE` 指向受信任证书。直接运行 `agent-factory` 仍会启动服务。
+`diff` 输出补丁和 `REVIEW_ID`，`review` 等待该轮完成并输出结果。省略 `--turn` 时从最后一条已完成的轮次分叉。在子命令前传入 `--user 成员ID`，按提示输入该本地账号的密码。使用其他服务地址时，在子命令前传入 `--url https://host:port`。私有 CA 可通过 `SSL_CERT_FILE` 指向受信任证书。直接运行 `agent-factory` 仍会启动服务。
 
 ## 让助手等到事件后继续工作
 

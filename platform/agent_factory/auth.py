@@ -3,16 +3,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from contextvars import Context
-import json
 from typing import Any
 
 from agno.os.authz import Authorization, AuthorizationContext, UserDirectory
 from agno.os.authz.native_engine import NativePolicyEngine
 from agno.os.authz.provider import AuthorizationProvider
-from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
 from fastapi import HTTPException, Request
 import jwt
-from starlette.responses import JSONResponse
 
 EXECUTOR_ID = "factory-executor"
 AUDIENCE = "agent-factory"
@@ -20,7 +17,7 @@ ACCOUNT_ADMIN_ROLE = "factory-manager"
 ACCOUNT_MIGRATION_KEY = "factory_account_admin_v1"
 _NATIVE_ACCOUNT_RESOURCES = {"agent_os", "authz", "users", "service_accounts"}
 _PUBLIC_PATHS = ["/", "/assets/*", "/favicon.ico", "/api/status", "/api/health",
-                 "/api/factory/status", "/api/factory/auth/config"]
+                 "/api/factory/status"]
 
 
 class TrustedTeamProvider(AuthorizationProvider):
@@ -53,68 +50,6 @@ class TrustedTeamProvider(AuthorizationProvider):
                for scope in required_scopes):
             return False
         return self.check(ctx)
-
-
-class MemberTokenBoundary:
-    """Keep native service-account tokens outside this directory-member product.
-
-    Agno PATs use a separate scope-based identity plane and bypass the configured
-    provider and the owner's disabled flag. The factory accepts member JWTs from
-    its identity bridges, so persisted PATs cannot acquire a second authority path.
-    """
-
-    def __init__(self, app: Any):
-        self.app = app
-
-    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope["type"] in {"http", "websocket"}:
-            for name, value in scope.get("headers", []):
-                if name.lower() != b"authorization":
-                    continue
-                credential = value.decode("latin-1")
-                # Mirror Agno's header extraction, which accepts raw tokens too.
-                token = credential[7:].strip() if credential.lower().startswith("bearer ") else credential.strip()
-                if token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
-                    if scope["type"] == "websocket":
-                        await send({"type": "websocket.close", "code": 1008})
-                    else:
-                        await JSONResponse({"detail": "A member identity token is required"}, status_code=401)(scope, receive, send)
-                    return
-        if scope["type"] == "websocket":
-            async def member_receive():
-                message = await receive()
-                if message["type"] == "websocket.receive" and message.get("text"):
-                    try:
-                        frame = json.loads(message["text"])
-                    except json.JSONDecodeError:
-                        return message
-                    # Native workflows authenticate through JSON frames rather
-                    # than HTTP headers, including identity changes mid-socket.
-                    if isinstance(frame, dict) and frame.get("action") == "authenticate":
-                        token = frame.get("token")
-                        if isinstance(token, str) and token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
-                            await send({"type": "websocket.close", "code": 1008})
-                            return {"type": "websocket.disconnect", "code": 1008}
-                return message
-            await self.app(scope, member_receive, send)
-        else:
-            await self.app(scope, receive, send)
-
-
-class UnconfiguredIdentityBoundary:
-    """Keep internal member tokens off the public app when no IdP is configured."""
-
-    def __init__(self, app: Any):
-        self.app = app
-
-    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope["type"] == "websocket":
-            await send({"type": "websocket.close", "code": 1008})
-            return
-        if scope["type"] == "http" and any(name.lower() == b"authorization" for name, _ in scope.get("headers", [])):
-            await JSONResponse({"detail": "AUTHENTICATION_NOT_CONFIGURED"}, status_code=401)(scope, receive, send)
-            return
-        await self.app(scope, receive, send)
 
 
 class AuthService:

@@ -3,15 +3,23 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import json
+import os
 import secrets
 import sys
+import time
+
+from agno.db.schemas.authz import AUTHZ_GROUPING, AUTHZ_USERS
+from agno.os.authz._request_scope import invalidate
 
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
 from fastapi import HTTPException
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.dialects.postgresql import insert
 
-from .accounts import AccountCreate, create_directory_member
+from .accounts import AccountCreate
+from .auth import ACCOUNT_ADMIN_ROLE, ACCOUNT_MIGRATION_KEY
 
 
 class LocalPasswords:
@@ -29,45 +37,56 @@ class LocalPasswords:
             raise ValueError('Password must not be empty')
 
     def reset(self, owner, password):
-        AccountCreate(id=owner)
         self._password(password)
         encoded = self.hasher.hash(password)
+        users = self.directory._db._get_table(AUTHZ_USERS, create_table_if_not_found=True)
         with self.engine.begin() as conn:
             if conn.dialect.name == 'postgresql':
                 conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_browser_auth'))"))
-            changed = conn.execute(text('UPDATE af_local_passwords SET password_hash=:hash WHERE owner=:owner'),
-                                   {'owner': owner, 'hash': encoded})
-            if not changed.rowcount:
-                raise ValueError('Only existing local passwords can be reset')
+            if conn.execute(select(users.c.id).where(users.c.id == owner)).scalar() is None:
+                raise ValueError('Account does not exist')
+            conn.execute(text('INSERT INTO af_local_passwords(owner,password_hash) VALUES(:owner,:hash) '
+                              'ON CONFLICT(owner) DO UPDATE SET password_hash=excluded.password_hash'),
+                         {'owner': owner, 'hash': encoded})
             if inspect(conn).has_table('af_browser_auth'):
-                conn.execute(text("DELETE FROM af_browser_auth WHERE kind='session' AND body->>'owner'=:owner "
-                                  "AND body->>'expires' IS NULL"), {'owner': owner})
-
-    def local_owners(self, owners):
-        from sqlalchemy import bindparam
-        with self.engine.connect() as conn:
-            return set(conn.execute(text('SELECT owner FROM af_local_passwords WHERE owner IN :owners')
-                .bindparams(bindparam('owners', expanding=True)), {'owners': owners}).scalars())
+                conn.execute(text("DELETE FROM af_browser_auth WHERE kind='session' AND body->>'owner'=:owner"), {'owner': owner})
 
     def create(self, owner, password, *, name=None, email=None, actor=None):
-        self._password(password)
         return self.create_member(owner, password, name=name, email=email, actor=actor)
 
     def create_member(self, owner, password, *, name=None, email=None, actor=None, first_member=False, admin=False):
         AccountCreate(id=owner)
-        if password is not None:
-            self._password(password)
-        encoded = self.hasher.hash(password) if password is not None else None
-
-        def persist_password(conn):
-            if conn.execute(text('SELECT 1 FROM af_local_passwords WHERE owner=:owner'), {'owner': owner}).first():
+        self._password(password)
+        encoded = self.hasher.hash(password)
+        # Agno's directory and role methods commit independently. Keep all records for a new member together.
+        database = self.directory._db
+        users = database._get_table(AUTHZ_USERS, create_table_if_not_found=True)
+        roles = database._get_table(AUTHZ_GROUPING, create_table_if_not_found=True) if admin else None
+        stamp = int(time.time())
+        row = dict(id=owner, name=name or owner, email=email, disabled=False, created_at=stamp, updated_at=stamp)
+        metadata = {ACCOUNT_MIGRATION_KEY: True}
+        with self.engine.begin() as conn:
+            if conn.dialect.name == 'sqlite':
+                conn.exec_driver_sql('BEGIN IMMEDIATE')
+            else:
+                conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_local_passwords_create'))"))
+            if first_member and conn.execute(select(users.c.id).limit(1)).first():
+                raise ValueError('首位成员已创建，请使用已有账号登录。')
+            created = conn.execute(insert(users).values(**row, user_metadata=json.dumps(metadata))
+                                   .on_conflict_do_nothing(index_elements=[users.c.id]).returning(users.c.id)).scalar()
+            if created is None:
                 raise ValueError('Account already exists; local identity was not attached')
-            if encoded is not None:
-                conn.execute(text('INSERT INTO af_local_passwords(owner,password_hash) VALUES(:owner,:hash)'),
-                             {'owner': owner, 'hash': encoded})
-
-        return create_directory_member(self.engine, self.directory, owner, name=name, email=email, actor=actor,
-            admin=admin, first_member=first_member, persist_password=persist_password)
+            added = conn.execute(text('INSERT INTO af_local_passwords(owner,password_hash) VALUES(:owner,:hash) '
+                                      'ON CONFLICT(owner) DO NOTHING RETURNING owner'), {'owner': owner, 'hash': encoded}).scalar()
+            if added is None:
+                raise ValueError('Account already exists')
+            if roles is not None:
+                conn.execute(insert(roles).values(subject=owner, role=ACCOUNT_ADMIN_ROLE).on_conflict_do_nothing())
+        if admin:
+            invalidate()
+        row['metadata'] = metadata
+        self.directory._emit('user.created', owner, None, [self.directory._summary(row)], actor)
+        return row
 
     @staticmethod
     def current_hash(conn, owner):
@@ -96,9 +115,9 @@ class LocalPasswords:
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description='Create a new ordinary local account while the service is stopped.')
+    parser = argparse.ArgumentParser(description='Create a local member or set the password for an existing member.')
     parser.add_argument('username')
-    parser.add_argument('--reset', action='store_true', help='Reset an existing local password')
+    parser.add_argument('--reset', action='store_true', help='Set or reset the password for an existing member, preserving their role and data')
     args = parser.parse_args(argv)
     engine = None
     try:
@@ -107,9 +126,10 @@ def main(argv=None):
             raise ValueError('Passwords differ')
         from agno.db.postgres import PostgresDb
         from agno.os.authz import UserDirectory
-        from .config import Settings
-        settings = Settings.from_env()
-        engine = create_engine(settings.db_url)
+        url = os.environ.get('FACTORY_DATABASE_URL', '')
+        if not url.startswith('postgresql'):
+            raise ValueError('FACTORY_DATABASE_URL must configure PostgreSQL')
+        engine = create_engine(url)
         database = PostgresDb(db_engine=engine, id='factory-native-postgres')
         directory = UserDirectory(db=database, fail_closed=True, auto_provision=False)
         passwords = LocalPasswords(database.db_engine, directory)

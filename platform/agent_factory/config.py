@@ -1,11 +1,8 @@
 from dataclasses import dataclass, field
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
-
-if TYPE_CHECKING:
-    from .oidc_identity import OIDCIdentityConfig
-    from .browser_oidc import BrowserOIDCConfig
+from typing import Callable
+from urllib.parse import urlsplit
 
 
 @dataclass
@@ -13,10 +10,7 @@ class Settings:
     db_url: str
     jwt_key: str = ""
     jwt_audience: str = "agent-factory"
-    # Operator-pinned public verification keys and existing-owner mapping only.
-    oidc_identity: "OIDCIdentityConfig | None" = None
-    browser_oidc: "BrowserOIDCConfig | None" = None
-    local_login_origin: str | None = None
+    local_login_origin: str = ""
     max_workers: int = 2
     max_queued: int = 0
     # Legacy constructor fields remain readable; admission no longer counts tasks.
@@ -39,20 +33,14 @@ class Settings:
     personal_tool_adapters: tuple = field(default_factory=tuple, repr=False)
     # Trusted workflow definitions/runtime implementations; never request-loaded.
     def __post_init__(self):
-        if self.browser_oidc is not None:
-            from .browser_oidc import BrowserOIDCConfig
-            if type(self.browser_oidc) is not BrowserOIDCConfig:
-                raise ValueError("Browser OIDC requires an explicit production configuration")
-        if self.local_login_origin is not None:
-            from .browser_oidc import _origin
-            if _origin(self.local_login_origin)[1] != self.local_login_origin:
-                raise ValueError('Local login requires an exact HTTPS origin without a path')
-            if self.browser_oidc is not None and self.browser_oidc.app_origin != self.local_login_origin:
-                raise ValueError('Local and OIDC login must use the same browser origin')
-        if self.oidc_identity is not None:
-            from .oidc_identity import OIDCIdentityConfig
-            if type(self.oidc_identity) is not OIDCIdentityConfig:
-                raise ValueError("External access-token identity requires an explicit production configuration")
+        self.local_login_origin = self.local_login_origin or f"https://127.0.0.1:{self.port}"
+        origin = self.local_login_origin
+        parsed = urlsplit(origin)
+        if (not origin.isascii() or any(char.isspace() or not char.isprintable() for char in origin)
+                or parsed.scheme != 'https' or not parsed.hostname or parsed.username is not None
+                or parsed.password is not None or parsed.port == 0 or '\\' in origin
+                or origin != f'https://{parsed.netloc}'):
+            raise ValueError('Local login requires an exact HTTPS origin without a path')
         if not isinstance(self.jwt_key, str) or len(self.jwt_key.encode()) < 32:
             raise ValueError("Production requires an explicitly configured JWT key of at least 32 bytes")
         if type(self.max_workers) is not int or self.max_workers < 1:
@@ -72,7 +60,7 @@ class Settings:
             raise ValueError("Production requires an operator-configured JWT key (at least 32 bytes)")
         return cls(db_url=url, jwt_key=key,
                    native_timeout_seconds=int(os.environ['FACTORY_NATIVE_TIMEOUT_SECONDS']) if os.getenv('FACTORY_NATIVE_TIMEOUT_SECONDS') else None,
-                   local_login_origin=local_login_origin or os.getenv('FACTORY_LOCAL_LOGIN_ORIGIN') or None,
+                   local_login_origin=local_login_origin or os.getenv('FACTORY_LOCAL_LOGIN_ORIGIN', ''),
                    workspace=Path(os.getenv("FACTORY_WORKSPACE", ".local")).resolve(),
                    max_workers=int(os.getenv("FACTORY_MAX_WORKERS", "2")),
                    port=int(os.getenv("FACTORY_PORT", "3100")))

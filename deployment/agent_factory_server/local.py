@@ -95,12 +95,14 @@ def main():
         ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert, private)
         database = PostgresDb(db_engine=engine, id='factory-native-postgres')
         directory = UserDirectory(db=database, fail_closed=True, auto_provision=False)
-        if not directory.ids():
+        if not directory.list(limit=1):
             owner = input('新库首位本地成员兼任账号管理员。输入成员 ID：').strip()
             password = getpass('本地密码：')
             if password != getpass('再次输入密码：'):
                 raise SystemExit('两次密码不一致，请重新启动向导。')
             LocalPasswords(engine, directory).create_member(owner, password, first_member=True, admin=True)
+        else:
+            print('已有成员。如管理员尚未设置本地密码，可在同一数据库运行 uv run agent-factory-local-user --reset 成员ID。')
     finally:
         engine.dispose()
     print('服务就绪后打开 ' + origin, flush=True)

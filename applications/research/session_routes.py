@@ -102,14 +102,11 @@ def session_router(auth, service):
         resources = AsyncExitStack()
         browser = request.scope.get('factory.browser_session')
         revoked = asyncio.Event()
-        deadline = None
         try:
             notifications = await resources.enter_async_context(subscriptions.subscribe(browser[0] if browser else None, revoked))
             if browser:
                 # Check after LISTEN so a concurrent logout is either observed here or delivered to the subscription.
-                lifetime = await asyncio.to_thread(browser[1])
-                if lifetime is not None:
-                    deadline = asyncio.get_running_loop().time() + lifetime
+                await asyncio.to_thread(browser[1])
             initial = await service.read(owner, identifier)
         except BaseException:
             await resources.aclose()
@@ -118,7 +115,7 @@ def session_router(auth, service):
         async def updates():
             try:
                 async for value in session_updates(request, auth, service, owner, identifier, notifications, initial):
-                    if revoked.is_set() or deadline is not None and asyncio.get_running_loop().time() >= deadline:
+                    if revoked.is_set():
                         return
                     yield value
             finally:
