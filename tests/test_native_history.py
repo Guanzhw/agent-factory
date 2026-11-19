@@ -6,6 +6,9 @@ import unittest
 from typing import Any
 from unittest.mock import patch
 
+from sqlalchemy import text
+
+from agno.db.postgres import PostgresDb
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -110,6 +113,38 @@ class NativeHistory(journey.ChatJourney):
         wire = json.dumps(self.provider.requests[-1][0])
         self.assertIn('stopped-user-instruction', wire)
         self.assertIn('canceled', wire)
+
+    def test_legacy_blob_tool_history_reaches_continuation_and_fork(self):
+        service = self.state['research_sessions']
+        with patch.object(service, 'native_session_for_plan', return_value=None):
+            first = self.turn('old tool question', 1)
+        turn = first['turns'][0]
+        bridge = service.runs.factory.bridge
+        db = bridge.native_db
+        raw = db.get_run(turn['runId'], deserialize=False)['run_data']
+        raw['messages'][-1:-1] = [
+            {'role': 'assistant', 'tool_calls': [{'id': 'archived-call', 'type': 'function',
+                'function': {'name': 'read_file', 'arguments': '{"path":"evidence.txt"}'}}]},
+            {'role': 'tool', 'tool_call_id': 'archived-call', 'content': 'archived tool result'}]
+        # A pre-migration session has no separate row for this run. Reopen the reader to reflect its schema.
+        with db.db_engine.begin() as conn:
+            conn.execute(text('ALTER TABLE ai.agno_sessions ADD COLUMN IF NOT EXISTS runs JSONB'))
+            conn.execute(text('UPDATE ai.agno_sessions SET runs=CAST(:runs AS JSONB) WHERE session_id=:sid'),
+                {'runs': json.dumps([raw]), 'sid': raw['session_id']})
+            conn.execute(text('DELETE FROM ai.agno_runs WHERE run_id=:rid'), {'rid': turn['runId']})
+        reader = PostgresDb(db_engine=db.db_engine, db_schema=db.db_schema, id=db.id)
+        self.assertIsNone(reader.get_run(turn['runId']))
+        with patch.object(bridge, 'native_db', reader):
+            fork = self.post(self.path + '/fork', {'turnId': turn['id']})
+            for session_id in (first['id'], fork['id']):
+                self.path = '/research/sessions/' + session_id
+                self.page.goto(self.origin + '/?researchSession=' + session_id)
+                self.assertEqual(self.turn('follow the old evidence', 2)['turns'][-1]['status'], 'completed')
+                messages = self.provider.requests[-1][0]['messages']
+                call_ids = [tool['id'] for message in messages for tool in message.get('tool_calls', [])]
+                results = [(m.get('tool_call_id'), m['content']) for m in messages if m['role'] == 'tool']
+                self.assertEqual(call_ids, ['archived-call'])
+                self.assertEqual(results, [('archived-call', 'archived tool result')])
 
     def test_summary_and_correction_keep_original_native_runs(self):
         self.provider.answer = lambda body: (200, reply(json.dumps({'summary': 'summarized-old-marker', 'topics': []})

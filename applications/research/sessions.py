@@ -16,6 +16,8 @@ from agno.utils.tokens import count_tokens
 from fastapi import HTTPException
 from sqlalchemy import Column, Integer, JSON, MetaData, String, Table, UniqueConstraint, case, select, text, tuple_
 
+from agent_factory.auth import EXECUTOR_ID
+from agent_factory.native_bridge import session_for_run
 from agent_factory.application_interface import ApplicationStart
 from agent_factory.application_runs import StartNotSubmitted, factory_request_id
 from agent_factory.applications import GovernedStorage
@@ -148,13 +150,26 @@ class ResearchSessions:
 
     def _history_native(self, owner, turn):
         run_id = turn['body'].get('runId')
-        native = self.runs.factory.bridge.native_db.get_run(run_id) if run_id else None
-        if native is not None:
-            prior_task = self._task(owner, turn)
-            if (prior_task is None or native.user_id != owner
-                    or native.session_id != self.store.native_session_id(prior_task)):
+        if not run_id:
+            return None
+        db = self.runs.factory.bridge.native_db
+        prior_task = self._task(owner, turn)
+        if prior_task is not None:
+            session_id = self.store.native_session_id(prior_task)
+            if prior_task['run_id'] != run_id:
                 raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
-        return native
+            saved = session_for_run(db, session_id, owner, run_id)
+            if saved is not None and saved['runs']:
+                if saved.get('agent_id') != EXECUTOR_ID or len(saved['runs']) != 1:
+                    raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
+                native = RunOutput.from_dict(saved['runs'][0])
+                if native.agent_id != EXECUTOR_ID or native.user_id != owner or native.session_id != session_id:
+                    raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
+                return native
+        # A run that exists outside this task's owner/session was previously rejected, not treated as missing.
+        if db.get_run(run_id, deserialize=False) is not None:
+            raise PermissionError('RESEARCH_HISTORY_OWNER_MISMATCH')
+        return None
 
     def _sources(self, owner, identifiers):
         if identifiers and self.content.readable_ids({owner}, identifiers) != set(identifiers):

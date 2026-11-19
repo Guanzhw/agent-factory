@@ -1,7 +1,14 @@
 """Account administration over Agno's persistent user directory."""
 from __future__ import annotations
 
+import json
+import time
 from typing import Annotated
+
+from agno.db.schemas.authz import AUTHZ_GROUPING, AUTHZ_USERS
+from agno.os.authz._request_scope import invalidate
+from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, StrictBool, field_validator
@@ -47,6 +54,37 @@ class AccountUpdate(BaseModel):
         return value
 
 
+def create_directory_member(engine, directory, owner, *, name=None, email=None, actor=None, admin=False,
+                            first_member=False, persist_password=None):
+    # Agno's directory and role methods commit independently. Keep all records for a new member together.
+    database = directory._db
+    users = database._get_table(AUTHZ_USERS, create_table_if_not_found=True)
+    roles = database._get_table(AUTHZ_GROUPING, create_table_if_not_found=True) if admin else None
+    stamp = int(time.time())
+    row = dict(id=owner, name=name or owner, email=email, disabled=False, created_at=stamp, updated_at=stamp)
+    metadata = {ACCOUNT_MIGRATION_KEY: True}
+    with engine.begin() as conn:
+        if conn.dialect.name == 'sqlite':
+            conn.exec_driver_sql('BEGIN IMMEDIATE')
+        else:
+            conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_local_passwords_create'))"))
+        if first_member and conn.execute(select(users.c.id).limit(1)).first():
+            raise ValueError('首位成员已创建，请使用已有账号登录。')
+        created = conn.execute(insert(users).values(**row, user_metadata=json.dumps(metadata))
+                               .on_conflict_do_nothing(index_elements=[users.c.id]).returning(users.c.id)).scalar()
+        if created is None:
+            raise ValueError('Account already exists; local identity was not attached')
+        if persist_password is not None:
+            persist_password(conn)
+        if roles is not None:
+            conn.execute(insert(roles).values(subject=owner, role=ACCOUNT_ADMIN_ROLE).on_conflict_do_nothing())
+    if admin:
+        invalidate()
+    row['metadata'] = metadata
+    directory._emit('user.created', owner, None, [directory._summary(row)], actor)
+    return row
+
+
 def account_router(auth: AuthService, passwords=None) -> APIRouter:
     router = APIRouter(prefix="/api/factory/accounts", tags=["Accounts"])
 
@@ -81,22 +119,18 @@ def account_router(auth: AuthService, passwords=None) -> APIRouter:
     @router.post("", status_code=201)
     def create_account(body: MemberCreate, request: Request):
         operator = actor(request)
-        if passwords is not None:
-            try:
+        if passwords is None and body.password is not None:
+            raise HTTPException(409, "此部署未启用本地密码登录。")
+        try:
+            if passwords is None:
+                row = create_directory_member(auth.native_db.db_engine, auth.directory, body.id, name=body.name,
+                    email=body.email, actor=operator, admin=body.accountAdmin)
+            else:
                 row = passwords.create_member(body.id, body.password.get_secret_value() if body.password else None,
-                                              name=body.name, email=body.email, actor=operator, admin=body.accountAdmin)
-            except ValueError:
-                raise HTTPException(409, "成员标识已存在，请使用其他标识。") from None
-        else:
-            if body.password is not None:
-                raise HTTPException(409, "此部署未启用本地密码登录。")
-            if auth.directory.get(body.id) is not None:
-                raise HTTPException(409, "Account already exists")
-            row = auth.directory.upsert(body.id, name=body.name, email=body.email,
-                                        metadata={ACCOUNT_MIGRATION_KEY: True}, actor=operator)
-            if body.accountAdmin:
-                set_admin(body.id, True)
-        return project(row, auth.account_roles.roles_of(row["id"]))
+                    name=body.name, email=body.email, actor=operator, admin=body.accountAdmin)
+        except ValueError:
+            raise HTTPException(409, "成员标识已存在，请使用其他标识。" if passwords else "Account already exists") from None
+        return project(row, auth.account_roles.roles_of(body.id))
 
     @router.put("/{user_id}/password")
     def reset_password(user_id: str, body: PasswordReset, request: Request):

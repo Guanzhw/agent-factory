@@ -20,7 +20,7 @@ export async function uploadFile(owner: string, session: string, file: File) {
   try { result = await send(pending ?? crypto.randomUUID()); }
   catch (error) {
     if (error instanceof ApiError && (error.status === 0 || error.code === 'INVALID_RESPONSE')) {
-      throw new Error('上传结果未确认。请重新选择同一个文件重试。');
+      throw new Error('上传结果未确认。请重新选择同一个文件重试。', { cause: error });
     }
     // Different bytes can have the same name and size.
     if (!pending || !(error instanceof ApiError && error.status === 409)) throw error;

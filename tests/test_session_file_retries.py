@@ -70,8 +70,16 @@ class SessionFileJourney(ChatJourney):
         def upload(name, body):
             return self.context.request.post(url, headers={'Origin': self.origin, 'X-Factory-CSRF': self.csrf},
                 multipart={'file': {'name': name, 'mimeType': 'text/plain', 'buffer': body}})
-        self.assertEqual(upload('a.txt', b'first').json()['path'], 'a.txt')
-        self.assertEqual(upload('a.txt', b'first').json()['path'], 'a.txt')
+        paths = self.page.evaluate("""async ([url, csrf]) => {
+            async function send() {
+                const data = new FormData();
+                data.append('file', new Blob(['first']), 'a.txt');
+                const response = await fetch(url, { method: 'POST', headers: {'X-Factory-CSRF': csrf}, body: data });
+                return (await response.json()).path;
+            }
+            return Promise.all([send(), send()]);
+        }""", [url, self.csrf])
+        self.assertEqual(paths, ['a.txt', 'a.txt'])
         self.assertEqual(upload('b.txt', b'first').status, 409)
         self.assertEqual(upload('a.txt', b'other').status, 409)
         (workspace / 'a.txt').rename(workspace / 'moved')
