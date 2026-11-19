@@ -141,10 +141,10 @@ class NativeHistory(journey.ChatJourney):
                 self.page.goto(self.origin + '/?researchSession=' + session_id)
                 self.assertEqual(self.turn('follow the old evidence', 2)['turns'][-1]['status'], 'completed')
                 messages = self.provider.requests[-1][0]['messages']
-                call_ids = [tool['id'] for message in messages for tool in message.get('tool_calls', [])]
+                calls = [tool for message in messages for tool in message.get('tool_calls', [])]
                 results = [(m.get('tool_call_id'), m['content']) for m in messages if m['role'] == 'tool']
-                self.assertEqual(call_ids, ['archived-call'])
-                self.assertEqual(results, [('archived-call', 'archived tool result')])
+                self.assertEqual([call['function']['name'] for call in calls], ['read_file'])
+                self.assertEqual(results, [(calls[0]['id'], 'archived tool result')])
 
     def test_summary_and_correction_keep_original_native_runs(self):
         self.provider.answer = lambda body: (200, reply(json.dumps({'summary': 'summarized-old-marker', 'topics': []})
