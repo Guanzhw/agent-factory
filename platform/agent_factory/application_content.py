@@ -113,10 +113,6 @@ class ApplicationContent:
 
     def _artifact(self, owner, reference):
         self.store.task(reference['taskId'], owner)
-        sizes = self.store.sql('SELECT length(content) AS size FROM af_artifacts WHERE task_id=:task AND id=:id',
-            task=reference['taskId'], id=reference['artifactId'])
-        if not sizes:
-            raise HTTPException(404, 'Artifact not found')
         metadata, raw = self.store.artifact(reference['taskId'], reference['artifactId'])
         if metadata['sha256'] != reference['sha256']:
             raise HTTPException(409, 'APPLICATION_CONTENT_ARTIFACT_CHANGED')
@@ -178,8 +174,7 @@ class ApplicationContent:
             visibility = value.pop('visibility')
             conn.execute(self.contents.insert().values(id=identifier, owner_id=owner, reference=reference,
                 body=value, created_at=now()))
-            self.sharing.register(conn, owner, reference)
-            self.sharing.set(conn, owner, reference, visibility)
+            self.sharing.create(conn, owner, reference, visibility)
             self.db.record(conn, self.commands, owner, request_id, fingerprint, 'content.publish', {'id': identifier})
             if visibility == 'team' and self.on_shared is not None:
                 self.on_shared(conn, owner, {'id': identifier, 'source': value['source']})
@@ -192,13 +187,70 @@ class ApplicationContent:
             self._readable(conn, actor, row)
             return self._project(conn, actor, row)
 
-    def list(self, actor, *, after='', limit=50, team_application=None):
+    def readable_ids(self, readers, identifiers, *, team_application=None):
+        """Check publication and flattened source permissions together, without loading content."""
+        with self._access() as conn:
+            return self._readable_ids(conn, readers, identifiers, team_application)
+
+    def _readable_ids(self, conn, readers, identifiers, team_application):
+        readers = set(readers)
+        for reader in readers:
+            self.auth.require_member(reader)
+        if not identifiers:
+            return set()
+        c, sharing = self.contents.c, self.sharing.resources.c
+        rows = select(c.id, c.owner_id, sharing.visibility, c.body['sourceContentIds'].label('sources')).select_from(
+            self.contents.outerjoin(self.sharing.resources, c.reference == sharing.reference))
+        candidates = rows.where(c.id.in_(identifiers))
+        if team_application is not None:
+            candidates = candidates.where(sharing.visibility == 'team', c.body['source']['application'].as_string() == team_application)
+        items = conn.execute(candidates).all()
+        dependencies = {key for item in items for key in item.sources or []}
+        sources = conn.execute(rows.where(c.id.in_(dependencies))).all() if dependencies else []
+        owners = {row.owner_id for row in [*items, *sources]}
+        unavailable = set()
+        for owner in owners - readers:
+            try:
+                self.auth.require_member(owner)
+            except HTTPException as error:
+                if error.status_code not in {403, 404}:
+                    raise
+                unavailable.add(owner)
+
+        def accessible(row):
+            return row.owner_id not in unavailable and (row.visibility == 'team' or readers == {row.owner_id})
+
+        allowed_sources = {row.id for row in sources if accessible(row)}
+        return {row.id for row in items if accessible(row) and allowed_sources.issuperset(row.sources or [])}
+
+    def team_evidence(self, readers, application, *, after='', limit=50, identifiers=None):
+        """Read shared candidate bodies for ranking, or just the requested page for delivery."""
+        c, sharing = self.contents.c, self.sharing.resources.c
+        with self._access() as conn:
+            if identifiers is None:
+                ids = list(conn.execute(select(c.id).join(self.sharing.resources, c.reference == sharing.reference)
+                    .where(c.id > after, sharing.visibility == 'team', c.body['source']['application'].as_string() == application)
+                    .order_by(c.id).limit(limit + 1)).scalars())
+                cursor = ids[limit - 1] if len(ids) > limit else None
+                identifiers = ids[:limit]
+            else:
+                cursor = None
+            allowed = self._readable_ids(conn, readers, identifiers, application)
+            rows = conn.execute(select(c.id, c.owner_id, c.body).where(c.id.in_(allowed))).all() if allowed else []
+            items = []
+            for row in rows:
+                body = row.body
+                content = (self._body_artifact(row.owner_id, body['contentArtifact'])
+                           if body.get('contentArtifact') is not None else body['content'])
+                items.append({'id': row.id, 'content': content, 'source': body['source'], 'verificationStatus': 'unverified'})
+            return {'items': items, 'nextCursor': cursor}
+
+    def list(self, actor, *, after='', limit=50):
         self.auth.require_member(actor)
         with self._access() as conn:
             resources = self.sharing.resources.c
             team = self.contents.c.reference.in_(select(resources.reference).where(resources.visibility == 'team'))
-            visible = or_(self.contents.c.owner_id == actor, team) if team_application is None else (
-                team & (self.contents.c.body['source']['application'].as_string() == team_application))
+            visible = or_(self.contents.c.owner_id == actor, team)
             rows = conn.execute(select(self.contents).where(self.contents.c.id > after, visible)
                 .order_by(self.contents.c.id).limit(limit + 1)).mappings().all()
             items = []

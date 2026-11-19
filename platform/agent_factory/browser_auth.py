@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from contextlib import contextmanager
+from functools import partial
 import hashlib
 import hmac
 import json
@@ -243,6 +244,10 @@ class BrowserSessionService:
         self.auth.require_member(row["owner"])
         return row
 
+    def stream_lifetime(self, token):
+        expires = self._session_record(token)["expires"]
+        return None if expires is None else expires - self.clock()
+
     def native_token(self, token):
         row = self._session_record(token)
         remaining = int(row["expires"] - self.clock()) if row["expires"] is not None else 60
@@ -396,7 +401,8 @@ class BrowserAuthBridge:
                 if scope.get("method") not in {"GET", "HEAD", "OPTIONS"}:
                     self._csrf(scope, token)
                 native = await asyncio.to_thread(self.service.native_token, token)
-                scope = {**scope, "headers": [*scope.get("headers", []), (b"authorization", ("Bearer " + native).encode())]}
+                scope = {**scope, "factory.browser_session": (_hash(token), partial(self.service.stream_lifetime, token)),
+                         "headers": [*scope.get("headers", []), (b"authorization", ("Bearer " + native).encode())]}
             async def private_send(message):
                 if message["type"] == "http.response.start":
                     protected = {b"cache-control", b"pragma", b"referrer-policy", b"x-frame-options"}

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { authEpoch, assertAuthEpoch, expireBrowserSession } from '../../browserAuth.js';
-import { factoryRequest } from '../../api.js';
+import { ApiError, factoryRequest } from '../../api.js';
+import { draftKey, readStored, removeStored, writeStored } from './researchSessionStorage.js';
 import './SessionFiles.css';
 
 const textFile = /\.(?:md|markdown|txt|text|json|jsonl|ya?ml|toml|ini|csv|tsv|py|js|jsx|ts|tsx|css|html|xml|svg|sh|sql|log)$/i;
@@ -8,8 +9,27 @@ const textFile = /\.(?:md|markdown|txt|text|json|jsonl|ya?ml|toml|ini|csv|tsv|py
 export async function uploadFile(owner: string, session: string, file: File) {
   const data = new FormData();
   data.append('file', file);
-  return factoryRequest<{ path: string; size: number }>(`/research/sessions/${encodeURIComponent(session)}/files`,
-    'POST', data, undefined, owner);
+  const key = `${draftKey(owner, session)}:upload:${JSON.stringify([file.name, file.size])}`;
+  const pending = readStored<string | null>(key, null);
+  async function send(requestId: string) {
+    writeStored(key, requestId);
+    return factoryRequest<{ path: string; size: number }>(`/research/sessions/${encodeURIComponent(session)}/files?requestId=${requestId}`,
+      'POST', data, undefined, owner);
+  }
+  let result;
+  try { result = await send(pending ?? crypto.randomUUID()); }
+  catch (error) {
+    if (error instanceof ApiError && (error.status === 0 || error.code === 'INVALID_RESPONSE')) {
+      throw new Error('上传结果未确认。请重新选择同一个文件重试。');
+    }
+    // Different bytes can have the same name and size.
+    if (!pending || !(error instanceof ApiError && error.status === 409)) throw error;
+    removeStored(key);
+    if (!error.message.startsWith('IDEMPOTENCY_CONFLICT')) throw error;
+    result = await send(crypto.randomUUID());
+  }
+  removeStored(key);
+  return result;
 }
 
 export function SessionFiles({ ownerId, sessionId, revision, onAttention }: { ownerId: string; sessionId: string; revision: string; onAttention?: (value: boolean) => void }) {
@@ -49,8 +69,6 @@ export function SessionFiles({ ownerId, sessionId, revision, onAttention }: { ow
   }, [base, ownerId, revision, refresh, directory]);
   useEffect(() => {
     if (!previewPath) return;
-    const size = files.find(file => file.path === previewPath)?.size;
-    if (size === undefined) return;
     const abort = new AbortController();
     const epoch = authEpoch();
     const url = `/api/factory${base}/download?path=${encodeURIComponent(previewPath)}`;
@@ -60,17 +78,21 @@ export function SessionFiles({ ownerId, sessionId, revision, onAttention }: { ow
     void (async () => {
       try {
         const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: abort.signal,
-          headers: { 'X-Factory-Expected-Owner': ownerId, ...(size ? { Range: `bytes=${offset}-${offset + 65535}`, ...(offset && current.tag ? { 'If-Match': current.tag } : {}) } : {}) } });
+          headers: { 'X-Factory-Expected-Owner': ownerId, Range: `bytes=${offset}-${offset + 65535}`, ...(offset && current.tag ? { 'If-Match': current.tag } : {}) } });
         assertAuthEpoch(epoch);
         if (response.status === 401) expireBrowserSession();
         if (response.status === 412) throw new Error('文件已变化，请刷新后重新读取。');
-        if (!response.ok) throw new Error(`文件读取失败（${response.status}），请刷新文件列表后重试。`);
+        if (response.status === 416 && offset === 0 && response.headers.get('Content-Range') === 'bytes */0') {
+          if (!abort.signal.aborted) setPreview({ key: previewKey, text: '' });
+          return;
+        }
+        if (response.status !== 206) throw new Error(`文件读取失败（${response.status}），请刷新文件列表后重试。`);
         const total = Number(response.headers.get('Content-Range')?.split('/')[1]);
         const bytes = await response.arrayBuffer();
         if (abort.signal.aborted) return;
         current.end = offset + bytes.byteLength;
         current.tag = response.headers.get('ETag') ?? '';
-        const more = response.status === 206 && total > current.end;
+        const more = total > current.end;
         try { current.text += current.decoder.decode(bytes, { stream: more }); }
         catch { throw new Error('该文件不是有效的 UTF-8 文本，无法预览。'); }
         assertAuthEpoch(epoch);
@@ -80,7 +102,7 @@ export function SessionFiles({ ownerId, sessionId, revision, onAttention }: { ow
       }
     })();
     return () => abort.abort();
-  }, [base, ownerId, previewKey, previewPath, offset, files]);
+  }, [base, ownerId, previewKey, previewPath, offset]);
   return <section className="rs-files" aria-label="会话文件">
     <p>会话文件（{files.length}）</p>
     <p>下载工作目录中的当前文件。<button type="button" onClick={() => setRefresh(value => value + 1)}>刷新文件列表</button></p>

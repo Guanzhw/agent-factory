@@ -63,16 +63,16 @@ class Settings:
         return self.workspace / "runtime"
 
     @classmethod
-    def from_env(cls):
-        url = os.getenv("FACTORY_DATABASE_URL", "")
+    def from_env(cls, *, db_url=None, jwt_key=None, local_login_origin=None):
+        url = db_url if db_url is not None else os.getenv("FACTORY_DATABASE_URL", "")
         if not url.startswith("postgresql"):
             raise ValueError("FACTORY_DATABASE_URL must configure PostgreSQL; no SQLite queue fallback")
-        key = os.getenv("FACTORY_JWT_KEY", "")
+        key = jwt_key if jwt_key is not None else os.getenv("FACTORY_JWT_KEY", "")
         if len(key.encode()) < 32:
             raise ValueError("Production requires an operator-configured JWT key (at least 32 bytes)")
         return cls(db_url=url, jwt_key=key,
                    native_timeout_seconds=int(os.environ['FACTORY_NATIVE_TIMEOUT_SECONDS']) if os.getenv('FACTORY_NATIVE_TIMEOUT_SECONDS') else None,
-                   local_login_origin=os.getenv('FACTORY_LOCAL_LOGIN_ORIGIN') or None,
+                   local_login_origin=local_login_origin or os.getenv('FACTORY_LOCAL_LOGIN_ORIGIN') or None,
                    workspace=Path(os.getenv("FACTORY_WORKSPACE", ".local")).resolve(),
                    max_workers=int(os.getenv("FACTORY_MAX_WORKERS", "2")),
                    port=int(os.getenv("FACTORY_PORT", "3100")))

@@ -154,7 +154,8 @@ class AssistantMessages:
             if message['recipient_id'] != owner:
                 raise HTTPException(409, 'ASSISTANT_MESSAGE_TASK_MISMATCH')
         return {'messageId': message['id'], 'senderId': message['sender_id'],
-            'recipientId': message['recipient_id'], 'endpointId': message['endpoint_id'], 'text': message['text']}
+            'recipientId': message['recipient_id'], 'endpointId': message['endpoint_id'], 'text': message['text'],
+            'hasReply': message['reply'] is not None}
 
     def _receipt(self, message):
         try:
@@ -166,13 +167,12 @@ class AssistantMessages:
             receipt = {'state': 'unconfirmed', 'taskId': None, 'runId': None}
         return receipt
 
-    def _require_reply_sources(self, message, content_ids):
-        for owner in (message['sender_id'], message['recipient_id']):
-            self.auth.require_member(owner)
-            for identifier in content_ids:
-                self.content.read(owner, identifier)
+    def _require_reply_sources(self, message, content_ids, team_application):
+        readers = {message['sender_id'], message['recipient_id']}
+        if set(content_ids) != self.content.readable_ids(readers, content_ids, team_application=team_application):
+            raise HTTPException(404, 'RESOURCE_NOT_FOUND')
 
-    def reply_for_task(self, receiver, task_id, text, content_ids=(), *, cited_content_ids=None):
+    def reply_for_task(self, receiver, task_id, text, content_ids=(), *, cited_content_ids=None, team_application=None):
         body = AssistantReply(text=text, contentIds=list(content_ids), citedContentIds=cited_content_ids)
         sources = sorted(set(body.contentIds))
         cited = sorted(set(body.citedContentIds)) if body.citedContentIds is not None else None
@@ -185,28 +185,32 @@ class AssistantMessages:
                 if original is None:
                     raise HTTPException(409, 'ASSISTANT_MESSAGE_TASK_MISMATCH')
                 message = self._row(conn, original['messageId'])
-                self._require_reply_sources(message, sources)
+                self._require_reply_sources(message, sources, team_application)
                 reply = message['reply']
                 if reply is not None:
                     if (reply['taskId'] != task_id or reply['text'] != body.text
                             or reply['contentIds'] != sources or reply.get('citedContentIds') != cited):
                         raise HTTPException(409, 'ASSISTANT_REPLY_CONFLICT')
                 else:
-                    conn.execute(self.messages.update().where(self.messages.c.id == message['id']).values(
-                        reply={'taskId': task_id, 'text': body.text, 'contentIds': sources, 'createdAt': now(),
-                               **({'citedContentIds': cited} if cited is not None else {})}))
-        return self.read(receiver, message['id'])
+                    reply = {'taskId': task_id, 'text': body.text, 'contentIds': sources, 'createdAt': now(),
+                             **({'citedContentIds': cited} if cited is not None else {})}
+                    conn.execute(self.messages.update().where(self.messages.c.id == message['id']).values(reply=reply))
+                return self._projection(message, self._available_reply(reply))
 
-    def _reply_snapshot(self, message):
+    def _reply_snapshot(self, message, team_application=None):
         reply = message['reply']
         if reply is None:
             return None
         try:
-            self._require_reply_sources(message, reply['contentIds'])
+            self._require_reply_sources(message, reply['contentIds'], team_application)
         except HTTPException as error:
             if error.status_code not in {403, 404}:
                 raise
             return {'state': 'source_unavailable'}
+        return self._available_reply(reply)
+
+    @staticmethod
+    def _available_reply(reply):
         return {'state': 'available', **{key: reply[key] for key in ('text', 'contentIds', 'createdAt')},
                 **({'citedContentIds': reply['citedContentIds']} if 'citedContentIds' in reply else {})}
 
@@ -218,7 +222,7 @@ class AssistantMessages:
             'delivery': {key: receipt[key] for key in ('state', 'taskId', 'runId')},
             'createsExecution': False, 'automaticReplay': False, 'reply': reply}
 
-    def read(self, actor, identifier):
+    def read(self, actor, identifier, *, task_id=None, team_application=None):
         self.auth.require_member(actor)
         with self.db.read() as conn:
             message = self._row(conn, identifier)
@@ -232,7 +236,9 @@ class AssistantMessages:
                     conn.execute(text("SELECT pg_advisory_xact_lock(hashtext('af_admission'))"))
                 self.auth.require_member(actor)
                 message = self._row(conn, identifier)
-                reply = self._reply_snapshot(message)
+                if task_id is not None and message['reply']['taskId'] != task_id:
+                    raise HTTPException(409, 'ASSISTANT_REPLY_CONFLICT')
+                reply = self._reply_snapshot(message, team_application)
         return self._projection(message, reply)
 
     def request(self, sender, request_id):

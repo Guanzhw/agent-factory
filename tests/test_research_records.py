@@ -84,6 +84,41 @@ class ResearchRecords(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stored['status'], 'recorded')
         self.assertIn('run:analysis', stored['assessments'])
 
+    async def test_result_only_projects_currently_readable_research(self):
+        saved = await self.research.invoke(self.context, 'base', 'research_record_experiment',
+                                           {'observations': ['Original private measurement']})
+        source = '00000000-0000-4000-8000-000000000001'
+        visible = {source}
+        self.research.content.read = lambda owner, identifier: {'sourceContentIds': []}
+        self.research.content.readable_ids = lambda readers, identifiers: visible.intersection(identifiers)
+        self.session['body']['sharedSourceIds'] = [source]
+        await self.research.invoke(self.context, 'derived', 'research_assess', {
+            'experimentId': saved['experimentId'], 'assessment': 'Peer-dependent interpretation'})
+        derived = await self.research.invoke(self.context, 'peer-note', 'research_record_experiment',
+                                             {'observations': ['Peer-dependent measurement']})
+        self.session['body']['sharedSourceIds'] = []
+        visible.clear()
+        base = await self.research.invoke(self.context, 'read-base', 'research_experiment_result',
+                                          {'experimentId': saved['experimentId']})
+        self.assertEqual(base['observations'], ['Original private measurement'])
+        self.assertEqual(base['assessments'], {})
+        result = await self.research.invoke(self.context, 'read-note', 'research_experiment_result',
+                                            {'experimentId': derived['experimentId']})
+        self.assertEqual(result, {'experimentId': derived['experimentId'], 'sourceUnavailable': True})
+        with self.assertRaises(ToolInvocationError):
+            await self.research.invoke(self.context, 'new-analysis', 'research_assess',
+                {'experimentId': derived['experimentId'], 'assessment': 'Would inherit the old observations'})
+        receipt = self.research.reconcile(self.context, 'derived', 'research_assess', {
+            'experimentId': saved['experimentId'], 'assessment': 'Peer-dependent interpretation'})
+        self.assertEqual(receipt, {'experimentId': saved['experimentId'], 'sourceUnavailable': True})
+        visible.add(source)
+        recorded = []
+        self.research.sessions.record_sources = lambda context, sources: recorded.extend(sources)
+        result = await self.research.invoke(self.context, 'again', 'research_experiment_result',
+                                            {'experimentId': derived['experimentId']})
+        self.assertEqual(result['observations'], ['Peer-dependent measurement'])
+        self.assertEqual(recorded, [source])
+
     async def test_analysis_of_nonterminal_legacy_record_preserves_facts(self):
         table = self.research.experiments
         body = {'status': 'running', 'evidenceIds': ['old-child'], 'hypothesis': 'Legacy hypothesis',

@@ -3,6 +3,7 @@ from base64 import b64decode
 from pathlib import Path
 from uuid import uuid4
 import unittest
+from unittest.mock import patch
 
 from playwright.sync_api import expect
 
@@ -147,6 +148,41 @@ class AuditJourney(ChatJourney):
         expect(self.page.get_by_role('option', name='regression')).to_be_focused()
         self.page.keyboard.press('Escape')
         expect(button).to_be_focused()
+
+    def test_shared_model_listing_tracks_credential_rotation_and_withdrawal(self):
+        models = self.state['store'].personal_models
+        colleague = 'colleague-' + uuid4().hex
+        self.state['auth'].directory.upsert(colleague, name=colleague)
+        credential = models.vault.create(owner=colleague, provider_id='byok-chat-v1',
+            destination='https://example.com', username='api-key', password='synthetic')
+        values = dict(provider='openai-compatible', baseURL='https://example.com/v1', model='shared',
+                      credentialRef=credential['credentialRef'], credentialRevision=credential['credentialRevision'])
+        ref = models.configure(colleague, values, str(uuid4()))['reference']
+
+        def visible():
+            records = self.context.request.get(self.origin + '/api/factory/personal-models').json()
+            return {record['reference']: record for record in records}
+
+        self.assertNotIn(ref, visible())
+        models.share(colleague, ref, 'team', str(uuid4()))
+        self.post('/personal-models/' + ref + '/default', {})
+        shared = visible()[ref]
+        self.assertTrue(shared['isDefault'] and shared['available'])
+        self.assertNotIn('credentialRef', shared)
+        models.vault.rotate(owner=colleague, reference=credential['credentialRef'],
+            revision=credential['credentialRevision'], username='api-key', password='rotated-synthetic')
+        self.assertFalse(visible()[ref]['available'])
+        models.share(colleague, ref, 'personal', str(uuid4()))
+        self.assertNotIn(ref, visible())
+
+    def test_list_and_detail_agree_when_submission_is_unconfirmed(self):
+        with patch.object(self.state['research_sessions'].runs, 'submit', side_effect=ConnectionError):
+            self.send('等待原提交确认')
+        detail = self.session()
+        items = self.context.request.get(self.origin + '/api/factory/research/sessions').json()['items']
+        listed = next(item for item in items if item['id'] == detail['id'])
+        self.assertEqual(detail['state'], 'blocked')
+        self.assertEqual(listed['state'], detail['state'])
 
     def test_search_and_recent_activity_across_pages(self):
         api = self.origin + '/api/factory/research/sessions'

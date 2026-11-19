@@ -59,8 +59,6 @@ def main():
     import uvicorn
     from agno.db.postgres import PostgresDb
     from agno.os.authz import UserDirectory
-    from agno.os.authz.native_engine import NativePolicyEngine
-    from agent_factory.auth import ACCOUNT_ADMIN_ROLE
     from agent_factory.local_login import LocalPasswords
     from .research import create_app
     workspace = Path(os.environ.get('FACTORY_WORKSPACE', '.local')).resolve()
@@ -88,8 +86,7 @@ def main():
                     raise SystemExit('已有部署，请提供原 FACTORY_JWT_KEY 或指定原工作目录。')
                 new_private_file(keyfile, secrets.token_urlsafe(48).encode())
             key = keyfile.read_text().strip()
-        settings = Settings(db_url=url, jwt_key=key, workspace=workspace, local_login_origin=origin,
-                            port=int(origin.rsplit(':', 1)[1]))
+        settings = Settings.from_env(db_url=url, jwt_key=key, local_login_origin=origin)
         cert, private = os.getenv('FACTORY_TLS_CERT'), os.getenv('FACTORY_TLS_KEY')
         if not cert and not private:
             cert, private = local_certificate(workspace / 'loopback.pem')
@@ -103,8 +100,7 @@ def main():
             password = getpass('本地密码：')
             if password != getpass('再次输入密码：'):
                 raise SystemExit('两次密码不一致，请重新启动向导。')
-            LocalPasswords(engine, directory).create_member(owner, password, first_member=True)
-            NativePolicyEngine(db=database).assign(owner, ACCOUNT_ADMIN_ROLE)
+            LocalPasswords(engine, directory).create_member(owner, password, first_member=True, admin=True)
     finally:
         engine.dispose()
     print('服务就绪后打开 ' + origin, flush=True)

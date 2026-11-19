@@ -157,13 +157,8 @@ class ResearchSessions:
         return native
 
     def _sources(self, owner, identifiers):
-        for identifier in identifiers:
-            try:
-                self.content.read(owner, identifier)
-            except HTTPException as error:
-                if error.status_code not in {403, 404}:
-                    raise
-                raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '本轮使用的共享来源已不可读，本轮已停止；可以发送新消息继续。') from None
+        if identifiers and self.content.readable_ids({owner}, identifiers) != set(identifiers):
+            raise rejected('RESEARCH_SOURCE_UNAVAILABLE', '本轮使用的共享来源已不可读，本轮已停止；可以发送新消息继续。')
 
     def _reply(self, owner, identifier, snapshot):
         try:
@@ -356,7 +351,7 @@ class ResearchSessions:
             task = detail['task']
             children = await self.subagents.children(task)
             if self.research is not None:
-                await self.research.observe(task)
+                await self.research.observe(task, identifier)
             status, snapshot = detail['status'], detail['snapshot']
             observations[turn['id']] = {'events': detail['events'], 'toolResults': [
                 {'effectKey': item['effect_key'], 'status': item['status'], 'result': item['result']}
@@ -682,17 +677,20 @@ class ResearchSessions:
                     'workspaceRef': row['id']}
 
     def record_source(self, context, identifier):
+        self.record_sources(context, [identifier])
+
+    def record_sources(self, context, identifiers):
         with self._write() as conn:
             row, turn, _ = self._execution(conn, context)
-            self._sources(context.user_id, [identifier])
-            body = deepcopy(row['body'])
-            if identifier not in body['sharedSourceIds']:
-                body['sharedSourceIds'].append(identifier)
-            turn_body = deepcopy(turn['body'])
-            if identifier not in turn_body.setdefault('sharedSourceIds', deepcopy(row['body']['sharedSourceIds'])):
-                turn_body['sharedSourceIds'].append(identifier)
-            self._save_turn(conn, turn, turn_body)
-            self._save_session(conn, row, body)
+            self._sources(context.user_id, identifiers)
+            session_ids = row['body']['sharedSourceIds']
+            turn_ids = turn['body'].get('sharedSourceIds', session_ids)
+            turn_sources = list(dict.fromkeys([*turn_ids, *identifiers]))
+            session_sources = list(dict.fromkeys([*session_ids, *identifiers]))
+            if turn_sources != turn['body'].get('sharedSourceIds'):
+                self._save_turn(conn, turn, {**turn['body'], 'sharedSourceIds': turn_sources})
+            if session_sources != session_ids:
+                self._save_session(conn, row, {**row['body'], 'sharedSourceIds': session_sources})
 
     def _model_boundary(self, conn, context):
         row, turn, task = self._execution(conn, context)
@@ -862,7 +860,7 @@ class ResearchSessions:
             await asyncio.to_thread(self.memory.observe, task['owner_id'], turn, task, EFFECT_PREFIX)
         await self.subagents.observe_waits(observer, task)
         if self.research is not None:
-            await self.research.observe(task)
+            await self.research.observe(task, turn['session_id'] if turn else None)
 
     @staticmethod
     def retry_operations(events):
@@ -941,6 +939,15 @@ class ResearchSessions:
             row = self._row(conn, owner, identifier)
             return self.tools._workspace({'ownerId': owner, 'id': row['id']})
 
+    @staticmethod
+    def _state(stopped, safe, status, reason):
+        block = None if reason == 'RESEARCH_EFFECT_UNCONFIRMED' else reason
+        if status == 'unknown' and not safe:
+            block = block or 'RESEARCH_ORIGINAL_OUTCOME_UNCONFIRMED'
+        state = ('blocked' if block else 'stopped' if stopped and safe else
+                 'stopping' if stopped else 'idle' if safe else 'running')
+        return state, block
+
     async def read(self, owner, identifier):
         self.auth.require_member(owner)
         observations = await self._refresh(owner, identifier)
@@ -949,11 +956,8 @@ class ResearchSessions:
             body = row['body']
             latest = turns[-1] if turns else None
             safe = not latest or self._safe(owner, latest)
-            block = latest['body'].get('blockReason') if latest else None
-            if block == 'RESEARCH_EFFECT_UNCONFIRMED':
-                block = None
-            if latest and latest['body']['status'] == 'unknown' and not safe:
-                block = block or 'RESEARCH_ORIGINAL_OUTCOME_UNCONFIRMED'
+            last = latest['body'] if latest else {}
+            state, block = self._state(body['stopped'], safe, last.get('status'), last.get('blockReason'))
             raw_characters = sum(len(item['text']) for turn in turns for item in turn['body']['messages'])
             raw_characters += sum(len(str(turn['body'].get('result') or '')) for turn in turns)
             context_row = self._continuation_context(row, turns) if safe else row
@@ -976,8 +980,6 @@ class ResearchSessions:
                 compact_view = {'status': 'ready'}
             if compact_view:
                 compact_view['throughSequence'] = saved['throughSequence'] if saved else 0
-            state = ('blocked' if block else 'stopped' if body['stopped'] and safe else
-                     'stopping' if body['stopped'] else 'idle' if safe else 'running')
             actions = []
             if safe and not block:
                 actions.append('start')
@@ -1020,14 +1022,17 @@ class ResearchSessions:
         sessions, turns = self.sessions.c, self.turns.c
         stamp = sessions.body['updatedAt'].as_string()
         title = sessions.body['title'].as_string()
-        reason = turns.body['blockReason'].as_string()
-        latest = select(case(
-            (reason.is_not(None) & (reason != 'RESEARCH_EFFECT_UNCONFIRMED'), 'blocked'),
-            (turns.body['terminal'].as_boolean().is_(False), 'running'), else_='idle')
-        ).where(turns.session_id == sessions.id).order_by(turns.sequence.desc()).limit(1).scalar_subquery()
+        terminal = turns.body['terminal'].as_boolean()
+        status = turns.body['status'].as_string()
+        latest = select(turns.id).where(turns.session_id == sessions.id).order_by(
+            turns.sequence.desc()).limit(1).correlate(self.sessions).scalar_subquery()
+        # A terminal turn with Stop or an unknown outcome still depends on its native task.
+        needs_task = terminal.is_(True) & ((status == 'unknown') | turns.body['stopRequestId'].as_string().is_not(None))
         statement = select(sessions.id, title.label('title'), stamp.label('updatedAt'),
-                           sessions.body['stopped'].as_boolean().label('stopped'),
-                           latest.label('state')).where(sessions.owner_id == owner)
+            sessions.body['stopped'].as_boolean().label('stopped'), terminal.label('terminal'), status.label('status'),
+            turns.body['blockReason'].as_string().label('reason'), turns.application_request_id,
+            case((needs_task, turns.body)).label('body')).select_from(
+                self.sessions.outerjoin(self.turns, turns.id == latest)).where(sessions.owner_id == owner)
         if query:
             statement = statement.where(title.icontains(query, autoescape=True))
         with self.db.read() as conn:
@@ -1038,12 +1043,11 @@ class ResearchSessions:
                     timestamp = self._row(conn, owner, identifier)['body']['updatedAt']
                 statement = statement.where(tuple_(stamp, sessions.id) < (timestamp, identifier))
             rows = conn.execute(statement.order_by(stamp.desc(), sessions.id.desc()).limit(21)).mappings().all()
-        items = []
-        for row in rows[:20]:
-            state = row['state'] or 'idle'
-            if row['stopped'] and state != 'blocked':
-                state = 'stopping' if state == 'running' else 'stopped'
-            items.append({'id': row['id'], 'title': row['title'], 'updatedAt': row['updatedAt'], 'state': state})
+            items = []
+            for row in rows[:20]:
+                safe = self._safe(owner, row) if row['body'] is not None else row['terminal'] is not False
+                state, _ = self._state(row['stopped'], safe, row['status'], row['reason'])
+                items.append({'id': row['id'], 'title': row['title'], 'updatedAt': row['updatedAt'], 'state': state})
         return {'items': items, 'nextCursor': rows[19]['updatedAt'] + '|' + rows[19]['id'] if len(rows) > 20 else None}
 
     async def request(self, owner, request_id):

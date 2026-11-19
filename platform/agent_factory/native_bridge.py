@@ -14,6 +14,7 @@ from fastapi import HTTPException
 from fastapi.encoders import jsonable_encoder
 import httpx
 from agno.db.base import SessionType
+from agno.db.utils import deserialize_run, merge_runs_table_with_legacy_blob
 from sqlalchemy import select
 
 from .auth import EXECUTOR_ID
@@ -24,6 +25,27 @@ INTERNAL_NATIVE: ContextVar[bool] = ContextVar("factory_internal_native", defaul
 
 class NativeAdmissionRejected(HTTPException):
     """The native queue explicitly declined this submission before insertion."""
+
+
+def session_for_run(db, session_id, user_id, run_id):
+    """Agno's get_session loads every run. Observe only the requested persisted run."""
+    sessions = db._get_table(table_type="sessions")
+    if sessions is None:
+        return None
+    runs = db._get_table(table_type="runs")
+    query = select(sessions).where(sessions.c.session_id == session_id, sessions.c.user_id == user_id)
+    if runs is not None:
+        query = query.add_columns(runs.c.run_data).select_from(sessions.outerjoin(runs,
+            (runs.c.session_id == sessions.c.session_id) & (runs.c.run_id == run_id)))
+    with db.db_engine.connect() as conn:
+        row = conn.execute(query).mappings().first()
+    if row is None:
+        return None
+    record = dict(row)
+    data = record.pop('run_data', None)
+    history = merge_runs_table_with_legacy_blob([data] if data is not None else [], record.get('runs'))
+    record['runs'] = [item for item in history if item.get('run_id') == run_id]
+    return record
 
 
 class NativeBridge:
@@ -142,33 +164,29 @@ class NativeBridge:
     def _run_path(run_id: str) -> str:
         return f"/agents/{EXECUTOR_ID}/runs/{quote(run_id, safe='')}"
 
-    async def detail(self, run_id: str, session_id: str, user_id: str) -> dict[str, Any]:
+    async def detail(self, run_id: str, session_id: str, user_id: str, *, native_session: str | None = None) -> dict[str, Any]:
         component = self._component(session_id, user_id)
-        session_id = self.native_session_id(session_id, user_id)
+        session_id = native_session if native_session is not None else self.native_session_id(session_id, user_id)
         kind, identifier = component["kind"], component["id"]
-        session_type = SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT
         try:
             result = await self._request("GET", self._component_path(run_id, component), user_id, params={"session_id": session_id})
         except HTTPException as error:
             if error.status_code != 403 and not (kind == "workflow" and error.status_code == 404):
                 raise
-            # Pinned Agno's agent-run GET requires run rights. Its native session
-            # GET is the supported owner-scoped read path; no admin token is used.
-            result = await self._request("GET", f"/sessions/{quote(session_id, safe='')}/runs/{quote(run_id, safe='')}",
-                user_id, params={"type": kind, "db_id": self.native_db.id})
-            if result.get("run_id") != run_id or result.get(kind + "_id") != identifier:
-                raise HTTPException(403, "Native session read returned a different executor/run")
-            session = self.native_db.get_session(session_id, session_type=session_type, user_id=user_id)
-            if session is None or getattr(session, kind + "_id", None) != identifier or session.user_id != user_id:
-                raise HTTPException(403, "Native session ownership differs from the task")
-            exact = [run for run in session.runs or [] if run.run_id == run_id and getattr(run, kind + "_id", None) == identifier]
-            if len(exact) != 1:
+            # The native session/run HTTP handler fetches the entire history before filtering by ID.
+            self.auth.require_member(user_id)
+            session = session_for_run(self.native_db, session_id, user_id, run_id)
+            if session is None:
+                raise HTTPException(404, f"Session with ID {session_id} not found")
+            exact = session["runs"]
+            if not exact:
+                raise HTTPException(404, f"Run with ID {run_id} not found in session {session_id}")
+            if session.get(kind + "_id") != identifier or exact[0].get(kind + "_id") != identifier:
+                raise HTTPException(403, "Native session or run differs from the task executor")
+            matching = [run for run in exact if run.get(kind + "_id") == identifier]
+            if len(matching) != 1:
                 raise HTTPException(404, "Exact native owner-scoped run not found")
-            # Native session RunSchema omits requirements. Enrich only after its
-            # HTTP ownership check, preserving persisted native question types.
-            result = {**exact[0].to_dict(), "readOnly": True}
-        # Only query the ticket after native HTTP ownership/resource checks succeed.
-        # Preserve requirements and the actual status; no synthetic status translation.
+            result = {**deserialize_run(kind, matching[0]).to_dict(), "readOnly": True}
         ticket = self.native_db.get_job(run_id)
         self._ticket(ticket, run_id, session_id, user_id, component)
         result["queue"] = jsonable_encoder(ticket)

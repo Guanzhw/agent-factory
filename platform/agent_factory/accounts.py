@@ -55,10 +55,10 @@ def account_router(auth: AuthService, passwords=None) -> APIRouter:
         auth.require_account_admin(user_id)
         return user_id
 
-    def project(row: dict) -> dict:
+    def project(row: dict, roles) -> dict:
         return {"id": row["id"], "name": row.get("name") or row["id"], "email": row.get("email"),
                 "disabled": row["disabled"],
-                "accountAdmin": ACCOUNT_ADMIN_ROLE in auth.account_roles.roles_of(row["id"])}
+                "accountAdmin": ACCOUNT_ADMIN_ROLE in roles}
 
     def set_admin(user_id: str, admin: bool) -> None:
         if admin:
@@ -71,8 +71,10 @@ def account_router(auth: AuthService, passwords=None) -> APIRouter:
                       offset: Annotated[int, Query(ge=0)] = 0):
         actor(request)
         rows = auth.directory.list(limit=limit, offset=offset)
-        local = passwords.local_owners([row['id'] for row in rows]) if passwords else set()
-        return {"accounts": [{**project(row), "localLogin": row['id'] in local} for row in rows],
+        ids = [row['id'] for row in rows]
+        roles = auth.account_roles.roles_of_many(ids)
+        local = passwords.local_owners(ids) if passwords else set()
+        return {"accounts": [{**project(row, roles.get(row['id'], [])), "localLogin": row['id'] in local} for row in rows],
                 "localLoginEnabled": passwords is not None,
                 "total": auth.directory.count()}
 
@@ -82,7 +84,7 @@ def account_router(auth: AuthService, passwords=None) -> APIRouter:
         if passwords is not None:
             try:
                 row = passwords.create_member(body.id, body.password.get_secret_value() if body.password else None,
-                                              name=body.name, email=body.email, actor=operator)
+                                              name=body.name, email=body.email, actor=operator, admin=body.accountAdmin)
             except ValueError:
                 raise HTTPException(409, "成员标识已存在，请使用其他标识。") from None
         else:
@@ -92,9 +94,9 @@ def account_router(auth: AuthService, passwords=None) -> APIRouter:
                 raise HTTPException(409, "Account already exists")
             row = auth.directory.upsert(body.id, name=body.name, email=body.email,
                                         metadata={ACCOUNT_MIGRATION_KEY: True}, actor=operator)
-        if body.accountAdmin:
-            set_admin(body.id, True)
-        return project(row)
+            if body.accountAdmin:
+                set_admin(body.id, True)
+        return project(row, auth.account_roles.roles_of(row["id"]))
 
     @router.put("/{user_id}/password")
     def reset_password(user_id: str, body: PasswordReset, request: Request):
@@ -120,6 +122,6 @@ def account_router(auth: AuthService, passwords=None) -> APIRouter:
             set_admin(user_id, bool(body.accountAdmin))
         if "disabled" in fields:
             row = auth.directory.set_disabled(user_id, bool(body.disabled), actor=operator)
-        return project(row)
+        return project(row, auth.account_roles.roles_of(row["id"]))
 
     return router

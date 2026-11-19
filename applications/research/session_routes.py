@@ -6,17 +6,19 @@ from contextlib import AsyncExitStack
 from pathlib import Path
 import stat
 from urllib.parse import quote
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from starlette.background import BackgroundTask
+from sqlalchemy import text
 
 from agent_factory.application_content import ObjectId
 from .projects import Reference, RequestId
 from .session_triggers import CreateTrigger
 from .session_stream import SessionNotifications, session_updates
-from .session_files import _directory, _open_file, _windows_path, _workspace_parts, receive_file
+from .session_files import _directory, _open_file, _windows_path, _workspace_parts, publish_upload, staged_upload
 
 
 # openai/codex 0ed34eb9: protocol/src/user_input.rs::MAX_USER_INPUT_TEXT_CHARS.
@@ -98,8 +100,16 @@ def session_router(auth, service):
     async def events(request: Request, identifier: str):
         owner = auth.request_owner(request)
         resources = AsyncExitStack()
+        browser = request.scope.get('factory.browser_session')
+        revoked = asyncio.Event()
+        deadline = None
         try:
-            notifications = await resources.enter_async_context(subscriptions.subscribe())
+            notifications = await resources.enter_async_context(subscriptions.subscribe(browser[0] if browser else None, revoked))
+            if browser:
+                # Check after LISTEN so a concurrent logout is either observed here or delivered to the subscription.
+                lifetime = await asyncio.to_thread(browser[1])
+                if lifetime is not None:
+                    deadline = asyncio.get_running_loop().time() + lifetime
             initial = await service.read(owner, identifier)
         except BaseException:
             await resources.aclose()
@@ -108,6 +118,8 @@ def session_router(auth, service):
         async def updates():
             try:
                 async for value in session_updates(request, auth, service, owner, identifier, notifications, initial):
+                    if revoked.is_set() or deadline is not None and asyncio.get_running_loop().time() >= deadline:
+                        return
                     yield value
             finally:
                 await resources.aclose()
@@ -117,13 +129,21 @@ def session_router(auth, service):
             background=BackgroundTask(resources.aclose))
 
     @router.post('/{identifier}/files', status_code=201)
-    def upload(request: Request, identifier: str, file: UploadFile):
-        workspace = service.workspace(auth.request_owner(request), identifier)
+    def upload(request: Request, identifier: str, file: UploadFile, requestId: UUID | None = None):
+        owner = auth.request_owner(request)
+        workspace = service.workspace(owner, identifier)
+        name = file.filename or ''
         try:
-            name = receive_file(workspace, file.filename or '', file.file)
+            with staged_upload(workspace, name, file.file) as (staged, checksum):
+                if requestId is None:
+                    return {'path': publish_upload(workspace, name, staged), 'size': file.size}
+                key = f'.upload-{workspace.name}-{requestId}'
+                with service.store.engine.begin() as conn:
+                    conn.execute(text('SELECT pg_advisory_xact_lock(hashtext(:key))'), {'key': key})
+                    path = publish_upload(workspace, name, staged, staged.parent / key, checksum)
+                return {'path': path, 'size': file.size}
         except ValueError:
             raise HTTPException(422, '请选择具有有效文件名的文件。') from None
-        return {'path': name, 'size': file.size}
 
     @router.get('/{identifier}/files')
     def files(request: Request, identifier: str, directory: str | None = None):

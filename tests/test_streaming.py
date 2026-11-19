@@ -61,6 +61,30 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
             await asyncio.gather(next_frame, return_exceptions=True)
             await stream.aclose()
 
+    async def test_idle_tab_keeps_heartbeat_while_other_sessions_change(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock
+        from research.session_stream import session_updates
+
+        queue = asyncio.Queue()
+        auth = SimpleNamespace(require_member=Mock())
+        stream = session_updates(SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
+            auth, None, 'member', 'mine', queue, {'turns': []})
+        async def other_tab():
+            while True:
+                queue.put_nowait({'table': 'research_sessions', 'id': 'other'})
+                await asyncio.sleep(0.005)
+        with patch('research.session_stream.HEARTBEAT_SECONDS', 0.05):
+            await anext(stream)
+            writer = asyncio.create_task(other_tab())
+            try:
+                self.assertEqual(await asyncio.wait_for(anext(stream), 1), ': connected\n\n')
+                auth.require_member.assert_called_with('member')
+            finally:
+                writer.cancel()
+                await asyncio.gather(writer, return_exceptions=True)
+                await stream.aclose()
+
     async def test_disabled_member_receives_no_more_stream_content(self):
         from types import SimpleNamespace
         from unittest.mock import AsyncMock, Mock
@@ -68,7 +92,7 @@ class ProviderStreaming(unittest.IsolatedAsyncioTestCase):
         from research.session_stream import session_updates
 
         notifications = asyncio.Queue()
-        notifications.put_nowait({'table': 'af_events', 'task': 'task', 'type': 'model_content_delta'})
+        notifications.put_nowait({'table': 'af_events', 'id': '1', 'task': 'task', 'type': 'model_content_delta'})
 
         snapshot = {'id': 'session', 'turns': [{'id': 'turn', 'taskId': 'task', 'status': 'running'}]}
         auth = SimpleNamespace(require_member=Mock(side_effect=HTTPException(403)))
@@ -259,6 +283,60 @@ class StoredStreaming(unittest.TestCase):
         cls.store.task = lambda identifier: {'id': identifier}
         cls.store.sql('CREATE TABLE af_events (id BIGSERIAL PRIMARY KEY, task_id TEXT NOT NULL, '
                       'type TEXT NOT NULL, message TEXT NOT NULL, data JSONB NOT NULL, created_at TEXT NOT NULL)')
+
+        from research.session_stream import install_notifications
+        cls.store.native_db = None
+        cls.store.sql('CREATE TABLE af_browser_auth (id TEXT PRIMARY KEY, kind TEXT, body JSONB)')
+        cls.store.sql('CREATE TABLE af_resource_sharing (reference TEXT PRIMARY KEY, owner_id TEXT, visibility TEXT)')
+        cls.store.sql('CREATE TABLE af_application_content (id TEXT PRIMARY KEY)')
+        with patch('research.session_stream.TABLES', ('af_events', 'af_browser_auth', 'af_resource_sharing', 'af_application_content')):
+            install_notifications(cls.store)
+
+    def test_stream_delivers_an_earlier_id_committed_after_the_snapshot(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, Mock
+        from research.session_stream import SessionNotifications, session_updates
+        store = self.store
+        task = uuid4().hex
+        async def check():
+            with store.engine.begin() as slow:
+                first = slow.execute(text("INSERT INTO af_events(task_id,type,message,data,created_at) "
+                    "VALUES(:task,'model_content_delta','generating','{}','now') RETURNING id"), {'task': task}).scalar_one()
+                store.event(task, 'tool_started', 'later ID commits first')
+                async with SessionNotifications(store).subscribe() as queue:
+                    turn = {'id': 'turn', 'taskId': task, 'events': store.events(task)}
+                    self.assertEqual(len(turn['events']), 1)
+                    stream = session_updates(SimpleNamespace(is_disconnected=AsyncMock(return_value=False)),
+                        SimpleNamespace(require_member=Mock()), SimpleNamespace(store=store),
+                        'owner', 'session', queue, {'turns': [turn]})
+                    await anext(stream)
+                    slow.commit()
+                    frame = await asyncio.wait_for(anext(stream), 3)
+                    self.assertEqual([item['id'] for item in json.loads(frame.split('data: ')[1])['events']], [first])
+                    self.assertEqual(turn['events'], store.events(task))
+                    await stream.aclose()
+        asyncio.run(check())
+
+    def test_new_content_does_not_wake_existing_tabs_and_revocation_targets_the_session(self):
+        from research.session_stream import SessionNotifications
+        async def check():
+            hub = SessionNotifications(self.store)
+            first, second = asyncio.Event(), asyncio.Event()
+            async with hub.subscribe('first', first) as one, hub.subscribe('second', second) as two:
+                self.store.sql("INSERT INTO af_application_content VALUES ('new-content')")
+                self.store.sql("INSERT INTO af_resource_sharing VALUES ('content:new-content','publisher','team')")
+                self.store.sql("INSERT INTO af_browser_auth VALUES ('first','session','{}'),('second','session','{}')")
+                self.store.sql("UPDATE af_resource_sharing SET visibility='personal' WHERE reference='content:new-content'")
+                for queue in (one, two):
+                    self.assertEqual((await asyncio.wait_for(queue.get(), 3))['table'], 'af_resource_sharing')
+                self.store.sql("UPDATE af_browser_auth SET body=jsonb_build_object('revoked', true) WHERE id='first'")
+                self.assertIsNone(await asyncio.wait_for(one.get(), 3))
+                self.assertTrue(first.is_set())
+                self.assertFalse(second.is_set())
+                self.store.sql("DELETE FROM af_browser_auth WHERE id='second'")
+                self.assertIsNone(await asyncio.wait_for(two.get(), 3))
+                self.assertTrue(second.is_set())
+        asyncio.run(check())
 
     def test_notifications_deliver_reconnect_and_close_on_default_platform_loop(self):
         from research.session_stream import CHANNEL, changes

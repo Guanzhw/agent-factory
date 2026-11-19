@@ -60,6 +60,10 @@ class NativeHistory(journey.ChatJourney):
         self.assertEqual(sum(item['content'] == 'legacy-earliest-marker' for item in request['messages']), 1)
         task = service.store.task(value['turns'][-1]['taskId'], self.owner)
         self.assertEqual(service.store.native_session_id(task), value['id'])
+        # Revisit an older persisted run after several more runs used the same native session.
+        earlier = service.store.task(value['turns'][1]['taskId'], self.owner)
+        binding = service.store.lifecycle_observer._binding(earlier, include_content=True)
+        self.assertEqual((binding['persistedRunStatus'], binding['content']), ('completed', 'answer:new-turn-2'))
         self.provider.answer = lambda _: (400, {'error': {'message': 'actual-history-provider-failure', 'type': 'invalid_request_error'}})
         failed = self.turn('failed-user-instruction', 7)
         self.assertEqual(failed['turns'][-1]['status'], 'failed')

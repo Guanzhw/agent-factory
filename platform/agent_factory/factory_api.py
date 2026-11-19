@@ -112,7 +112,8 @@ class FactoryAPI:
         snapshot = {}
         if task.get("run_id"):
             try:
-                snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"])
+                snapshot = await self.bridge.detail(task["run_id"], task["id"], task["owner_id"],
+                    native_session=self.store.native_session_id(task))
             except HTTPException as error:
                 ticket = self.store.lifecycle_observer._binding(task)
                 if error.status_code != 404 or not ticket or ticket['status'] != 'cancelled':

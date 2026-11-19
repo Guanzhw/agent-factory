@@ -11,9 +11,10 @@ from psycopg import sql
 
 
 CHANNEL = 'factory_research_updates'
+HEARTBEAT_SECONDS = 15
 TABLES = ('af_events', 'af_tasks', 'af_effects', 'research_sessions', 'research_session_turns',
     'research_collaboration_intents', 'research_question_origins', 'af_assistant_messages',
-    'af_application_content', 'af_resource_sharing', 'research_trigger_deliveries')
+    'af_application_content', 'af_resource_sharing', 'research_trigger_deliveries', 'af_browser_auth')
 
 
 def install_notifications(store):
@@ -21,6 +22,15 @@ def install_notifications(store):
     with store.engine.begin() as conn:
         conn.exec_driver_sql('''CREATE OR REPLACE FUNCTION af_research_changed() RETURNS trigger
             LANGUAGE plpgsql AS $$ DECLARE row jsonb; BEGIN
+            IF TG_OP = 'INSERT' AND TG_TABLE_NAME IN ('af_application_content', 'af_resource_sharing')
+                THEN RETURN NULL; END IF;
+            IF TG_TABLE_NAME = 'af_browser_auth' THEN
+                IF TG_OP = 'INSERT' OR OLD.kind <> 'session' THEN RETURN NULL; END IF;
+                IF TG_OP = 'UPDATE' AND NOT (NEW.body->>'revoked')::boolean THEN RETURN NULL; END IF;
+                PERFORM pg_notify('factory_research_updates', jsonb_build_object(
+                    'table', TG_TABLE_NAME, 'id', OLD.id)::text);
+                RETURN NULL;
+            END IF;
             IF TG_OP = 'UPDATE' THEN
                 IF to_jsonb(OLD) = to_jsonb(NEW) THEN RETURN NEW; END IF;
                 IF TG_TABLE_NAME = 'af_tasks' AND
@@ -94,7 +104,7 @@ class SessionNotifications:
     def __init__(self, store):
         self.store = store
         self.listener = None
-        self.queues = set()
+        self.queues = {}
 
     async def _listen(self, ready, queues):
         try:
@@ -102,31 +112,37 @@ class SessionNotifications:
                 ready.set_result(None)
                 async for notice in notifications:
                     change = json.loads(notice.payload)
-                    for queue in queues:
-                        queue.put_nowait(change)
+                    for queue, (browser_id, revoked) in queues.items():
+                        if change.get('table') == 'af_browser_auth':
+                            if change['id'] == browser_id:
+                                revoked.set()
+                                queue.put_nowait(None)
+                        else:
+                            queue.put_nowait(change)
         except Exception as error:
             if not ready.done():
                 ready.set_exception(error)
         finally:
             if not ready.done():
                 ready.cancel()
-            for queue in queues:
+            for queue, (_, revoked) in queues.items():
+                revoked.set()
                 queue.put_nowait(None)
 
     @asynccontextmanager
-    async def subscribe(self):
+    async def subscribe(self, browser_id=None, revoked=None):
         if self.listener is None or self.listener.done():
-            self.queues = set()
+            self.queues = {}
             self.ready = asyncio.get_running_loop().create_future()
             self.listener = asyncio.create_task(self._listen(self.ready, self.queues))
         queues, listener = self.queues, self.listener
         queue = asyncio.Queue()
-        queues.add(queue)
+        queues[queue] = (browser_id, revoked if revoked is not None else asyncio.Event())
         try:
             await asyncio.shield(self.ready)
             yield queue
         finally:
-            queues.discard(queue)
+            del queues[queue]
             if not queues:
                 if self.listener is listener:
                     self.listener = None
@@ -144,12 +160,14 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
     try:
         loop = asyncio.get_running_loop()
         next_read = loop.time()
+        heartbeat = loop.time() + HEARTBEAT_SECONDS
         yield frame('session', snapshot)
         while not await request.is_disconnected():
             try:
-                notice = await asyncio.wait_for(notifications.get(), timeout=15)
+                notice = await asyncio.wait_for(notifications.get(), timeout=heartbeat - loop.time())
             except TimeoutError:
-                auth.require_member(owner)
+                await asyncio.to_thread(auth.require_member, owner)
+                heartbeat = loop.time() + HEARTBEAT_SECONDS
                 yield ': connected\n\n'
                 continue
             if notice is None:
@@ -166,12 +184,14 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
                     return  # Reconnect with a new snapshot after the database listener exits.
                 notices.append(notice)
             turns = {turn['taskId']: turn for turn in snapshot['turns'] if turn.get('taskId')}
-            changed, refresh = set(), False
+            changed, refresh = {}, False
             for notice in notices:
                 if notice['table'] == 'af_events':
                     if notice['task'] in turns:
-                        changed.add(notice['task'])
-                        refresh |= notice['type'] not in {'model_content_delta', 'model_reasoning_delta'}
+                        if notice['type'] in {'model_content_delta', 'model_reasoning_delta'}:
+                            changed.setdefault(notice['task'], set()).add(int(notice['id']))
+                        else:
+                            refresh = True
                 elif notice['table'] in {'af_application_content', 'af_resource_sharing'}:
                     # Replies may depend on a source transitively. Refresh those views on any sharing change.
                     refresh |= bool(snapshot.get('sharedSourceIds') or any(
@@ -191,21 +211,22 @@ async def session_updates(request, auth, service, owner, identifier, notificatio
                 next_read = loop.time() + 0.2
                 if current != snapshot:
                     snapshot = current
+                    heartbeat = loop.time() + HEARTBEAT_SECONDS
                     yield frame('session', snapshot)
             else:
-                auth.require_member(owner)
-                for task_id in changed:
+                await asyncio.to_thread(auth.require_member, owner)
+                for task_id, ids in changed.items():
                     turn = turns[task_id]
                     old = {event['id']: event for event in turn.get('events') or []}
-                    last = max(old, default=0)
                     rows = await asyncio.to_thread(service.store.sql,
-                        'SELECT * FROM af_events WHERE task_id=:task AND id>=:last ORDER BY id', task=task_id, last=last)
+                        'SELECT * FROM af_events WHERE task_id=:task AND id=ANY(:ids) ORDER BY id', task=task_id, ids=list(ids))
                     events = [{'id': row['id'], 'jobId': task_id, 'type': row['type'], 'message': row['message'],
                         'data': row['data'], 'createdAt': row['created_at']} for row in rows]
                     updated = [event for event in events if old.get(event['id']) != event]
                     if updated:
                         old.update({event['id']: event for event in updated})
                         turn['events'] = sorted(old.values(), key=lambda event: event['id'])
+                        heartbeat = loop.time() + HEARTBEAT_SECONDS
                         yield frame('turn_events', {'sessionId': identifier, 'turnId': turn['id'], 'events': updated})
                 next_read = loop.time() + 0.05
     except HTTPException as error:

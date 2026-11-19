@@ -88,14 +88,6 @@ class ResearchQA:
         config = self.assistants.configuration_for_endpoint(owner, message['endpointId'])
         return message, config
 
-    def _source(self, message, identifier):
-        read = self.content.read
-        source = read(message['senderId'], identifier)
-        read(message['recipientId'], identifier)
-        if source['visibility'] != 'team' or source['source']['application'] != 'research':
-            raise HTTPException(403, 'RESEARCH_QA_TEAM_SOURCE_REQUIRED')
-        return {key: source[key] for key in ('id', 'source', 'content', 'verificationStatus')}
-
     @staticmethod
     def _passage(item, tokens):
         content = json.dumps(item['content'], ensure_ascii=False)
@@ -107,7 +99,7 @@ class ResearchQA:
         start = max(0, min(position - 120, len(content) - 500))
         return len(hits), content[start:start + 500]
 
-    def _page(self, conn, task, message, query, offset):
+    def _page(self, conn, task, readers, query, offset):
         tokens = terms(query) | set(re.findall(r'[\w]+', query.casefold()))
         search = conn.execute(select(self.searches).where(self.searches.c.task_id == task)).mappings().first()
         if offset and search and search['query'] == query:
@@ -116,16 +108,10 @@ class ResearchQA:
             ranked = []
             after = ''
             while True:
-                batch = self.content.list(message['recipientId'], after=after, limit=50, team_application='research')
+                batch = self.content.team_evidence(readers, 'research', after=after, limit=50)
                 for item in batch['items']:
                     score, _ = self._passage(item, tokens)
                     if score:
-                        try:
-                            self.content.read(message['senderId'], item['id'])
-                        except HTTPException as error:
-                            if error.status_code not in {403, 404}:
-                                raise
-                            continue
                         ranked.append((-score, item['id']))
                 after = batch.get('nextCursor')
                 if not after:
@@ -139,17 +125,15 @@ class ResearchQA:
         # Store only ranked IDs. Recheck both readers before returning each passage.
         page = []
         while offset < len(identifiers) and len(page) < 10:
-            identifier = identifiers[offset]
-            offset += 1
-            try:
-                source = self._source(message, identifier)
-            except HTTPException as error:
-                if error.status_code not in {403, 404}:
-                    raise
-                continue
-            _, excerpt = self._passage(source, tokens)
-            source.pop('content')
-            page.append({**source, 'excerpt': excerpt})
+            keys = identifiers[offset:offset + 10 - len(page)]
+            offset += len(keys)
+            batch = self.content.team_evidence(readers, 'research', identifiers=keys)
+            available = {item['id']: item for item in batch['items']}
+            for key in keys:
+                if key in available:
+                    source = available[key]
+                    _, excerpt = self._passage(source, tokens)
+                    page.append({k: v for k, v in source.items() if k != 'content'} | {'excerpt': excerpt})
         return page, {'total': len(identifiers), 'nextOffset': offset if offset < len(identifiers) else None,
                       'insufficientEvidence': not identifiers}
 
@@ -162,29 +146,31 @@ class ResearchQA:
                 delivery = self.associations.events.delivery_for_task(ctx.user_id, ctx.session_id)
                 if delivery is not None:
                     return self.associations.context(ctx, message, delivery)
-            saved = self.messages.read(ctx.user_id, message['messageId'])['reply']
             row = conn.execute(select(self.inputs).where(self.inputs.c.task_id == ctx.session_id)).mappings().first()
-            if saved is not None:
-                if row is None:
-                    raise HTTPException(409, 'RESEARCH_QA_ORIGINAL_INPUT_REQUIRED')
-                self._match(row, ctx, message, config)
-                for identifier in row['content_ids']:
-                    self._source(message, identifier)
-                if saved['state'] != 'available':
-                    raise HTTPException(403, 'RESEARCH_QA_REPLY_SOURCE_UNAVAILABLE')
-                return {'savedReply': self.messages.reply_for_task(ctx.user_id, ctx.session_id,
-                    saved['text'], content_ids=row['content_ids'], cited_content_ids=saved.get('citedContentIds'))}
+            readers = {message['senderId'], message['recipientId']}
             previous = []
             if row is not None:
                 self._match(row, ctx, message, config)
                 previous = row['content_ids']
-                for identifier in previous:
-                    self._source(message, identifier)
+            if message['hasReply']:
+                if row is None:
+                    raise HTTPException(409, 'RESEARCH_QA_ORIGINAL_INPUT_REQUIRED')
+                saved = self.messages.read(ctx.user_id, message['messageId'], task_id=ctx.session_id, team_application='research')
+                if saved['reply']['state'] != 'available':
+                    raise HTTPException(403, 'RESEARCH_QA_REPLY_SOURCE_UNAVAILABLE')
+                if set(saved['reply']['contentIds']) != set(previous):
+                    raise HTTPException(409, 'RESEARCH_QA_ORIGINAL_INPUT_REQUIRED')
+                return {'savedReply': saved}
+            if previous and set(previous) != self.content.readable_ids(readers, previous, team_application='research'):
+                raise HTTPException(403, 'RESEARCH_QA_REPLY_SOURCE_UNAVAILABLE')
             if source_id is not None:
-                result = {'source': self._source(message, source_id)}
+                batch = self.content.team_evidence(readers, 'research', identifiers=[source_id])
+                if not batch['items']:
+                    raise HTTPException(403, 'RESEARCH_QA_TEAM_SOURCE_REQUIRED')
+                result = {'source': batch['items'][0]}
                 received = [source_id]
             else:
-                page, search = self._page(conn, ctx.session_id, message, query or message['text'], offset)
+                page, search = self._page(conn, ctx.session_id, readers, query or message['text'], offset)
                 result = {'question': message['text'], 'sources': page, 'search': search}
                 received = [source['id'] for source in page]
             dependencies = list(dict.fromkeys([*previous, *received]))
@@ -218,4 +204,4 @@ class ResearchQA:
         if not set(answer.citations) <= set(dependencies):
             raise HTTPException(422, 'RESEARCH_QA_UNKNOWN_CITATION')
         return self.messages.reply_for_task(ctx.user_id, ctx.session_id, answer.answer,
-            content_ids=dependencies, cited_content_ids=answer.citations)
+            content_ids=dependencies, cited_content_ids=answer.citations, team_application='research')

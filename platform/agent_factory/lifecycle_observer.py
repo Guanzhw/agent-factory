@@ -16,10 +16,11 @@ import json
 from types import SimpleNamespace
 from typing import Any, Callable
 
+from .native_bridge import session_for_run
 from .task_status import native_status
 
 from agno.agent import Agent
-from agno.db.base import SessionType
+from agno.db.utils import deserialize_run
 from fastapi import HTTPException
 from sqlalchemy import text
 
@@ -81,23 +82,25 @@ class FactoryLifecycleObserver:
         state = (ticket.get("payload") or {}).get("kwargs", {}).get("session_state")
         if isinstance(state, str):
             state = json.loads(state)
-        session = self.native_db.get_session(self.store.native_session_id(task), session_type=SessionType.WORKFLOW if kind == "workflow" else SessionType.AGENT, user_id=task["owner_id"])
+        session = session_for_run(self.native_db, expected["session_id"], task["owner_id"], task["run_id"])
         native_status = None
         requirements = []
         content = None
         if session is not None:
-            if session.user_id != task["owner_id"] or getattr(session, kind + "_id", None) != component_id:
+            if session.get(kind + "_id") != component_id:
                 raise ValueError("Native session differs from its Factory owner/executor")
-            runs = [run for run in session.runs or [] if run.run_id == task["run_id"] and getattr(run, kind + "_id", None) == component_id]
+            runs = [run for run in session["runs"] if run.get(kind + "_id") == component_id]
             if len(runs) != 1 and not (not runs and ticket["status"] == "cancelled"):
                 raise ValueError("Exact persisted native Factory run is not observable")
             if runs:
-                native_status = str(getattr(runs[0].status, "value", runs[0].status)).lower()
-                requirements = runs[0].to_dict().get("requirements") or []
+                run = deserialize_run(kind, runs[0])
+                native_status = str(getattr(run.status, "value", run.status)).lower()
+                run_data = run.to_dict()
+                requirements = run_data.get("requirements") or []
                 if include_content:
-                    content = runs[0].to_dict().get("content")
+                    content = run_data.get("content")
             if state is None:
-                state = (session.session_data or {}).get("session_state")
+                state = (session.get("session_data") or {}).get("session_state")
         if not isinstance(state, dict) or state.get("factory_envelope") != envelope:
             raise ValueError("Native payload/session lacks the exact immutable Factory envelope")
         return {**ticket, "persistedRunStatus": native_status, "requirements": requirements,

@@ -284,7 +284,10 @@ class ResearchSessionTools:
                     return unknown()
                 if reservation['status'] == 'done':
                     guard()
-                    return self._receipt(reservation.get('result'), **original)
+                    result = self._receipt(reservation.get('result'), **original)
+                    if name in RESEARCH_WRITES:
+                        result = self.sessions.research.visible_output(run_context, result)
+                    return result
                 if reservation['status'] != 'new':
                     if name == 'research_git_comment':
                         output = self.sessions.git_review.invoke(run_context, call_id, values)
